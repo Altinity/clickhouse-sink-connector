@@ -1,0 +1,5 @@
+com/altinity/clickhouse/sink/connector/ClickHouseSinkTask.class
+com/altinity/clickhouse/sink/connector/ClickHouseSinkConnectorConfig.class
+com/altinity/clickhouse/sink/connector/ClickHouseSinkConnector.class
+com/altinity/clickhouse/sink/connector/Version.class
+com/altinity/clickhouse/sink/connector/Const.class
