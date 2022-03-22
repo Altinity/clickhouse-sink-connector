@@ -1,0 +1,49 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# IDE folders - everywhere
+.idea
+.project
+.pydevproject
+
+# Skip logs and caches
+log
+*.log
+__pycache__
+
+# Skip dev runtime-produced
+dev/bin
+dev/log
+
+/.vagrant
+/.DS_Store
+
+# Skip vendor
+vendor
+
+operator_output
+.gitsecret/keys/random_seed
+!*.secret
+dockerfile/actions
+
+# python virtualenv
+venv
+
+# Tests cached files
+tests/image/cache
+
+# Skip tmp folder
+/tmp/
+
+# Ignore DevSpace cache and log folder
+/.devspace

@@ -1,0 +1,5 @@
+/home/vladislav/dev/clickhouse-sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkConnector.java
+/home/vladislav/dev/clickhouse-sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkTask.java
+/home/vladislav/dev/clickhouse-sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/Const.java
+/home/vladislav/dev/clickhouse-sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/Version.java
+/home/vladislav/dev/clickhouse-sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkConnectorConfig.java
