@@ -10,6 +10,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.clickhouse.client.*;
 
 public class ClickHouseSinkTask extends SinkTask {
   private static final long WAIT_TIME = 5 * 1000; // 5 sec
@@ -30,6 +31,32 @@ public class ClickHouseSinkTask extends SinkTask {
     this.id = config.getOrDefault(Const.TASK_ID, "-1");
     final long count = Long.parseLong(config.get(ClickHouseSinkConnectorConfig.BUFFER_COUNT));
     log.info("start({}):{}", this.id, count);
+
+
+// only HTTP and gRPC are supported at this point
+    ClickHouseProtocol preferredProtocol = ClickHouseProtocol.HTTP;
+// you'll have to parse response manually if use different format
+    ClickHouseFormat preferredFormat = ClickHouseFormat.RowBinaryWithNamesAndTypes;
+
+// connect to localhost, use default port of the preferred protocol
+    ClickHouseNode server = ClickHouseNode.builder().port(preferredProtocol).build();
+
+    try (ClickHouseClient client = ClickHouseClient.newInstance(preferredProtocol);
+         ClickHouseResponse response = client.connect(server)
+                 .format(preferredFormat)
+                 .query("select * from numbers(:limit)")
+                 .params(1000).execute().get()) {
+      // or resp.stream() if you prefer stream API
+      for (ClickHouseRecord record : response.records()) {
+        int num = record.getValue(0).asInteger();
+        String str = record.getValue(0).asString();
+      }
+
+      ClickHouseResponseSummary summary = response.getSummary();
+      long totalRows = summary.getTotalRowsToRead();
+    } catch (Exception e) {
+
+    }
   }
 
   @Override
