@@ -33,20 +33,15 @@ public class ClickHouseSinkTask extends SinkTask {
     log.info("start({}):{}", this.id, count);
 
 
-// only HTTP and gRPC are supported at this point
-    ClickHouseProtocol preferredProtocol = ClickHouseProtocol.HTTP;
-// you'll have to parse response manually if use different format
-    ClickHouseFormat preferredFormat = ClickHouseFormat.RowBinaryWithNamesAndTypes;
+    ClickHouseProtocol protocol = ClickHouseProtocol.HTTP;
+    ClickHouseFormat format = ClickHouseFormat.RowBinaryWithNamesAndTypes;
+    ClickHouseNode node = ClickHouseNode.builder().port(protocol).build();
 
-// connect to localhost, use default port of the preferred protocol
-    ClickHouseNode server = ClickHouseNode.builder().port(preferredProtocol).build();
-
-    try (ClickHouseClient client = ClickHouseClient.newInstance(preferredProtocol);
-         ClickHouseResponse response = client.connect(server)
-                 .format(preferredFormat)
+    try (ClickHouseClient client = ClickHouseClient.newInstance(protocol);
+         ClickHouseResponse response = client.connect(node)
+                 .format(format)
                  .query("select * from numbers(:limit)")
                  .params(1000).execute().get()) {
-      // or resp.stream() if you prefer stream API
       for (ClickHouseRecord record : response.records()) {
         int num = record.getValue(0).asInteger();
         String str = record.getValue(0).asString();
@@ -55,7 +50,7 @@ public class ClickHouseSinkTask extends SinkTask {
       ClickHouseResponseSummary summary = response.getSummary();
       long totalRows = summary.getTotalRowsToRead();
     } catch (Exception e) {
-
+      log.warn("error call query");
     }
   }
 
