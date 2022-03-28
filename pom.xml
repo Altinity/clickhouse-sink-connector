@@ -210,7 +210,7 @@
                     </execution>
                 </executions>
             </plugin>
-            <plugin>
+            <!-- <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
                 <version>1.6</version>
@@ -223,7 +223,7 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin>
+            </plugin> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
@@ -253,8 +253,18 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.0.0</version>
+                <configuration>
+                    <mainClass></mainClass>
+                    <classpathScope>test</classpathScope>
+                </configuration>
+            </plugin> -->
         </plugins>
 
+        <!-- disable default maven deploy plugin since we are using gpg:sign-and-deploy-file -->
         <pluginManagement>
             <plugins>
                 <plugin>
@@ -266,8 +276,8 @@
             </plugins>
         </pluginManagement>
     </build>
-
     <dependencies>
+        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcpkix-fips -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-fips</artifactId>
@@ -275,10 +285,11 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- https://mvnrepository.com/artifact/org.apache.kafka/connect-api -->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-api</artifactId>
-            <version>3.1.0</version>
+            <version>2.8.1</version>
             <scope>provided</scope>
             <exclusions>
                 <exclusion>
@@ -327,19 +338,16 @@
                 </exclusion>
             </exclusions>
         </dependency>
-
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
             <version>2.12.6</version>
         </dependency>
-
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.12.6</version>
         </dependency>
-
         <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>kafka-schema-registry-client</artifactId>
@@ -363,7 +371,6 @@
                 </exclusion>
             </exclusions>
         </dependency>
-
         <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>kafka-avro-serializer</artifactId>
@@ -375,7 +382,7 @@
                 </exclusion>
             </exclusions>
         </dependency>
-
+        <!-- https://mvnrepository.com/artifact/io.confluent/kafka-connect-avro-converter -->
         <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>kafka-connect-avro-converter</artifactId>
@@ -383,6 +390,21 @@
             <scope>test</scope>
         </dependency>
 
+        <!--JDBC driver for building connection with Clickhouse-->
+        <!-- <dependency>
+            <groupId>ru.yandex.clickhouse</groupId>
+            <artifactId>clickhouse-jdbc</artifactId>
+            <version>0.3.2</version>
+        </dependency> -->
+        <dependency>
+            <groupId>com.clickhouse</groupId>
+            <!-- or clickhouse-grpc-client if you prefer gRPC -->
+            <artifactId>clickhouse-http-client</artifactId>
+            <version>0.3.2-patch7</version>
+        </dependency>
+
+
+        <!-- https://mvnrepository.com/artifact/io.dropwizard.metrics/metrics-core -->
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
             <artifactId>metrics-core</artifactId>
@@ -401,12 +423,7 @@
             <version>31.0.1-jre</version>
         </dependency>
 
-        <dependency>
-            <groupId>dev.failsafe</groupId>
-            <artifactId>failsafe</artifactId>
-            <version>3.2.1</version>
-        </dependency>
-
+        <!--junit for unit test-->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
@@ -414,33 +431,30 @@
             <scope>test</scope>
         </dependency>
 
+        <!--Mockito for unit test-->
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
             <version>2.20.1</version>
             <scope>test</scope>
         </dependency>
-
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <version>1.7.25</version>
         </dependency>
-
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
             <version>1.7.25</version>
             <scope>test</scope>
         </dependency>
-
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
             <version>2.17.1</version>
             <scope>test</scope>
         </dependency>
-
         <dependency>
             <groupId>com.github.stefanbirkner</groupId>
             <artifactId>system-rules</artifactId>
@@ -448,19 +462,18 @@
             <scope>test</scope>
         </dependency>
 
+        <!--Kafka JSON converter for SMT unit test-->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
-            <version>0.9.0.0</version>
+            <version>3.1.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.clickhouse</groupId>
-            <!-- or clickhouse-grpc-client if you prefer gRPC -->
-            <artifactId>clickhouse-http-client</artifactId>
-            <version>0.3.2-patch7</version>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>connect-json</artifactId>
+            <version>3.1.0</version>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
-
 </project>
-
