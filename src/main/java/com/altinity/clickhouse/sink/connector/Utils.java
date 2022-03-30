@@ -43,7 +43,7 @@ class Utils {
         LOGGER.error(
             Logging.logMessage(
                 "Invalid {} config format: {}",
-                ClickHouseConfigurationVariables.CLICKHOUSE_TOPICS_TABLES_MAP,
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP,
                 input));
         return null;
       }
