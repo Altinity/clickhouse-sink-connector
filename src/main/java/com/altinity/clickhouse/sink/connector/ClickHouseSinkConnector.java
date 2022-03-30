@@ -15,6 +15,7 @@ import java.util.Map;
 
 
 public class ClickHouseSinkConnector extends SinkConnector {
+
     private Map<String, String> config;
     //private ClickHouse ch;
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnector.class);
@@ -24,22 +25,25 @@ public class ClickHouseSinkConnector extends SinkConnector {
      *
      */
     public ClickHouseSinkConnector() {
-        this.ready = false;
         log.info("ClickHouseSinkConnector()");
+        // Connector is not yet ready to accept data
+        this.ready = false;
     }
 
     /**
      *
-     * @param cnf
+     * @param conf
      */
     @Override
-    public void start(final Map<String, String> cnf) {
+    public void start(final Map<String, String> conf) {
         log.info("start()");
-        // Prepare config
-        this.config = new HashMap<>(cnf);
+        // Instantiate main connector's config and fill it with default values
+        this.config = new HashMap<>(conf);
         ClickHouseSinkConnectorConfig.setDefaultValues(this.config);
         // Prepare ClickHouse connection
         //ch = ch.builder().setProperties(this.config).build();
+
+        // From now on connector is ready to accept data
         this.ready = true;
     }
 
@@ -49,6 +53,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
     @Override
     public void stop() {
         log.info("stop()");
+        // Connector is no more ready to accept data
         this.ready = false;
     }
 
@@ -72,16 +77,19 @@ public class ClickHouseSinkConnector extends SinkConnector {
             try {
                 Thread.sleep(5000);
             } catch (InterruptedException ex) {
+                // Action may be interrupted
             }
         }
 
-        List<Map<String, String>> taskConfigs = new ArrayList<>(maxTasks);
+        // Create personal configuration for each task
+        List<Map<String, String>> configs = new ArrayList<>(maxTasks);
         for (int i = 0; i < maxTasks; i++) {
+            // Instantiate config from the main connector's config and personalize with additional params
             Map<String, String> conf = new HashMap<>(this.config);
             conf.put(Const.TASK_ID, "" + i);
-            taskConfigs.add(conf);
+            configs.add(conf);
         }
-        return taskConfigs;
+        return configs;
     }
 
     /**
@@ -95,14 +103,16 @@ public class ClickHouseSinkConnector extends SinkConnector {
 
     /**
      *
-     * @param connectorConfigs
+     * @param conf
      * @return
      */
     @Override
-    public Config validate(Map<String, String> connectorConfigs) {
+    public Config validate(Map<String, String> conf) {
         log.debug("validate()");
-        connectorConfigs.put(Const.NAME, "TEST_CONNECTOR");
-        Config result = super.validate(connectorConfigs);
+        // Insert name of the connector.
+        // TODO - should it be a parameter?
+        conf.put(Const.NAME, "TEST_CONNECTOR");
+        Config result = super.validate(conf);
         log.info("Config validated");
         return result;
     }
