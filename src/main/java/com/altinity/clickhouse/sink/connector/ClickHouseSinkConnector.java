@@ -1,22 +1,7 @@
-/*
- * Copyright (c)  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
 package com.altinity.clickhouse.sink.connector;
 
 
+import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.sink.SinkConnector;
@@ -30,51 +15,105 @@ import java.util.Map;
 
 
 public class ClickHouseSinkConnector extends SinkConnector {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(ClickHouseSinkConnector.class);
-
     private Map<String, String> config;
-    @Override
-    public String version() {
-        return Utils.VERSION;
+    //private ClickHouse ch;
+    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnector.class);
+    private boolean ready;
+
+    /**
+     *
+     */
+    public ClickHouseSinkConnector() {
+        this.ready = false;
+        log.info("ClickHouseSinkConnector()");
     }
 
+    /**
+     *
+     * @param cnf
+     */
     @Override
-    public void start(Map<String, String> props) {
-        // The following activities need to be done here
-        // 1. Load configuration (Kafka and Clickhouse specific)
-        // 2. Create a connection to Clickhouse.
-
-        LOGGER.debug("STARTING CLICKHOUSE SINK CONNECTOR");
-        config = new HashMap<>(props);
+    public void start(final Map<String, String> cnf) {
+        log.info("start()");
+        // Prepare config
+        this.config = new HashMap<>(cnf);
+        ClickHouseSinkConnectorConfig.setDefaultValues(this.config);
+        // Prepare ClickHouse connection
+        //ch = ch.builder().setProperties(this.config).build();
+        this.ready = true;
     }
 
-    /** @return Sink task class */
+    /**
+     *
+     */
+    @Override
+    public void stop() {
+        log.info("stop()");
+        this.ready = false;
+    }
+
+    /**
+     *
+     * @return
+     */
     @Override
     public Class<? extends Task> taskClass() {
         return ClickHouseSinkTask.class;
     }
 
+    /**
+     *
+     * @param maxTasks
+     * @return
+     */
     @Override
-    public List<Map<String, String>> taskConfigs(int maxTasks) {
+    public List<Map<String, String>> taskConfigs(final int maxTasks) {
+        while (!this.ready) {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException ex) {
+            }
+        }
 
         List<Map<String, String>> taskConfigs = new ArrayList<>(maxTasks);
         for (int i = 0; i < maxTasks; i++) {
-            Map<String, String> conf = new HashMap<>(config);
-            conf.put(Utils.TASK_ID, i + "");
+            Map<String, String> conf = new HashMap<>(this.config);
+            conf.put(Const.TASK_ID, "" + i);
             taskConfigs.add(conf);
         }
         return taskConfigs;
     }
 
-    @Override
-    public void stop() {
-        // TODO Auto-generated method stub
-        
-    }
-
+    /**
+     *
+     * @return
+     */
     @Override
     public ConfigDef config() {
         return ClickHouseSinkConnectorConfig.newConfigDef();
     }
+
+    /**
+     *
+     * @param connectorConfigs
+     * @return
+     */
+    @Override
+    public Config validate(Map<String, String> connectorConfigs) {
+        log.debug("validate()");
+        connectorConfigs.put(Const.NAME, "TEST_CONNECTOR");
+        Config result = super.validate(connectorConfigs);
+        log.info("Config validated");
+        return result;
+    }
+
+    /**
+     *
+     * @return
+     */
+    @Override
+    public String version() {
+        return Version.VERSION;
+    }
+
 }

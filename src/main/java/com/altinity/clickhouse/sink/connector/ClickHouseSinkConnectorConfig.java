@@ -7,6 +7,8 @@ import org.apache.kafka.common.config.ConfigDef.Type;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
+
 /**
  * Class for defining the configuration 
  * for the connector.
@@ -14,7 +16,14 @@ import org.slf4j.LoggerFactory;
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
 public class ClickHouseSinkConnectorConfig {
-    
+    static final String NAME = Const.NAME;
+    public static final String TOPICS = "topics";
+
+    public static final String BUFFER_COUNT = "buffer.count";
+    public static final long BUFFER_COUNT_DEFAULT = 100;
+
+    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
+
     // ClickHouse connection
     private static final String CLICKHOUSE_LOGIN_INFO = "ClickHouse Login Info";
     private static final String CONNECTOR_CONFIG = "Connector Config";
@@ -23,8 +32,38 @@ public class ClickHouseSinkConnectorConfig {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class);
 
+    public static void setDefaultValues(Map<String, String> config) {
+        setFieldToDefaultValues(config, BUFFER_COUNT, BUFFER_COUNT_DEFAULT);
+    }
+
+    static void setFieldToDefaultValues(Map<String, String> config, String field, Long value) {
+        if (!config.containsKey(field)) {
+            config.put(field, "" + value);
+            log.info("setFieldToDefaultValues(){}={}", field, value);
+        }
+    }
+
+    static String getProperty(final Map<String, String> config, final String key) {
+        if (config.containsKey(key) && !config.get(key).isEmpty()) {
+            return config.get(key);
+        } else {
+            return null;
+        }
+    }
+
     static ConfigDef newConfigDef() {
         return new ConfigDef()
+                .define(
+                        BUFFER_COUNT,
+                        Type.LONG,
+                        BUFFER_COUNT_DEFAULT,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "BufCount",
+                        "Connector",
+                        1,
+                        ConfigDef.Width.NONE,
+                        BUFFER_COUNT)
             // ClickHouse login info
             .define(
                 ClickHouseConfigurationVariables.CLICKHOUSE_URL,
