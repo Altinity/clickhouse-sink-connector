@@ -95,6 +95,15 @@ public class ClickHouseSinkTask extends SinkTask{
 
     }
 
+    /**
+     *  It really is a replacement for flush (it actually takes the same parameters as flush), except that it is expected to return the offsets that Kafka Connect should commit. By default, preCommit just calls flush and then returns the same offsets that were passed to preCommit, which means Kafka Connect should commit all the offsets it passed to the connector via preCommit. But if your preCommit returns an empty set of offsets, then Kafka Connect will record no offsets at all.
+     *
+     * So, if your connector is going to handle all offsets in the external system and doesn't need Kafka Connect to record anything, then you should override the preCommit method instead of flush, and return an empty set of offsets.
+     * 
+     * @param currentOffsets
+     * @return
+     * @throws RetriableException
+     */
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> currentOffsets)
             throws RetriableException {
