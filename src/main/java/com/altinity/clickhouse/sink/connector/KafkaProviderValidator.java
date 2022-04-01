@@ -3,19 +3,23 @@ package com.altinity.clickhouse.sink.connector;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 
-
-/* Validator to validate Kafka Provider values which says where kafka is hosted */
+/**
+ * KafkaProviderValidator validates KafkaProvider enum values
+ */
 public class KafkaProviderValidator implements ConfigDef.Validator {
-
 
     public static final String PROVIDER_CONFIG = "provider";
 
     public KafkaProviderValidator() {
     }
 
-    // This API is called by framework to ensure the validity when connector is
-    // started or when a
-    // validate REST API is called
+    /**
+     * ensureValid is called by framework to ensure the validity
+     * 1. when connector is started or
+     * 2. when validate REST API is called
+     * @param name
+     * @param value
+     */
     @Override
     public void ensureValid(String name, Object value) {
         assert value instanceof String;
