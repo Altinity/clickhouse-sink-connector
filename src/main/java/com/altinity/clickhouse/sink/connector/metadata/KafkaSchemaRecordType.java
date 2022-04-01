@@ -2,7 +2,7 @@ package com.altinity.clickhouse.sink.connector.metadata;
 
 
 /**
- *  Enum class for Kafka schema or record type, either value or key.
+ * Enum class for Kafka schema or record type, either value or key.
  */
 public enum KafkaSchemaRecordType {
 
@@ -11,10 +11,18 @@ public enum KafkaSchemaRecordType {
 
     private final String str;
 
+    /**
+     * Constructor
+     *
+     * @param str string value
+     */
     KafkaSchemaRecordType(String str) {
         this.str = str;
     }
 
+    /**
+     * @return
+     */
     public String toString() {
         return this.str;
     }

@@ -20,10 +20,14 @@ public class BufferedRecords {
         final List<SinkRecord> flushed = new ArrayList<>();
 
         boolean schemaChanged = false;
+
+        // Find out key schema status
         if (!Objects.equals(keySchema, record.keySchema())) {
             keySchema = record.keySchema();
             schemaChanged = true;
         }
+
+        // Find out key schema status
         if (isNull(record.valueSchema())) {
             // For deletes, value and optionally value schema come in as null.
             // We don't want to treat this as a schema change if key schemas is the same
@@ -37,10 +41,11 @@ public class BufferedRecords {
             //  flushed.addAll(flush());
             //}
         } else {
-            // value schema is not null and has changed. This is a real schema change.
+            // Value schema is available and has changed. This is a real schema change.
             valueSchema = record.valueSchema();
             schemaChanged = true;
         }
+
         if (schemaChanged) {
             // Each batch needs to have the same schemas, so get the buffered records out
             //flushed.addAll(flush());
