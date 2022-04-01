@@ -389,6 +389,11 @@
             <version>5.5.1</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-core</artifactId>
+            <version>1.8.1.Final</version>
+        </dependency>
 
         <!--JDBC driver for building connection with Clickhouse-->
         <!-- <dependency>
@@ -399,8 +404,16 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
-            <artifactId>clickhouse-http-client</artifactId>
+            <artifactId>clickhouse-jdbc</artifactId>
             <version>0.3.2-patch7</version>
+            <!-- below is only needed when all you want is a shaded jar -->
+            <classifier>http</classifier>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
 
