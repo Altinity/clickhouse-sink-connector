@@ -1,14 +1,14 @@
 apiVersion: v1
-data:
-  rootHost: JQ==
-  rootPassword: YWx0aW5pdHk=
-  rootUser: cm9vdA==
 kind: Secret
 metadata:
   name: mypwds
   namespace: mysql
 type: Opaque
-
+data:
+  rootHost: JQ==
+  rootPassword: YWx0aW5pdHk=
+  rootUser: cm9vdA==
+---
 apiVersion: mysql.oracle.com/v2alpha1
 kind: InnoDBCluster
 metadata:
