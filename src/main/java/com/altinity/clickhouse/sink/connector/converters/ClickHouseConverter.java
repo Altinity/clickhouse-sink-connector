@@ -15,7 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class ClickHouseConverter implements AbstractConverter{
+public class ClickHouseConverter implements AbstractConverter {
     @Override
     public Map<String, Object> convertKey(SinkRecord record) {
 
@@ -82,19 +82,19 @@ public class ClickHouseConverter implements AbstractConverter{
         System.out.println("Converted Key");
         System.out.println("Converted Value");
 
-        if(convertedValue.containsKey("after")) {
+        if (convertedValue.containsKey("after")) {
             Struct afterValue = (Struct) convertedValue.get("after");
             List<Field> fields = afterValue.schema().fields();
             System.out.println("DONE");
 
             List<String> cols = new ArrayList<String>();
             List<Object> values = new ArrayList<Object>();
-            for(Field f: fields) {
+            for (Field f : fields) {
 
                 System.out.println("Key" + f.name());
                 cols.add(f.name());
 
-                System.out.println("Value"+ afterValue.get(f));
+                System.out.println("Value" + afterValue.get(f));
                 values.add(afterValue.get(f));
             }
 
@@ -107,7 +107,7 @@ public class ClickHouseConverter implements AbstractConverter{
             byte[] rawJsonPayload = new JsonConverter().fromConnectData(record.topic(), record.valueSchema(), record.value());
             String stringPayload = new String(rawJsonPayload, StandardCharsets.UTF_8);
             System.out.println("STRING PAYLOAD" + stringPayload);
-        } catch(Exception e) {
+        } catch (Exception e) {
 
         }
     }
