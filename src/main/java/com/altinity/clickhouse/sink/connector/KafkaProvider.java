@@ -6,12 +6,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/* Enum which represents allowed values of kafka provider. (Hosted Platform) */
+/**
+ * KafkaProvider is an enum with possible values of kafka provider
+ */
 public enum KafkaProvider {
-    // Default value, when nothing is provided. (More like Not Applicable)
+    // Default value
     UNKNOWN,
 
-    // Kafka/KC is on self hosted node
+    // Kafka/KC is on self-hosted node
     SELF_HOSTED,
 
     // Hosted/managed by Confluent
@@ -24,22 +26,26 @@ public enum KafkaProvider {
             .map(kafkaProvider -> kafkaProvider.name().toLowerCase())
             .collect(Collectors.toList());
 
-    // Returns the KafkaProvider object from string. It does convert an empty or null value to an
-    // Enum.
+    /**
+     * Creates the KafkaProvider object from a string.
+     *
+     * @param kafkaProviderStr
+     * @return
+     */
     public static KafkaProvider of(final String kafkaProviderStr) {
-
-      if (Strings.isNullOrEmpty(kafkaProviderStr)) {
-        return KafkaProvider.UNKNOWN;
-      }
-
-      for (final KafkaProvider b : KafkaProvider.values()) {
-        if (b.name().equalsIgnoreCase(kafkaProviderStr)) {
-          return b;
+        if (Strings.isNullOrEmpty(kafkaProviderStr)) {
+            return KafkaProvider.UNKNOWN;
         }
-      }
-      throw new IllegalArgumentException(
-          String.format(
-              "Unsupported provider name: %s. Supported are: %s",
-              kafkaProviderStr, String.join(",", PROVIDER_NAMES)));
+
+        for (final KafkaProvider p : KafkaProvider.values()) {
+            if (p.name().equalsIgnoreCase(kafkaProviderStr)) {
+                return p;
+            }
+        }
+
+        throw new IllegalArgumentException(
+            String.format(
+                "Unsupported provider name: %s. Supported are: %s",
+                kafkaProviderStr, String.join(",", PROVIDER_NAMES)));
     }
 }
