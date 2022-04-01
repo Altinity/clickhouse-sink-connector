@@ -1,6 +1,6 @@
 # ClickHouse Sink Connector
 
-Sick connector sinks data from Kafka into CLickHouse
+Sink connector sinks data from Kafka into CLickHouse
 
 ## Documentation
 
