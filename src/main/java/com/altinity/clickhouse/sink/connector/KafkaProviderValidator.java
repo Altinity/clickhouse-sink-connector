@@ -17,6 +17,7 @@ public class KafkaProviderValidator implements ConfigDef.Validator {
      * ensureValid is called by framework to ensure the validity
      * 1. when connector is started or
      * 2. when validate REST API is called
+     *
      * @param name
      * @param value
      */

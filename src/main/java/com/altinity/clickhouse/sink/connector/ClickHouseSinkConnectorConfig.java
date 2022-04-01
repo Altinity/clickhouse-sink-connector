@@ -10,9 +10,9 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 
 /**
- * Class for defining the configuration 
+ * Class for defining the configuration
  * for the connector.
- * 
+ * <p>
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
 public class ClickHouseSinkConnectorConfig {
@@ -29,7 +29,6 @@ public class ClickHouseSinkConnectorConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class);
 
     /**
-     *
      * @param config
      */
     public static void setDefaultValues(Map<String, String> config) {
@@ -37,7 +36,6 @@ public class ClickHouseSinkConnectorConfig {
     }
 
     /**
-     *
      * @param config
      * @param field
      * @param value
@@ -50,7 +48,6 @@ public class ClickHouseSinkConnectorConfig {
     }
 
     /**
-     *
      * @param config
      * @param key
      * @return
@@ -64,13 +61,12 @@ public class ClickHouseSinkConnectorConfig {
     }
 
     /**
-     *
      * @return
      */
     static ConfigDef newConfigDef() {
         return new ConfigDef()
-                    // Config Group "Connector config"
-                    .define(
+                // Config Group "Connector config"
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP,
                         Type.STRING,
                         "",
@@ -82,7 +78,7 @@ public class ClickHouseSinkConnectorConfig {
                         0,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP)
-                    .define(
+                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT,
                         Type.LONG,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT_DEFAULT,
@@ -93,7 +89,7 @@ public class ClickHouseSinkConnectorConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT)
-                    .define(
+                .define(
                         ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG,
                         Type.STRING,
                         KafkaProvider.UNKNOWN.name(),
@@ -105,8 +101,8 @@ public class ClickHouseSinkConnectorConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG)
 
-                    // Config Group "ClickHouse login info"
-                    .define(
+                // Config Group "ClickHouse login info"
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL,
                         Type.STRING,
                         null,
@@ -117,7 +113,7 @@ public class ClickHouseSinkConnectorConfig {
                         0,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL)
-                    .define(
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER,
                         Type.STRING,
                         null,
@@ -128,7 +124,7 @@ public class ClickHouseSinkConnectorConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER)
-                    .define(
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS,
                         Type.STRING,
                         null,
@@ -139,7 +135,7 @@ public class ClickHouseSinkConnectorConfig {
                         2,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS)
-                    .define(
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE,
                         Type.STRING,
                         null,
@@ -150,7 +146,7 @@ public class ClickHouseSinkConnectorConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE)
-                        // ToDo: Add JVM Proxy
+                // ToDo: Add JVM Proxy
                 ;
-      }
+    }
 }
