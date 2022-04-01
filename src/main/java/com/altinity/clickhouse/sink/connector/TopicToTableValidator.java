@@ -13,6 +13,7 @@ public class TopicToTableValidator implements ConfigDef.Validator {
      * ensureValid is called by framework to ensure the validity
      * 1. when connector is started or
      * 2. when validate REST API is called
+     *
      * @param name
      * @param value
      */
@@ -33,6 +34,6 @@ public class TopicToTableValidator implements ConfigDef.Validator {
 
     public String toString() {
         return "Topic to table map format : comma-separated tuples, e.g."
-          + " <topic-1>:<table-1>,<topic-2>:<table-2>,... ";
+                + " <topic-1>:<table-1>,<topic-2>:<table-2>,... ";
     }
 }

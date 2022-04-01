@@ -22,9 +22,9 @@ public enum KafkaProvider {
 
     // All valid enum values
     public static final List<String> PROVIDER_NAMES =
-        Arrays.stream(KafkaProvider.values())
-            .map(kafkaProvider -> kafkaProvider.name().toLowerCase())
-            .collect(Collectors.toList());
+            Arrays.stream(KafkaProvider.values())
+                    .map(kafkaProvider -> kafkaProvider.name().toLowerCase())
+                    .collect(Collectors.toList());
 
     /**
      * Creates the KafkaProvider object from a string.
@@ -44,8 +44,8 @@ public enum KafkaProvider {
         }
 
         throw new IllegalArgumentException(
-            String.format(
-                "Unsupported provider name: %s. Supported are: %s",
-                kafkaProviderStr, String.join(",", PROVIDER_NAMES)));
+                String.format(
+                        "Unsupported provider name: %s. Supported are: %s",
+                        kafkaProviderStr, String.join(",", PROVIDER_NAMES)));
     }
 }

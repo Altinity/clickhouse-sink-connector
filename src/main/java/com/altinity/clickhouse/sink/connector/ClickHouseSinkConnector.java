@@ -31,7 +31,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @param conf
      */
     @Override
@@ -58,7 +57,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @return
      */
     @Override
@@ -67,7 +65,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @param maxTasks
      * @return
      */
@@ -93,7 +90,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @return
      */
     @Override
@@ -102,7 +98,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @param conf
      * @return
      */
@@ -118,7 +113,6 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     *
      * @return
      */
     @Override

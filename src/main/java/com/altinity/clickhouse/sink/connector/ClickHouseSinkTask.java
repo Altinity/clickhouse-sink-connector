@@ -15,12 +15,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- *
- * <p>Creates sink service instance, takes records loaded from those 
+ * <p>Creates sink service instance, takes records loaded from those
  * Kafka partitions and ingests to
  * ClickHouse via Sink service
  */
-public class ClickHouseSinkTask extends SinkTask{
+public class ClickHouseSinkTask extends SinkTask {
     private static final long WAIT_TIME = 5 * 1000; // 5 sec
     private static final int REPEAT_TIME = 12; // 60 sec
     private String id = "-1";
@@ -84,19 +83,19 @@ public class ClickHouseSinkTask extends SinkTask{
     public void put(Collection<SinkRecord> records) {
         log.info("out({}):{}", this.id, records.size());
         BufferedRecords br = new BufferedRecords();
-        for (SinkRecord record: records) {
+        for (SinkRecord record : records) {
             new ClickHouseConverter().convert(record);
         }
 
     }
 
     /**
-     *  preCommit() is a something like a replacement for flush - takes the same parameters
-     *  Returns the offsets that Kafka Connect should commit.
-     *  Typical behavior is to call flush and return the same offsets that were passed as params,
-     *  which means Kafka Connect should commit all the offsets it passed to the connector via preCommit.
-     *  But if your preCommit returns an empty set of offsets, then Kafka Connect will record no offsets at all.
-     *
+     * preCommit() is a something like a replacement for flush - takes the same parameters
+     * Returns the offsets that Kafka Connect should commit.
+     * Typical behavior is to call flush and return the same offsets that were passed as params,
+     * which means Kafka Connect should commit all the offsets it passed to the connector via preCommit.
+     * But if your preCommit returns an empty set of offsets, then Kafka Connect will record no offsets at all.
+     * <p>
      * If the connector is going to handle all offsets in the external system and doesn't need Kafka Connect to record anything,
      * then you should override the preCommit method instead of flush, and return an empty set of offsets.
      *
