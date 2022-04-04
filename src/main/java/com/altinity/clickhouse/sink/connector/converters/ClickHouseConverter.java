@@ -1,9 +1,11 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkTask;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.metadata.KafkaSchemaRecordType;
-import org.apache.kafka.connect.data.Field;
-import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.*;
+import org.apache.kafka.connect.sink.SinkRecord;
+
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.json.JsonConverter;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -20,15 +22,51 @@ public class ClickHouseConverter implements AbstractConverter {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseConverter.class);
 
     /**
-     * Convert SinkRecord
      *
+     */
+    public enum CDC_OPERATION {
+        // Sql updates
+        UPDATE("U"),
+        // Inserts
+        CREATE("C"),
+
+        DELETE("D");
+
+        private String operation;
+
+        CDC_OPERATION(String op) {
+            this.operation = op;
+        }
+    }
+
+    /**
+     * Primary functionality of parsing a CDC event in a SinkRecord.
+     * This checks the operation flag( if its 'C' or 'U')
      * @param record
      */
-    public void convert(SinkRecord record) {
+    /**
+     * Struct{before=Struct{id=1,message=Hello from MySQL},
+     * after=Struct{id=1,message=Mysql update},source=Struct{version=1.8.1.Final,connector=mysql,
+     * name=local_mysql3,ts_ms=1648575279000,snapshot=false,db=test,table=test_hello2,server_id=1,file=binlog.000002,pos=4414,row=0},op=u,ts_ms=1648575279856}
+     */
+    public Struct convert(SinkRecord record) {
         log.info("convert()");
 
         Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
+
+        Struct afterRecord = null;
+        if (convertedValue.containsKey("op")) {
+            // Operation (u, c)
+            String operation = (String) convertedValue.get("op");
+            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation)) {
+                // Inserts.
+            } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
+                // Updates.
+            } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
+                // Deletes.
+            }
+        }
 
         if (convertedValue.containsKey("after")) {
             Struct afterValue = (Struct) convertedValue.get("after");
@@ -36,6 +74,8 @@ public class ClickHouseConverter implements AbstractConverter {
 
             List<String> cols = new ArrayList<String>();
             List<Object> values = new ArrayList<Object>();
+            List<Schema.Type> types = new ArrayList<Schema.Type>();
+
             for (Field f : fields) {
                 log.info("Key" + f.name());
                 log.info("Value" + afterValue.get(f));
@@ -44,16 +84,17 @@ public class ClickHouseConverter implements AbstractConverter {
                 values.add(afterValue.get(f));
             }
 
-            DbWriter writer = new DbWriter();
-            //writer.insert(record.topic(), String.join(' ', cols.), String.join(' ', values));
         }
 
+        //ToDO: Remove the following code after evaluating
         try {
             byte[] rawJsonPayload = new JsonConverter().fromConnectData(record.topic(), record.valueSchema(), record.value());
             String stringPayload = new String(rawJsonPayload, StandardCharsets.UTF_8);
             log.info("STRING PAYLOAD" + stringPayload);
         } catch (Exception e) {
         }
+
+        return afterRecord;
     }
 
     @Override
@@ -67,14 +108,13 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     *
      * @param record
      * @param what
      * @return
      */
     public Map<String, Object> convertRecord(SinkRecord record, KafkaSchemaRecordType what) {
         Schema schema = what == KafkaSchemaRecordType.KEY ? record.keySchema() : record.valueSchema();
-        Object obj    = what == KafkaSchemaRecordType.KEY ? record.key() : record.value();
+        Object obj = what == KafkaSchemaRecordType.KEY ? record.key() : record.value();
         Map<String, Object> result = null;
 
         if (schema == null) {
@@ -100,7 +140,6 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     *
      * @param object
      * @param schema
      * @return
@@ -114,7 +153,7 @@ public class ClickHouseConverter implements AbstractConverter {
             boolean isEmptyStruct = (field.schema().type() == Schema.Type.STRUCT) && (field.schema().fields().isEmpty());
             if (!isEmptyStruct) {
                 // Not empty struct
-                Object convertedObject = convertObject(struct.get(field.name()),field.schema());
+                Object convertedObject = convertObject(struct.get(field.name()), field.schema());
                 if (convertedObject != null) {
                     record.put(field.name(), convertedObject);
                 }
@@ -124,7 +163,6 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     *
      * @param object
      * @param schema
      * @return
