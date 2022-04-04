@@ -1,13 +1,14 @@
-package com.altinity.clickhouse.sink.connector.converters;
+package com.kafka.connect.clickhouse.converters;
 
 
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.converters.AbstractConverter;
 import com.altinity.clickhouse.sink.connector.metadata.KafkaSchemaRecordType;
-import org.apache.kafka.connect.data.Field;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.json.JsonConverter;
+import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.sink.SinkRecord;
+
+import org.apache.kafka.connect.data.Struct;
+
+import org.apache.kafka.connect.json.JsonConverter;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -16,9 +17,31 @@ import java.util.List;
 import java.util.Map;
 
 public class ClickHouseConverter implements AbstractConverter {
+
+    /**
+     *
+     */
+    public enum CDC_OPERATION {
+        // Sql updates
+        UPDATE("U"),
+        // Inserts
+        CREATE("C"),
+
+        DELETE("D");
+
+        private String operation;
+        CDC_OPERATION(String op) {
+            this.operation = op;
+        }
+    }
     @Override
     public Map<String, Object> convertKey(SinkRecord record) {
 
+        /**
+         * Struct{before=Struct{id=1,message=Hello from MySQL},
+         * after=Struct{id=1,message=Mysql update},source=Struct{version=1.8.1.Final,connector=mysql,
+         * name=local_mysql3,ts_ms=1648575279000,snapshot=false,db=test,table=test_hello2,server_id=1,file=binlog.000002,pos=4414,row=0},op=u,ts_ms=1648575279856}
+         */
         KafkaSchemaRecordType recordType = KafkaSchemaRecordType.KEY;
         Schema kafkaConnectSchema = recordType == KafkaSchemaRecordType.KEY ? record.keySchema() : record.valueSchema();
         Object kafkaConnectStruct = recordType == KafkaSchemaRecordType.KEY ? record.key() : record.value();
@@ -74,42 +97,56 @@ public class ClickHouseConverter implements AbstractConverter {
         return result;
     }
 
-    public void convert(SinkRecord record) {
+    /**
+     * Primary functionality of parsing a CDC event in a SinkRecord.
+     * This checks the operation flag( if its 'C' or 'U')
+     * @param record
+     */
+    public Struct convert(SinkRecord record) {
 
         Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
 
-        System.out.println("Converted Key");
-        System.out.println("Converted Value");
-
-        if (convertedValue.containsKey("after")) {
-            Struct afterValue = (Struct) convertedValue.get("after");
-            List<Field> fields = afterValue.schema().fields();
-            System.out.println("DONE");
+        Struct afterRecord = null;
+        if(convertedValue.containsKey("op")) {
+            // Operation (u, c)
+            String operation = (String) convertedValue.get("op");
+            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation)) {
+                // Inserts.
+            } else if(operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
+                // Updates.
+            } else if(operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
+                // Deletes.
+            }
+        }
+        if(convertedValue.containsKey("after")) {
+            afterRecord = (Struct) convertedValue.get("after");
+            List<Field> fields = afterRecord.schema().fields();
 
             List<String> cols = new ArrayList<String>();
             List<Object> values = new ArrayList<Object>();
-            for (Field f : fields) {
+            List<Schema.Type> types = new ArrayList<Schema.Type>();
 
+            for(Field f: fields) {
                 System.out.println("Key" + f.name());
                 cols.add(f.name());
 
-                System.out.println("Value" + afterValue.get(f));
-                values.add(afterValue.get(f));
+                System.out.println("Value"+ afterRecord.get(f));
+                values.add(afterRecord.get(f));
             }
-
-            DbWriter writer = new DbWriter();
-            //writer.insert(record.topic(), String.join(' ', cols.), String.join(' ', values));
 
         }
 
+        //ToDO: Remove the following code after evaluating
         try {
             byte[] rawJsonPayload = new JsonConverter().fromConnectData(record.topic(), record.valueSchema(), record.value());
             String stringPayload = new String(rawJsonPayload, StandardCharsets.UTF_8);
             System.out.println("STRING PAYLOAD" + stringPayload);
-        } catch (Exception e) {
+        } catch(Exception e) {
 
         }
+
+        return afterRecord;
     }
 
     private Map<String, Object> convertStruct(Object kafkaConnectObject, Schema kafkaConnectSchema) {
