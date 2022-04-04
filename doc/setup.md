@@ -1,3 +1,7 @@
+# Pipeline
+
+![pipeline](img/pipeline.png)
+
 For local setup, run Docker compose in docker
 directory. It will start
 - MySQL
