@@ -1,6 +1,10 @@
+This doc describes how to set up CDC pipeline
+
 # Pipeline
 
 ![pipeline](img/pipeline.png)
+
+# Setup local pipeline
 
 For local setup, run Docker compose in docker
 directory. It will start
