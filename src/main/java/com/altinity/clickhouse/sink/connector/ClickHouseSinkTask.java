@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
@@ -47,9 +48,8 @@ public class ClickHouseSinkTask extends SinkTask {
         log.info("start({}):{}", this.id, count);
 
         this.records = new ConcurrentLinkedQueue();
-        this.executor = new ClickHouseBatchExecutor(2);
         this.runnable = new ClickHouseBatchRunnable(this.records);
-
+        this.executor = new ClickHouseBatchExecutor(2);
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
 
         /*
@@ -95,10 +95,10 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter converter = new com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter();
         log.debug("CLICKHOUSE received records" + records.size());
+        ClickHouseConverter converter = new ClickHouseConverter();
         BufferedRecords br = new BufferedRecords();
-        for (SinkRecord record: records) {
+        for (SinkRecord record : records) {
             this.records.add(converter.convert(record));
         }
     }

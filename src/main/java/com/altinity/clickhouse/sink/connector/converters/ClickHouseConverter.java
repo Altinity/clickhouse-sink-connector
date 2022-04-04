@@ -29,7 +29,7 @@ public class ClickHouseConverter implements AbstractConverter {
         UPDATE("U"),
         // Inserts
         CREATE("C"),
-
+        // Deletes
         DELETE("D");
 
         private String operation;
@@ -40,22 +40,45 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
+     * Struct{
+     *  before=Struct{
+     *      id=1,
+     *      message=Hello from MySQL
+     *  },
+     *  after=Struct{
+     *      id=1,
+     *      message=Mysql update
+     *  },
+     *  source=Struct{
+     *      version=1.8.1.Final,
+     *      connector=mysql,
+     *      name=local_mysql3,
+     *      ts_ms=1648575279000,
+     *      snapshot=false,
+     *      db=test,
+     *      table=test_hello2,
+     *      server_id=1,
+     *      file=binlog.000002,
+     *      pos=4414,
+     *      row=0
+     *  },
+     *  op=u,
+     *  ts_ms=1648575279856
+     * }
+     */
+
+    /**
      * Primary functionality of parsing a CDC event in a SinkRecord.
      * This checks the operation flag( if its 'C' or 'U')
      * @param record
-     */
-    /**
-     * Struct{before=Struct{id=1,message=Hello from MySQL},
-     * after=Struct{id=1,message=Mysql update},source=Struct{version=1.8.1.Final,connector=mysql,
-     * name=local_mysql3,ts_ms=1648575279000,snapshot=false,db=test,table=test_hello2,server_id=1,file=binlog.000002,pos=4414,row=0},op=u,ts_ms=1648575279856}
      */
     public Struct convert(SinkRecord record) {
         log.info("convert()");
 
         Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
-
         Struct afterRecord = null;
+
         if (convertedValue.containsKey("op")) {
             // Operation (u, c)
             String operation = (String) convertedValue.get("op");
@@ -145,11 +168,15 @@ public class ClickHouseConverter implements AbstractConverter {
      * @return
      */
     private Map<String, Object> convertStruct(Object object, Schema schema) {
-        Map<String, Object> record = new HashMap<>();
-        List<Field> fields = schema.fields();
+        // Object to be converted assumed to be a struct
         Struct struct = (Struct) object;
+        // Result record would be a map
+        Map<String, Object> record = new HashMap<>();
+        // Fields of the struct
+        List<Field> fields = schema.fields();
+        // Convert all fields of the struct into a map
         for (Field field : fields) {
-            // ignore empty structures
+            // Ignore empty structures
             boolean isEmptyStruct = (field.schema().type() == Schema.Type.STRUCT) && (field.schema().fields().isEmpty());
             if (!isEmptyStruct) {
                 // Not empty struct
