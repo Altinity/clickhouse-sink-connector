@@ -26,11 +26,9 @@ public class ClickHouseSinkTask extends SinkTask {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
 
     public ClickHouseSinkTask() {
-        return;
     }
 
     private void getConnection() {
-        return;
     }
 
     @Override
@@ -81,12 +79,11 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        log.info("out({}):{}", this.id, records.size());
+        log.info("put({}):{}", this.id, records.size());
         BufferedRecords br = new BufferedRecords();
         for (SinkRecord record : records) {
             new ClickHouseConverter().convert(record);
         }
-
     }
 
     /**
