@@ -6,18 +6,29 @@ This doc describes how to set up CDC pipeline
 
 # Setup local pipeline
 
-For local setup, run Docker compose in docker
-directory. It will start
-- MySQL
-- RedPanda(Kafka)
-- Clickhouse
+## docker-compose
+Full pipeline can be launched via docker-compose with the help of [docker-compose.yaml][docker-compose.yaml]
+It will start:
+1. MySQL
+2. Zookeeper
+3. Debezium MySQL connector
+4. RedPanda
+5. clickhouse-kafka-sink-connector
+6. Clickhouse
+
+In order to launch `clickhouse-kafka-sink-connector` appropariate docker image is required, 
+which can be built as described in [Image](#Image)  
+```bash
+cd deploy/docker
+docker-compose up
+```
+
+# Image
+Docker image can be created with provided [Dockerfile][Dockerfile] and build script
+
+
 
 ToDO: Create Kafka connector image with Mysql
-
-` cd docker`
-
-`docker-compose up`
-
 Create JAR file by running the following command and copy to the /libs directory of Kafka. 
 
 ` mvn install`
@@ -30,3 +41,6 @@ for both MYSQL and Clickhouse properties.
 `./connect-standalone.sh ../config/connect-standalone.properties 
 ../../kafka-connect-clickhouse/kcch-connector/src/main/config/mysql-debezium.properties 
 ../../kafka-connect-clickhouse/kcch-connector/src/main/config/clickhouse-sink.properties`
+
+[docker-compose.yaml]: ../deploy/docker/docker-compose.yaml
+[Dockerfile]: ../docker/Dockerfile
