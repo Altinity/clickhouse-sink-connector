@@ -1,0 +1,129 @@
+version: "2.3"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  mysql:
+    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+    # SHOW VARIABLES LIKE 'server_id';
+    # SHOW VARIABLES LIKE 'log_bin';
+    # SHOW MASTER STATUS;
+    container_name: mysql
+    image: mysql
+    command:
+      --default-authentication-plugin=mysql_native_password
+      --server-id=1
+      --binlog_do_db=test
+    restart: "no"
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+
+  zookeeper:
+    container_name: zookeeper
+    image: zookeeper
+    restart: "no"
+
+  debezium:
+    container_name: debezium
+    image: debezium/connect:1.9
+    restart: "no"
+    ports:
+      - "8083:8083"
+    environment:
+      # Where to find Kafka broker
+      - BOOTSTRAP_SERVERS=kafka:9092
+      # Maps to rest.advertised.host.name
+      #- ADVERTISED_HOST_NAME=kafka
+      # Maps to rest.advertised.port
+      #- ADVERTISED_PORT=9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
+      - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
+      - LOG_LEVEL=INFO
+      #- LOG_LEVEL=DEBUG
+    depends_on:
+      - zookeeper
+      - kafka
+
+  kafka:
+    container_name: kafka
+    image: vectorized/redpanda
+    restart: "no"
+#    ports:
+#      - "8081:8081"
+#      - "8082:8082"
+#      - "9091:9091"
+#      - "9092:9092"
+    ports:
+      # Expose LOCALHOST_NETWORK listener on localhost
+      - "19092:19092"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      # Setup listeners for docker network and localhost network
+      - --kafka-addr
+      - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
+#  kafka2:
+#    container_name: kafka2
+#    image: vectorized/redpanda
+#    restart: always
+
+  sink:
+    container_name: sink
+    image: altinity/clickhouse-kafka-sink-connector:latest
+    restart: "no"
+    ports:
+      - "18083:8083"
+    environment:
+      # Where to find Kafka broker
+      - BOOTSTRAP_SERVERS=kafka:9092
+      # Maps to rest.advertised.host.name
+      #- ADVERTISED_HOST_NAME=kafka
+      # Maps to rest.advertised.port
+      #- ADVERTISED_PORT=9092
+      - GROUP_ID=2
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
+      - STATUS_STORAGE_TOPIC=status-storage-topic-sink
+      - LOG_LEVEL=INFO
+      #- LOG_LEVEL=DEBUG
+    depends_on:
+      - zookeeper
+      - kafka
+
+  clickhouse:
+    container_name: clickhouse
+    image: yandex/clickhouse-server
+    restart: "no"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_USER=root
+      - CLICKHOUSE_PASSWORD=root
+      - CLICKHOUSE_DB=test
+    ulimits:
+      nofile:
+        soft: "262144"
+        hard: "262144"
+
+  bash:
+    container_name: bash
+    image: ubuntu
+    restart: "no"
+    entrypoint:
+      - /bin/sleep
+    command:
+      - infinity
