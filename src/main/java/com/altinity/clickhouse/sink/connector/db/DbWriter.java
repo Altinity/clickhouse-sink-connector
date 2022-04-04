@@ -59,7 +59,7 @@ public class DbWriter {
 
             this.conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
-            System.out.println("Error creating SQL connection" + e);
+            log.warn("Error creating SQL connection" + e);
         }
     }
 
@@ -88,6 +88,7 @@ public class DbWriter {
     }
 
     /**
+     * Creates INSERT statement and runs it over connection
      * @param records
      */
     public void insert(ConcurrentLinkedQueue<Struct> records) {
@@ -95,9 +96,10 @@ public class DbWriter {
         String table = "employees";
 
         if (records.isEmpty()) {
-            System.out.println("No Records to process");
+            log.info("No Records to process");
             return;
         }
+
         // Get the first record to get length of columns
         Struct peekRecord = records.peek();
         String insertQueryTemplate = this.getInsertQuery(table, peekRecord.schema().fields().size());
@@ -106,23 +108,26 @@ public class DbWriter {
 
             Iterator iterator = records.iterator();
             while (iterator.hasNext()) {
-                Struct afterRecord = (Struct) iterator.next();
-
-                List<Field> fields = afterRecord.schema().fields();
+                Struct record = (Struct) iterator.next();
+                List<Field> fields = record.schema().fields();
 
                 int index = 1;
-                for (Field f : fields) {
-                    Schema.Type fieldType = f.schema().type();
-                    String schemaName = f.schema().name();
-                    Object value = afterRecord.get(f);
+                for (Field field : fields) {
+                    Schema.Type type = field.schema().type();
+                    String schemaName = field.schema().name();
+                    Object value = record.get(field);
+
+                    boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type()) ||
+                            (type == Schema.INT16_SCHEMA.type()) ||
+                            (type == Schema.INT32_SCHEMA.type());
+
+                    boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
+                            (type == Schema.FLOAT64_SCHEMA.type());
 
                     // Text columns
-                    if (fieldType == Schema.Type.STRING) {
-
+                    if (type == Schema.Type.STRING) {
                         ps.setString(index, (String) value);
-                    } else if (fieldType == Schema.INT8_SCHEMA.type() ||
-                            fieldType == Schema.INT16_SCHEMA.type() ||
-                            fieldType == Schema.INT32_SCHEMA.type()) {
+                    } else if (isFieldTypeInt) {
                         if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                             // Date field arrives as INT32 with schema name set to io.debezium.time.Date
                             long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
@@ -132,20 +137,21 @@ public class DbWriter {
                         } else {
                             ps.setInt(index, (Integer) value);
                         }
-                    } else if (fieldType == Schema.FLOAT32_SCHEMA.type() ||
-                            fieldType == Schema.FLOAT64_SCHEMA.type()) {
+                    } else if (isFieldTypeFloat) {
                         ps.setFloat(index, (Float) value);
-                    } else if (fieldType == Schema.BOOLEAN_SCHEMA.type()) {
+                    } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
                         ps.setBoolean(index, (Boolean) value);
                     }
                     index++;
                 }
-                ps.addBatch(); // append parameters to the query
+                // Append parameters to the query
+                ps.addBatch();
             }
 
-            ps.executeBatch(); // issue the composed query: insert into mytable values(...)(...)...(...)
+            // Issue the composed query: insert into mytable values(...)(...)...(...)
+            ps.executeBatch();
         } catch (Exception e) {
-            System.out.println("insert Batch exception" + e);
+            log.warn("insert Batch exception" + e);
         }
     }
 
