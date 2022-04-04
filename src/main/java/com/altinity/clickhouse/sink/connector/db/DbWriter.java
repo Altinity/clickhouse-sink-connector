@@ -11,8 +11,11 @@ import org.apache.kafka.connect.data.Struct;
 
 import io.debezium.time.Date;
 import java.sql.PreparedStatement;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class that abstracts all functionality
@@ -27,7 +30,7 @@ public class DbWriter {
      */
     public DbWriter() {
         //ToDo: Read from Config
-        String url = "jdbc:ch://localhost/test";
+        String url = "jdbc:ch://localhost/default";
         String clientName = "Agent_1";
         String userName = "admin";
         String password = "root";
@@ -86,47 +89,61 @@ public class DbWriter {
     }
 
     /**
-     * Function where the Kafka connect data types
-     * are mapped to Clickhouse data types and a batch insert is performed.
-     * @param table Table Name
-     * @param afterValue after Value (With Insert: before is always empty_
-     * @param fields Kafka connect fields
+     *
+     * @param records
      */
-    public void insert(String table, Struct afterValue, List<Field> fields){
+    public void insert(ConcurrentLinkedQueue<Struct> records){
 
-        table = "test";
-        String insertQueryTemplate = this.getInsertQuery(table, fields.size());
+        String table = "employees";
+
+        if(records.isEmpty()) {
+            System.out.println("No Records to process");
+            return;
+        }
+        // Get the first record to get length of columns
+        Struct peekRecord = records.peek();
+        String insertQueryTemplate = this.getInsertQuery(table, peekRecord.schema().fields().size());
+
         try (PreparedStatement ps = this.conn.prepareStatement(insertQueryTemplate)) {
 
-            int index = 1;
-            for(Field f: fields) {
-                Schema.Type fieldType = f.schema().type();
-                Object value = afterValue.get(f);
+            Iterator iterator = records.iterator();
+            while(iterator.hasNext()) {
+                Struct afterRecord = (Struct) iterator.next();
 
-                // Text columns
-                if(fieldType == Schema.Type.STRING) {
+                List<Field> fields = afterRecord.schema().fields();
 
-                    ps.setString(index, (String) value);
-                }
-                else if(fieldType == Schema.INT8_SCHEMA.type() ||
-                        fieldType == Schema.INT16_SCHEMA.type() ||
-                        fieldType == Schema.INT32_SCHEMA.type()) {
-                    if(f.schema().name() == Date.SCHEMA_NAME) {
-                        // Date field arrives as INT32 with schema name set to io.debezium.time.Date
-                        ps.setDate(index, (java.sql.Date) value);
-                    } else {
-                        ps.setInt(index, (Integer) value);
+                int index = 1;
+                for(Field f: fields) {
+                    Schema.Type fieldType = f.schema().type();
+                    String schemaName = f.schema().name();
+                    Object value = afterRecord.get(f);
+
+                    // Text columns
+                    if (fieldType == Schema.Type.STRING) {
+
+                        ps.setString(index, (String) value);
+                    } else if (fieldType == Schema.INT8_SCHEMA.type() ||
+                            fieldType == Schema.INT16_SCHEMA.type() ||
+                            fieldType == Schema.INT32_SCHEMA.type()) {
+                        if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
+                            // Date field arrives as INT32 with schema name set to io.debezium.time.Date
+                            long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
+                            java.util.Date date = new java.util.Date(msSinceEpoch);
+                            java.sql.Date sqlDate = new java.sql.Date(date.getTime());
+                            ps.setDate(index, sqlDate);
+                        } else {
+                            ps.setInt(index, (Integer) value);
+                        }
+                    } else if (fieldType == Schema.FLOAT32_SCHEMA.type() ||
+                            fieldType == Schema.FLOAT64_SCHEMA.type()) {
+                        ps.setFloat(index, (Float) value);
+                    } else if (fieldType == Schema.BOOLEAN_SCHEMA.type()) {
+                        ps.setBoolean(index, (Boolean) value);
                     }
-                } else if(fieldType == Schema.FLOAT32_SCHEMA.type() ||
-                        fieldType == Schema.FLOAT64_SCHEMA.type()) {
-                    ps.setFloat(index, (Float) value);
-                } else if(fieldType == Schema.BOOLEAN_SCHEMA.type()) {
-                    ps.setBoolean(index, (Boolean) value);
+                    index++;
                 }
-                index++;
-
+                ps.addBatch(); // append parameters to the query
             }
-            ps.addBatch(); // append parameters to the query
 
             ps.executeBatch(); // issue the composed query: insert into mytable values(...)(...)...(...)
         } catch(Exception e) {
