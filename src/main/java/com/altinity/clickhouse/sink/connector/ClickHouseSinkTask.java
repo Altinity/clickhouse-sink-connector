@@ -1,9 +1,10 @@
 package com.altinity.clickhouse.sink.connector;
 
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
-import com.clickhouse.client.*;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
@@ -13,6 +14,8 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p>Creates sink service instance, takes records loaded from those
@@ -26,16 +29,29 @@ public class ClickHouseSinkTask extends SinkTask {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
 
     public ClickHouseSinkTask() {
+        return;
     }
 
     private void getConnection() {
+        return;
     }
+
+    private ClickHouseBatchExecutor executor;
+    private ClickHouseBatchRunnable runnable;
+    private ConcurrentLinkedQueue<Struct> records;
 
     @Override
     public void start(Map<String, String> config) {
         this.id = config.getOrDefault(Const.TASK_ID, "-1");
         final long count = Long.parseLong(config.get(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT));
         log.info("start({}):{}", this.id, count);
+
+        this.records = new ConcurrentLinkedQueue();
+        this.executor = new ClickHouseBatchExecutor(2);
+        this.runnable = new ClickHouseBatchRunnable(this.records);
+
+        this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
+
         /*
 
 
@@ -79,10 +95,11 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        log.info("put({}):{}", this.id, records.size());
+        com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter converter = new com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter();
+        log.debug("CLICKHOUSE received records" + records.size());
         BufferedRecords br = new BufferedRecords();
-        for (SinkRecord record : records) {
-            new ClickHouseConverter().convert(record);
+        for (SinkRecord record: records) {
+            this.records.add(converter.convert(record));
         }
     }
 
