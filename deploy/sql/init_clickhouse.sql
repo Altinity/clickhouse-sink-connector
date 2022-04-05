@@ -1,3 +1,5 @@
+use test;
+
 CREATE TABLE employees
 (
     `emp_no` Int8,

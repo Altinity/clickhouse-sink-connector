@@ -4,10 +4,14 @@
 CONNECT_URL="http://127.0.0.1:18083/connectors"
 CONNECTOR_NAME="sink-connector"
 
-CLICKHOUSE_HOST="mysql"
-CLICKHOUSE_PORT="3306"
+CLICKHOUSE_HOST="localhost"
+CLICKHOUSE_PORT=8123
 CLICKHOUSE_USER="root"
 CLICKHOUSE_PASSWORD="root"
+CLICKHOUSE_TABLE="employees"
+CLICKHOUSE_DATABASE="test"
+
+BUFFER_COUNT=10000
 
 TOPICS="SERVER5432.test.employees"
 
@@ -18,11 +22,13 @@ cat <<EOF | curl --request POST --url "${CONNECT_URL}" --header 'Content-Type: a
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
     "tasks.max": "1",
     "topics": "${TOPICS}",
-
-    "database.hostname": "${CLICKHOUSE_HOST}",
-    "database.port": "${CLICKHOUSE_PORT}",
-    "database.user": "${CLICKHOUSE_USER}",
-    "database.password": "${CLICKHOUSE_PASSWORD}"
+    "buffer.count.records": "${BUFFER_COUNT}",
+    "clickhouse.server.url": "${CLICKHOUSE_HOST}",
+    "clickhouse.server.user": "${CLICKHOUSE_USER}",
+    "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
+    "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
+    "clickhouse.server.port": ${CLICKHOUSE_PORT},
+    "clickhouse.table.name": "${CLICKHOUSE_TABLE}"
   }
 }
 EOF

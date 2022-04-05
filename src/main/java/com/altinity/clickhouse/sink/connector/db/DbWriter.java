@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -29,6 +31,11 @@ public class DbWriter {
     ClickHouseConnection conn;
     private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
 
+    public DbWriter(String hostName, Integer port, String database, String userName, String password) {
+        String connectionUrl = getConnectionString(hostName, port, database);
+        this.createConnection(connectionUrl, "Agent_1", userName, password);
+    }
+
     /**
      * Constructor to create Clickhouse DB connection.
      */
@@ -39,8 +46,11 @@ public class DbWriter {
         String clientName = "Agent_1";
         String userName = "admin";
         String password = "root";
-
         this.createConnection(url, clientName, userName, password);
+    }
+
+    public String getConnectionString(String hostName, Integer port, String database) {
+        return String.format("jdbc:ch://%s:%s/%s", hostName, port, database);
     }
 
     /**
@@ -91,9 +101,7 @@ public class DbWriter {
      * Creates INSERT statement and runs it over connection
      * @param records
      */
-    public void insert(ConcurrentLinkedQueue<Struct> records) {
-
-        String table = "employees";
+    public void insert(String tableName, ConcurrentLinkedQueue<Struct> records) {
 
         if (records.isEmpty()) {
             log.info("No Records to process");
@@ -102,7 +110,7 @@ public class DbWriter {
 
         // Get the first record to get length of columns
         Struct peekRecord = records.peek();
-        String insertQueryTemplate = this.getInsertQuery(table, peekRecord.schema().fields().size());
+        String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
 
         try (PreparedStatement ps = this.conn.prepareStatement(insertQueryTemplate)) {
 
@@ -149,7 +157,11 @@ public class DbWriter {
             }
 
             // Issue the composed query: insert into mytable values(...)(...)...(...)
-            ps.executeBatch();
+            // ToDo: The result of greater than or equal to zero means
+            // the records were processed successfully.
+            // but if any of the records were not processed successfully
+            // How to we rollback or what action needs to be taken.
+            int[] result = ps.executeBatch();
         } catch (Exception e) {
             log.warn("insert Batch exception" + e);
         }

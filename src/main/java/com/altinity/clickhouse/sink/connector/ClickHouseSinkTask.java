@@ -44,15 +44,23 @@ public class ClickHouseSinkTask extends SinkTask {
 
     private DeDuplicator deduplicator;
 
+    private ClickHouseSinkConnectorConfig config;
+
     @Override
     public void start(Map<String, String> config) {
         this.id = config.getOrDefault(Const.TASK_ID, "-1");
-        final long count = Long.parseLong(config.get(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT));
-        log.info("start({}):{}", this.id, count);
+
+        //ToDo: Check buffer.count.records and how its used.
+        //final long count = Long.parseLong(config.get(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT));
+        //log.info("start({}):{}", this.id, count);
+        log.info("start({})", this.id);
+
+        this.config = new ClickHouseSinkConnectorConfig(config);
+
 
         this.records = new ConcurrentLinkedQueue();
-        this.runnable = new ClickHouseBatchRunnable(this.records);
-        this.executor = new ClickHouseBatchExecutor(2);
+        this.runnable = new ClickHouseBatchRunnable(this.records, this.config);
+        this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
 
         this.deduplicator = new DeDuplicator();
@@ -102,9 +110,11 @@ public class ClickHouseSinkTask extends SinkTask {
     public void put(Collection<SinkRecord> records) {
         log.debug("CLICKHOUSE received records" + records.size());
         ClickHouseConverter converter = new ClickHouseConverter();
-        BufferedRecords br = new BufferedRecords();
+
         for (SinkRecord record : records) {
-            if (this.deduplicator.isNew(record)) {
+            //if (this.deduplicator.isNew(record))
+            if(true)
+            {
                 Struct c = converter.convert(record);
                 if (c != null) {
                     this.records.add(c);
