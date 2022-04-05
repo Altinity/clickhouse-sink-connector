@@ -25,11 +25,12 @@ services:
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=test
-
-  zookeeper:
-    container_name: zookeeper
-    image: zookeeper
-    restart: "no"
+    volumes:
+      - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+  #zookeeper:
+  #  container_name: zookeeper
+  #  image: zookeeper
+  #  restart: "no"
 
   debezium:
     container_name: debezium
@@ -51,7 +52,7 @@ services:
       - LOG_LEVEL=INFO
       #- LOG_LEVEL=DEBUG
     depends_on:
-      - zookeeper
+  #    - zookeeper
       - kafka
 
   kafka:
@@ -86,6 +87,7 @@ services:
     restart: "no"
     ports:
       - "18083:8083"
+      - "5005:5005"
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
@@ -98,9 +100,12 @@ services:
       - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
       - STATUS_STORAGE_TOPIC=status-storage-topic-sink
       - LOG_LEVEL=INFO
+      - JAVA_DEBUG_PORT=*:5005
+      - DEFAULT_JAVA_DEBUG_PORT=*:5005
+      - KAFKA_DEBUG=true
       #- LOG_LEVEL=DEBUG
     depends_on:
-      - zookeeper
+  #    - zookeeper
       - kafka
 
   clickhouse:
@@ -118,6 +123,8 @@ services:
       nofile:
         soft: "262144"
         hard: "262144"
+    volumes:
+      - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
 
   bash:
     container_name: bash

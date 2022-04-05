@@ -22,7 +22,8 @@ public class ClickHouseConverter implements AbstractConverter {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseConverter.class);
 
     /**
-     *
+     * Enum to store the OP Types.
+     * Refer: https://debezium.io/documentation/reference/stable/connectors/mysql.html
      */
     public enum CDC_OPERATION {
         // Sql updates
@@ -142,23 +143,19 @@ public class ClickHouseConverter implements AbstractConverter {
 
         if (schema == null) {
             if (obj instanceof Map) {
-                // Schemaless record.
-                //return (Map<String, Object>) convertSchemalessRecord(kafkaConnectStruct);
                 log.info("SCHEMA LESS RECORD");
             }
-//                    throw new ConversionConnectException("Only Map objects supported in absence of schema for " +
-//                            "record conversion to BigQuery format.");
-        }
+        } else {
 
-        if (schema.type() != Schema.Type.STRUCT) {
+            if (schema.type() != Schema.Type.STRUCT) {
 //                    throw new
 //                            ConversionConnectException("Top-level Kafka Connect schema must be of type 'struct'");
-        } else {
-            // Convert STRUCT
-            log.info("RECEIVED STRUCT");
-            result = convertStruct(obj, schema);
+            } else {
+                // Convert STRUCT
+                log.info("RECEIVED STRUCT");
+                result = convertStruct(obj, schema);
+            }
         }
-
         return result;
     }
 
