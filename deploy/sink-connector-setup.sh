@@ -4,7 +4,7 @@
 CONNECT_URL="http://127.0.0.1:18083/connectors"
 CONNECTOR_NAME="sink-connector"
 
-CLICKHOUSE_HOST="localhost"
+CLICKHOUSE_HOST="clickhouse"
 CLICKHOUSE_PORT=8123
 CLICKHOUSE_USER="root"
 CLICKHOUSE_PASSWORD="root"
