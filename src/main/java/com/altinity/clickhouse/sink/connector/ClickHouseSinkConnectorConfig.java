@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector;
 
 
+import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
@@ -14,7 +15,7 @@ import java.util.Map;
  * <p>
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
-public class ClickHouseSinkConnectorConfig {
+public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     static final String NAME = Const.NAME;
     public static final String TOPICS = "topics";
 
@@ -23,6 +24,14 @@ public class ClickHouseSinkConnectorConfig {
     // ClickHouse connection
     private static final String CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO = "ClickHouse Login Info";
     private static final String CONFIG_GROUP_CONNECTOR_CONFIG = "Connector Config";
+
+    public ClickHouseSinkConnectorConfig(Map<String, String> properties) {
+        this(newConfigDef(), properties);
+    }
+
+    protected ClickHouseSinkConnectorConfig(ConfigDef config, Map<String, String> properties) {
+        super(config, properties);
+    }
 
     /**
      * Set default values for config
@@ -56,7 +65,7 @@ public class ClickHouseSinkConnectorConfig {
      * @param key
      * @return
      */
-    static String getProperty(final Map<String, String> config, final String key) {
+    public static String getProperty(final Map<String, String> config, final String key) {
         if (config.containsKey(key) && !config.get(key).isEmpty()) {
             return config.get(key);
         } else {
@@ -109,10 +118,10 @@ public class ClickHouseSinkConnectorConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL,
                         Type.STRING,
-                        null,
+                        "locahost",
                         new ConfigDef.NonEmptyString(),
                         Importance.HIGH,
-                        "ClickHouse account url",
+                        "ClickHouse Host Name",
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         0,
                         ConfigDef.Width.NONE,
@@ -150,6 +159,28 @@ public class ClickHouseSinkConnectorConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT,
+                        Type.INT,
+                        8123,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.HIGH,
+                        "ClickHouse database port number",
+                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE,
+                        Type.STRING,
+                        null,
+                        new ConfigDef.NonEmptyString(),
+                        Importance.HIGH,
+                        "ClickHouse table name",
+                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE)
                 // ToDo: Add JVM Proxy
                 ;
     }
