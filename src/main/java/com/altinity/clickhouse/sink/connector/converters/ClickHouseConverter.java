@@ -40,30 +40,108 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     * Struct{
-     *  before=Struct{
-     *      id=1,
-     *      message=Hello from MySQL
-     *  },
-     *  after=Struct{
-     *      id=1,
-     *      message=Mysql update
-     *  },
-     *  source=Struct{
-     *      version=1.8.1.Final,
-     *      connector=mysql,
-     *      name=local_mysql3,
-     *      ts_ms=1648575279000,
-     *      snapshot=false,
-     *      db=test,
-     *      table=test_hello2,
-     *      server_id=1,
-     *      file=binlog.000002,
-     *      pos=4414,
-     *      row=0
-     *  },
-     *  op=u,
-     *  ts_ms=1648575279856
+     * SinkRecord
+     *
+     * SinkRecord{
+     *     kafkaOffset=300023,
+     *     timestampType=CreateTime
+     * }
+     * ConnectRecord{
+     *     topic='SERVER5432.test.employees',
+     *     kafkaPartition=0,
+     *     key=Struct{
+     *         emp_no=499999
+     *     },
+     *     keySchema=Schema{
+     *         SERVER5432.test.employees.Key:STRUCT
+     *     },
+     *     value=Struct{
+     *         after=Struct{
+     *             emp_no=499999,
+     *             birth_date=-4263,
+     *             first_name=Sachin,
+     *             last_name=Tsukuda,
+     *             gender=M,
+     *             hire_date=10195
+     *         },
+     *         source=Struct{
+     *             version=1.9.0.CR1,
+     *             connector=mysql,
+     *             name=SERVER5432,
+     *             ts_ms=1649152583000,
+     *             snapshot=false,
+     *             db=test,
+     *             table=employees,
+     *             server_id=1,
+     *             file=binlog.000002,
+     *             pos=8249512,
+     *             row=104,
+     *             thread=13
+     *         },
+     *         op=c,
+     *         ts_ms=1649152741745
+     *     },
+     *     valueSchema=Schema{
+     *         SERVER5432.test.employees.Envelope:STRUCT
+     *     },
+     *     timestamp=1649152746408,
+     *     headers=ConnectHeaders(headers=)
+     * }
+     *
+     * Value struct
+     * CREATE
+     * value=Struct{
+     *         after=Struct{
+     *             emp_no=499999,
+     *             birth_date=-4263,
+     *             first_name=Sachin,
+     *             last_name=Tsukuda,
+     *             gender=M,
+     *             hire_date=10195
+     *         },
+     *         source=Struct{
+     *             version=1.9.0.CR1,
+     *             connector=mysql,
+     *             name=SERVER5432,
+     *             ts_ms=1649152583000,
+     *             snapshot=false,
+     *             db=test,
+     *             table=employees,
+     *             server_id=1,
+     *             file=binlog.000002,
+     *             pos=8249512,
+     *             row=104,
+     *             thread=13
+     *         },
+     *         op=c,
+     *         ts_ms=1649152741745
+     * },
+     *
+     * UPDATE
+     * value=Struct{
+     *      before=Struct{
+     *          id=1,
+     *          message=Hello from MySQL
+     *      },
+     *      after=Struct{
+     *          id=1,
+     *          message=Mysql update
+     *      },
+     *      source=Struct{
+     *          version=1.8.1.Final,
+     *          connector=mysql,
+     *          name=local_mysql3,
+     *          ts_ms=1648575279000,
+     *          snapshot=false,
+     *          db=test,
+     *          table=test_hello2,
+     *          server_id=1,
+     *          file=binlog.000002,
+     *          pos=4414,
+     *          row=0
+     *      },
+     *      op=u,
+     *      ts_ms=1648575279856
      * }
      */
 
@@ -79,6 +157,7 @@ public class ClickHouseConverter implements AbstractConverter {
         Map<String, Object> convertedValue = convertValue(record);
         Struct afterRecord = null;
 
+        // Check "operation" represented by this record.
         if (convertedValue.containsKey("op")) {
             // Operation (u, c)
             String operation = (String) convertedValue.get("op");
@@ -91,6 +170,7 @@ public class ClickHouseConverter implements AbstractConverter {
             }
         }
 
+        // Check "after" value represented by this record.
         if (convertedValue.containsKey("after")) {
             Struct afterValue = (Struct) convertedValue.get("after");
             List<Field> fields = afterValue.schema().fields();
@@ -106,7 +186,6 @@ public class ClickHouseConverter implements AbstractConverter {
                 cols.add(field.name());
                 values.add(afterValue.get(field));
             }
-
         }
 
         //ToDO: Remove the following code after evaluating
