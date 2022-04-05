@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector;
 
+import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -41,6 +42,8 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchRunnable runnable;
     private ConcurrentLinkedQueue<Struct> records;
 
+    private DeDuplicator deduplicator;
+
     @Override
     public void start(Map<String, String> config) {
         this.id = config.getOrDefault(Const.TASK_ID, "-1");
@@ -51,6 +54,8 @@ public class ClickHouseSinkTask extends SinkTask {
         this.runnable = new ClickHouseBatchRunnable(this.records);
         this.executor = new ClickHouseBatchExecutor(2);
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
+
+        this.deduplicator = new DeDuplicator();
 
         /*
 
@@ -99,7 +104,14 @@ public class ClickHouseSinkTask extends SinkTask {
         ClickHouseConverter converter = new ClickHouseConverter();
         BufferedRecords br = new BufferedRecords();
         for (SinkRecord record : records) {
-            this.records.add(converter.convert(record));
+            if (this.deduplicator.isNew(record)) {
+                Struct c = converter.convert(record);
+                if (c != null) {
+                    this.records.add(c);
+                }
+            } else {
+                log.info("skip already seen record: " + record);
+            }
         }
     }
 
