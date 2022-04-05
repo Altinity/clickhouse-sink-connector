@@ -36,21 +36,8 @@ public class DbWriter {
         this.createConnection(connectionUrl, "Agent_1", userName, password);
     }
 
-    /**
-     * Constructor to create Clickhouse DB connection.
-     */
-    public DbWriter() {
-        log.info("DbWriter()");
-        //ToDo: Read from Config
-        String url = "jdbc:ch://localhost/default";
-        String clientName = "Agent_1";
-        String userName = "admin";
-        String password = "root";
-        this.createConnection(url, clientName, userName, password);
-    }
-
     public String getConnectionString(String hostName, Integer port, String database) {
-        return String.format("jdbc:ch://%s:%s/%s", hostName, port, database);
+        return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port, database);
     }
 
     /**
