@@ -99,12 +99,12 @@ public class ClickHouseConverter implements AbstractConverter {
             List<Object> values = new ArrayList<Object>();
             List<Schema.Type> types = new ArrayList<Schema.Type>();
 
-            for (Field f : fields) {
-                log.info("Key" + f.name());
-                log.info("Value" + afterValue.get(f));
+            for (Field field : fields) {
+                log.info("Key" + field.name());
+                log.info("Value" + afterValue.get(field));
 
-                cols.add(f.name());
-                values.add(afterValue.get(f));
+                cols.add(field.name());
+                values.add(afterValue.get(field));
             }
 
         }
