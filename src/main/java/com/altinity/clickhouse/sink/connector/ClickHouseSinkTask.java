@@ -93,6 +93,9 @@ public class ClickHouseSinkTask extends SinkTask {
     @Override
     public void stop() {
         log.info("stop({})", this.id);
+        if(this.executor != null) {
+            this.executor.shutdown();
+        }
     }
 
     @Override

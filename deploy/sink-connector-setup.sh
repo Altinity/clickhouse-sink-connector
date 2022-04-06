@@ -28,7 +28,9 @@ cat <<EOF | curl --request POST --url "${CONNECT_URL}" --header 'Content-Type: a
     "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
     "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
     "clickhouse.server.port": ${CLICKHOUSE_PORT},
-    "clickhouse.table.name": "${CLICKHOUSE_TABLE}"
+    "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
   }
 }
 EOF
