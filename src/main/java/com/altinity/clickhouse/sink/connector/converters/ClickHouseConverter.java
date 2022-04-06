@@ -173,8 +173,8 @@ public class ClickHouseConverter implements AbstractConverter {
 
         // Check "after" value represented by this record.
         if (convertedValue.containsKey("after")) {
-            Struct afterValue = (Struct) convertedValue.get("after");
-            List<Field> fields = afterValue.schema().fields();
+            afterRecord = (Struct) convertedValue.get("after");
+            List<Field> fields = afterRecord.schema().fields();
 
             List<String> cols = new ArrayList<String>();
             List<Object> values = new ArrayList<Object>();
@@ -182,10 +182,10 @@ public class ClickHouseConverter implements AbstractConverter {
 
             for (Field field : fields) {
                 log.info("Key" + field.name());
-                log.info("Value" + afterValue.get(field));
+                log.info("Value" + afterRecord.get(field));
 
                 cols.add(field.name());
-                values.add(afterValue.get(field));
+                values.add(afterRecord.get(field));
             }
         }
 

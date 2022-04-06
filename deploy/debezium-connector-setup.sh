@@ -14,7 +14,7 @@ MYSQL_PASSWORD="root"
 # Comma-separated list of regular expressions that match the databases for which to capture changes
 MYSQL_DBS="test"
 # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
-MYSQL_TABLES=""
+MYSQL_TABLES="employees"
 #KAFKA_BOOTSTRAP_SERVERS="one-node-cluster-0.one-node-cluster.redpanda.svc.cluster.local:9092"
 KAFKA_BOOTSTRAP_SERVERS="kafka:9092"
 KAFKA_TOPIC="schema-changes.test_db"
@@ -26,21 +26,29 @@ DATABASE_SERVER_ID="5432"
 # Alphanumeric characters, hyphens, dots and underscores only.
 DATABASE_SERVER_NAME="SERVER5432"
 
+    #"database.include.list": "${MYSQL_DBS}",
+    #"table.include.list": "${MYSQL_TABLES}",
+
 cat <<EOF | curl --request POST --url "${CONNECT_URL}" --header 'Content-Type: application/json' --data @-
 {
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "io.debezium.connector.mysql.MySqlConnector",
     "tasks.max": "1",
-
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "snapshot.mode": "initial",
+    "snapshot.locking.mode": "minimal",
+    "snapshot.delay.ms": 10000,
+    "include.schema.changes":"true",
     "database.hostname": "${MYSQL_HOST}",
     "database.port": "${MYSQL_PORT}",
     "database.user": "${MYSQL_USER}",
     "database.password": "${MYSQL_PASSWORD}",
     "database.server.id": "${DATABASE_SERVER_ID}",
     "database.server.name": "${DATABASE_SERVER_NAME}",
-    "database.include.list": "${MYSQL_DBS}",
-    "table.include.list": "${MYSQL_TABLES}",
+    "database.whitelist": "${MYSQL_DBS}",
+
     "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
     "database.history.kafka.topic": "${KAFKA_TOPIC}"
   }

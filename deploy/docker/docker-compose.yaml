@@ -27,6 +27,8 @@ services:
       - MYSQL_DATABASE=test
     volumes:
       - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+    security_opt:
+      - seccomp:unconfined
   #zookeeper:
   #  container_name: zookeeper
   #  image: zookeeper
