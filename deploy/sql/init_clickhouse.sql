@@ -2,7 +2,7 @@ use test;
 
 CREATE TABLE employees
 (
-    `emp_no` Int8,
+    `emp_no` Int32,
     `birth_date` Date32,
     `first_name` String,
     `last_name` String,

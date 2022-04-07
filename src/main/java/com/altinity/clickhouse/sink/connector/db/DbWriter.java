@@ -119,6 +119,9 @@ public class DbWriter {
                     boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
                             (type == Schema.FLOAT64_SCHEMA.type());
 
+                    // MySQL BigInt -> INT64
+                    boolean isFieldTypeBigInt = (type == Schema.INT64_SCHEMA.type());
+
                     // Text columns
                     if (type == Schema.Type.STRING) {
                         ps.setString(index, (String) value);
@@ -136,6 +139,8 @@ public class DbWriter {
                         ps.setFloat(index, (Float) value);
                     } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
                         ps.setBoolean(index, (Boolean) value);
+                    } else if(isFieldTypeBigInt) {
+                       //ps.setIn
                     }
                     index++;
                 }
@@ -149,6 +154,10 @@ public class DbWriter {
             // but if any of the records were not processed successfully
             // How to we rollback or what action needs to be taken.
             int[] result = ps.executeBatch();
+
+            // ToDo: Clear is not an atomic operation.
+            //  It might delete the records that are inserted by the ingestion process.
+            records.clear();
         } catch (Exception e) {
             log.warn("insert Batch exception" + e);
         }
