@@ -149,12 +149,13 @@ public class ClickHouseConverter implements AbstractConverter {
     /**
      * Primary functionality of parsing a CDC event in a SinkRecord.
      * This checks the operation flag( if its 'C' or 'U')
+     * and retreives the after structure for downstream processing.
      * @param record
      */
     public Struct convert(SinkRecord record) {
         log.info("convert()");
 
-        Map<String, Object> convertedKey = convertKey(record);
+        //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
         Struct afterRecord = null;
 
@@ -164,37 +165,45 @@ public class ClickHouseConverter implements AbstractConverter {
             String operation = (String) convertedValue.get("op");
             if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation)) {
                 // Inserts.
+                log.info("CREATE received");
+                if (convertedValue.containsKey("after")) {
+                    afterRecord = (Struct) convertedValue.get("after");
+                }
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
+                log.warn("UPDATE received -  ignored");
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
+                log.warn("DELETE received - ignored");
             }
         }
 
-        // Check "after" value represented by this record.
-        if (convertedValue.containsKey("after")) {
-            afterRecord = (Struct) convertedValue.get("after");
-            List<Field> fields = afterRecord.schema().fields();
+        return afterRecord;
+    }
 
-            List<String> cols = new ArrayList<String>();
-            List<Object> values = new ArrayList<Object>();
-            List<Schema.Type> types = new ArrayList<Schema.Type>();
+    /**
+     * Function to retrieve the key/value pair in the
+     * struct
+     * value=Struct{after=Struct{emp_no=13,birth_date=3652,first_name=John,last_name=Doe,gender=M,hire_date=18993,salary=232323232},
+     * @param convertedValue
+     * @return
+     */
+    private Struct process(Map<String, Object> convertedValue) {
+        Struct afterRecord = null;
 
-            for (Field field : fields) {
-                log.info("Key" + field.name());
-                log.info("Value" + afterRecord.get(field));
+        afterRecord = (Struct) convertedValue.get("after");
+        List<Field> fields = afterRecord.schema().fields();
 
-                cols.add(field.name());
-                values.add(afterRecord.get(field));
-            }
-        }
+        List<String> cols = new ArrayList<String>();
+        List<Object> values = new ArrayList<Object>();
+        List<Schema.Type> types = new ArrayList<Schema.Type>();
 
-        //ToDO: Remove the following code after evaluating
-        try {
-            byte[] rawJsonPayload = new JsonConverter().fromConnectData(record.topic(), record.valueSchema(), record.value());
-            String stringPayload = new String(rawJsonPayload, StandardCharsets.UTF_8);
-            log.info("STRING PAYLOAD" + stringPayload);
-        } catch (Exception e) {
+        for (Field field : fields) {
+            log.info("Key" + field.name());
+            log.info("Value" + afterRecord.get(field));
+
+            cols.add(field.name());
+            values.add(afterRecord.get(field));
         }
 
         return afterRecord;
@@ -227,8 +236,7 @@ public class ClickHouseConverter implements AbstractConverter {
         } else {
 
             if (schema.type() != Schema.Type.STRUCT) {
-//                    throw new
-//                            ConversionConnectException("Top-level Kafka Connect schema must be of type 'struct'");
+                log.warn("NON STRUCT records ignored");
             } else {
                 // Convert STRUCT
                 log.info("RECEIVED STRUCT");

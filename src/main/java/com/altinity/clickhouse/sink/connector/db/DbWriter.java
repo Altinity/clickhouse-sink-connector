@@ -140,7 +140,7 @@ public class DbWriter {
                     } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
                         ps.setBoolean(index, (Boolean) value);
                     } else if(isFieldTypeBigInt) {
-                       //ps.setIn
+                       ps.setObject(index, value);
                     }
                     index++;
                 }
