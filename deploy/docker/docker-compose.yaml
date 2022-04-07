@@ -90,6 +90,7 @@ services:
     ports:
       - "18083:8083"
       - "5005:5005"
+      - "39999:39999"
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
@@ -105,6 +106,7 @@ services:
       - JAVA_DEBUG_PORT=*:5005
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
+      - JMX_PORT=39999
       #- LOG_LEVEL=DEBUG
     depends_on:
   #    - zookeeper
@@ -128,6 +130,39 @@ services:
     volumes:
       - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
 
+##### MONITORING #####
+  #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
+  # Bitnami bitnami/jmx-exporter vs sscaling images
+  jmx_exporter:
+    container_name: jmx_exporter
+    image: sscaling/jmx-prometheus-exporter
+    restart: "no"
+    ports:
+      - "9072:9072"
+    environment:
+      SERVICE_PORT: 9072
+    volumes:
+      - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
+
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus
+    restart: "no"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    restart: "no"
+    volumes:
+      - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+
+#### END OF MONITORING ###
   bash:
     container_name: bash
     image: ubuntu

@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+scrape_configs:
+  - job_name: 'jmx'
+    static_configs:
+      - targets:
+          - jmx_exporter:9072
