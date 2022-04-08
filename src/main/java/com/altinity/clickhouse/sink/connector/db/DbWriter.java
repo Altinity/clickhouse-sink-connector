@@ -7,6 +7,7 @@ import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import io.debezium.time.Time;
+import io.debezium.time.Timestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -18,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.PreparedStatement;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -96,6 +98,8 @@ public class DbWriter {
         }
 
         // Get the first record to get length of columns
+        //ToDo: This wont work where there are fields with different lengths.
+        //ToDo: It will happens with alter table and add columns
         Struct peekRecord = records.peek();
         String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
 
@@ -112,12 +116,18 @@ public class DbWriter {
                     String schemaName = field.schema().name();
                     Object value = record.get(field);
 
+                    //TinyINT -> INT16 -> TinyInt
+                    boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
+
                     boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type()) ||
-                            (type == Schema.INT16_SCHEMA.type()) ||
                             (type == Schema.INT32_SCHEMA.type());
 
                     boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
                             (type == Schema.FLOAT64_SCHEMA.type());
+
+                    // DateTime -> INT64 + Timestamp(Debezium)
+                    boolean isFieldDateTime = (type == Schema.INT64_SCHEMA.type() &&
+                            schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME));
 
                     // MySQL BigInt -> INT64
                     boolean isFieldTypeBigInt = (type == Schema.INT64_SCHEMA.type());
@@ -132,6 +142,9 @@ public class DbWriter {
                             java.util.Date date = new java.util.Date(msSinceEpoch);
                             java.sql.Date sqlDate = new java.sql.Date(date.getTime());
                             ps.setDate(index, sqlDate);
+
+                        } else if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                            ps.setTimestamp(index, (java.sql.Timestamp) value);
                         } else {
                             ps.setInt(index, (Integer) value);
                         }
@@ -139,7 +152,7 @@ public class DbWriter {
                         ps.setFloat(index, (Float) value);
                     } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
                         ps.setBoolean(index, (Boolean) value);
-                    } else if(isFieldTypeBigInt) {
+                    } else if(isFieldTypeBigInt || isFieldTinyInt) {
                        ps.setObject(index, value);
                     }
                     index++;
