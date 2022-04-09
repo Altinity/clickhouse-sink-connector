@@ -30,8 +30,9 @@ public class DbWriterTest {
         String database = "employees";
         String userName = "test";
         String password = "test";
+        String tableName = "employees";
 
-        this.writer = new DbWriter(hostName, port, database, userName, password);
+        this.writer = new DbWriter(hostName, port, tableName, database, userName, password);
 
     }
     @Test
@@ -62,11 +63,12 @@ public class DbWriterTest {
         String database = "test";
         String userName = "root";
         String password = "root";
+        String tableName = "employees";
 
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
 
-        DbWriter dbWriter = new DbWriter(hostName, port, database, userName, password);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
         String insertQueryTemplate = "insert into employees values(?,?,?,?,?,?)";
