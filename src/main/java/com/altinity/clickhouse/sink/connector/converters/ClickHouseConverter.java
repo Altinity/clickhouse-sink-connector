@@ -26,6 +26,8 @@ public class ClickHouseConverter implements AbstractConverter {
      * Refer: https://debezium.io/documentation/reference/stable/connectors/mysql.html
      */
     public enum CDC_OPERATION {
+        // Snapshot events come as r
+        READ("r"),
         // Sql updates
         UPDATE("U"),
         // Inserts
@@ -163,7 +165,8 @@ public class ClickHouseConverter implements AbstractConverter {
         if (convertedValue.containsKey("op")) {
             // Operation (u, c)
             String operation = (String) convertedValue.get("op");
-            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation)) {
+            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
+                operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 log.info("CREATE received");
                 if (convertedValue.containsKey("after")) {
@@ -295,19 +298,19 @@ public class ClickHouseConverter implements AbstractConverter {
         Schema.Type type = schema.type();
         switch (type) {
             case ARRAY:
-                log.info("ARRAY type");
+                log.debug("ARRAY type");
                 //return convertArray(kafkaConnectObject, kafkaConnectSchema);
             case MAP:
-                log.info("MAP type");
+                log.debug("MAP type");
                 //return convertMap(kafkaConnectObject, kafkaConnectSchema);
             case STRUCT:
-                log.info("STRUCT type");
+                log.debug("STRUCT type");
                 //return convertStruct(kafkaConnectObject, kafkaConnectSchema);
             case BYTES:
-                log.info("BYTES type");
+                log.debug("BYTES type");
                 //return convertBytes(kafkaConnectObject);
             case FLOAT64:
-                log.info("FLOAT64 type");
+                log.debug("FLOAT64 type");
                 //return convertDouble((Double)kafkaConnectObject);
             case BOOLEAN:
             case FLOAT32:

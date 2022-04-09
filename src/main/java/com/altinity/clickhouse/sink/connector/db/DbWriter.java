@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.client.ClickHouseCredentials;
+import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
@@ -17,10 +18,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.PreparedStatement;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -33,9 +33,22 @@ public class DbWriter {
     ClickHouseConnection conn;
     private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
 
-    public DbWriter(String hostName, Integer port, String database, String userName, String password) {
+    private String tableName;
+    // Map of column names to data types.
+    private Map<String, String> columnNameToDataTypeMap = new HashMap<String, String>();
+    String insertQueryUsingInputFunction;
+
+    public DbWriter(String hostName, Integer port, String database, String tableName, String userName, String password) {
+        this.tableName = tableName;
+
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
+
+        if(this.conn != null) {
+            // Order of the column names and the data type has to match.
+            this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+            this.insertQueryUsingInputFunction = this.getInsertQueryUsingInputFunction(tableName);
+        }
     }
 
     public String getConnectionString(String hostName, Integer port, String database) {
@@ -87,10 +100,59 @@ public class DbWriter {
     }
 
     /**
+     * Function to construct a insert query using input functions.
+     * @param tableName Table Name
+     * @return Insert query using Input function.
+     */
+    public String getInsertQueryUsingInputFunction(String tableName) {
+        // "insert into mytable select col1, col2 from input('col1 String, col2 DateTime64(3), col3 Int32')"))
+
+        StringBuffer colNamesDelimited = new StringBuffer();
+        StringBuffer colNamesToDataTypes = new StringBuffer();
+
+        for (Map.Entry<String, String> entry: this.columnNameToDataTypeMap.entrySet()) {
+            colNamesDelimited.append(entry.getKey()).append(",");
+            colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
+        }
+
+        //Remove terminating comma
+        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
+        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
+
+        return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
+    }
+
+    /**
+     * Function that uses the DatabaseMetaData JDBC functionality
+     * to get the column name and column data type as key/value pair.
+     */
+    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
+
+        HashMap<String, String> result = new HashMap<String, String>();
+        try {
+
+            ResultSet columns = this.conn.getMetaData().getColumns(null, null,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+                String columnSize = columns.getString("COLUMN_SIZE");
+                String isNullable = columns.getString("IS_NULLABLE");
+                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                result.put(columnName, typeName);
+            }
+        } catch(SQLException sq) {
+            log.error("Exception retrieving Column Metadata", sq);
+        }
+        return result;
+    }
+    /**
      * Creates INSERT statement and runs it over connection
      * @param records
      */
-    public void insert(String tableName, ConcurrentLinkedQueue<Struct> records) {
+    public void insert(ConcurrentLinkedQueue<Struct> records) {
 
         if (records.isEmpty()) {
             log.info("No Records to process");
@@ -101,8 +163,8 @@ public class DbWriter {
         //ToDo: This wont work where there are fields with different lengths.
         //ToDo: It will happens with alter table and add columns
         Struct peekRecord = records.peek();
-        String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
-
+        //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
+        String insertQueryTemplate = this.getInsertQueryUsingInputFunction(this.tableName);
         try (PreparedStatement ps = this.conn.prepareStatement(insertQueryTemplate)) {
 
             Iterator iterator = records.iterator();
@@ -110,53 +172,8 @@ public class DbWriter {
                 Struct record = (Struct) iterator.next();
                 List<Field> fields = record.schema().fields();
 
-                int index = 1;
-                for (Field field : fields) {
-                    Schema.Type type = field.schema().type();
-                    String schemaName = field.schema().name();
-                    Object value = record.get(field);
 
-                    //TinyINT -> INT16 -> TinyInt
-                    boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
-
-                    boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type()) ||
-                            (type == Schema.INT32_SCHEMA.type());
-
-                    boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
-                            (type == Schema.FLOAT64_SCHEMA.type());
-
-                    // DateTime -> INT64 + Timestamp(Debezium)
-                    boolean isFieldDateTime = (type == Schema.INT64_SCHEMA.type() &&
-                            schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME));
-
-                    // MySQL BigInt -> INT64
-                    boolean isFieldTypeBigInt = (type == Schema.INT64_SCHEMA.type());
-
-                    // Text columns
-                    if (type == Schema.Type.STRING) {
-                        ps.setString(index, (String) value);
-                    } else if (isFieldTypeInt) {
-                        if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
-                            // Date field arrives as INT32 with schema name set to io.debezium.time.Date
-                            long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
-                            java.util.Date date = new java.util.Date(msSinceEpoch);
-                            java.sql.Date sqlDate = new java.sql.Date(date.getTime());
-                            ps.setDate(index, sqlDate);
-
-                        } else if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
-                            ps.setTimestamp(index, (java.sql.Timestamp) value);
-                        } else {
-                            ps.setInt(index, (Integer) value);
-                        }
-                    } else if (isFieldTypeFloat) {
-                        ps.setFloat(index, (Float) value);
-                    } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
-                        ps.setBoolean(index, (Boolean) value);
-                    } else if(isFieldTypeBigInt || isFieldTinyInt) {
-                       ps.setObject(index, value);
-                    }
-                    index++;
-                }
+                insertPreparedStatement(ps, fields, record);
                 // Append parameters to the query
                 ps.addBatch();
             }
@@ -176,6 +193,81 @@ public class DbWriter {
         }
     }
 
+    private Field getFieldByColumnName(List<Field> fields, String colName) {
+        Field matchingField = null;
+        for(Field f: fields) {
+            if(f.name().equalsIgnoreCase(colName)) {
+                matchingField = f;
+                break;
+            }
+        }
+        return matchingField;
+    }
+
+    /**
+     *
+     * @param ps
+     * @param fields
+     * @param record
+     */
+    private void insertPreparedStatement(PreparedStatement ps, List<Field> fields, Struct record) throws SQLException {
+
+        int index = 1;
+
+        // Use this map's key natural ordering as the source of truth.
+        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+
+            // Column Name
+            String colName = entry.getKey();
+
+            Field field = getFieldByColumnName(fields, colName);
+
+            Schema.Type type = field.schema().type();
+            String schemaName = field.schema().name();
+            Object value = record.get(field);
+
+            //TinyINT -> INT16 -> TinyInt
+            boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
+
+            boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type()) ||
+                    (type == Schema.INT32_SCHEMA.type());
+
+            boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
+                    (type == Schema.FLOAT64_SCHEMA.type());
+
+            // DateTime -> INT64 + Timestamp(Debezium)
+//                    boolean isFieldDateTime = (type == Schema.INT64_SCHEMA.type() &&
+//                            schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME));
+
+            // MySQL BigInt -> INT64
+            boolean isFieldTypeBigInt = (type == Schema.INT64_SCHEMA.type());
+
+            // Text columns
+            if (type == Schema.Type.STRING) {
+                ps.setString(index, (String) value);
+            } else if (isFieldTypeInt) {
+                if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
+                    // Date field arrives as INT32 with schema name set to io.debezium.time.Date
+                    long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
+                    java.util.Date date = new java.util.Date(msSinceEpoch);
+                    java.sql.Date sqlDate = new java.sql.Date(date.getTime());
+                    ps.setDate(index, sqlDate);
+
+                } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                    ps.setTimestamp(index, (java.sql.Timestamp) value);
+                } else {
+                    ps.setInt(index, (Integer) value);
+                }
+            } else if (isFieldTypeFloat) {
+                ps.setFloat(index, (Float) value);
+            } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
+                ps.setBoolean(index, (Boolean) value);
+            } else if (isFieldTypeBigInt || isFieldTinyInt) {
+                ps.setObject(index, value);
+            }
+            index++;
+        }
+    }
     /**
      * Function to retrieve Clickhouse http client Connection
      *
