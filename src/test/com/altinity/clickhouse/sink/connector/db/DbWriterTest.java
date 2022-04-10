@@ -2,21 +2,13 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
-import io.debezium.time.Date;
-import org.apache.kafka.connect.data.Field;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.Struct;
+
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.PreparedStatement;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 
 public class DbWriterTest {
 
