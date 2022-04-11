@@ -64,30 +64,6 @@ public class ClickHouseSinkTask extends SinkTask {
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
 
         this.deduplicator = new DeDuplicator();
-
-        /*
-
-
-        ClickHouseProtocol protocol = ClickHouseProtocol.HTTP;
-        ClickHouseFormat format = ClickHouseFormat.RowBinaryWithNamesAndTypes;
-        ClickHouseNode node = ClickHouseNode.builder().port(protocol).build();
-
-        try (ClickHouseClient client = ClickHouseClient.newInstance(protocol);
-             ClickHouseResponse response = client.connect(node)
-                     .format(format)
-                     .query("select * from numbers(:limit)")
-                     .params(1000).execute().get()) {
-            for (ClickHouseRecord record : response.records()) {
-                int num = record.getValue(0).asInteger();
-                String str = record.getValue(0).asString();
-            }
-
-            ClickHouseResponseSummary summary = response.getSummary();
-            long totalRows = summary.getTotalRowsToRead();
-        } catch (Exception e) {
-            log.warn("error call query");
-        }
-        */
     }
 
     @Override
