@@ -44,7 +44,7 @@ public class DbWriter {
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
 
-        if(this.conn != null) {
+        if (this.conn != null) {
             // Order of the column names and the data type has to match.
             this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
             this.insertQueryUsingInputFunction = this.getInsertQueryUsingInputFunction(tableName);
@@ -100,7 +100,8 @@ public class DbWriter {
     }
 
     /**
-     * Function to construct a insert query using input functions.
+     * Function to construct an INSERT query using input functions.
+     *
      * @param tableName Table Name
      * @return Insert query using Input function.
      */
@@ -110,7 +111,7 @@ public class DbWriter {
         StringBuffer colNamesDelimited = new StringBuffer();
         StringBuffer colNamesToDataTypes = new StringBuffer();
 
-        for (Map.Entry<String, String> entry: this.columnNameToDataTypeMap.entrySet()) {
+        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
             colNamesDelimited.append(entry.getKey()).append(",");
             colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
         }
@@ -143,13 +144,15 @@ public class DbWriter {
 
                 result.put(columnName, typeName);
             }
-        } catch(SQLException sq) {
+        } catch (SQLException sq) {
             log.error("Exception retrieving Column Metadata", sq);
         }
         return result;
     }
+
     /**
      * Creates INSERT statement and runs it over connection
+     *
      * @param records
      */
     public void insert(ConcurrentLinkedQueue<Struct> records) {
@@ -195,8 +198,8 @@ public class DbWriter {
 
     private Field getFieldByColumnName(List<Field> fields, String colName) {
         Field matchingField = null;
-        for(Field f: fields) {
-            if(f.name().equalsIgnoreCase(colName)) {
+        for (Field f : fields) {
+            if (f.name().equalsIgnoreCase(colName)) {
                 matchingField = f;
                 break;
             }
@@ -205,7 +208,6 @@ public class DbWriter {
     }
 
     /**
-     *
      * @param ps
      * @param fields
      * @param record
@@ -268,6 +270,7 @@ public class DbWriter {
             index++;
         }
     }
+
     /**
      * Function to retrieve Clickhouse http client Connection
      *
