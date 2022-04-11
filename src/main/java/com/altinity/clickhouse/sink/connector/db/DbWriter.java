@@ -35,7 +35,7 @@ public class DbWriter {
 
     private String tableName;
     // Map of column names to data types.
-    private Map<String, String> columnNameToDataTypeMap = new HashMap<String, String>();
+    private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
     String insertQueryUsingInputFunction;
 
     public DbWriter(String hostName, Integer port, String database, String tableName, String userName, String password) {
@@ -129,7 +129,7 @@ public class DbWriter {
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName) {
 
-        HashMap<String, String> result = new HashMap<String, String>();
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
 
             ResultSet columns = this.conn.getMetaData().getColumns(null, null,
