@@ -16,9 +16,8 @@ import java.util.Map;
 
 public class ClickHouseSinkConnector extends SinkConnector {
 
-    private Map<String, String> configProperties;
-    private ClickHouseSinkConnectorConfig config;
-    //private ClickHouse ch;
+    // String configuration as properties
+    private Map<String, String> config;
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnector.class);
     private boolean ready;
 
@@ -38,11 +37,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
     public void start(final Map<String, String> conf) {
         log.info("start()");
         // Instantiate main connector's config and fill it with default values
-        this.configProperties = conf;
-        this.config = new ClickHouseSinkConnectorConfig(conf);
-        // Prepare ClickHouse connection
-        //ch = ch.builder().setProperties(this.config).build();
-
+        this.config = conf;
         // From now on connector is ready to accept data
         this.ready = true;
     }
@@ -83,7 +78,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
         List<Map<String, String>> configs = new ArrayList<>(maxTasks);
         for (int i = 0; i < maxTasks; i++) {
             // Instantiate config from the main connector's config and personalize with additional params
-            Map<String, String> conf = new HashMap<>(this.configProperties);
+            Map<String, String> conf = new HashMap<>(this.config);
             conf.put(Const.TASK_ID, "" + i);
             configs.add(conf);
         }

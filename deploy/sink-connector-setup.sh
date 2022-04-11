@@ -1,8 +1,10 @@
 #!/bin/bash
 
+# Source configuration
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+source "${CUR_DIR}/sink-connector-config.sh"
 
-CONNECT_URL="http://127.0.0.1:18083/connectors"
-CONNECTOR_NAME="sink-connector"
+# clickhouse-sink-connector params
 
 CLICKHOUSE_HOST="clickhouse"
 CLICKHOUSE_PORT=8123
@@ -15,7 +17,7 @@ BUFFER_COUNT=10000
 
 TOPICS="SERVER5432.test.employees"
 
-cat <<EOF | curl --request POST --url "${CONNECT_URL}" --header 'Content-Type: application/json' --data @-
+cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
   "name": "${CONNECTOR_NAME}",
   "config": {

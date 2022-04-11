@@ -16,7 +16,6 @@ import java.util.Map;
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
 public class ClickHouseSinkConnectorConfig extends AbstractConfig {
-    static final String NAME = Const.NAME;
     public static final String TOPICS = "topics";
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
