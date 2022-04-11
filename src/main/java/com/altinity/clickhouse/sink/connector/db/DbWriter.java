@@ -194,6 +194,7 @@ public class DbWriter {
     }
 
     private Field getFieldByColumnName(List<Field> fields, String colName) {
+        // ToDo: Change it to a map so that multiple loops are avoided
         Field matchingField = null;
         for(Field f: fields) {
             if(f.name().equalsIgnoreCase(colName)) {
