@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Check
-# https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
-# for full list of properties
+# Source configuration
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+source "${CUR_DIR}/debezium-connector-config.sh"
 
-CONNECT_URL="http://127.0.0.1:8083/connectors"
-CONNECTOR_NAME="test-connector"
+# Debezium parameters. Check
+# https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
+# for the full list of available properties
 
 MYSQL_HOST="mysql"
 MYSQL_PORT="3306"
@@ -29,7 +30,7 @@ DATABASE_SERVER_NAME="SERVER5432"
     #"database.include.list": "${MYSQL_DBS}",
     #"table.include.list": "${MYSQL_TABLES}",
 
-cat <<EOF | curl --request POST --url "${CONNECT_URL}" --header 'Content-Type: application/json' --data @-
+cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
   "name": "${CONNECTOR_NAME}",
   "config": {
