@@ -1,4 +1,8 @@
 #!/bin/sh
 
+# Source configuration
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+source "${CUR_DIR}/debezium-connector-config.sh"
+
 echo "Deleting Source Connector"
-curl -X DELETE -H "Accept:application/json" localhost:8083/connectors/test-connector 2>/dev/null | jq .
+curl -X DELETE -H "Accept:application/json" "${CONNECTOR_URL}" 2>/dev/null | jq .
