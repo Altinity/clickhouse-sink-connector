@@ -225,6 +225,11 @@ public class DbWriter {
 
             Field field = getFieldByColumnName(fields, colName);
 
+            if(field == null) {
+                log.error("Column:{} not found in ClickHouse", colName);
+                continue;
+            }
+
             Schema.Type type = field.schema().type();
             String schemaName = field.schema().name();
             Object value = record.get(field);
