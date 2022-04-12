@@ -133,7 +133,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL,
                         Type.STRING,
-                        "locahost",
+                        "localhost",
                         new ConfigDef.NonEmptyString(),
                         Importance.HIGH,
                         "ClickHouse Host Name",
