@@ -227,19 +227,19 @@ public class DbWriter {
             // Column Name
             String colName = entry.getKey();
 
-            if(colName.equalsIgnoreCase(KafkaMetaData.OFFSET.name())) {
+            if(colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
                 ps.setLong(index, record.getKafkaOffset());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.TOPIC.name())) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
                 ps.setString(index, record.getTopic());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.PARTITION.name())) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
                 ps.setInt(index, record.getKafkaPartition());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.name())) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
                 ps.setLong(index, record.getTimestamp());
                 index++;
                 continue;
