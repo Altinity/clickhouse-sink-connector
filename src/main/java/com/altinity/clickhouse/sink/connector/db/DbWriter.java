@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -9,10 +10,8 @@ import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.Struct;
 
 import io.debezium.time.Date;
-import org.checkerframework.checker.units.qual.C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -228,19 +227,19 @@ public class DbWriter {
             // Column Name
             String colName = entry.getKey();
 
-            if(colName.equalsIgnoreCase("kafkaOffset")) {
+            if(colName.equalsIgnoreCase(KafkaMetaData.OFFSET.name())) {
                 ps.setLong(index, record.getKafkaOffset());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase("topic")) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.TOPIC.name())) {
                 ps.setString(index, record.getTopic());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase("kafkaPartition")) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.PARTITION.name())) {
                 ps.setInt(index, record.getKafkaPartition());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase("timestamp")) {
+            } else if(colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.name())) {
                 ps.setLong(index, record.getTimestamp());
                 index++;
                 continue;
