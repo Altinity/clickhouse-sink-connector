@@ -64,7 +64,7 @@ public class ClickHouseSinkTask extends SinkTask {
         this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
 
-        this.deduplicator = new DeDuplicator();
+        this.deduplicator = new DeDuplicator(this.config);
     }
 
     @Override
