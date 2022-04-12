@@ -153,6 +153,7 @@ public class ClickHouseConverter implements AbstractConverter {
      * Primary functionality of parsing a CDC event in a SinkRecord.
      * This checks the operation flag( if its 'C' or 'U')
      * and retreives the after structure for downstream processing.
+     *
      * @param record
      */
     public ClickHouseStruct convert(SinkRecord record) {
@@ -167,7 +168,7 @@ public class ClickHouseConverter implements AbstractConverter {
             // Operation (u, c)
             String operation = (String) convertedValue.get("op");
             if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
-                operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
+                    operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 log.info("CREATE received");
                 if (convertedValue.containsKey("after")) {
@@ -192,6 +193,7 @@ public class ClickHouseConverter implements AbstractConverter {
      * Function to retrieve the key/value pair in the
      * struct
      * value=Struct{after=Struct{emp_no=13,birth_date=3652,first_name=John,last_name=Doe,gender=M,hire_date=18993,salary=232323232},
+     *
      * @param convertedValue
      * @return
      */

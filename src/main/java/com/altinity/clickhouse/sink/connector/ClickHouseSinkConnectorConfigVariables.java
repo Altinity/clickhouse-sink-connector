@@ -4,8 +4,8 @@ package com.altinity.clickhouse.sink.connector;
 public class ClickHouseSinkConnectorConfigVariables {
 
     public static final String BUFFER_COUNT = "buffer.count";
-
     public static final long BUFFER_COUNT_DEFAULT = 100;
+
     public static final String CLICKHOUSE_TOPICS_TABLES_MAP = "clickhouse.topic2table.map";
 
     public static final String CLICKHOUSE_URL = "clickhouse.server.url";
@@ -17,4 +17,5 @@ public class ClickHouseSinkConnectorConfigVariables {
     public static final String CLICKHOUSE_TABLE = "clickhouse.table.name";
 
     public static final String PROVIDER_CONFIG = "provider";
+    public static final String TASK_ID = "task_id";
 }
