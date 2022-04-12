@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.deduplicator;
 
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.data.Struct;
@@ -11,13 +13,19 @@ import java.util.*;
 
 public class DeDuplicator {
     private static final Logger log = LoggerFactory.getLogger(DeDuplicator.class);
+
+    private ClickHouseSinkConnectorConfig config;
     private Map<Object, Object> records;
     private LinkedList<Object> queue;
-    private int maxPoolSize = 10;
+    private long maxPoolSize;
 
-    public DeDuplicator() {
+    public DeDuplicator(ClickHouseSinkConnectorConfig config) {
+        this.config = config;
         this.records = new HashMap<Object, Object>();
         this.queue = new LinkedList<Object>();
+        this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
+        
+        log.info("de-duplicator for task: {}, pool size: {}", this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID), this.maxPoolSize);
     }
 
     public boolean isNew(SinkRecord record) {
