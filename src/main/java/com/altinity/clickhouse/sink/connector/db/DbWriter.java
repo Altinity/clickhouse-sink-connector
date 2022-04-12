@@ -19,6 +19,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -314,6 +315,13 @@ public class DbWriter {
                     }
                 } else if(isFieldTime) {
                     System.out.println(value);
+                    Long milliTimestamp = (Long) value / 1000;
+                    java.util.Date date = new java.util.Date(milliTimestamp);
+
+                    SimpleDateFormat bqTimeSecondsFormat = new SimpleDateFormat("HH:mm:ss");
+                   // bqTimeSecondsFormat.setTimeZone();
+                    String formattedSecondsTimestamp = bqTimeSecondsFormat.format(date);
+                    ps.setString(index, formattedSecondsTimestamp);
                 }
                 // Convert this to string.
                 // ps.setString(index, String.valueOf(value));
