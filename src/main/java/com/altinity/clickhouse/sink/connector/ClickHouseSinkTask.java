@@ -69,7 +69,7 @@ public class ClickHouseSinkTask extends SinkTask {
     @Override
     public void stop() {
         log.info("stop({})", this.id);
-        if(this.executor != null) {
+        if (this.executor != null) {
             this.executor.shutdown();
         }
     }
@@ -92,8 +92,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         for (SinkRecord record : records) {
             //if (this.deduplicator.isNew(record))
-            if(true)
-            {
+            if (true) {
                 Struct c = converter.convert(record);
                 if (c != null) {
                     this.records.add(c);
