@@ -48,7 +48,6 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void start(Map<String, String> config) {
-        this.id = config.getOrDefault(Const.TASK_ID, "-1");
 
         //ToDo: Check buffer.count.records and how its used.
         //final long count = Long.parseLong(config.get(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT));
@@ -57,13 +56,14 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.config = new ClickHouseSinkConnectorConfig(config);
 
+        this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
         this.records = new ConcurrentLinkedQueue();
         this.runnable = new ClickHouseBatchRunnable(this.records, this.config);
         this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
 
-        this.deduplicator = new DeDuplicator();
+        this.deduplicator = new DeDuplicator(this.config);
     }
 
     @Override
