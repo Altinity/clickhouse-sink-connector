@@ -16,13 +16,18 @@ import java.util.Map;
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
 public class ClickHouseSinkConnectorConfig extends AbstractConfig {
-    public static final String TOPICS = "topics";
-
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
 
-    // ClickHouse connection
+    // Configuration groups
+
+    // Configuration group "clickhouse login info"
     private static final String CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO = "ClickHouse Login Info";
+    // Configuration group "connector config"
     private static final String CONFIG_GROUP_CONNECTOR_CONFIG = "Connector Config";
+    // Configuration group "de-duplicator config"
+    private static final String CONFIG_GROUP_DE_DUPLICATOR_CONFIG = "DeDuplicator Config";
+    // Configuration group "task config"
+    private static final String CONFIG_GROUP_TASK_CONFIG = "Task Config";
 
     public ClickHouseSinkConnectorConfig(Map<String, String> properties) {
         this(newConfigDef(), properties);
@@ -97,10 +102,21 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Range.atLeast(1),
                         Importance.LOW,
                         "BufCount",
-                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.TASK_ID,
+                        Type.LONG,
+                        0,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.LOW,
+                        "TaskId",
+                        CONFIG_GROUP_TASK_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.TASK_ID)
                 .define(
                         ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG,
                         Type.STRING,
@@ -117,7 +133,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL,
                         Type.STRING,
-                        "locahost",
+                        "localhost",
                         new ConfigDef.NonEmptyString(),
                         Importance.HIGH,
                         "ClickHouse Host Name",
