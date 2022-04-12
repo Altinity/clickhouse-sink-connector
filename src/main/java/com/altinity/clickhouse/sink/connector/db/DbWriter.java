@@ -1,25 +1,29 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.client.ClickHouseCredentials;
-import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
-import io.debezium.time.Time;
+import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 import io.debezium.time.Date;
+import org.checkerframework.checker.units.qual.C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -155,7 +159,7 @@ public class DbWriter {
      *
      * @param records
      */
-    public void insert(ConcurrentLinkedQueue<Struct> records) {
+    public void insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
 
         if (records.isEmpty()) {
             log.info("No Records to process");
@@ -165,15 +169,14 @@ public class DbWriter {
         // Get the first record to get length of columns
         //ToDo: This wont work where there are fields with different lengths.
         //ToDo: It will happens with alter table and add columns
-        Struct peekRecord = records.peek();
         //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
         String insertQueryTemplate = this.getInsertQueryUsingInputFunction(this.tableName);
         try (PreparedStatement ps = this.conn.prepareStatement(insertQueryTemplate)) {
 
             Iterator iterator = records.iterator();
             while (iterator.hasNext()) {
-                Struct record = (Struct) iterator.next();
-                List<Field> fields = record.schema().fields();
+                ClickHouseStruct record = (ClickHouseStruct) iterator.next();
+                List<Field> fields = record.getStruct().schema().fields();
 
 
                 insertPreparedStatement(ps, fields, record);
@@ -213,15 +216,35 @@ public class DbWriter {
      * @param fields
      * @param record
      */
-    private void insertPreparedStatement(PreparedStatement ps, List<Field> fields, Struct record) throws SQLException {
+    private void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws SQLException {
 
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
         for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
 
+            //ToDo: Map the Clickhouse types as a Enum.
+
             // Column Name
             String colName = entry.getKey();
+
+            if(colName.equalsIgnoreCase("kafkaOffset")) {
+                ps.setLong(index, record.getKafkaOffset());
+                index++;
+                continue;
+            } else if(colName.equalsIgnoreCase("topic")) {
+                ps.setString(index, record.getTopic());
+                index++;
+                continue;
+            } else if(colName.equalsIgnoreCase("kafkaPartition")) {
+                ps.setInt(index, record.getKafkaPartition());
+                index++;
+                continue;
+            } else if(colName.equalsIgnoreCase("timestamp")) {
+                ps.setLong(index, record.getTimestamp());
+                index++;
+                continue;
+            }
 
             Field field = getFieldByColumnName(fields, colName);
 
@@ -232,7 +255,7 @@ public class DbWriter {
 
             Schema.Type type = field.schema().type();
             String schemaName = field.schema().name();
-            Object value = record.get(field);
+            Object value = record.getStruct().get(field);
 
             //TinyINT -> INT16 -> TinyInt
             boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
@@ -243,12 +266,23 @@ public class DbWriter {
             boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
                     (type == Schema.FLOAT64_SCHEMA.type());
 
-            // DateTime -> INT64 + Timestamp(Debezium)
-//                    boolean isFieldDateTime = (type == Schema.INT64_SCHEMA.type() &&
-//                            schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME));
 
             // MySQL BigInt -> INT64
-            boolean isFieldTypeBigInt = (type == Schema.INT64_SCHEMA.type());
+            boolean isFieldTypeBigInt = false;
+            boolean isFieldTime = false;
+            boolean isFieldDateTime = false;
+
+            if (type == Schema.INT64_SCHEMA.type()) {
+                // Time -> INT64 + io.debezium.time.MicroTime
+                if (schemaName != null && schemaName.equalsIgnoreCase(MicroTime.SCHEMA_NAME)) {
+                    isFieldTime = true;
+                } else if(schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                    //DateTime -> INT64 + Timestamp(Debezium)
+                    isFieldDateTime = true;
+                }else {
+                    isFieldTypeBigInt = true;
+                }
+            }
 
             // Text columns
             if (type == Schema.Type.STRING) {
@@ -272,11 +306,34 @@ public class DbWriter {
                 ps.setBoolean(index, (Boolean) value);
             } else if (isFieldTypeBigInt || isFieldTinyInt) {
                 ps.setObject(index, value);
+            } else if(isFieldDateTime || isFieldTime) {
+                if(isFieldDateTime) {
+                    if(value instanceof Long) {
+                        LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
+                        DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
+                        ps.setString(index,   date.format(formatter));
+                    }
+                } else if(isFieldTime) {
+                    System.out.println(value);
+                }
+                // Convert this to string.
+                // ps.setString(index, String.valueOf(value));
+            } else {
+                log.error("Data Type not supported: {}", colName);
             }
+
             index++;
         }
     }
 
+    /**
+     * Function to add Kafka metadata columns
+     * topic Name, offset, timestamp and partition
+     * @param ps
+     */
+    public void addKafkaMetadata(PreparedStatement ps, int index, ClickHouseStruct struct) {
+
+    }
     /**
      * Function to retrieve Clickhouse http client Connection
      *

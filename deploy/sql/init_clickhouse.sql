@@ -7,7 +7,11 @@ CREATE TABLE employees
     `first_name` String,
     `last_name` String,
     `gender` String,
-    `hire_date` Date32
+    `hire_date` Date32,
+    `kafkaOffset` Int64,
+    `topic` String,
+    `kafkaPartition` Int32,
+    `timestamp` Int64
 )
 ENGINE = MergeTree
 PRIMARY KEY emp_no
