@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
@@ -40,7 +41,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
     private ClickHouseBatchExecutor executor;
     private ClickHouseBatchRunnable runnable;
-    private ConcurrentLinkedQueue<Struct> records;
+    private ConcurrentLinkedQueue<ClickHouseStruct> records;
 
     private DeDuplicator deduplicator;
 
@@ -94,7 +95,7 @@ public class ClickHouseSinkTask extends SinkTask {
             //if (this.deduplicator.isNew(record))
             if(true)
             {
-                Struct c = converter.convert(record);
+                ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
                     this.records.add(c);
                 }

@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkTask;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.metadata.KafkaSchemaRecordType;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.sink.SinkRecord;
 
@@ -154,12 +155,12 @@ public class ClickHouseConverter implements AbstractConverter {
      * and retreives the after structure for downstream processing.
      * @param record
      */
-    public Struct convert(SinkRecord record) {
+    public ClickHouseStruct convert(SinkRecord record) {
         log.info("convert()");
 
         //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
-        Struct afterRecord = null;
+        ClickHouseStruct afterRecord = null;
 
         // Check "operation" represented by this record.
         if (convertedValue.containsKey("op")) {
@@ -170,7 +171,10 @@ public class ClickHouseConverter implements AbstractConverter {
                 // Inserts.
                 log.info("CREATE received");
                 if (convertedValue.containsKey("after")) {
-                    afterRecord = (Struct) convertedValue.get("after");
+                    afterRecord = new ClickHouseStruct(record.kafkaOffset(),
+                            record.topic(), record.kafkaPartition(),
+                            record.timestamp());
+                    afterRecord.setStruct( (Struct) convertedValue.get("after"));
                 }
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.

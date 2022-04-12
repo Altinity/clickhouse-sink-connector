@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkTask;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,11 +18,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseBatchRunnable implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
-    private ConcurrentLinkedQueue<Struct> records;
+    private ConcurrentLinkedQueue<ClickHouseStruct> records;
 
     private ClickHouseSinkConnectorConfig config;
 
-    public ClickHouseBatchRunnable(ConcurrentLinkedQueue<Struct> records, ClickHouseSinkConnectorConfig config) {
+    public ClickHouseBatchRunnable(ConcurrentLinkedQueue<ClickHouseStruct> records, ClickHouseSinkConnectorConfig config) {
         this.records = records;
         this.config = config;
     }
