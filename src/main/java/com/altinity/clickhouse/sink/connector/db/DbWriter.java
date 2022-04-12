@@ -225,7 +225,7 @@ public class DbWriter {
 
             Field field = getFieldByColumnName(fields, colName);
 
-            if(field == null) {
+            if (field == null) {
                 log.error("Column:{} not found in ClickHouse", colName);
                 continue;
             }
