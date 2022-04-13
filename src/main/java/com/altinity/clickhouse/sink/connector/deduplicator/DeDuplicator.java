@@ -11,23 +11,52 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
+/**
+ * DeDuplicator performs SinkRecord items de-duplication
+ */
 public class DeDuplicator {
     private static final Logger log = LoggerFactory.getLogger(DeDuplicator.class);
 
+    /**
+     * Prepared, ready-to-use configuration. De-duplication needs some configuration parameters to fetch.
+     */
     private ClickHouseSinkConnectorConfig config;
+    /**
+     * Pool of record for de-duplication. Maps a deduplication key to a record.
+     * In case such a deduplication key already exists deduplication policy comes into play - what record to keep
+     * an old one (already registered) or a newly coming one.
+     */
     private Map<Object, Object> records;
+    /**
+     * FIFO of de-duplication keys. Is limited by maxPoolSize. As soon as limit is exceeded, all older entries
+     * are removed from both FIFO and the pool.
+     */
     private LinkedList<Object> queue;
+    /**
+     * Max number of records in de-duplication pool.
+     */
     private long maxPoolSize;
 
+    /**
+     * Constructor.
+     *
+     * @param config configuration to extract parameters from.
+     */
     public DeDuplicator(ClickHouseSinkConnectorConfig config) {
         this.config = config;
         this.records = new HashMap<Object, Object>();
         this.queue = new LinkedList<Object>();
         this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
-        
+
         log.info("de-duplicator for task: {}, pool size: {}", this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID), this.maxPoolSize);
     }
 
+    /**
+     * Checks whether provided record is a new one or already seen before.
+     *
+     * @param record record to check
+     * @return
+     */
     public boolean isNew(SinkRecord record) {
         if (this.records.containsKey(record.key())) {
             log.warn("already seen this key:" + record.key());
