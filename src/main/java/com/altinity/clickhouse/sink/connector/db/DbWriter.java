@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
@@ -16,6 +18,7 @@ import io.debezium.time.Date;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.WeakReference;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -44,8 +47,13 @@ public class DbWriter {
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
     String insertQueryUsingInputFunction;
 
-    public DbWriter(String hostName, Integer port, String database, String tableName, String userName, String password) {
+    private ClickHouseSinkConnectorConfig config;
+
+    public DbWriter(String hostName, Integer port, String database, String tableName,
+                    String userName, String password, ClickHouseSinkConnectorConfig config) {
         this.tableName = tableName;
+
+        this.config = config;
 
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
@@ -230,22 +238,25 @@ public class DbWriter {
             // Column Name
             String colName = entry.getKey();
 
-            if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
-                ps.setLong(index, record.getKafkaOffset());
-                index++;
-                continue;
-            } else if (colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
-                ps.setString(index, record.getTopic());
-                index++;
-                continue;
-            } else if (colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
-                ps.setInt(index, record.getKafkaPartition());
-                index++;
-                continue;
-            } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
-                ps.setLong(index, record.getTimestamp());
-                index++;
-                continue;
+            // ToDo: should we actually do an alter table to add those columns.
+            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
+                if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
+                    ps.setLong(index, record.getKafkaOffset());
+                    index++;
+                    continue;
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
+                    ps.setString(index, record.getTopic());
+                    index++;
+                    continue;
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
+                    ps.setInt(index, record.getKafkaPartition());
+                    index++;
+                    continue;
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
+                    ps.setLong(index, record.getTimestamp());
+                    index++;
+                    continue;
+                }
             }
 
             Field field = getFieldByColumnName(fields, colName);

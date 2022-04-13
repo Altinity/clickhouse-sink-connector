@@ -19,4 +19,8 @@ public class ClickHouseSinkConnectorConfigVariables {
 
     public static final String PROVIDER_CONFIG = "provider";
     public static final String TASK_ID = "task_id";
+
+    // Flag thats configurable by the user to store kafka metadata information
+    // in clickhouse tables.
+    public static final String STORE_KAFKA_METADATA = "store.kafka.metadata";
 }

@@ -38,7 +38,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         String password = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS);
         String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE);
 
-        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password);
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
         writer.insert(this.records);
     }
 }
