@@ -36,6 +36,7 @@ public class DeDuplicator {
      * Max number of records in de-duplication pool.
      */
     private long maxPoolSize;
+    private DeDuplicationPolicy policy;
 
     /**
      * Constructor.
@@ -47,6 +48,7 @@ public class DeDuplicator {
         this.records = new HashMap<Object, Object>();
         this.queue = new LinkedList<Object>();
         this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
+        this.policy = DeDuplicationPolicy.of(this.config.getString(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY));
 
         log.info("de-duplicator for task: {}, pool size: {}", this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID), this.maxPoolSize);
     }
@@ -58,15 +60,21 @@ public class DeDuplicator {
      * @return
      */
     public boolean isNew(SinkRecord record) {
-        if (this.records.containsKey(record.key())) {
+        Object deDuplicationKey = record.key();
+        if (this.records.containsKey(deDuplicationKey)) {
             log.warn("already seen this key:" + record.key());
+
+            if (this.policy == DeDuplicationPolicy.NEW) {
+                this.records.put(deDuplicationKey, record);
+            }
+
             return false;
         }
 
-        log.debug("add new key to the pool:" + record.key());
+        log.debug("add new key to the pool:" + deDuplicationKey);
 
-        this.records.put(record.key(), record);
-        this.queue.add(record.key());
+        this.records.put(deDuplicationKey, record);
+        this.queue.add(deDuplicationKey);
 
         while (this.queue.size() > this.maxPoolSize) {
             log.info("records pool is too big, need to flush:" + this.queue.size());
