@@ -8,6 +8,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
+import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 
@@ -15,6 +16,7 @@ import io.debezium.time.Date;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -272,6 +274,14 @@ public class DbWriter {
             boolean isFieldTime = false;
             boolean isFieldDateTime = false;
 
+            boolean isFieldTypeDecimal = false;
+
+            // Decimal -> BigDecimal(JDBC)
+            if(type == Schema.BYTES_SCHEMA.type() && (schemaName != null &&
+                    schemaName.equalsIgnoreCase(Decimal.LOGICAL_NAME))) {
+                isFieldTypeDecimal = true;
+            }
+
             if (type == Schema.INT64_SCHEMA.type()) {
                 // Time -> INT64 + io.debezium.time.MicroTime
                 if (schemaName != null && schemaName.equalsIgnoreCase(MicroTime.SCHEMA_NAME)) {
@@ -325,6 +335,8 @@ public class DbWriter {
                 }
                 // Convert this to string.
                 // ps.setString(index, String.valueOf(value));
+            } else if(isFieldTypeDecimal) {
+              ps.setBigDecimal(index, (BigDecimal) value);
             } else {
                 log.error("Data Type not supported: {}", colName);
             }
