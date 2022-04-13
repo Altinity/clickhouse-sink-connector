@@ -230,19 +230,19 @@ public class DbWriter {
             // Column Name
             String colName = entry.getKey();
 
-            if(colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
+            if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
                 ps.setLong(index, record.getKafkaOffset());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
+            } else if (colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
                 ps.setString(index, record.getTopic());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
+            } else if (colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
                 ps.setInt(index, record.getKafkaPartition());
                 index++;
                 continue;
-            } else if(colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
+            } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
                 ps.setLong(index, record.getTimestamp());
                 index++;
                 continue;
@@ -286,10 +286,10 @@ public class DbWriter {
                 // Time -> INT64 + io.debezium.time.MicroTime
                 if (schemaName != null && schemaName.equalsIgnoreCase(MicroTime.SCHEMA_NAME)) {
                     isFieldTime = true;
-                } else if(schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                     //DateTime -> INT64 + Timestamp(Debezium)
                     isFieldDateTime = true;
-                }else {
+                } else {
                     isFieldTypeBigInt = true;
                 }
             }
@@ -316,20 +316,20 @@ public class DbWriter {
                 ps.setBoolean(index, (Boolean) value);
             } else if (isFieldTypeBigInt || isFieldTinyInt) {
                 ps.setObject(index, value);
-            } else if(isFieldDateTime || isFieldTime) {
-                if(isFieldDateTime) {
-                    if(value instanceof Long) {
+            } else if (isFieldDateTime || isFieldTime) {
+                if (isFieldDateTime) {
+                    if (value instanceof Long) {
                         LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
                         DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
-                        ps.setString(index,   date.format(formatter));
+                        ps.setString(index, date.format(formatter));
                     }
-                } else if(isFieldTime) {
+                } else if (isFieldTime) {
                     System.out.println(value);
                     Long milliTimestamp = (Long) value / 1000;
                     java.util.Date date = new java.util.Date(milliTimestamp);
 
                     SimpleDateFormat bqTimeSecondsFormat = new SimpleDateFormat("HH:mm:ss");
-                   // bqTimeSecondsFormat.setTimeZone();
+                    // bqTimeSecondsFormat.setTimeZone();
                     String formattedSecondsTimestamp = bqTimeSecondsFormat.format(date);
                     ps.setString(index, formattedSecondsTimestamp);
                 }
@@ -348,11 +348,13 @@ public class DbWriter {
     /**
      * Function to add Kafka metadata columns
      * topic Name, offset, timestamp and partition
+     *
      * @param ps
      */
     public void addKafkaMetadata(PreparedStatement ps, int index, ClickHouseStruct struct) {
 
     }
+
     /**
      * Function to retrieve Clickhouse http client Connection
      *
