@@ -9,6 +9,9 @@ import org.apache.kafka.common.config.ConfigException;
  */
 public class DeDuplicationPolicyValidator implements ConfigDef.Validator {
 
+    /**
+     * Default constructor
+     */
     public DeDuplicationPolicyValidator() {
     }
 
@@ -17,14 +20,17 @@ public class DeDuplicationPolicyValidator implements ConfigDef.Validator {
      * 1. when connector is started or
      * 2. when validate REST API is called
      *
-     * @param name
-     * @param value
+     * @param name  name of the property
+     * @param value value of the property
+     * @throws ConfigException in case property is not valid
      */
     @Override
     public void ensureValid(String name, Object value) {
+        // Sanity check for the value type
         assert value instanceof String;
         final String strValue = (String) value;
-        // The value can be null or empty.
+
+        // The value can be null or empty and it is not an error
         try {
             DeDuplicationPolicy policy = DeDuplicationPolicy.of(strValue);
         } catch (final IllegalArgumentException e) {
@@ -35,7 +41,7 @@ public class DeDuplicationPolicyValidator implements ConfigDef.Validator {
     /**
      * String representation of the validator
      *
-     * @return
+     * @return string representation
      */
     public String toString() {
         return "What DeDuplication policy is used."
