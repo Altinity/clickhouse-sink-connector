@@ -175,7 +175,7 @@ public class ClickHouseConverter implements AbstractConverter {
                     afterRecord = new ClickHouseStruct(record.kafkaOffset(),
                             record.topic(), record.kafkaPartition(),
                             record.timestamp());
-                    afterRecord.setStruct( (Struct) convertedValue.get("after"));
+                    afterRecord.setStruct((Struct) convertedValue.get("after"));
                 }
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
