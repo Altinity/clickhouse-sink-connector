@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.deduplicator;
 
-
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -15,6 +14,9 @@ import java.util.*;
  * DeDuplicator performs SinkRecord items de-duplication
  */
 public class DeDuplicator {
+    /**
+     * Local instance of a logger
+     */
     private static final Logger log = LoggerFactory.getLogger(DeDuplicator.class);
 
     /**
@@ -36,6 +38,9 @@ public class DeDuplicator {
      * Max number of records in de-duplication pool.
      */
     private long maxPoolSize;
+    /**
+     * DeDuplication policy describes how duplicate records are managed within the pool.
+     */
     private DeDuplicationPolicy policy;
 
     /**
@@ -60,12 +65,16 @@ public class DeDuplicator {
      * @return
      */
     public boolean isNew(SinkRecord record) {
+        // Prepare de-duplication key
         Object deDuplicationKey = record.key();
+
+        // Check, may be this key has already been seen
         if (this.records.containsKey(deDuplicationKey)) {
-            log.warn("already seen this key:" + record.key());
+            log.warn("already seen this key:" + deDuplicationKey);
 
             if (this.policy == DeDuplicationPolicy.NEW) {
                 this.records.put(deDuplicationKey, record);
+                log.info("replace the key:" + deDuplicationKey);
             }
 
             return false;
