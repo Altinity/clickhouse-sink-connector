@@ -5,6 +5,7 @@ public class ClickHouseSinkConnectorConfigVariables {
 
     public static final String BUFFER_COUNT = "buffer.count";
     public static final long BUFFER_COUNT_DEFAULT = 100;
+    public static final String DEDUPLICATION_POLICY = "deduplication.policy";
 
     public static final String CLICKHOUSE_TOPICS_TABLES_MAP = "clickhouse.topic2table.map";
 
