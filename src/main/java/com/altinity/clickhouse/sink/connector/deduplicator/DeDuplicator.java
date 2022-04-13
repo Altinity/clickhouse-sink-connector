@@ -52,6 +52,7 @@ public class DeDuplicator {
         this.config = config;
         this.records = new HashMap<Object, Object>();
         this.queue = new LinkedList<Object>();
+        // Prepare configuration values
         this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
         this.policy = DeDuplicationPolicy.of(this.config.getString(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY));
 
@@ -62,11 +63,11 @@ public class DeDuplicator {
      * Checks whether provided record is a new one or already seen before.
      *
      * @param record record to check
-     * @return
+     * @return whether this record is a new one or been already seen
      */
     public boolean isNew(SinkRecord record) {
-        // Prepare de-duplication key
-        Object deDuplicationKey = record.key();
+        // Fetch de-duplication key
+        Object deDuplicationKey = this.prepareDeDuplicationKey(record);
 
         // Check, may be this key has already been seen
         if (this.records.containsKey(deDuplicationKey)) {
@@ -97,5 +98,19 @@ public class DeDuplicator {
         }
 
         return true;
+    }
+
+    /**
+     * Prepares de-duplication key out of a record
+     *
+     * @param record record to prepare de-duplication key from
+     * @return de-duplication key constructed out of the record
+     */
+    private Object prepareDeDuplicationKey(SinkRecord record) {
+        Object key = record.key();
+        if (key == null) {
+            key = record.value();
+        }
+        return key;
     }
 }
