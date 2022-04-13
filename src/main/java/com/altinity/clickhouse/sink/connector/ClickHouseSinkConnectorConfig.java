@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector;
 
 
+import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
+import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
@@ -106,6 +108,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY,
+                        Type.STRING,
+                        DeDuplicationPolicy.OLD.name(),
+                        new DeDuplicationPolicyValidator(),
+                        Importance.LOW,
+                        "What de-duplication policy to use",
+                        CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
+                        2,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY)
                 .define(
                         ClickHouseSinkConnectorConfigVariables.TASK_ID,
                         Type.LONG,
