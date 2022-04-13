@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 
@@ -8,6 +9,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.PreparedStatement;
+import java.util.HashMap;
 import java.util.Properties;
 
 public class DbWriterTest {
@@ -24,7 +26,8 @@ public class DbWriterTest {
         String password = "test";
         String tableName = "employees";
 
-        this.writer = new DbWriter(hostName, port, tableName, database, userName, password);
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
+        this.writer = new DbWriter(hostName, port, tableName, database, userName, password, config);
 
     }
     @Test
@@ -60,7 +63,8 @@ public class DbWriterTest {
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
 
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password);
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
         String insertQueryTemplate = "insert into employees values(?,?,?,?,?,?)";

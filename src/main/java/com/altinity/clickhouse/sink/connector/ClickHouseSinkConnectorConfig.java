@@ -209,6 +209,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA,
+                        Type.BOOLEAN,
+                        "true",
+                        Importance.LOW,
+                        "True, if the kafka metadata needs to be stored in Clickhouse tables, false otherwise",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)
                 // ToDo: Add JVM Proxy
                 ;
     }
