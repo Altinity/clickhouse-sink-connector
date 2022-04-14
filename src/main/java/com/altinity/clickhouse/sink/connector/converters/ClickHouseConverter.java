@@ -36,7 +36,7 @@ public class ClickHouseConverter implements AbstractConverter {
         // Deletes
         DELETE("D");
 
-        private String operation;
+        private final String operation;
 
         CDC_OPERATION(String op) {
             this.operation = op;
@@ -173,7 +173,7 @@ public class ClickHouseConverter implements AbstractConverter {
                 log.info("CREATE received");
                 if (convertedValue.containsKey("after")) {
                     afterRecord = new ClickHouseStruct(record.kafkaOffset(),
-                            record.topic(), record.kafkaPartition(),
+                            record.topic(), (String) record.key(), record.kafkaPartition(),
                             record.timestamp());
                     afterRecord.setStruct((Struct) convertedValue.get("after"));
                 }
@@ -198,21 +198,15 @@ public class ClickHouseConverter implements AbstractConverter {
      * @return
      */
     private Struct process(Map<String, Object> convertedValue) {
-        Struct afterRecord = null;
+        Struct afterRecord;
 
         afterRecord = (Struct) convertedValue.get("after");
         List<Field> fields = afterRecord.schema().fields();
-
-        List<String> cols = new ArrayList<String>();
-        List<Object> values = new ArrayList<Object>();
-        List<Schema.Type> types = new ArrayList<Schema.Type>();
 
         for (Field field : fields) {
             log.info("Key" + field.name());
             log.info("Value" + afterRecord.get(field));
 
-            cols.add(field.name());
-            values.add(afterRecord.get(field));
         }
 
         return afterRecord;
@@ -292,11 +286,12 @@ public class ClickHouseConverter implements AbstractConverter {
             if (schema.isOptional()) {
                 // short circuit converting the object
                 return null;
-            } else {
+            }
+            //else {
                 // Name is not optional
 //                throw new ConversionConnectException(
 //                        kafkaConnectSchema.name() + " is not optional, but converting object had null value");
-            }
+           // }
         }
 //        if (LogicalConverterRegistry.isRegisteredLogicalType(kafkaConnectSchema.name())) {
 //            return convertLogical(kafkaConnectObject, kafkaConnectSchema);
