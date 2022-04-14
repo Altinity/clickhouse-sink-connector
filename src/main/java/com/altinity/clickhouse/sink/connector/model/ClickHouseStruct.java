@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.model;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 /**

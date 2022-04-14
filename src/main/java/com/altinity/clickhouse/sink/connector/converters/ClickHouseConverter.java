@@ -1,20 +1,14 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkTask;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.metadata.KafkaSchemaRecordType;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import org.apache.kafka.connect.data.*;
-import org.apache.kafka.connect.sink.SinkRecord;
-
+import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.json.JsonConverter;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;

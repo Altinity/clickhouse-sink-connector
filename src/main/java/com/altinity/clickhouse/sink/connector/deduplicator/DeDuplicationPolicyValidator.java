@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.deduplicator;
 
-import com.altinity.clickhouse.sink.connector.KafkaProvider;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 
