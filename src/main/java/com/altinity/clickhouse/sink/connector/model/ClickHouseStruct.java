@@ -25,6 +25,10 @@ public class ClickHouseStruct {
     @Setter
     private Long timestamp;
 
+    @Getter
+    @Setter
+    private String key;
+
     // Inheritance doesnt work because of different package
     // error, composition.
     @Getter
@@ -32,13 +36,12 @@ public class ClickHouseStruct {
     Struct struct;
 
 
-    public ClickHouseStruct(long kafkaOffset, String topic, Integer kafkaPartition, Long timestamp) {
+    public ClickHouseStruct(long kafkaOffset, String topic, String key, Integer kafkaPartition, Long timestamp) {
 
         this.kafkaOffset = kafkaOffset;
         this.topic = topic;
         this.kafkaPartition = kafkaPartition;
         this.timestamp = timestamp;
-
-
+        this.key = key;
     }
 }

@@ -7,7 +7,6 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
@@ -32,15 +31,11 @@ public class ClickHouseSinkTask extends SinkTask {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
 
     public ClickHouseSinkTask() {
-        return;
+
     }
 
-    private void getConnection() {
-        return;
-    }
 
     private ClickHouseBatchExecutor executor;
-    private ClickHouseBatchRunnable runnable;
     private ConcurrentLinkedQueue<ClickHouseStruct> records;
 
     private DeDuplicator deduplicator;
@@ -59,10 +54,10 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
-        this.records = new ConcurrentLinkedQueue();
-        this.runnable = new ClickHouseBatchRunnable(this.records, this.config);
+        this.records = new ConcurrentLinkedQueue<>();
+        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config);
         this.executor = new ClickHouseBatchExecutor(1);
-        this.executor.scheduleAtFixedRate(this.runnable, 0, 30, TimeUnit.SECONDS);
+        this.executor.scheduleAtFixedRate(runnable, 0, 30, TimeUnit.SECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
     }
@@ -114,8 +109,8 @@ public class ClickHouseSinkTask extends SinkTask {
      * If the connector is going to handle all offsets in the external system and doesn't need Kafka Connect to record anything,
      * then you should override the preCommit method instead of flush, and return an empty set of offsets.
      *
-     * @param currentOffsets
-     * @return
+     * @param currentOffsets Offset in Kafka.
+     * @return Map of
      * @throws RetriableException
      */
     @Override
