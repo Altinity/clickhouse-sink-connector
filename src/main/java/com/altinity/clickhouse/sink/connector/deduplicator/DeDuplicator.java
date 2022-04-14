@@ -2,13 +2,13 @@ package com.altinity.clickhouse.sink.connector.deduplicator;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.kafka.connect.sink.SinkRecord;
-import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.Map;
 
 /**
  * DeDuplicator performs SinkRecord items de-duplication
