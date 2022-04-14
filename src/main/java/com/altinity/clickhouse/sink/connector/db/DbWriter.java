@@ -10,6 +10,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
+import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -307,7 +308,11 @@ public class DbWriter {
 
             // Text columns
             if (type == Schema.Type.STRING) {
-                ps.setString(index, (String) value);
+                if(schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
+                    ps.setObject(index, (String) value);
+                } else {
+                    ps.setString(index, (String) value);
+                }
             } else if (isFieldTypeInt) {
                 if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                     // Date field arrives as INT32 with schema name set to io.debezium.time.Date
