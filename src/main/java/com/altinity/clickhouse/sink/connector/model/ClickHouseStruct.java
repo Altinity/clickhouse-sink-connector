@@ -35,12 +35,12 @@ public class ClickHouseStruct {
     Struct struct;
 
 
-    public ClickHouseStruct(long kafkaOffset, String topic, String key, Integer kafkaPartition, Long timestamp) {
+    public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition, Long timestamp) {
 
         this.kafkaOffset = kafkaOffset;
         this.topic = topic;
         this.kafkaPartition = kafkaPartition;
         this.timestamp = timestamp;
-        this.key = key;
+        this.key = key.toString();
     }
 }
