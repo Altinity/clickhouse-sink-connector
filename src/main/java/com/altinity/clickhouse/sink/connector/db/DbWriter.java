@@ -205,7 +205,7 @@ public class DbWriter {
             //  It might delete the records that are inserted by the ingestion process.
             records.clear();
         } catch (Exception e) {
-            log.warn("insert Batch exception" + e);
+            log.warn("insert Batch exception" , e);
         }
     }
 
@@ -252,8 +252,24 @@ public class DbWriter {
                     ps.setInt(index, record.getKafkaPartition());
                     index++;
                     continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP_MS.getColumn())) {
                     ps.setLong(index, record.getTimestamp());
+                    index++;
+                    continue;
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
+
+                    LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(record.getTimestamp()),
+                            ZoneId.systemDefault());
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                    //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
+                    ps.setObject(index, date.format(formatter));
+
+                    index++;
+                    continue;
+                } else if (colName.equalsIgnoreCase(KafkaMetaData.KEY.getColumn())) {
+                    if(record.getKey() != null) {
+                        ps.setString(index, record.getKey());
+                    }
                     index++;
                     continue;
                 }

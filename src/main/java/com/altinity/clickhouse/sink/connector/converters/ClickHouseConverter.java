@@ -167,7 +167,7 @@ public class ClickHouseConverter implements AbstractConverter {
                 log.info("CREATE received");
                 if (convertedValue.containsKey("after")) {
                     afterRecord = new ClickHouseStruct(record.kafkaOffset(),
-                            record.topic(), (String) record.key(), record.kafkaPartition(),
+                            record.topic(), (Struct) record.key(), record.kafkaPartition(),
                             record.timestamp());
                     afterRecord.setStruct((Struct) convertedValue.get("after"));
                 }
