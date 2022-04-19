@@ -282,10 +282,10 @@ public class ClickHouseConverter implements AbstractConverter {
                 return null;
             }
             //else {
-                // Name is not optional
+            // Name is not optional
 //                throw new ConversionConnectException(
 //                        kafkaConnectSchema.name() + " is not optional, but converting object had null value");
-           // }
+            // }
         }
 //        if (LogicalConverterRegistry.isRegisteredLogicalType(kafkaConnectSchema.name())) {
 //            return convertLogical(kafkaConnectObject, kafkaConnectSchema);
