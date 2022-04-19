@@ -66,6 +66,11 @@ public class DeDuplicator {
      * @return whether this record is a new one or been already seen
      */
     public boolean isNew(SinkRecord record) {
+        // In case de-duplicator is turned off no de-duplication is performed and all entries are considered to be new.
+        if (this.isTurnedOff()) {
+            return true;
+        }
+
         // Fetch de-duplication key
         Object deDuplicationKey = this.prepareDeDuplicationKey(record);
 
@@ -112,5 +117,21 @@ public class DeDuplicator {
             key = record.value();
         }
         return key;
+    }
+
+    /**
+     * Checks whether de-duplicator is turned off or is turted on
+     *
+     * @return true in case de-duplicator is off
+     * false in case de-duplicator is on
+     */
+    private boolean isTurnedOff() {
+        if (this.policy == DeDuplicationPolicy.OLD) {
+            return false;
+        }
+        if (this.policy == DeDuplicationPolicy.NEW) {
+            return false;
+        }
+        return true;
     }
 }

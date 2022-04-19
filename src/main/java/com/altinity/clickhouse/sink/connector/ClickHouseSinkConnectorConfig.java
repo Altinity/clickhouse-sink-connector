@@ -111,7 +111,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY,
                         Type.STRING,
-                        DeDuplicationPolicy.OLD.name(),
+                        DeDuplicationPolicy.OFF.name(),
                         new DeDuplicationPolicyValidator(),
                         Importance.LOW,
                         "What de-duplication policy to use",
