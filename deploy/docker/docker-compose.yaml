@@ -29,10 +29,6 @@ services:
       - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
     security_opt:
       - seccomp:unconfined
-  #zookeeper:
-  #  container_name: zookeeper
-  #  image: zookeeper
-  #  restart: "no"
 
   debezium:
     container_name: debezium
@@ -54,18 +50,17 @@ services:
       - LOG_LEVEL=INFO
       #- LOG_LEVEL=DEBUG
     depends_on:
-  #    - zookeeper
       - kafka
 
   kafka:
     container_name: kafka
     image: vectorized/redpanda
     restart: "no"
-#    ports:
-#      - "8081:8081"
-#      - "8082:8082"
-#      - "9091:9091"
-#      - "9092:9092"
+    #    ports:
+    #      - "8081:8081"
+    #      - "8082:8082"
+    #      - "9091:9091"
+    #      - "9092:9092"
     ports:
       # Expose LOCALHOST_NETWORK listener on localhost
       - "19092:19092"
@@ -78,10 +73,10 @@ services:
       - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
       - --advertise-kafka-addr
       - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
-#  kafka2:
-#    container_name: kafka2
-#    image: vectorized/redpanda
-#    restart: always
+  #  kafka2:
+  #    container_name: kafka2
+  #    image: vectorized/redpanda
+  #    restart: always
 
   sink:
     container_name: sink
@@ -109,7 +104,6 @@ services:
       - JMX_PORT=39999
       #- LOG_LEVEL=DEBUG
     depends_on:
-  #    - zookeeper
       - kafka
 
   clickhouse:
@@ -130,7 +124,7 @@ services:
     volumes:
       - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
 
-##### MONITORING #####
+  ##### MONITORING #####
   #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
   # Bitnami bitnami/jmx-exporter vs sscaling images
   jmx_exporter:
@@ -162,7 +156,8 @@ services:
     ports:
       - "3000:3000"
 
-#### END OF MONITORING ###
+  #### END OF MONITORING ###
+
   bash:
     container_name: bash
     image: ubuntu
