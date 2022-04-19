@@ -20,7 +20,7 @@ public class DeDuplicationPolicyValidator implements ConfigDef.Validator {
      * 2. when validate REST API is called
      *
      * @param name  name of the property
-     * @param value value of the property
+     * @param value value of the property. Value can be null or empty, will fallback to default value
      * @throws ConfigException in case property is not valid
      */
     @Override
@@ -29,7 +29,7 @@ public class DeDuplicationPolicyValidator implements ConfigDef.Validator {
         assert value instanceof String;
         final String strValue = (String) value;
 
-        // The value can be null or empty and it is not an error
+        // The value can be null or empty - it is not an error, but fallback to default value
         try {
             DeDuplicationPolicy policy = DeDuplicationPolicy.of(strValue);
         } catch (final IllegalArgumentException e) {
