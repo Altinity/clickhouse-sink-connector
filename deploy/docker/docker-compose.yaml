@@ -107,6 +107,7 @@ services:
       - kafka
 
   clickhouse:
+    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
     container_name: clickhouse
     image: yandex/clickhouse-server
     restart: "no"
