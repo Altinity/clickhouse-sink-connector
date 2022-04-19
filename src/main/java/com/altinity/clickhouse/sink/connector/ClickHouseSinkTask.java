@@ -87,8 +87,8 @@ public class ClickHouseSinkTask extends SinkTask {
         ClickHouseConverter converter = new ClickHouseConverter();
 
         for (SinkRecord record : records) {
-            //if (this.deduplicator.isNew(record))
-            if (true) {
+            if (this.deduplicator.isNew(record)) {
+                //if (true) {
                 ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
                     this.records.add(c);

@@ -28,7 +28,7 @@ public class ClickHouseStruct {
     @Setter
     private String key;
 
-    // Inheritance doesnt work because of different package
+    // Inheritance doesn't work because of different package
     // error, composition.
     @Getter
     @Setter
