@@ -10,8 +10,8 @@ import java.util.stream.Collectors;
  * Enum with de-duplication policy options.
  */
 public enum DeDuplicationPolicy {
-    // Default value
-    UNKNOWN,
+    // De-duplicator is turned off
+    OFF,
 
     // Keep old value
     OLD,
@@ -20,7 +20,10 @@ public enum DeDuplicationPolicy {
     NEW,
     ;
 
-    // All valid enum values
+    /**
+     * List of names (string) of all enum items.
+     * Lowercase.
+     */
     public static final List<String> POLICY_NAMES =
             Arrays.stream(DeDuplicationPolicy.values())
                     .map(policy -> policy.name().toLowerCase())
@@ -28,14 +31,15 @@ public enum DeDuplicationPolicy {
 
     /**
      * Creates the DeDuplicationPolicy object from a string.
+     * Case-insensitive.
      *
-     * @param name
-     * @return
+     * @param name enum item (name)
+     * @return DeDuplicationPolicy instance
      */
     public static DeDuplicationPolicy of(final String name) {
         // Sanity check for empty values
         if (Strings.isNullOrEmpty(name)) {
-            return DeDuplicationPolicy.UNKNOWN;
+            return DeDuplicationPolicy.OFF;
         }
 
         // Try to find enum value with the same name (case-insensitive)
