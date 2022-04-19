@@ -49,12 +49,17 @@ public class DbWriter {
 
     private ClickHouseSinkConnectorConfig config;
 
-    public DbWriter(String hostName, Integer port, String database, String tableName,
-                    String userName, String password, ClickHouseSinkConnectorConfig config) {
+    public DbWriter(
+            String hostName,
+            Integer port,
+            String database,
+            String tableName,
+            String userName,
+            String password,
+            ClickHouseSinkConnectorConfig config
+    ) {
         this.tableName = tableName;
-
         this.config = config;
-
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
 
@@ -205,10 +210,17 @@ public class DbWriter {
             //  It might delete the records that are inserted by the ingestion process.
             records.clear();
         } catch (Exception e) {
-            log.warn("insert Batch exception" , e);
+            log.warn("insert Batch exception", e);
         }
     }
 
+    /**
+     * Case-insensitive
+     *
+     * @param fields
+     * @param colName
+     * @return
+     */
     private Field getFieldByColumnName(List<Field> fields, String colName) {
         // ToDo: Change it to a map so that multiple loops are avoided
         Field matchingField = null;
@@ -239,7 +251,7 @@ public class DbWriter {
             String colName = entry.getKey();
 
             // ToDo: should we actually do an alter table to add those columns.
-            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
+            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
                 if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
                     ps.setLong(index, record.getKafkaOffset());
                     index++;
@@ -267,7 +279,7 @@ public class DbWriter {
                     index++;
                     continue;
                 } else if (colName.equalsIgnoreCase(KafkaMetaData.KEY.getColumn())) {
-                    if(record.getKey() != null) {
+                    if (record.getKey() != null) {
                         ps.setString(index, record.getKey());
                     }
                     index++;
@@ -304,7 +316,7 @@ public class DbWriter {
             boolean isFieldTypeDecimal = false;
 
             // Decimal -> BigDecimal(JDBC)
-            if(type == Schema.BYTES_SCHEMA.type() && (schemaName != null &&
+            if (type == Schema.BYTES_SCHEMA.type() && (schemaName != null &&
                     schemaName.equalsIgnoreCase(Decimal.LOGICAL_NAME))) {
                 isFieldTypeDecimal = true;
             }
@@ -323,7 +335,7 @@ public class DbWriter {
 
             // Text columns
             if (type == Schema.Type.STRING) {
-                if(schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
+                if (schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
                     ps.setObject(index, (String) value);
                 } else {
                     ps.setString(index, (String) value);
@@ -366,8 +378,8 @@ public class DbWriter {
                 }
                 // Convert this to string.
                 // ps.setString(index, String.valueOf(value));
-            } else if(isFieldTypeDecimal) {
-              ps.setBigDecimal(index, (BigDecimal) value);
+            } else if (isFieldTypeDecimal) {
+                ps.setBigDecimal(index, (BigDecimal) value);
             } else {
                 log.error("Data Type not supported: {}", colName);
             }

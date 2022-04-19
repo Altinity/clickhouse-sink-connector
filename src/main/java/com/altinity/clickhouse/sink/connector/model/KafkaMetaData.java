@@ -14,13 +14,13 @@ public enum KafkaMetaData {
     // Key of the message
     KEY("_key"),
 
-    //Offset of the message
+    // Offset of the message
     OFFSET("_offset"),
 
-    //Timestamp of the message
+    // Timestamp of the message
     TIMESTAMP("_timestamp"),
 
-    //Timestamp in milliseconds of the message.
+    // Timestamp in milliseconds of the message.
     TIMESTAMP_MS("_timestamp_ms"),
 
     PARTITION("_partition");
@@ -31,5 +31,4 @@ public enum KafkaMetaData {
     KafkaMetaData(String column) {
         this.column = column;
     }
-
 }
