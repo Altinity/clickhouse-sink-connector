@@ -59,7 +59,9 @@ public class DbWriter {
             ClickHouseSinkConnectorConfig config
     ) {
         this.tableName = tableName;
+
         this.config = config;
+
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
 
@@ -118,6 +120,40 @@ public class DbWriter {
         return insertQuery.toString();
     }
 
+    /**
+     * There could be a possibility that the column count will not match
+     * between Source and Clickhouse.
+     * - We will drop records if the columns are not present in clickhouse.
+     * @param tableName
+     * @param fields
+     * @return
+     */
+    public String getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
+                                                   Map<String, String> columnNameToDataTypeMap) {
+
+
+        StringBuffer colNamesDelimited = new StringBuffer();
+        StringBuffer colNamesToDataTypes = new StringBuffer();
+
+        for(Field f: fields) {
+            String sourceColumnName = f.name();
+            // Get Field Name and lookup in the Clickhouse column to datatype map.
+            String dataType = columnNameToDataTypeMap.get(sourceColumnName);
+
+            if(dataType != null) {
+                colNamesDelimited.append(sourceColumnName).append(",");
+                colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
+            } else {
+                log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnName));
+            }
+
+        }
+        //Remove terminating comma
+        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
+        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
+
+        return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
+    }
     /**
      * Function to construct an INSERT query using input functions.
      *
@@ -185,32 +221,68 @@ public class DbWriter {
         //ToDo: This wont work where there are fields with different lengths.
         //ToDo: It will happens with alter table and add columns
         //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
-        String insertQueryTemplate = this.getInsertQueryUsingInputFunction(this.tableName);
-        try (PreparedStatement ps = this.conn.prepareStatement(insertQueryTemplate)) {
 
-            Iterator iterator = records.iterator();
-            while (iterator.hasNext()) {
-                ClickHouseStruct record = (ClickHouseStruct) iterator.next();
-                List<Field> fields = record.getStruct().schema().fields();
+        // Code block to create a Map of Query -> list of records
+        // so that all records belonging to the same  query
+        // can be inserted as a batch.
+        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
+        Iterator iterator = records.iterator();
+        while (iterator.hasNext()) {
+            ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
-
-                insertPreparedStatement(ps, fields, record);
-                // Append parameters to the query
-                ps.addBatch();
+            List<Field> schemaFields = record.getStruct().schema().fields();
+            List<Field> modifiedFields = new ArrayList<Field>();
+            for(Field f: schemaFields) {
+                // Identify the list of columns that were modified.
+                // Schema.fields() will give the list of columns in the schema.
+                if(record.getStruct().get(f) != null) {
+                    modifiedFields.add(f);
+                }
             }
+            String insertQueryTemplate = this.getInsertQueryUsingInputFunction(this.tableName, modifiedFields, this.columnNameToDataTypeMap);
 
-            // Issue the composed query: insert into mytable values(...)(...)...(...)
-            // ToDo: The result of greater than or equal to zero means
-            // the records were processed successfully.
-            // but if any of the records were not processed successfully
-            // How to we rollback or what action needs to be taken.
-            int[] result = ps.executeBatch();
+            if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
+                List<ClickHouseStruct> newList = new ArrayList<ClickHouseStruct>();
+                newList.add(record);
+                queryToRecordsMap.put(insertQueryTemplate, newList);
+            } else {
+                List<ClickHouseStruct> recordsList = queryToRecordsMap.get(insertQueryTemplate);
+                recordsList.add(record);
+                queryToRecordsMap.put(insertQueryTemplate, recordsList);
+            }
+        }
 
-            // ToDo: Clear is not an atomic operation.
-            //  It might delete the records that are inserted by the ingestion process.
-            records.clear();
-        } catch (Exception e) {
-            log.warn("insert Batch exception", e);
+        for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
+
+            String insertQuery = entry.getKey();
+            // Create Hashmap of PreparedStatement(Query) -> Set of records
+            // because the data will contain a mix of SQL statements(multiple columns)
+            try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
+
+                List<ClickHouseStruct> recordsList = entry.getValue();
+                for (ClickHouseStruct record : recordsList) {
+                    List<Field> fields = record.getStruct().schema().fields();
+
+                    insertPreparedStatement(ps, fields, record);
+                    // Append parameters to the query
+                    ps.addBatch();
+                }
+
+
+
+                // Issue the composed query: insert into mytable values(...)(...)...(...)
+                // ToDo: The result of greater than or equal to zero means
+                // the records were processed successfully.
+                // but if any of the records were not processed successfully
+                // How to we rollback or what action needs to be taken.
+                int[] result = ps.executeBatch();
+
+                // ToDo: Clear is not an atomic operation.
+                //  It might delete the records that are inserted by the ingestion process.
+                records.clear();
+            } catch (Exception e) {
+                log.warn("insert Batch exception", e);
+            }
         }
     }
 
@@ -243,12 +315,21 @@ public class DbWriter {
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
-        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+        for(Field f: fields) {
+
+            if(record.getStruct().get(f.name()) == null) {
+                continue;
+            }
+                // Column Name
+            String colName = f.name();
+            if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
+                log.error("Column:{} not found in ClickHouse", colName);
+                continue;
+            }
+        //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
 
             //ToDo: Map the Clickhouse types as a Enum.
 
-            // Column Name
-            String colName = entry.getKey();
 
             // ToDo: should we actually do an alter table to add those columns.
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
@@ -287,16 +368,11 @@ public class DbWriter {
                 }
             }
 
-            Field field = getFieldByColumnName(fields, colName);
 
-            if (field == null) {
-                log.error("Column:{} not found in ClickHouse", colName);
-                continue;
-            }
 
-            Schema.Type type = field.schema().type();
-            String schemaName = field.schema().name();
-            Object value = record.getStruct().get(field);
+            Schema.Type type = f.schema().type();
+            String schemaName = f.schema().name();
+            Object value = record.getStruct().get(f);
 
             //TinyINT -> INT16 -> TinyInt
             boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
