@@ -120,7 +120,7 @@ public class DeDuplicator {
     }
 
     /**
-     * Checks whether de-duplicator is turned off or is turted on
+     * Checks whether de-duplicator is turned off or is turned on
      *
      * @return true in case de-duplicator is off
      * false in case de-duplicator is on

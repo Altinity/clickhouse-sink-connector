@@ -2,11 +2,14 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.Metrics;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.codahale.metrics.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -36,7 +39,15 @@ public class ClickHouseBatchRunnable implements Runnable {
         String password = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS);
         String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE);
 
+        UUID blockUuid = UUID.randomUUID();
+
+        // Initialize Timer to track time taken to transform and insert to Clickhouse.
+        Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
+        Timer.Context context = timer.time();
+
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
         writer.insert(this.records);
+
+        context.stop();
     }
 }
