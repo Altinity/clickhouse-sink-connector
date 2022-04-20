@@ -30,14 +30,14 @@ public class DbWriterTest {
         this.writer = new DbWriter(hostName, port, tableName, database, userName, password, config);
 
     }
-    @Test
-    public void testInsertQuery() {
-
-        String query = writer.getInsertQuery("products", 4);
-
-        Assert.assertEquals(query, "insert into products values(?,?,?,?)");
-
-    }
+//    @Test
+//    public void testInsertQuery() {
+//
+//        String query = writer.getInsertQuery("products", 4);
+//
+//        Assert.assertEquals(query, "insert into products values(?,?,?,?)");
+//
+//    }
 
     @Test
     public void testGetConnectionUrl() {
