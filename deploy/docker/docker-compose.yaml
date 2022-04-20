@@ -30,6 +30,24 @@ services:
     security_opt:
       - seccomp:unconfined
 
+  schemaregistry:
+    container_name: schemaregistry
+    image: apicurio/apicurio-registry-mem:2.0.0.Final
+    #image: confluentinc/cp-schema-registry:latest
+    restart: "no"
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    #    environment:
+    #      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092
+    #      - SCHEMA_REGISTRY_HOST_NAME=localhost
+    #      - SCHEMA_REGISTRY_LISTENERS=http://localhost:8081
+    #      - SCHEMA_REGISTRY_DEBUG=true
+
+    depends_on:
+      - kafka
+
   debezium:
     container_name: debezium
     image: debezium/connect:1.9
@@ -48,6 +66,17 @@ services:
       - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
       - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
       - LOG_LEVEL=INFO
+      - ENABLE_APICURIO_CONVERTERS=true
+      - KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_KEY_CONVERTER_APICURIO.REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
+      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
+      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
+      - CONNECT_VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -77,6 +106,8 @@ services:
   #    container_name: kafka2
   #    image: vectorized/redpanda
   #    restart: always
+
+
 
   sink:
     container_name: sink
