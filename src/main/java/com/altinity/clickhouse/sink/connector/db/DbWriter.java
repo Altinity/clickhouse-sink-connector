@@ -2,20 +2,21 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
+import io.debezium.time.Date;
 import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
-
-import io.debezium.time.Date;
+import org.apache.kafka.connect.errors.DataException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,15 +24,13 @@ import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-
-import java.text.SimpleDateFormat;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Class that abstracts all functionality
@@ -45,7 +44,6 @@ public class DbWriter {
     private String tableName;
     // Map of column names to data types.
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
-    String insertQueryUsingInputFunction;
 
     private ClickHouseSinkConnectorConfig config;
 
@@ -68,7 +66,6 @@ public class DbWriter {
         if (this.conn != null) {
             // Order of the column names and the data type has to match.
             this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
-            this.insertQueryUsingInputFunction = this.getInsertQueryUsingInputFunction(tableName);
         }
     }
 
@@ -96,87 +93,6 @@ public class DbWriter {
         }
     }
 
-    /**
-     * Formatter for SQL 'Insert' query with placeholders for values
-     * insert into <table name> values(?, ?, ?)
-     *
-     * @param tableName Table Name
-     * @param numFields Number of fields with placeholders
-     * @return
-     */
-    public String getInsertQuery(String tableName, int numFields) {
-        StringBuffer insertQuery = new StringBuffer()
-                .append("insert into ")
-                .append(tableName)
-                .append(" values(");
-        for (int i = 0; i < numFields; i++) {
-            insertQuery.append("?");
-            if (i == numFields - 1) {
-                insertQuery.append(")");
-            } else {
-                insertQuery.append(",");
-            }
-        }
-        return insertQuery.toString();
-    }
-
-    /**
-     * There could be a possibility that the column count will not match
-     * between Source and Clickhouse.
-     * - We will drop records if the columns are not present in clickhouse.
-     * @param tableName
-     * @param fields
-     * @return
-     */
-    public String getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
-                                                   Map<String, String> columnNameToDataTypeMap) {
-
-
-        StringBuffer colNamesDelimited = new StringBuffer();
-        StringBuffer colNamesToDataTypes = new StringBuffer();
-
-        for(Field f: fields) {
-            String sourceColumnName = f.name();
-            // Get Field Name and lookup in the Clickhouse column to datatype map.
-            String dataType = columnNameToDataTypeMap.get(sourceColumnName);
-
-            if(dataType != null) {
-                colNamesDelimited.append(sourceColumnName).append(",");
-                colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
-            } else {
-                log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnName));
-            }
-
-        }
-        //Remove terminating comma
-        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
-        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
-
-        return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
-    }
-    /**
-     * Function to construct an INSERT query using input functions.
-     *
-     * @param tableName Table Name
-     * @return Insert query using Input function.
-     */
-    public String getInsertQueryUsingInputFunction(String tableName) {
-        // "insert into mytable select col1, col2 from input('col1 String, col2 DateTime64(3), col3 Int32')"))
-
-        StringBuffer colNamesDelimited = new StringBuffer();
-        StringBuffer colNamesToDataTypes = new StringBuffer();
-
-        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-            colNamesDelimited.append(entry.getKey()).append(",");
-            colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
-        }
-
-        //Remove terminating comma
-        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
-        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
-
-        return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
-    }
 
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
@@ -239,7 +155,8 @@ public class DbWriter {
                     modifiedFields.add(f);
                 }
             }
-            String insertQueryTemplate = this.getInsertQueryUsingInputFunction(this.tableName, modifiedFields, this.columnNameToDataTypeMap);
+            String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
+                    (this.tableName, this.columnNameToDataTypeMap);
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
                 List<ClickHouseStruct> newList = new ArrayList<ClickHouseStruct>();
@@ -315,13 +232,25 @@ public class DbWriter {
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
-        for(Field f: fields) {
+        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+        //for(Field f: fields) {
 
-            if(record.getStruct().get(f.name()) == null) {
+            String colName = entry.getKey();
+            try {
+                Object value = record.getStruct().get(colName);
+                if (value == null) {
+                    ps.setNull(index, Types.OTHER);
+                    index++;
+                    continue;
+                }
+            } catch(DataException e) {
+                // Struct .get throws a DataException
+                // if the field is not present.
+                // If the record was not supplied, we need to set it as null.
+                ps.setNull(index, Types.OTHER);
+                index++;
                 continue;
             }
-                // Column Name
-            String colName = f.name();
             if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
                 log.error("Column:{} not found in ClickHouse", colName);
                 continue;
@@ -368,8 +297,7 @@ public class DbWriter {
                 }
             }
 
-
-
+            Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = record.getStruct().get(f);
@@ -412,17 +340,16 @@ public class DbWriter {
             // Text columns
             if (type == Schema.Type.STRING) {
                 if (schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
-                    ps.setObject(index, (String) value);
+                    // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
+                    ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
+
                 } else {
                     ps.setString(index, (String) value);
                 }
             } else if (isFieldTypeInt) {
                 if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                     // Date field arrives as INT32 with schema name set to io.debezium.time.Date
-                    long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
-                    java.util.Date date = new java.util.Date(msSinceEpoch);
-                    java.sql.Date sqlDate = new java.sql.Date(date.getTime());
-                    ps.setDate(index, sqlDate);
+                    ps.setDate(index, DebeziumConverter.DateConverter.convert(value));
 
                 } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                     ps.setTimestamp(index, (java.sql.Timestamp) value);
@@ -430,7 +357,11 @@ public class DbWriter {
                     ps.setInt(index, (Integer) value);
                 }
             } else if (isFieldTypeFloat) {
-                ps.setFloat(index, (Float) value);
+                if(true == value instanceof Float) {
+                    ps.setFloat(index, (Float) value);
+                } else if(true == value instanceof Double) {
+                    ps.setDouble(index, (Double) value);
+                }
             } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
                 ps.setBoolean(index, (Boolean) value);
             } else if (isFieldTypeBigInt || isFieldTinyInt) {
@@ -438,25 +369,23 @@ public class DbWriter {
             } else if (isFieldDateTime || isFieldTime) {
                 if (isFieldDateTime) {
                     if (value instanceof Long) {
-                        LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
-                        DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
-                        ps.setString(index, date.format(formatter));
+                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value));
                     }
                 } else if (isFieldTime) {
-                    System.out.println(value);
-                    Long milliTimestamp = (Long) value / 1000;
-                    java.util.Date date = new java.util.Date(milliTimestamp);
-
-                    SimpleDateFormat bqTimeSecondsFormat = new SimpleDateFormat("HH:mm:ss");
-                    // bqTimeSecondsFormat.setTimeZone();
-                    String formattedSecondsTimestamp = bqTimeSecondsFormat.format(date);
-                    ps.setString(index, formattedSecondsTimestamp);
+                    ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
                 }
                 // Convert this to string.
                 // ps.setString(index, String.valueOf(value));
             } else if (isFieldTypeDecimal) {
                 ps.setBigDecimal(index, (BigDecimal) value);
-            } else {
+            } else if(type == Schema.Type.BYTES) {
+                // Blob storage.
+                if(value instanceof byte[]) {
+                    String hexValue = new String((byte[]) value);
+                    ps.setString(index, hexValue);
+                }
+
+            }else {
                 log.error("Data Type not supported: {}", colName);
             }
 
