@@ -151,7 +151,7 @@ public class ClickHouseConverter implements AbstractConverter {
      * @param record
      */
     public ClickHouseStruct convert(SinkRecord record) {
-        log.info("convert()");
+        log.debug("convert()");
 
         //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
@@ -164,7 +164,7 @@ public class ClickHouseConverter implements AbstractConverter {
             if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
                     operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
-                log.info("CREATE received");
+                log.debug("CREATE received");
                 if (convertedValue.containsKey("after")) {
                     afterRecord = new ClickHouseStruct(record.kafkaOffset(),
                             record.topic(), (Struct) record.key(), record.kafkaPartition(),
@@ -236,7 +236,7 @@ public class ClickHouseConverter implements AbstractConverter {
                 log.warn("NON STRUCT records ignored");
             } else {
                 // Convert STRUCT
-                log.info("RECEIVED STRUCT");
+                log.debug("RECEIVED STRUCT");
                 result = convertStruct(obj, schema);
             }
         }
