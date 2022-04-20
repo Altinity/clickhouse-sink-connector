@@ -43,4 +43,4 @@ alter table employees add column `jobDescription` Nullable(String);
 
 alter table employees add column `updated_time` Nullable(DateTime);
 
-alter table employees add column `bytes_date` Nullable(String);
+--alter table employees add column `bytes_date` Nullable(String);
