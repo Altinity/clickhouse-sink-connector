@@ -27,14 +27,36 @@ class MySqlConnection:
 
         return self.conn
 
-    def execute_sql(self, sql):
+    def get_column_names(self, sql):
+        column_names = ''
+
+        if self.conn.is_connected:
+            self.cursor = self.conn.cursor()
+
+            self.cursor.execute(sql)
+            for result in self.cursor:
+                print(result)
+
+            column_names = self.cursor.column_names
+
+
+            if (self.conn and self.conn.is_connected()):
+                self.conn.commit()
+
+        return column_names
+
+    def execute_sql(self, sql, data=None):
 
         if self.conn.is_connected():
             self.cursor = self.conn.cursor()
 
             try:
                 if self.cursor:
-                    self.cursor.execute(sql)
+                    if data:
+                        self.cursor.execute(sql, data)
+                    else:
+                        self.cursor.execute(sql)
+
                     for result in self.cursor:
                         print(result)
 
