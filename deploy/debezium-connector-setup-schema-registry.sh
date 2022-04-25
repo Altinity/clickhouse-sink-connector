@@ -66,10 +66,15 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
     "value.converter.apicurio.registry.auto-register": "true",
-    "value.converter.apicurio.registry.find-latest": "true"
+    "value.converter.apicurio.registry.find-latest": "true",
+
+    "topic.creation.$alias.partitions": 3,
+    "topic.creation.default.replication.factor": 1,
+    "topic.creation.default.partitions": 3
+
+
   }
 }
 EOF
-
 
 echo

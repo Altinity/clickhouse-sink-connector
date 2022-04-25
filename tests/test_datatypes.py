@@ -27,6 +27,9 @@ class MyTestCase(unittest.TestCase):
     def test_something(self):
         conn = MySqlConnection()
         conn.create_connection()
+
+        # Start with empty table
+        conn.execute_sql("truncate table employees")
         conn.execute_sql("select * from employees limit 1")
 
         col_names = conn.get_column_names('select * from employees limit 1')
