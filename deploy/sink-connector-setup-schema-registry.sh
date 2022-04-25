@@ -22,9 +22,8 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-    "tasks.max": "2",
+    "tasks.max": "3",
     "topics": "${TOPICS}",
-    "buffer.count.records": "${BUFFER_COUNT}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
     "clickhouse.server.user": "${CLICKHOUSE_USER}",
     "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",

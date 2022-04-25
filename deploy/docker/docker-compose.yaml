@@ -133,7 +133,7 @@ services:
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
-      #- LOG_LEVEL=DEBUG
+      - LOG_LEVEL=DEBUG
     depends_on:
       - kafka
 
