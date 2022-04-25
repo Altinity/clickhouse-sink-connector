@@ -26,7 +26,14 @@ docker-compose up
 # Image
 Docker image can be created with provided [Dockerfile][Dockerfile] and build script
 
-
+# Topic Partitions.
+By Default the kafka topic is created with number of partitions set to 1.
+For better throughput and High availability, its better to set to the partitions
+to a number greater than 1.
+The topic partitions must be created before the sink connector is started.
+```
+rpk topic create SERVER5432.test.employees -p 3
+```
 
 ToDO: Create Kafka connector image with Mysql
 Create JAR file by running the following command and copy to the /libs directory of Kafka. 

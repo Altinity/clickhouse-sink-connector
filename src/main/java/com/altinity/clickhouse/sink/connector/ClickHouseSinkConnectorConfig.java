@@ -219,6 +219,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
+                        Type.LONG,
+                        30,
+                        Importance.LOW,
+                        "The time in seconds to flush cached data",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
                 // ToDo: Add JVM Proxy
                 ;
     }

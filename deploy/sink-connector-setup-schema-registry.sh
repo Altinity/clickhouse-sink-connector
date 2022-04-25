@@ -16,6 +16,7 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 TOPICS="SERVER5432.test.employees"
+#TOPICS="SERVER5432"
 
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
@@ -40,7 +41,9 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
     "value.converter.apicurio.registry.auto-register": "true",
     "value.converter.apicurio.registry.find-latest": "true",
-    "store.kafka.metadata": true
+    "store.kafka.metadata": true,
+    "topic.creation.default.partitions": 3
+
   }
 }
 EOF
