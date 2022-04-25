@@ -76,5 +76,5 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   }
 }
 EOF
-
+#"topic.creation.$alias.partitions": 3,
 echo

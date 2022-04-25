@@ -23,4 +23,8 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Flag thats configurable by the user to store kafka metadata information
     // in clickhouse tables.
     public static final String STORE_KAFKA_METADATA = "store.kafka.metadata";
+
+    // Buffer flush time in seconds.
+    public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";
+
 }
