@@ -148,10 +148,10 @@ public class DbWriter {
 
             List<Field> schemaFields = record.getStruct().schema().fields();
             List<Field> modifiedFields = new ArrayList<Field>();
-            for(Field f: schemaFields) {
+            for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
-                if(record.getStruct().get(f) != null) {
+                if (record.getStruct().get(f) != null) {
                     modifiedFields.add(f);
                 }
             }
@@ -184,7 +184,6 @@ public class DbWriter {
                     // Append parameters to the query
                     ps.addBatch();
                 }
-
 
 
                 // Issue the composed query: insert into mytable values(...)(...)...(...)
@@ -227,38 +226,15 @@ public class DbWriter {
      * @param fields
      * @param record
      */
-    private void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws SQLException {
+    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws SQLException {
 
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
         for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-        //for(Field f: fields) {
+            //for(Field f: fields) {
 
             String colName = entry.getKey();
-            try {
-                Object value = record.getStruct().get(colName);
-                if (value == null) {
-                    ps.setNull(index, Types.OTHER);
-                    index++;
-                    continue;
-                }
-            } catch(DataException e) {
-                // Struct .get throws a DataException
-                // if the field is not present.
-                // If the record was not supplied, we need to set it as null.
-                ps.setNull(index, Types.OTHER);
-                index++;
-                continue;
-            }
-            if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
-                log.error("Column:{} not found in ClickHouse", colName);
-                continue;
-            }
-        //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-
-            //ToDo: Map the Clickhouse types as a Enum.
-
 
             // ToDo: should we actually do an alter table to add those columns.
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
@@ -296,6 +272,30 @@ public class DbWriter {
                     continue;
                 }
             }
+
+            try {
+                Object value = record.getStruct().get(colName);
+                if (value == null) {
+                    ps.setNull(index, Types.OTHER);
+                    index++;
+                    continue;
+                }
+            } catch (DataException e) {
+                // Struct .get throws a DataException
+                // if the field is not present.
+                // If the record was not supplied, we need to set it as null.
+                ps.setNull(index, Types.OTHER);
+                index++;
+                continue;
+            }
+            if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
+                log.error("Column:{} not found in ClickHouse", colName);
+                continue;
+            }
+            //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+
+            //ToDo: Map the Clickhouse types as a Enum.
+
 
             Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
@@ -357,9 +357,9 @@ public class DbWriter {
                     ps.setInt(index, (Integer) value);
                 }
             } else if (isFieldTypeFloat) {
-                if(true == value instanceof Float) {
+                if (true == value instanceof Float) {
                     ps.setFloat(index, (Float) value);
-                } else if(true == value instanceof Double) {
+                } else if (true == value instanceof Double) {
                     ps.setDouble(index, (Double) value);
                 }
             } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
@@ -378,20 +378,22 @@ public class DbWriter {
                 // ps.setString(index, String.valueOf(value));
             } else if (isFieldTypeDecimal) {
                 ps.setBigDecimal(index, (BigDecimal) value);
-            } else if(type == Schema.Type.BYTES) {
+            } else if (type == Schema.Type.BYTES) {
                 // Blob storage.
-                if(value instanceof byte[]) {
+                if (value instanceof byte[]) {
                     String hexValue = new String((byte[]) value);
                     ps.setString(index, hexValue);
                 }
 
-            }else {
+            } else {
                 log.error("Data Type not supported: {}", colName);
             }
 
             index++;
         }
     }
+
+
 
     /**
      * Function to add Kafka metadata columns

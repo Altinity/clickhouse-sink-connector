@@ -50,6 +50,16 @@ public class DbWriterTest {
         Assert.assertEquals(connectionUrl, "jdbc:clickhouse://remoteClickHouse:8123/employees");
     }
 
+    @Test
+    public void testInsertPreparedStatement() {
+        String hostName = "remoteClickHouse";
+        Integer port = 8123;
+        String database = "employees";
+        String connectionUrl = writer.getConnectionString(hostName, port, database);
+
+
+    }
+
     //@Test
     public void testBatchInsert() {
         String hostName = "localhost";
