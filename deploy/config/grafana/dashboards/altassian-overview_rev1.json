@@ -326,7 +326,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "100 - (java_lang_operatingsystem_freeswapspacesize{instance=~\"$instance\"} / on(instance) java_lang_operatingsystem_totalswapspacesize{instance=~\"$instance\"} * 100)",
+              "expr": "100 - (java_lang_OperatingSystem_FreeSwapSpaceSize{instance=~\"$instance\"} / on(instance) java_lang_OperatingSystem_FreeSwapSpaceSize{instance=~\"$instance\"} * 100)",
               "format": "time_series",
               "groupBy": [
                 {
@@ -436,7 +436,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "java_lang_operatingsystem_totalswapspacesize{instance=~\"$instance\"}",
+              "expr": "java_lang_OperatingSystem_TotalSwapSpaceSize{instance=~\"$instance\"}",
               "format": "time_series",
               "groupBy": [
                 {
@@ -546,7 +546,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "avg_over_time(java_lang_operatingsystem_systemcpuload{instance=~\"$instance\"}[1m]) * 100",
+              "expr": "avg_over_time(java_lang_OperatingSystem_SystemCpuLoad{instance=~\"$instance\"}[1m]) * 100",
               "format": "time_series",
               "groupBy": [
                 {
@@ -657,7 +657,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "avg_over_time(java_lang_operatingsystem_systemcpuload{instance=~\"$instance\"}[5m]) * 100",
+              "expr": "avg_over_time(java_lang_OperatingSystem_SystemCpuLoad{instance=~\"$instance\"}[5m]) * 100",
               "format": "time_series",
               "groupBy": [
                 {
@@ -767,7 +767,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "java_lang_operatingsystem_availableprocessors{instance=~\"$instance\"}",
+              "expr": "java_lang_OperatingSystem_AvailableProcessors{instance=~\"$instance\"}",
               "format": "time_series",
               "groupBy": [
                 {
@@ -863,7 +863,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "java_lang_operatingsystem_systemcpuload{instance=~\"$instance\"} * 100",
+              "expr": "java_lang_OperatingSystem_SystemCpuLoad{instance=~\"$instance\"} * 100",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "system",
@@ -872,7 +872,7 @@
             },
             {
               "dsType": "influxdb",
-              "expr": "java_lang_operatingsystem_processcpuload{instance=~\"$instance\"} * 100",
+              "expr": "java_lang_OperatingSystem_ProcessCpuLoad{instance=~\"$instance\"} * 100",
               "format": "time_series",
               "groupBy": [
                 {
@@ -983,12 +983,12 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "jvm_memory_bytes_used{instance=~\"$instance\"}  / ignoring(area) group_left java_lang_operatingsystem_totalphysicalmemorysize{instance=~\"$instance\"} *100",
+              "expr": "java_lang_Memory_HeapMemoryUsage_used{instance=~\"$instance\"}  / ignoring(area) group_left java_lang_OperatingSystem_TotalPhysicalMemorySize{instance=~\"$instance\"} *100",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 5,
               "legendFormat": "{{area}} memory",
-              "metric": "jvm_memory_bytes_used",
+              "metric": "java_lang_Memory_HeapMemoryUsage_used",
               "refId": "A",
               "step": 50
             }
@@ -1183,7 +1183,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "jvm_threads_current{instance=~\"$instance\"}",
+              "expr": "java_lang_Threading_TotalStartedThreadCount{instance=~\"$instance\"}",
               "format": "time_series",
               "intervalFactor": 5,
               "legendFormat": "current",
@@ -1192,7 +1192,7 @@
               "step": 50
             },
             {
-              "expr": "jvm_threads_daemon{instance=~\"$instance\"}",
+              "expr": "java_lang_Threading_DaemonThreadCount{instance=~\"$instance\"}",
               "format": "time_series",
               "intervalFactor": 5,
               "legendFormat": "daemon",
@@ -1270,7 +1270,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "jvm_classes_loaded{instance=~\"$instance\"}",
+              "expr": "java_lang_ClassLoading_LoadedClassCount{instance=~\"$instance\"}",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 5,
@@ -1350,7 +1350,7 @@
           "targets": [
             {
               "dsType": "influxdb",
-              "expr": "java_lang_operatingsystem_openfiledescriptorcount{instance=~\"$instance\"}",
+              "expr": "java_lang_OperatingSystem_OpenFileDescriptorCount{instance=~\"$instance\"}",
               "format": "time_series",
               "groupBy": [
                 {
