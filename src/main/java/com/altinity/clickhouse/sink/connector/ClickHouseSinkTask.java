@@ -25,15 +25,13 @@ import java.util.concurrent.TimeUnit;
  * ClickHouse via Sink service
  */
 public class ClickHouseSinkTask extends SinkTask {
-    private static final long WAIT_TIME = 5 * 1000; // 5 sec
-    private static final int REPEAT_TIME = 12; // 60 sec
+
     private String id = "-1";
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
 
     public ClickHouseSinkTask() {
 
     }
-
 
     private ClickHouseBatchExecutor executor;
     private ConcurrentLinkedQueue<ClickHouseStruct> records;
@@ -52,10 +50,17 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.config = new ClickHouseSinkConnectorConfig(config);
 
+        Map<String, String> topic2TableMap = null;
+        try {
+             topic2TableMap = Utils.parseTopicToTableMap(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP));
+        } catch (Exception e) {
+            log.error("Error parsing topic to table map" + e);
+        }
+
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
         this.records = new ConcurrentLinkedQueue<>();
-        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config);
+        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.SECONDS);
 

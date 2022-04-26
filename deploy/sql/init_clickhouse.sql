@@ -44,3 +44,17 @@ alter table employees add column `jobDescription` Nullable(String);
 alter table employees add column `updated_time` Nullable(DateTime);
 
 --alter table employees add column `bytes_date` Nullable(String);
+
+CREATE TABLE products(
+  `productCode` String,
+  `productName` String,
+  `productLine` String,
+  `productScale` String,
+  `productVendor` String,
+  `productDescription` String,
+  `quantityInStock` Int32,
+  `buyPrice` Decimal(10,2),
+  `MSRP` Decimal(10,2)
+)
+ENGINE = MergeTree
+PRIMARY KEY productCode
