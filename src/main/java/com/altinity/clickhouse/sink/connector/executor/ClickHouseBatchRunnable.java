@@ -50,14 +50,18 @@ public class ClickHouseBatchRunnable implements Runnable {
         // ToDo: Every task should only have one topic.
         // peeking in the buffer might be a good logic?
         ClickHouseStruct peekedRecord = this.records.peek();
-        String tableName = this.topic2TableMap.get(peekedRecord.getTopic());
-        // Initialize Timer to track time taken to transform and insert to Clickhouse.
-        Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
-        Timer.Context context = timer.time();
+        if(peekedRecord != null) {
 
-        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-        writer.insert(this.records);
+            String tableName = this.topic2TableMap.get(peekedRecord.getTopic());
+            // Initialize Timer to track time taken to transform and insert to Clickhouse.
+            Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
+            Timer.Context context = timer.time();
 
-        context.stop();
+            DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
+            writer.insert(this.records);
+            context.stop();
+
+        }
+
     }
 }
