@@ -22,5 +22,13 @@ public class UtilsTest {
 
     }
 
+    @Test
+    public void testGetTableNameFromTopic() {
+
+        String topicName = "SERVER5432.test.employees";
+        String tableName = Utils.getTableNameFromTopic(topicName);
+
+        Assert.assertEquals(tableName, "employees");
+    }
 }
 
