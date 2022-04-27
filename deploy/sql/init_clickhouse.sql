@@ -41,9 +41,9 @@ alter table employees add column `perDiemRate` Nullable(Decimal(30, 12));
 alter table employees  add column `hourlyRate` Nullable(Float64);
 alter table employees add column `jobDescription` Nullable(String);
 
-alter table employees add column `updated_time` Nullable(DateTime);
+-- alter table employees add column `updated_time` Nullable(DateTime);
 
---alter table employees add column `bytes_date` Nullable(String);
+-- alter table employees add column `bytes_date` Nullable(String);
 
 CREATE TABLE products(
   `productCode` String,

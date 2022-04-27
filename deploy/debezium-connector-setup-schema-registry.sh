@@ -71,8 +71,6 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "topic.creation.$alias.partitions": 3,
     "topic.creation.default.replication.factor": 1,
     "topic.creation.default.partitions": 3
-
-
   }
 }
 EOF

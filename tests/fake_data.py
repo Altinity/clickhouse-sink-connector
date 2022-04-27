@@ -19,3 +19,17 @@ class FakeData:
                fake.date_time(), fake.time(), 'M', fake.pyfloat(), fake.pyfloat(), fake.job(),
                fake.date_time())
         return row
+
+    @classmethod
+    def get_fake_products_row(cls):
+
+        #CREATE TABLE products(
+        #    `productCode` String, `productName` String, `productLine` String, `productScale` String,
+        #    `productVendor` String, `productDescription` String, quantityInStock` Int32, `buyPrice` Decimal(10,2),
+        #                                                                                            `MSRP` Decimal(10,2)
+
+        fake = Faker()
+        row = (fake.bs()[:10], fake.name()[:10], fake.bs()[:10], fake.bs()[:10], fake.company()[:10], \
+              fake.company()[:10], fake.unique.pyint(0, 100), fake.pyfloat(min_value=0, max_value=1), fake.pyfloat(min_value=0, max_value=2))
+
+        return row

@@ -146,15 +146,6 @@ public class DbWriter {
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
-            List<Field> schemaFields = record.getStruct().schema().fields();
-            List<Field> modifiedFields = new ArrayList<Field>();
-            for (Field f : schemaFields) {
-                // Identify the list of columns that were modified.
-                // Schema.fields() will give the list of columns in the schema.
-                if (record.getStruct().get(f) != null) {
-                    modifiedFields.add(f);
-                }
-            }
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
                     (this.tableName, this.columnNameToDataTypeMap);
 
@@ -180,7 +171,9 @@ public class DbWriter {
                 for (ClickHouseStruct record : recordsList) {
                     List<Field> fields = record.getStruct().schema().fields();
 
+                    //ToDO:
                     insertPreparedStatement(ps, fields, record);
+                    //insertPreparedStatement(ps, record.getModifiedFields(), record);
                     // Append parameters to the query
                     ps.addBatch();
                 }
@@ -232,8 +225,9 @@ public class DbWriter {
 
         // Use this map's key natural ordering as the source of truth.
         for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-            //for(Field f: fields) {
+        //for(Field f: fields) {
 
+            //String colName = f.name();
             String colName = entry.getKey();
 
             // ToDo: should we actually do an alter table to add those columns.
@@ -273,6 +267,7 @@ public class DbWriter {
                 }
             }
 
+            // If the Received column is not a clickhouse column
             try {
                 Object value = record.getStruct().get(colName);
                 if (value == null) {
@@ -289,7 +284,7 @@ public class DbWriter {
                 continue;
             }
             if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
-                log.error("Column:{} not found in ClickHouse", colName);
+                log.error(" ***** ERROR: Column:{} not found in ClickHouse", colName);
                 continue;
             }
             //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
