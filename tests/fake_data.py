@@ -21,6 +21,22 @@ class FakeData:
         return row
 
     @classmethod
+    def get_fake_employees_row_with_out_of_range_datetime(cls, primary_num, start_date, end_date):
+        fake = Faker()
+
+        #9999-12-31 or 1900-01-01
+        row = (primary_num, fake.date(), fake.name()[:10], fake.name()[:10], 'M', fake.date(),
+               fake.unique.random_int(), fake.pyint(0, 10),
+               fake.unique.random_int(), fake.unique.random_int(),
+               fake.unique.random_int(), fake.unique.random_int(),
+               fake.unique.pyint(0, -10, -1), fake.unique.random_int(),
+               fake.unique.random_int(), fake.unique.random_int(),
+               fake.date_between(start_date, end_date), fake.time(), 'M', fake.pyfloat(), fake.pyfloat(), fake.job(),
+               fake.date_time())
+
+        return row
+
+    @classmethod
     def get_fake_products_row(cls):
 
         #CREATE TABLE products(
