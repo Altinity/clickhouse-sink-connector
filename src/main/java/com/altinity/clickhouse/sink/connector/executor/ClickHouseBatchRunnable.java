@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.Metrics;
+import com.altinity.clickhouse.sink.connector.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
@@ -51,7 +52,13 @@ public class ClickHouseBatchRunnable implements Runnable {
         for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
 
             String topicName = entry.getKey();
+
+            //The user parameter will override the topic mapping to table.
             String tableName = this.topic2TableMap.get(topicName);
+            if(tableName == null) {
+                tableName = Utils.getTableNameFromTopic(topicName);
+            }
+
             // Initialize Timer to track time taken to transform and insert to Clickhouse.
             Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
             Timer.Context context = timer.time();

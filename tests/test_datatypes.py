@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 
+from tests.clickhouse_connection import ClickHouseConnection
 from tests.mysql_connection import MySqlConnection
 from fake_data import FakeData
 
@@ -67,8 +68,12 @@ class MyTestCase(unittest.TestCase):
         fake_row_ch_invalid_date_range = FakeData.get_fake_employees_row_with_out_of_range_datetime(122324, date(9999, 12, 30), date(9999, 12, 31))
         conn.execute_sql(sql_query, fake_row_ch_invalid_date_range)
 
+        clickhouse_conn = ClickHouseConnection(host_name='localhost', username='root', password='root', database='test')
+        clickhouse_conn.create_connection()
+        result = clickhouse_conn.execute_sql('select * from products')
 
-        conn.close
+        print(result)
+        conn.close()
 
 
     def generate_products_fake_records(self):
