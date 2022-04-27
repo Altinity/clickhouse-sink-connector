@@ -1,9 +1,9 @@
 package com.altinity.clickhouse.sink.connector;
 
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -34,7 +35,7 @@ public class ClickHouseSinkTask extends SinkTask {
     }
 
     private ClickHouseBatchExecutor executor;
-    private ConcurrentLinkedQueue<ClickHouseStruct> records;
+    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
@@ -59,7 +60,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
-        this.records = new ConcurrentLinkedQueue<>();
+        this.records = new ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.SECONDS);
@@ -96,12 +97,24 @@ public class ClickHouseSinkTask extends SinkTask {
                 //if (true) {
                 ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
-                    this.records.add(c);
+                    this.appendToRecords(c.getTopic(), c);
                 }
             } else {
                 log.info("skip already seen record: " + record);
             }
         }
+    }
+
+    private void appendToRecords(String topicName, ClickHouseStruct chs) {
+        ConcurrentLinkedQueue<ClickHouseStruct> structs = null;
+
+        if(this.records.containsKey(topicName)) {
+            structs = this.records.get(topicName);
+        } else {
+            structs = new ConcurrentLinkedQueue<ClickHouseStruct>();
+        }
+        structs.add(chs);
+        this.records.put(topicName, structs);
     }
 
     /**
