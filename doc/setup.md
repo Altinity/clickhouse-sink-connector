@@ -16,7 +16,7 @@ It will start:
 5. clickhouse-kafka-sink-connector
 6. Clickhouse
 
-In order to launch `clickhouse-kafka-sink-connector` appropariate docker image is required, 
+In order to launch `clickhouse-kafka-sink-connector` appropriate docker image is required, 
 which can be built as described in [Image](#Image)  
 ```bash
 cd deploy/docker
@@ -31,23 +31,26 @@ By Default the kafka topic is created with number of partitions set to 1.
 For better throughput and High availability, its better to set to the partitions
 to a number greater than 1.
 The topic partitions must be created before the sink connector is started.
+For redpanda:
 ```
 rpk topic create SERVER5432.test.employees -p 3
 ```
 
-ToDO: Create Kafka connector image with Mysql
-Create JAR file by running the following command and copy to the /libs directory of Kafka. 
+# Source connector
+After all the docker containers are up and running, execute the following command
+to create the Debezium MySQL connector
+[debezium-connector-setup-schema-registry.sh](../deploy/debezium-connector-setup-schema-registry.sh)
 
-` mvn install`
+# Sink Connector
+After the source connector is created, 
+execute the script [sink-connector-setup-schema-registry.sh](../deploy/sink-connector-setup-schema-registry.sh)
+to create the Clickhouse Sink connector using Kafka connect REST API
 
-Copy MYSQL libs from container/libs to the kafka libs directory.
 
-Start the Kafka connect process and pass the properties file
-for both MYSQL and Clickhouse properties.
 
-`./connect-standalone.sh ../config/connect-standalone.properties 
-../../kafka-connect-clickhouse/kcch-connector/src/main/config/mysql-debezium.properties 
-../../kafka-connect-clickhouse/kcch-connector/src/main/config/clickhouse-sink.properties`
+
+# References
+Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
 [docker-compose.yaml]: ../deploy/docker/docker-compose.yaml
 [Dockerfile]: ../docker/Dockerfile
