@@ -58,6 +58,11 @@ public class ClickHouseTableMetaData {
         return columnUpdated;
     }
 
+    public static void addRawData(String colName, ClickHouseStruct record, int index, PreparedStatement ps) throws Exception {
+        String jsonRecord = convertRecordToJSON(record);
+        ps.setString(index, jsonRecord);
+    }
+
     /**
      * Function to convert the kafka record to JSON.
      * @param record

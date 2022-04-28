@@ -24,6 +24,12 @@ public class ClickHouseSinkConnectorConfigVariables {
     // in clickhouse tables.
     public static final String STORE_KAFKA_METADATA = "store.kafka.metadata";
 
+    // Flag to store the raw data as JSON string in clickhouse.
+    public static final String STORE_RAW_DATA ="store.raw.data";
+
+    // Column to store the raw data.
+    public static final String STORE_RAW_DATA_COLUMN = "store.raw.data.column";
+
     // Buffer flush time in seconds.
     public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";
 

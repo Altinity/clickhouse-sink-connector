@@ -214,7 +214,7 @@ public class DbWriter {
      * @param fields
      * @param record
      */
-    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws SQLException {
+    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws Exception {
 
         int index = 1;
 
@@ -225,11 +225,21 @@ public class DbWriter {
             //String colName = f.name();
             String colName = entry.getKey();
 
+            // Kafka metdata columns.
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
                if (true == ClickHouseTableMetaData.addKafkaMetaData(colName, record, index, ps)) {
                    index++;
                    continue;
                }
+            }
+
+            // Store raw data in JSON form.
+            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
+                if(colName.equalsIgnoreCase(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)) {
+                    ClickHouseTableMetaData.addRawData(colName, record, index, ps);
+                    index++;
+                    continue;
+                }
             }
 
             // If the Received column is not a clickhouse column
