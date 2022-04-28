@@ -2,6 +2,9 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Struct;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -9,6 +12,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.List;
 
 /**
  * Class to perform all operations related
@@ -51,5 +56,27 @@ public class ClickHouseTableMetaData {
         }
 
         return columnUpdated;
+    }
+
+    /**
+     * Function to convert the kafka record to JSON.
+     * @param record
+     * @return
+     */
+    public static String convertRecordToJSON(ClickHouseStruct record) throws Exception {
+
+        Struct s = record.getStruct();
+        List<Field> fields = s.schema().fields();
+
+        HashMap<String, Object> result = new HashMap<String, Object>();
+        for(Field f: fields) {
+            if(f != null && s.get(f) != null) {
+                result.put(f.name(), s.get(f));
+            }
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        return mapper.writeValueAsString(result);
     }
 }
