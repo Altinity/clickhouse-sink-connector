@@ -4,7 +4,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -25,10 +24,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -230,41 +225,11 @@ public class DbWriter {
             //String colName = f.name();
             String colName = entry.getKey();
 
-            // ToDo: should we actually do an alter table to add those columns.
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
-                if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
-                    ps.setLong(index, record.getKafkaOffset());
-                    index++;
-                    continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
-                    ps.setString(index, record.getTopic());
-                    index++;
-                    continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
-                    ps.setInt(index, record.getKafkaPartition());
-                    index++;
-                    continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP_MS.getColumn())) {
-                    ps.setLong(index, record.getTimestamp());
-                    index++;
-                    continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
-
-                    LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(record.getTimestamp()),
-                            ZoneId.systemDefault());
-                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-                    //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
-                    ps.setObject(index, date.format(formatter));
-
-                    index++;
-                    continue;
-                } else if (colName.equalsIgnoreCase(KafkaMetaData.KEY.getColumn())) {
-                    if (record.getKey() != null) {
-                        ps.setString(index, record.getKey());
-                    }
-                    index++;
-                    continue;
-                }
+               if (true == ClickHouseTableMetaData.addKafkaMetaData(colName, record, index, ps)) {
+                   index++;
+                   continue;
+               }
             }
 
             // If the Received column is not a clickhouse column
@@ -386,18 +351,6 @@ public class DbWriter {
 
             index++;
         }
-    }
-
-
-
-    /**
-     * Function to add Kafka metadata columns
-     * topic Name, offset, timestamp and partition
-     *
-     * @param ps
-     */
-    public void addKafkaMetadata(PreparedStatement ps, int index, ClickHouseStruct struct) {
-
     }
 
     /**
