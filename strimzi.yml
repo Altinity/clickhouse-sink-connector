@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
 spec:
   destination:
-    namespace: <namespace>
+    namespace: altinity
     server: https://kubernetes.default.svc
   project: default
   source:
