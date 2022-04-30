@@ -86,7 +86,7 @@ class MyTestCase(unittest.TestCase):
 
         table_name = 'products'
         # Start with empty table
-        #conn.execute_sql(f"truncate table {table_name}")
+        conn.execute_sql(f"truncate table {table_name}")
         conn.execute_sql(f"select * from {table_name} limit 1")
 
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
@@ -101,10 +101,10 @@ class MyTestCase(unittest.TestCase):
         conn.close()
 
     def test_multiple_tables(self):
-        self.generate_employees_records_with_datetime()
+        #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()
         #self.generate_products_fake_records()
-        #generate_products_fake_records()
+        self.generate_products_fake_records()
 
 
 
