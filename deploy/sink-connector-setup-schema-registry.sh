@@ -16,7 +16,7 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products"
-TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
+#TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
@@ -44,7 +44,11 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "value.converter.apicurio.registry.auto-register": "true",
     "value.converter.apicurio.registry.find-latest": "true",
     "store.kafka.metadata": true,
-    "topic.creation.default.partitions": 3
+    "topic.creation.default.partitions": 3,
+
+    "store.raw.data": true,
+    "store.raw.data.column": "raw_data"
+
 
   }
 }

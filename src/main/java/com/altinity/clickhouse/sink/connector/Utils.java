@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.Map;
 
-class Utils {
+public class Utils {
     private static final Logger LOGGER = LoggerFactory.getLogger(Utils.class);
 
     public static final String TASK_ID = "task_id";
@@ -81,6 +81,24 @@ class Utils {
         return topic2Table;
     }
 
+    /**
+     * Function to get Table name from kafka connect topic
+     * @param topicName
+     * @return Table Name
+     */
+    public static String getTableNameFromTopic(String topicName) {
+        String tableName = null;
+
+
+            // topic names is of the following format.
+            // hostname.dbName.tableName
+            String[] splitName = topicName.split("\\.");
+            if(splitName.length == 3) {
+                tableName = splitName[2];
+            }
+
+        return tableName;
+    }
     /**
      * Function to valid table name passed in settings
      * //ToDO: Implement the function.

@@ -220,6 +220,26 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA,
+                        Type.BOOLEAN,
+                        "false",
+                        Importance.LOW,
+                        "True, if the raw data has to be stored in JSON form, false otherwise",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN,
+                        Type.STRING,
+                        "false",
+                        Importance.LOW,
+                        "Column name to store the raw data(JSON form), only applicable if STORE_RAW_DATA is set to True",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
                         Type.LONG,
                         30,
