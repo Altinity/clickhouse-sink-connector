@@ -19,10 +19,17 @@ spec:
   # https://kafka.apache.org/documentation/#connectconfigs
   config:
     group.id: 1
-    config.storage.topic: config-storage-topic-debezium
-    offset.storage.topic: offset-storage-topic-debezium
-    status.storage.topic: status-storage-topic-debezium
+
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.replication.factor: -1
-    offset.storage.replication.factor: -1
-    status.storage.replication.factor: -1
+    config.storage.topic: config-storage-topic-debezium
+    config.storage.replication.factor: 1
+    config.storage.partitions: 1
+    offset.storage.topic: offset-storage-topic-debezium
+    offset.storage.replication.factor: 1
+    offset.storage.partitions: 1
+    status.storage.topic: status-storage-topic-debezium
+    status.storage.replication.factor: 1
+    status.storage.partitions: 1
+
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
