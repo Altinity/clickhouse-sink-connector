@@ -1,0 +1,5 @@
+FROM quay.io/strimzi/kafka:0.21.1-kafka-2.7.0
+USER root:root
+COPY deploy/libs /opt/kafka/libs/
+COPY target/*.jar /opt/share/kafka/plugins/
+USER 1001
