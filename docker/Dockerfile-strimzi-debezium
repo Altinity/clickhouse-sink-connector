@@ -4,8 +4,10 @@ LABEL maintainer="Altinity"
 
 USER root:root
 
-ADD https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.2.Final/debezium-connector-mysql-1.9.2.Final-plugin.tar.gz /opt/kafka/plugins/debezium/
-RUN chmod 666 /opt/kafka/plugins/debezium/*
+#ADD https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.2.Final/debezium-connector-mysql-1.9.2.Final-plugin.tar.gz /opt/kafka/plugins/debezium/
+#RUN chmod 666 /opt/kafka/plugins/debezium/*
+ADD https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.2.Final/debezium-connector-mysql-1.9.2.Final-plugin.tar.gz /opt/kafka/plugins/
+RUN chmod 666 /opt/kafka/plugins/*
 
 ADD deploy/apicurio-registry-distro-connect-converter/*.jar /opt/kafka/libs/
 
