@@ -19,10 +19,16 @@ spec:
   # https://kafka.apache.org/documentation/#connectconfigs
   config:
     group.id: 2
-    config.storage.topic: config-storage-topic-sink
-    offset.storage.topic: offset-storage-topic-sink
-    status.storage.topic: status-storage-topic-sink
+
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.replication.factor: -1
-    offset.storage.replication.factor: -1
-    status.storage.replication.factor: -1
+    config.storage.topic: config-storage-topic-sink
+    config.storage.replication.factor: 1
+    config.storage.partitions: 1
+
+    offset.storage.topic: offset-storage-topic-sink
+    offset.storage.replication.factor: 1
+    offset.storage.partitions: 1
+
+    status.storage.topic: status-storage-topic-sink
+    status.storage.replication.factor: 1
+    status.storage.partitions: 1
