@@ -170,7 +170,7 @@ kubectl -n $NAMESPACE rollout status -w deployment/mysql-operator
 kubectl -n $NAMESPACE get pod
 ```
 
-###sink
+### Strimzi
 
 ```bash
 docker   image pull quay.io/strimzi/operator:0.28.0
@@ -179,7 +179,7 @@ minikube image load quay.io/strimzi/operator:0.28.0
 
 ```bash
 VERSION="0.28.0"
-NAMESPACE="sink"
+NAMESPACE="strimzi"
 echo "Install strimzi-operator. Version: $VERSION Namespace: $NAMESPACE" && \
 helm repo add strimzi https://strimzi.io/charts/ && \
 helm install \
@@ -259,10 +259,16 @@ kubectl -n ${NAMESPACE} apply -f schema-registry.yaml
 ### debezium
 
 ```bash
+docker   image pull sunsingerus/debezium-mysql-source-connector:latest
+minikube image load sunsingerus/debezium-mysql-source-connector:latest
+```
+
+```bash
 NAMESPACE="debezium"
+kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f debezium-connect.yaml
 kubectl -n $NAMESPACE apply -f <( \
-  cat debezium-connector.yaml | \
+  cat debezium-connector-avro.yaml | \
     MYSQL_HOST="mysql.mysql" \
     MYSQL_PORT="3306" \
     MYSQL_USER="root" \
@@ -277,6 +283,8 @@ kubectl -n $NAMESPACE apply -f <( \
     envsubst \ 
 )
 ```
+
+### sink
 
 ```bash
 NAMESPACE="sink"
