@@ -50,7 +50,7 @@ services:
 
   debezium:
     container_name: debezium
-    image: debezium/connect:1.9
+    image: debezium/connect:1.9.2.Final
     restart: "no"
     ports:
       - "8083:8083"
