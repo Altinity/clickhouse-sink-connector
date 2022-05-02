@@ -1,0 +1,29 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: clickhouse-connect-cluster
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  image: localhost:5001/altinity/clickhouse-kafka-sink-connector-strimzi:latest
+  replicas: 1
+  bootstrapServers: my-cluster-kafka-bootstrap:9093
+  tls:
+    trustedCertificates:
+      - secretName: my-cluster-cluster-ca-cert
+        certificate: ca.crt
+  config:
+    group.id: strimzi-connect-cluster-group
+    offset.storage.topic: strimzi-connect-cluster-offsets
+    offset.storage.partitions: 1
+    offset.storage.replication.factor: 1
+    config.storage.topic: strimzi-connect-cluster-configs
+    config.storage.replication.factor: 1
+    config.storage.partitions: 1
+    status.storage.topic: strimzi-connect-cluster-status
+    status.storage.replication.factor: 1
+    status.storage.partitions: 1
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: true

@@ -1,0 +1,13 @@
+apiVersion: "kafka.strimzi.io/v1beta2"
+kind: "KafkaConnector"
+metadata:
+  name: "clickhouse-sink-connector"
+  labels:
+    strimzi.io/cluster:  clickhouse-connect-cluster
+spec:
+  class: com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    database.history.kafka.bootstrap.servers: "my-cluster-kafka-bootstrap:9092"
+    database.history.kafka.topic: "schema-changes.inventory"
+    include.schema.changes: "true"
