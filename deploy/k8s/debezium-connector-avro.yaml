@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1alpha1
+apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnector
 metadata:
   namespace: debezium
@@ -9,6 +9,9 @@ spec:
   class: io.debezium.connector.mysql.MySqlConnector
   tasksMax: 1
   config:
+    # List of mysql options:
+    # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
+
     snapshot.mode: "initial"
     snapshot.locking.mode: "minimal"
     snapshot.delay.ms: "10000"
@@ -20,15 +23,20 @@ spec:
     database.password: "${MYSQL_PASSWORD}"
     database.server.id: "${DATABASE_SERVER_ID}"
     database.server.name: "${DATABASE_SERVER_NAME}"
-    database.whitelist: "${MYSQL_DBS}"
+    database.include.list: "${MYSQL_DBS}"
 
     database.history.kafka.bootstrap.servers: "${KAFKA_BOOTSTRAP_SERVERS}"
     database.history.kafka.topic: "${KAFKA_TOPIC}"
 
-    topic.creation.$alias.partitions: 3,
+    # List of topic options:
+    # https://debezium.io/documentation/reference/stable/configuration/topic-auto-create-config.html
     topic.creation.default.replication.factor: 1,
     topic.creation.default.partitions: 3
+    # ?
+    topic.creation.$alias.partitions: 3,
 
+    # Avro serialization description:
+    # https://debezium.io/documentation/reference/stable/configuration/avro.html
     key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
     key.converter.apicurio.registry.url: "${REGISTRY_URL}"
     key.converter.apicurio.registry.auto-register: "true"
