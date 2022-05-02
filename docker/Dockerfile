@@ -1,4 +1,4 @@
-FROM debezium/connect-base:1.9
+FROM debezium/connect-base:1.9.2.Final
 
 LABEL maintainer="Altinity"
 
