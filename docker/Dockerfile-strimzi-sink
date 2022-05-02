@@ -1,0 +1,8 @@
+FROM quay.io/strimzi/kafka:0.28.0-kafka-3.1.0
+
+LABEL maintainer="Altinity"
+
+USER root:root
+COPY deploy/libs/* /opt/kafka/plugins/clickhouse-kafka-sink-connector/
+COPY target/*.jar  /opt/kafka/plugins/clickhouse-kafka-sink-connector/
+USER 1001

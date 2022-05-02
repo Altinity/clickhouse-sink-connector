@@ -1,0 +1,29 @@
+apiVersion: kafka.strimzi.io/v1alpha1
+kind: KafkaConnector
+metadata:
+  namespace: debezium
+  name: debezium
+  labels:
+    strimzi.io/cluster: debezium
+spec:
+  class: io.debezium.connector.mysql.MySqlConnector
+  tasksMax: 1
+  config:
+    snapshot.mode: "initial"
+    snapshot.locking.mode: "minimal"
+    snapshot.delay.ms: "10000"
+    include.schema.changes: "true"
+
+    database.hostname: "${MYSQL_HOST}"
+    database.port: "${MYSQL_PORT}"
+    database.user: "${MYSQL_USER}"
+    database.password: "${MYSQL_PASSWORD}"
+    database.server.id: "${DATABASE_SERVER_ID}"
+    database.server.name: "${DATABASE_SERVER_NAME}"
+    database.whitelist: "${MYSQL_DBS}"
+
+    database.history.kafka.bootstrap.servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+    database.history.kafka.topic: "${KAFKA_TOPIC}"
+
+    key.converter: "org.apache.kafka.connect.json.JsonConverter",
+    value.converter: "org.apache.kafka.connect.json.JsonConverter",
