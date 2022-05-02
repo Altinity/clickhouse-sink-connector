@@ -1,0 +1,19 @@
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  namespace: clickhouse
+  name: clickhouse
+spec:
+  configuration:
+    clusters:
+      - name: cluster
+        templates:
+          podTemplate: clickhouse:22.3.5.5
+  templates:
+    podTemplates:
+      - name: clickhouse:22.3.5.5
+        spec:
+          containers:
+            - name: clickhouse-pod
+              image: clickhouse/clickhouse-server:22.3.5.5
+              imagePullPolicy: IfNotPresent

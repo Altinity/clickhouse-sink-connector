@@ -1,0 +1,28 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  namespace: sink
+  name: sink
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: 3.1.0
+  replicas: 1
+  #image: altinity/clickhouse-kafka-sink-connector:latest
+  image: sunsingerus/clickhouse-kafka-sink-connector:latest
+  bootstrapServers: redpanda.redpanda:9092
+#  tls:
+#    trustedCertificates:
+#      - secretName: my-cluster-cluster-ca-cert
+#        certificate: ca.crt
+
+  # https://kafka.apache.org/documentation/#connectconfigs
+  config:
+    group.id: 2
+    config.storage.topic: config-storage-topic-sink
+    offset.storage.topic: offset-storage-topic-sink
+    status.storage.topic: status-storage-topic-sink
+    # -1 means it will use the default replication factor configured in the broker
+    config.storage.replication.factor: -1
+    offset.storage.replication.factor: -1
+    status.storage.replication.factor: -1
