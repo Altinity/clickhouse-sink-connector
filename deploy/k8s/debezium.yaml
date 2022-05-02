@@ -2,20 +2,20 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: debezium-connect
-  namespace: mysql
+  namespace: debezium
 spec:
   containers:
     - name: connect
-      image: debezium/connect
+      image: debezium/connect:1.9.2.Final
       ports:
         - name: debezium
           containerPort: 8083
           protocol: TCP
       env:
         - name: BOOTSTRAP_SERVERS
-          value: "one-node-cluster-0.one-node-cluster.redpanda.svc.cluster.local:9092"
+          value: "redpanda.redpanda:9092"
         - name: GROUP_ID
-          value: "1"
+          value: "10"
         - name: CONFIG_STORAGE_TOPIC
           value:  "inventory.configs"
         - name: OFFSET_STORAGE_TOPIC
@@ -27,7 +27,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: debezium-connect
-  namespace: mysql
+  namespace: debezium
 spec:
   ports:
     - name: debezium
