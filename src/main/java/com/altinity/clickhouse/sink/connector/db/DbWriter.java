@@ -235,13 +235,15 @@ public class DbWriter {
 
             // Store raw data in JSON form.
             if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
-                if(colName.equalsIgnoreCase(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)) {
+                if(colName.equalsIgnoreCase(this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN))) {
                     ClickHouseTableMetaData.addRawData(colName, record, index, ps);
                     index++;
                     continue;
                 }
             }
 
+            //ToDO: Setting null to a non-nullable field
+            // will throw an error.
             // If the Received column is not a clickhouse column
             try {
                 Object value = record.getStruct().get(colName);
