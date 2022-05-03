@@ -56,7 +56,8 @@ CREATE TABLE products(
   `productDescription` String,
   `quantityInStock` Int32,
   `buyPrice` Decimal(10,2),
-  `MSRP` Decimal(10,2)
+  `MSRP` Decimal(10,2),
+  `raw_data` String
 )
 ENGINE = MergeTree
 PRIMARY KEY productCode
