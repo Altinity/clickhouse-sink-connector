@@ -28,6 +28,12 @@ wget https://github.com/derailed/k9s/releases/download/$VERSION/k9s_Linux_x86_64
 install k9s ~/bin/k9s
 ```
 
+### jq
+Ubuntu
+```bash
+sudo apt-get update && sudo apt-get install jq
+```
+
 ### helm
 ```bash
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | HELM_INSTALL_DIR=~/bin USE_SUDO=false bash
@@ -73,12 +79,6 @@ cert-manager-798f8bb594-n6fsm              1/1     Running   0          43s
 cert-manager-cainjector-5bb9bfbb5c-bzvvq   1/1     Running   0          43s
 cert-manager-webhook-69579b9ccd-ldhgb      1/1     Running   0          43s
 
-```
-
-### jq
-Ubuntu
-```bash
-sudo apt-get update && sudo apt-get install jq
 ```
 
 ### redpanda-operator
