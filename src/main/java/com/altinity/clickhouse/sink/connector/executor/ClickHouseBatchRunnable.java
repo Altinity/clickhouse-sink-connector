@@ -7,7 +7,6 @@ import com.altinity.clickhouse.sink.connector.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
-import io.micrometer.core.instrument.Gauge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,8 +43,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     @Override
     public void run() {
-        log.info("*************** BULK INSERT TO CLICKHOUSE **************");
-        log.info("*************** RECORDS: {}", records.size());
+
         String dbHostName = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL);
         String database = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE);
         Integer port = config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT);
@@ -71,19 +69,22 @@ public class ClickHouseBatchRunnable implements Runnable {
             if (entry.getValue().size() > 0) {
                 UUID blockUuid = UUID.randomUUID();
 
+                log.info("*************** BULK INSERT TO CLICKHOUSE **************");
+                log.info("*************** RECORDS: {}", entry.getValue().size());
+
                 // Initialize Timer to track time taken to transform and insert to Clickhouse.
-                Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
+                Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + entry.getValue().size());
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
                 writer.insert(entry.getValue());
                 context.stop();
 
-                Gauge gauge = Gauge.builder("clickhouse.sink.records", entry.getValue().size(), Integer::new)
+                Metrics.getClickHouseSinkRecordsCounter()
                         .tag("UUID", blockUuid.toString())
-                        .tag("topic", topicName).tag("table", tableName).register(Metrics.meterRegistry());
-
-
+                        .tag("topic", topicName)
+                        .tag("table", tableName)
+                        .register(Metrics.meterRegistry()).increment(entry.getValue().size());
 
             }
         }
