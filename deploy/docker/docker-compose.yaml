@@ -170,6 +170,13 @@ services:
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
 
+  blackbox_exporter:
+    container_name: blackbox_exporter
+    image: prom/blackbox-exporter:master
+    restart: "no"
+    ports:
+      - "9115:9115"
+
   prometheus:
     container_name: prometheus
     image: bitnami/prometheus
