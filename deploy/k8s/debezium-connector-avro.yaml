@@ -24,16 +24,20 @@ spec:
     database.server.id: "${DATABASE_SERVER_ID}"
     database.server.name: "${DATABASE_SERVER_NAME}"
     database.include.list: "${MYSQL_DBS}"
+    # In order to deal with exception
+    # "message": "Connector configuration is invalid and contains the following 1 error(s):\nUnable to connect: Public Key Retrieval is not allowed\nYou can also find the above list of errors at the endpoint `/{connectorType}/config/validate`"
+    database.allowPublicKeyRetrieval: "true"
+    database.useSSL: "false"
 
     database.history.kafka.bootstrap.servers: "${KAFKA_BOOTSTRAP_SERVERS}"
     database.history.kafka.topic: "${KAFKA_TOPIC}"
 
     # List of topic options:
     # https://debezium.io/documentation/reference/stable/configuration/topic-auto-create-config.html
-    topic.creation.default.replication.factor: 1,
-    topic.creation.default.partitions: 3
+    topic.creation.default.replication.factor: "1"
+    topic.creation.default.partitions: "1"
     # ?
-    topic.creation.$alias.partitions: 3,
+    topic.creation.$alias.partitions: "1"
 
     # Avro serialization description:
     # https://debezium.io/documentation/reference/stable/configuration/avro.html
