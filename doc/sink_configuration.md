@@ -6,6 +6,15 @@ This variable will override the default mapping of topics to table names.
 
 `store.kafka.metadata`: If set to true, kafka metadata columns will be added to Clickhouse.
 
+`buffer.flush.time`: The clickhouse records after mapping are stored in a buffer. This variable defines the time in seconds
+after which the buffer is flushed. This is added to avoid frequent calls to clickhouse. Its performed using the Clickhouse
+JDBC Bulk Insert functionality.
+
+`store.raw.data`: If set to true, the entire row is converted to JSON and stored in the column defined by the `store.raw.data.column` field.
+
+`store.raw.data.column`: Clickhouse table column to store the raw data in JSON form(String Clickhouse DataType)
+
+
 
 This is a sample configuration that's used in creating the connector using the Kafka connect REST API.
 
