@@ -183,6 +183,7 @@ minikube image load altinity/metrics-exporter:0.18.4
 ```
 
 ```bash
+```bash
 docker   image pull clickhouse/clickhouse-server:22.3.5.5
 minikube image load clickhouse/clickhouse-server:22.3.5.5
 ```
@@ -281,6 +282,9 @@ cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 -
 echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 ```
 
+```bash
+mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+```
 
 ```bash
 docker   image pull sunsingerus/debezium-mysql-source-connector:latest
@@ -342,6 +346,10 @@ cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.
 echo "desc test.employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
 ```
 
+```bash
+clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+```
+
 ### create secret
 ```bash
 NAMESPACE="sink"
@@ -374,12 +382,19 @@ rm -f ${BASE}/deploy/k8s/artefacts/*.tgz
 NAMESPACE="sink"
 kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f sink-connect.yaml
+sleep 10
+echo -n "Building"
+while kubectl -n $NAMESPACE get pod/sink-connect-build > /dev/null 2>&1; do
+  echo -n "."
+  sleep 1 
+done
+echo "done"
 kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
 kubectl -n $NAMESPACE get pod
 
 kubectl -n $NAMESPACE apply -f <( \
   cat sink-connector-avro.yaml | \
-    CLICKHOUSE_HOST="clickhouse.clickhouse" \
+    CLICKHOUSE_HOST="clickhouse-clickhouse.clickhouse" \
     CLICKHOUSE_PORT=8123 \
     CLICKHOUSE_USER="clickhouse_operator" \
     CLICKHOUSE_PASSWORD="clickhouse_operator_password" \
