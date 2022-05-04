@@ -5,7 +5,7 @@ metadata:
   name: redpanda
 spec:
   image: "vectorized/redpanda"
-  version: "latest"
+  version: "v21.11.15"
   replicas: 1
   resources:
     requests:

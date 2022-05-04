@@ -12,3 +12,20 @@ RUN chmod 666 /opt/kafka/plugins/*
 ADD deploy/apicurio-registry-distro-connect-converter/*.jar /opt/kafka/libs/
 
 USER 1001
+
+#
+#FROM quay.io/strimzi/kafka:0.28.0-kafka-3.1.0
+#
+#USER root:root
+#
+#RUN 'mkdir' '-p' '/opt/kafka/plugins/debezium-mysql-connector/c2d5b744' \
+#          && 'curl' '-L' '--output' '/opt/kafka/plugins/debezium-mysql-connector/c2d5b744.tgz' 'https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.2.Final/debezium-connector-mysql-1.9.2.Final-plugin.tar.gz' \
+#          && 'tar' 'xvfz' '/opt/kafka/plugins/debezium-mysql-connector/c2d5b744.tgz' '-C' '/opt/kafka/plugins/debezium-mysql-connector/c2d5b744' \
+#          && 'rm' '-vf' '/opt/kafka/plugins/debezium-mysql-connector/c2d5b744.tgz'
+#
+#    RUN 'mkdir' '-p' '/opt/kafka/plugins/debezium-mysql-connector/3542976d' \
+#          && 'curl' '-L' '--output' '/opt/kafka/plugins/debezium-mysql-connector/3542976d.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+#          && 'tar' 'xvfz' '/opt/kafka/plugins/debezium-mysql-connector/3542976d.tgz' '-C' '/opt/kafka/plugins/debezium-mysql-connector/3542976d' \
+#          && 'rm' '-vf' '/opt/kafka/plugins/debezium-mysql-connector/3542976d.tgz'
+#
+#    USER 1001
