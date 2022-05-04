@@ -53,10 +53,10 @@ helm repo add jetstack https://charts.jetstack.io && \
 helm repo update && \
 helm install \
 cert-manager jetstack/cert-manager \
---namespace $NAMESPACE \
---create-namespace \
---version $VERSION \
---set installCRDs=true
+  --namespace $NAMESPACE \
+  --create-namespace \
+  --version $VERSION \
+  --set installCRDs=true
 ```
 
 ```bash
@@ -83,11 +83,17 @@ sudo apt-get update && sudo apt-get install jq
 
 ### redpanda-operator
 
+
+
 ```bash
 docker image pull   vectorized/redpanda-operator:v21.11.15
+docker image pull   vectorized/redpanda:v21.11.15
+docker image pull   vectorized/configurator:v21.11.15
 docker image pull   gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
 
 minikube image load vectorized/redpanda-operator:v21.11.15
+minikube image load vectorized/redpanda:v21.11.15
+minikube image load vectorized/configurator:v21.11.15
 minikube image load gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
 ```
 
@@ -145,6 +151,12 @@ helm install \
   --version $VERSION
 ```
 
+
+```bash
+kubectl -n $NAMESPACE rollout status -w deployment/mysql-operator
+kubectl -n $NAMESPACE get pod
+```
+
 ```bash
 docker   image pull mysql/mysql-server:8.0.29
 docker   image pull mysql/mysql-router:8.0.29
@@ -160,70 +172,7 @@ kubectl create ns "${NAMESPACE}"
 kubectl -n "${NAMESPACE}" apply -f mysql.yaml
 ```
 
-```bash
-minikube image load altinity/clickhouse-kafka-sink-connector:latest
-minikube image build -t my_image .
-```
-
-```bash
-kubectl -n $NAMESPACE rollout status -w deployment/mysql-operator
-kubectl -n $NAMESPACE get pod
-```
-
-### Strimzi
-
-```bash
-docker   image pull quay.io/strimzi/operator:0.28.0
-minikube image load quay.io/strimzi/operator:0.28.0 
-```
-
-```bash
-VERSION="0.28.0"
-NAMESPACE="strimzi"
-echo "Install strimzi-operator. Version: $VERSION Namespace: $NAMESPACE" && \
-helm repo add strimzi https://strimzi.io/charts/ && \
-helm install \
-    strimzi-kafka-operator \
-    strimzi/strimzi-kafka-operator \
-    --namespace $NAMESPACE \
-    --create-namespace \
-    --version $VERSION \
-    --set watchAnyNamespace=true
-```
-```bash
-helm delete strimzi-kafka-operator
-```
-
-#$ helm install --name my-release --set logLevel=DEBUG,fullReconciliationIntervalMs=240000 strimzi/strimzi-kafka-operator
-
-#kafkaConnect.image.registry 	Override default Kafka Connect image registry 	nil
-#kafkaConnect.image.repository 	Override default Kafka Connect image repository 	nil
-#kafkaConnect.image.name 	Kafka Connect image name 	kafka
-#kafkaConnect.image.tagPrefix 	Override default Kafka Connect image tag prefix 	nil
-
 ### clickhouse
-
-```bash
-docker   image pull altinity/clickhouse-operator:0.18.4
-minikube image load altinity/clickhouse-operator:0.18.4
-```
-
-```bash
-NAMESPACE=clickhouse
-INSTALL_SH="https://raw.githubusercontent.com/Altinity/clickhouse-operator/master/deploy/operator-web-installer/clickhouse-operator-install.sh"
-curl -s $INSTALL_SH | OPERATOR_NAMESPACE="${NAMESPACE}" bash
-```
-
-```bash
-kubectl -n ${NAMESPACE} apply -f <( \
-  cat clickhouse-operator-install-template.yaml | \
-    OPERATOR_NAMESPACE="clickhouse" \
-    OPERATOR_IMAGE="altinity/clickhouse-operator:0.18.4" \
-    METRICS_EXPORTER_IMAGE="altinity/metrics-exporter:0.18.4" \
-    IMAGE_PULL_POLICY="IfNotPresent" \
-    envsubst \
-)
-```
 
 ```bash
 docker   image pull altinity/clickhouse-operator:0.18.4
@@ -236,6 +185,28 @@ minikube image load altinity/metrics-exporter:0.18.4
 ```bash
 docker   image pull clickhouse/clickhouse-server:22.3.5.5
 minikube image load clickhouse/clickhouse-server:22.3.5.5
+```
+
+```bash
+NAMESPACE=clickhouse
+INSTALL_SH="https://raw.githubusercontent.com/Altinity/clickhouse-operator/master/deploy/operator-web-installer/clickhouse-operator-install.sh"
+curl -s ${INSTALL_SH} | OPERATOR_NAMESPACE="${NAMESPACE}" bash
+```
+
+## Local alternative installation
+```bash
+kubectl -n ${NAMESPACE} apply -f <( \
+  cat clickhouse-operator-install-template.yaml | \
+    OPERATOR_NAMESPACE="clickhouse" \
+    OPERATOR_IMAGE="altinity/clickhouse-operator:0.18.4" \
+    METRICS_EXPORTER_IMAGE="altinity/metrics-exporter:0.18.4" \
+    IMAGE_PULL_POLICY="IfNotPresent" \
+    envsubst )
+```
+
+```bash
+kubectl -n $NAMESPACE rollout status -w deployment/clickhouse-operator
+kubectl -n $NAMESPACE get pod
 ```
 
 ```bash
@@ -256,17 +227,93 @@ kubectl create namespace ${NAMESPACE}
 kubectl -n ${NAMESPACE} apply -f schema-registry.yaml
 ```
 
+```bash
+kubectl -n $NAMESPACE rollout status -w deployment/schema-registry
+kubectl -n $NAMESPACE get pod
+```
+
+### Strimzi
+
+```bash
+docker   image pull quay.io/strimzi/operator:0.28.0
+docker   image pull quay.io/strimzi/kaniko-executor:0.28.0
+
+minikube image load quay.io/strimzi/operator:0.28.0
+minikube image load quay.io/strimzi/kaniko-executor:0.28.0 
+```
+
+```bash
+VERSION="0.28.0"
+NAMESPACE="strimzi"
+echo "Install strimzi-operator. Version: $VERSION Namespace: $NAMESPACE" && \
+helm repo add strimzi https://strimzi.io/charts/ && \
+helm install \
+  strimzi-kafka-operator \
+  strimzi/strimzi-kafka-operator \
+  --namespace $NAMESPACE \
+  --create-namespace \
+  --version $VERSION \
+  --set watchAnyNamespace=true
+```
+
+```bash
+kubectl -n $NAMESPACE rollout status -w deployment/strimzi-cluster-operator
+kubectl -n $NAMESPACE get pod
+```
+
+```bash
+helm delete strimzi-kafka-operator
+```
+
+#$ helm install --name my-release --set logLevel=DEBUG,fullReconciliationIntervalMs=240000 strimzi/strimzi-kafka-operator
+
+#kafkaConnect.image.registry 	Override default Kafka Connect image registry 	nil
+#kafkaConnect.image.repository 	Override default Kafka Connect image repository 	nil
+#kafkaConnect.image.name 	Kafka Connect image name 	kafka
+#kafkaConnect.image.tagPrefix 	Override default Kafka Connect image tag prefix 	nil
+
 ### debezium
+
+```bash
+kubectl -n mysql port-forward service/mysql 3306:3306
+cat deploy/sql/mysql_schema_employees.sql | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
+cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+```
+
 
 ```bash
 docker   image pull sunsingerus/debezium-mysql-source-connector:latest
 minikube image load sunsingerus/debezium-mysql-source-connector:latest
 ```
 
+### create secret
+```bash
+NAMESPACE=debezium
+kubectl create ns ${NAMESPACE}
+kubectl -n ${NAMESPACE} create secret generic docker-access-secret \
+  --from-file=.dockerconfigjson=${HOME}/.docker/config.json \
+  --type=kubernetes.io/dockerconfigjson
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: debezium
+  name: docker-access-secret
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: cat ~/.docker/config.json | base64
+```
+
 ```bash
 NAMESPACE="debezium"
 kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f debezium-connect.yaml
+kubectl -n $NAMESPACE rollout status -w deployment/debezium-connect
+kubectl -n $NAMESPACE get pod
+
 kubectl -n $NAMESPACE apply -f <( \
   cat debezium-connector-avro.yaml | \
     MYSQL_HOST="mysql.mysql" \
@@ -280,25 +327,65 @@ kubectl -n $NAMESPACE apply -f <( \
     DATABASE_SERVER_ID="5432" \
     DATABASE_SERVER_NAME="SERVER5432" \
     REGISTRY_URL="http://schema-registry.registry:8080/apis/registry/v2" \
-    envsubst \ 
-)
+    envsubst )
+```
+
+```bash
+rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ```
 
 ### sink
 
 ```bash
-NAMESPACE="sink"
-kubectl -n $NAMESPACE apply -f sink-connect.yaml
-kubectl -n $NAMESPACE apply -f <( \
-cat sink-connector.yaml | \
-  CLICKHOUSE_HOST="clickhouse" \
-  CLICKHOUSE_PORT=8123 \
-  CLICKHOUSE_USER="root" \
-  CLICKHOUSE_PASSWORD="root" \
-  CLICKHOUSE_TABLE="employees" \
-  CLICKHOUSE_DATABASE="test" \
-  BUFFER_COUNT=10000 \
-  TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products" \
-  envsubst \ 
-)
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
+cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
+echo "desc test.employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
 ```
+
+### create secret
+```bash
+NAMESPACE="sink"
+kubectl create namespace "${NAMESPACE}"
+kubectl -n ${NAMESPACE} create secret generic docker-access-secret \
+  --from-file=.dockerconfigjson=${HOME}/.docker/config.json \
+  --type=kubernetes.io/dockerconfigjson
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: debezium
+  name: docker-access-secret
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: cat ~/.docker/config.json | base64
+```
+
+```bash
+NAMESPACE="sink"
+kubectl create namespace "${NAMESPACE}"
+kubectl -n $NAMESPACE apply -f sink-connect.yaml
+kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
+kubectl -n $NAMESPACE get pod
+
+kubectl -n $NAMESPACE apply -f <( \
+  cat sink-connector-avro.yaml | \
+    CLICKHOUSE_HOST="clickhouse.clickhouse" \
+    CLICKHOUSE_PORT=8123 \
+    CLICKHOUSE_USER="clickhouse_operator" \
+    CLICKHOUSE_PASSWORD="clickhouse_operator_password" \
+    CLICKHOUSE_TABLE="employees" \
+    CLICKHOUSE_DATABASE="test" \
+    BUFFER_COUNT=10000 \
+    TOPICS="SERVER5432.test.employees" \
+    TOPICS_TABLE_MAP="SERVER5432.test.employees:employees" \
+    REGISTRY_URL="http://schema-registry.registry:8080/apis/registry/v2" \
+    envsubst )
+```
+
+```bash
+kubectl -n registry port-forward service/schema-registry 8080:8080
+firefox http://localhost:8080/ui/artifacts
+```
+
