@@ -8,6 +8,7 @@ import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
+import com.google.common.io.BaseEncoding;
 import io.debezium.time.Date;
 import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
@@ -20,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -355,6 +357,8 @@ public class DbWriter {
                 if (value instanceof byte[]) {
                     String hexValue = new String((byte[]) value);
                     ps.setString(index, hexValue);
+                } else if(value instanceof java.nio.ByteBuffer) {
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
                 }
 
             } else {
