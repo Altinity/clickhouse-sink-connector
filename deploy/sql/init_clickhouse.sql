@@ -45,7 +45,7 @@ alter table employees add column `raw_data` Nullable(String);
 
 -- alter table employees add column `updated_time` Nullable(DateTime);
 
--- alter table employees add column `bytes_date` Nullable(String);
+alter table employees add column `bytes_date` Nullable(String);
 
 CREATE TABLE products(
   `productCode` String,

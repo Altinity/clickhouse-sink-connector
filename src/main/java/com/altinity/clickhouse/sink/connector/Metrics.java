@@ -5,6 +5,8 @@ import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.codahale.metrics.jvm.MemoryUsageGaugeSet;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import org.slf4j.Logger;
@@ -12,7 +14,6 @@ import org.slf4j.Logger;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Metrics class using io.dropwizard library
@@ -27,17 +28,20 @@ public class Metrics {
 
     private static PrometheusMeterRegistry meterRegistry;
 
+    private static Gauge clickHouseSinkRecordsGauge;
+
+    private static Counter.Builder clickHouseSinkRecordsCounter;
     private static HttpServer server;
     public static void initialize() {
         registry = new MetricRegistry();
         registry.register("memory", new MemoryUsageGaugeSet());
 
         // Register reporters here.
-        reporter = ConsoleReporter.forRegistry(registry)
-                .convertRatesTo(TimeUnit.SECONDS)
-                .convertDurationsTo(TimeUnit.SECONDS)
-                .build();
-        reporter.start(1, TimeUnit.MINUTES);
+//        reporter = ConsoleReporter.forRegistry(registry)
+//                .convertRatesTo(TimeUnit.SECONDS)
+//                .convertDurationsTo(TimeUnit.SECONDS)
+//                .build();
+//        reporter.start(1, TimeUnit.MINUTES);
 
 
         meterRegistry =
@@ -45,8 +49,17 @@ public class Metrics {
 
 
         exposePrometheusPort(meterRegistry);
+        registerMetrics();
     }
 
+    private static void registerMetrics() {
+        //ToDO: Dont want to keep a strong reference.
+//        clickHouseSinkRecordsGauge = Gauge.builder("clickhouse.sink.records", 0, Integer::new)
+//                .register(Metrics.meterRegistry());
+
+        clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
+
+    }
     private static void exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
 
 
@@ -74,6 +87,10 @@ public class Metrics {
     public static MetricRegistry registry() {
         return registry;
     }
+
+    public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
+
+    public static Gauge getClickHouseSinkRecordsGauge(){return clickHouseSinkRecordsGauge;}
 
     public static PrometheusMeterRegistry meterRegistry(){ return meterRegistry;}
 
