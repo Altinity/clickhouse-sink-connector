@@ -40,6 +40,9 @@ public class ClickHouseSinkConnector extends SinkConnector {
         this.config = conf;
         // From now on connector is ready to accept data
         this.ready = true;
+
+        // Initialize Metrics
+        Metrics.initialize();
     }
 
     /**
@@ -50,6 +53,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
         log.info("stop()");
         // Connector is no more ready to accept data
         this.ready = false;
+        Metrics.stop();
     }
 
     /**
