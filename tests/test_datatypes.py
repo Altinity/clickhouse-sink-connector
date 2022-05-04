@@ -1,3 +1,4 @@
+import time
 import unittest
 from datetime import date
 
@@ -76,6 +77,43 @@ class MyTestCase(unittest.TestCase):
         conn.close()
 
 
+    def test_duplicate_inserts(self):
+        '''
+        Test case to make sure duplicate records
+        are not inserted
+        :return:
+        '''
+
+        clickhouse_conn = ClickHouseConnection(host_name='localhost', username='root', password='root', database='test')
+        clickhouse_conn.create_connection()
+        clickhouse_conn.execute_sql('truncate table products')
+
+        time.sleep(20)
+
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        table_name = 'products'
+        # Start with empty table
+        conn.execute_sql(f"truncate table {table_name}")
+        conn.execute_sql(f"select * from {table_name} limit 1")
+
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query_1 = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        fake_row_1 = FakeData.get_fake_products_row()
+        conn.execute_sql(sql_query_1, fake_row_1)
+
+        conn.execute_sql(f"truncate table {table_name}")
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query_2 = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        conn.execute_sql(sql_query_2, fake_row_1)
+
+
+        result = clickhouse_conn.execute_sql('select count(*) from products')
+
+        print(result)
+        conn.close()
+
     def generate_products_fake_records(self):
         '''
         Generate fake records for products table.
@@ -105,6 +143,7 @@ class MyTestCase(unittest.TestCase):
         #self.generate_employees_fake_records()
         #self.generate_products_fake_records()
         self.generate_products_fake_records()
+        #self.test_duplicate_inserts()
 
 
 

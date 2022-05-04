@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
+import io.micrometer.core.instrument.Gauge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,7 +53,6 @@ public class ClickHouseBatchRunnable implements Runnable {
         String password = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS);
         //String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE);
 
-        UUID blockUuid = UUID.randomUUID();
 
         for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
 
@@ -61,21 +61,31 @@ public class ClickHouseBatchRunnable implements Runnable {
             //The user parameter will override the topic mapping to table.
             String tableName;
 
-            if(this.topic2TableMap.containsKey(topicName) == false) {
+            if (this.topic2TableMap.containsKey(topicName) == false) {
                 tableName = Utils.getTableNameFromTopic(topicName);
                 this.topic2TableMap.put(topicName, tableName);
             } else {
                 tableName = this.topic2TableMap.get(topicName);
             }
 
-            // Initialize Timer to track time taken to transform and insert to Clickhouse.
-            Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
-            Timer.Context context = timer.time();
+            if (entry.getValue().size() > 0) {
+                UUID blockUuid = UUID.randomUUID();
 
-            DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-            writer.insert(entry.getValue());
-            context.stop();
+                // Initialize Timer to track time taken to transform and insert to Clickhouse.
+                Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + records.size());
+                Timer.Context context = timer.time();
+
+                DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
+                writer.insert(entry.getValue());
+                context.stop();
+
+                Gauge gauge = Gauge.builder("clickhouse.sink.records", entry.getValue().size(), Integer::new)
+                        .tag("UUID", blockUuid.toString())
+                        .tag("topic", topicName).tag("table", tableName).register(Metrics.meterRegistry());
+
+
+
+            }
         }
-
     }
 }

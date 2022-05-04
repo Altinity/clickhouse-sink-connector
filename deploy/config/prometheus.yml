@@ -6,3 +6,7 @@ scrape_configs:
     static_configs:
       - targets:
           - jmx_exporter:9072
+  - job_name: 'sink'
+    static_configs:
+      - targets:
+          - sink:8084
