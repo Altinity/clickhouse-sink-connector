@@ -41,15 +41,6 @@ helm version
 ```
 
 ### cert-manager
-```bash
-docker image pull quay.io/jetstack/cert-manager-controller:v1.4.0
-docker image pull quay.io/jetstack/cert-manager-cainjector:v1.4.0
-docker image pull quay.io/jetstack/cert-manager-webhook:v1.4.0
-
-minikube image load quay.io/jetstack/cert-manager-controller:v1.4.0
-minikube image load quay.io/jetstack/cert-manager-cainjector:v1.4.0
-minikube image load quay.io/jetstack/cert-manager-webhook:v1.4.0
-```
 
 ```bash
 VERSION="v1.4.0"
@@ -72,30 +63,7 @@ kubectl -n $NAMESPACE rollout status -w deployment/cert-manager-webhook
 kubectl -n $NAMESPACE get pod
 ```
 
-```bash
-kubectl get pod -n $NAMESPACE
-NAME                                       READY   STATUS    RESTARTS   AGE
-cert-manager-798f8bb594-n6fsm              1/1     Running   0          43s
-cert-manager-cainjector-5bb9bfbb5c-bzvvq   1/1     Running   0          43s
-cert-manager-webhook-69579b9ccd-ldhgb      1/1     Running   0          43s
-
-```
-
 ### redpanda-operator
-
-
-
-```bash
-docker image pull   vectorized/redpanda-operator:v21.11.15
-docker image pull   vectorized/redpanda:v21.11.15
-docker image pull   vectorized/configurator:v21.11.15
-docker image pull   gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
-
-minikube image load vectorized/redpanda-operator:v21.11.15
-minikube image load vectorized/redpanda:v21.11.15
-minikube image load vectorized/configurator:v21.11.15
-minikube image load gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
-```
 
 ```bash
 #VERSION=$(curl -s https://api.github.com/repos/redpanda-data/redpanda/releases/latest | jq -r .tag_name)
@@ -133,11 +101,6 @@ kubectl -n $NAMESPACE create -f redpanda-internal.yaml
 ### mysql-operator
 
 ```bash
-docker   image pull mysql/mysql-operator:8.0.29-2.0.4
-minikube image load mysql/mysql-operator:8.0.29-2.0.4
-```
-
-```bash
 NAMESPACE="mysql"
 VERSION="2.0.4"
 echo "Install mysql-operator. Version: $VERSION Namespace: $NAMESPACE" && \
@@ -157,14 +120,6 @@ kubectl -n $NAMESPACE rollout status -w deployment/mysql-operator
 kubectl -n $NAMESPACE get pod
 ```
 
-```bash
-docker   image pull mysql/mysql-server:8.0.29
-docker   image pull mysql/mysql-router:8.0.29
-
-minikube image load mysql/mysql-server:8.0.29
-minikube image load mysql/mysql-router:8.0.29 
-```
-
 ### mysql cluster
 ```bash
 NAMESPACE="mysql"
@@ -175,20 +130,6 @@ kubectl -n "${NAMESPACE}" apply -f mysql.yaml
 ### clickhouse
 
 ```bash
-docker   image pull altinity/clickhouse-operator:0.18.4
-docker   image pull altinity/metrics-exporter:0.18.4
-
-minikube image load altinity/clickhouse-operator:0.18.4
-minikube image load altinity/metrics-exporter:0.18.4
-```
-
-```bash
-```bash
-docker   image pull clickhouse/clickhouse-server:22.3.5.5
-minikube image load clickhouse/clickhouse-server:22.3.5.5
-```
-
-```bash
 NAMESPACE=clickhouse
 INSTALL_SH="https://raw.githubusercontent.com/Altinity/clickhouse-operator/master/deploy/operator-web-installer/clickhouse-operator-install.sh"
 curl -s ${INSTALL_SH} | OPERATOR_NAMESPACE="${NAMESPACE}" bash
@@ -196,6 +137,8 @@ curl -s ${INSTALL_SH} | OPERATOR_NAMESPACE="${NAMESPACE}" bash
 
 ## Local alternative installation
 ```bash
+NAMESPACE=clickhouse
+kubectl create namespace $NAMESPACE
 kubectl -n ${NAMESPACE} apply -f <( \
   cat clickhouse-operator-install-template.yaml | \
     OPERATOR_NAMESPACE="clickhouse" \
@@ -218,11 +161,6 @@ kubectl -n $NAMESPACE apply -f clickhouse.yaml
 ### schema registry
 
 ```bash
-docker   image pull apicurio/apicurio-registry-mem:2.0.0.Final
-minikube image load apicurio/apicurio-registry-mem:2.0.0.Final 
-```
-
-```bash
 NAMESPACE="registry"
 kubectl create namespace ${NAMESPACE}
 kubectl -n ${NAMESPACE} apply -f schema-registry.yaml
@@ -234,14 +172,6 @@ kubectl -n $NAMESPACE get pod
 ```
 
 ### Strimzi
-
-```bash
-docker   image pull quay.io/strimzi/operator:0.28.0
-docker   image pull quay.io/strimzi/kaniko-executor:0.28.0
-
-minikube image load quay.io/strimzi/operator:0.28.0
-minikube image load quay.io/strimzi/kaniko-executor:0.28.0 
-```
 
 ```bash
 VERSION="0.28.0"
@@ -286,11 +216,6 @@ echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 
 mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 ```
 
-```bash
-docker   image pull sunsingerus/debezium-mysql-source-connector:latest
-minikube image load sunsingerus/debezium-mysql-source-connector:latest
-```
-
 ### create secret
 ```bash
 NAMESPACE=debezium
@@ -315,6 +240,7 @@ data:
 NAMESPACE="debezium"
 kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f debezium-connect.yaml
+sleep 10
 kubectl -n $NAMESPACE rollout status -w deployment/debezium-connect
 kubectl -n $NAMESPACE get pod
 
@@ -382,16 +308,17 @@ rm -f ${BASE}/deploy/k8s/artefacts/*.tgz
 NAMESPACE="sink"
 kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f sink-connect.yaml
-sleep 10
+sleep 5
 echo -n "Building"
 while kubectl -n $NAMESPACE get pod/sink-connect-build > /dev/null 2>&1; do
   echo -n "."
   sleep 1 
 done
 echo "done"
+sleep 5
 kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
 kubectl -n $NAMESPACE get pod
-
+sleep 5
 kubectl -n $NAMESPACE apply -f <( \
   cat sink-connector-avro.yaml | \
     CLICKHOUSE_HOST="clickhouse-clickhouse.clickhouse" \
