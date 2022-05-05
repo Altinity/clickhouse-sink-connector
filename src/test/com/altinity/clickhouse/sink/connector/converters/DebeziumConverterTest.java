@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.db.Constants;
+import com.altinity.clickhouse.sink.connector.db.DataTypeRange;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -25,6 +25,24 @@ public class DebeziumConverterTest {
     }
 
     @Test
+    public void testTimestampConverterMinRange() {
+
+        Object timestampEpoch = -2166681362000L;
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch);
+
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME));
+    }
+
+    @Test
+    public void testTimestampConverterMaxRange() {
+
+        Object timestampEpoch = 4807440238000L;
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch);
+
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME));
+    }
+
+    @Test
     public void testDateConverter() {
 
         Integer date = 3652;
@@ -39,7 +57,7 @@ public class DebeziumConverterTest {
         Integer date = -144450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(Constants.CLICKHOUSE_MIN_SUPPORTED_DATE));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE));
     }
     @Test
     public void testDateConverterMaxRange() {
@@ -47,7 +65,7 @@ public class DebeziumConverterTest {
         Integer date = 450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(Constants.CLICKHOUSE_MAX_SUPPORTED_DATE));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE));
     }
 
     @Test
