@@ -227,11 +227,11 @@ public class ClickHouseConverter implements AbstractConverter {
         Map<String, Object> result = null;
 
         if (schema == null) {
+            log.debug("schema is null");
             if (obj instanceof Map) {
                 log.info("SCHEMA LESS RECORD");
             }
         } else {
-
             if (schema.type() != Schema.Type.STRUCT) {
                 log.warn("NON STRUCT records ignored");
             } else {

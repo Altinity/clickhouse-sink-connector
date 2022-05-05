@@ -26,9 +26,9 @@ spec:
       - name: clickhouse-sink-connector
         artifacts:
           - type: tgz
-            url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
-          - type: tgz
             url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
+          - type: tgz
+            url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
   config:
     group.id: 2
 
@@ -44,3 +44,11 @@ spec:
     status.storage.topic: status-storage-topic-sink
     status.storage.replication.factor: 1
     status.storage.partitions: 1
+
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+
+  logging:
+    type: inline
+    loggers:
+      log4j.rootLogger: "DEBUG"
