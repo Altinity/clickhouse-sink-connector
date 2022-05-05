@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.db.Constants;
+import com.altinity.clickhouse.sink.connector.db.DataTypeRange;
 
 import java.sql.Date;
 import java.text.SimpleDateFormat;
@@ -39,9 +39,26 @@ public class DebeziumConverter {
          */
         public static String convert(Object value) {
             LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
+
+            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date);
             DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
 
-            return date.format(formatter);
+            return modifiedDate.format(formatter);
+        }
+
+        public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime) {
+            LocalDateTime minSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME);
+            LocalDateTime maxSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME);
+
+
+            if(providedDateTime.isBefore(minSupportedDateTime)) {
+                return minSupportedDateTime;
+            } else if (providedDateTime.isAfter(maxSupportedDateTime)){
+                return maxSupportedDateTime;
+            }
+
+            return providedDateTime;
+
         }
     }
 
@@ -67,8 +84,8 @@ public class DebeziumConverter {
         }
 
         public static java.util.Date checkIfDateExceedsSupportedRange(java.util.Date providedDate) {
-            java.util.Date minSupportedDate = Date.valueOf(Constants.CLICKHOUSE_MIN_SUPPORTED_DATE);
-            java.util.Date maxSupportedDate = Date.valueOf(Constants.CLICKHOUSE_MAX_SUPPORTED_DATE);
+            java.util.Date minSupportedDate = Date.valueOf(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE);
+            java.util.Date maxSupportedDate = Date.valueOf(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE);
 
             if(providedDate.before(minSupportedDate)) {
                 return minSupportedDate;
