@@ -28,6 +28,8 @@ spec:
           - type: tgz
             url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
           - type: tgz
+            url: https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz
+          - type: tgz
             url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
   config:
     group.id: 2
