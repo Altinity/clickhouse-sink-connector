@@ -19,7 +19,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverter() {
 
         Object timestampEpoch = 1640995260000L;
-        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch);
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31T19:01:00"));
     }
@@ -28,7 +28,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMinRange() {
 
         Object timestampEpoch = -2166681362000L;
-        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch);
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME));
     }
@@ -37,7 +37,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMaxRange() {
 
         Object timestampEpoch = 4807440238000L;
-        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch);
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME));
     }

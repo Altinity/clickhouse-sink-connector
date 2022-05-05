@@ -37,19 +37,24 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value) {
+        public static String convert(Object value, boolean isDateTime64) {
             LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
 
-            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date);
+            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, isDateTime64);
             DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
 
             return modifiedDate.format(formatter);
         }
 
-        public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime) {
+        public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {
+
             LocalDateTime minSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME);
             LocalDateTime maxSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME);
 
+            if(isDateTime64 == true) {
+                minSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME);
+                maxSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME);
+            }
 
             if(providedDateTime.isBefore(minSupportedDateTime)) {
                 return minSupportedDateTime;

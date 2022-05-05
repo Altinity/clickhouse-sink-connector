@@ -3,10 +3,10 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
-
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.sql.PreparedStatement;
 import java.util.HashMap;
@@ -51,12 +51,32 @@ public class DbWriterTest {
     }
 
     @Test
+    public void testIsColumnTypeDate64() {
+       boolean result = DbWriter.isColumnDateTime64("Nullable(DateTime64(3))");
+    }
+    @Test
+    @Tag("IntegrationTest")
+    public void testGetColumnsDataTypesForTable() {
+
+        String dbHostName = "localhost";
+        Integer port = 8123;
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<String, String>()));
+        writer.getColumnsDataTypesForTable("employees");
+
+    }
+
+    @Test
     public void testInsertPreparedStatement() {
         String hostName = "remoteClickHouse";
         Integer port = 8123;
         String database = "employees";
         String connectionUrl = writer.getConnectionString(hostName, port, database);
-
 
     }
 

@@ -92,6 +92,22 @@ public class DbWriter {
 
 
     /**
+     * Function to check if the column is of DateTime64
+     * from the column type(string name)
+     * @param columnType
+     * @return true if its DateTime64, false otherwise.
+     */
+    public static boolean isColumnDateTime64(String columnType){
+        //ClickHouseDataType dt = ClickHouseDataType.of(columnType);
+        //ToDo: Figure out a way to get the ClickHouseDataType
+        // from column name.
+        boolean result = false;
+        if(columnType.contains("DateTime64")){
+            result = true;
+        }
+        return result;
+    }
+    /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
      */
@@ -99,6 +115,10 @@ public class DbWriter {
 
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
+            if(this.conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
 
             ResultSet columns = this.conn.getMetaData().getColumns(null, null,
                     tableName, null);
@@ -106,6 +126,7 @@ public class DbWriter {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
 
+                Object dataType = columns.getString("DATA_TYPE");
                 String columnSize = columns.getString("COLUMN_SIZE");
                 String isNullable = columns.getString("IS_NULLABLE");
                 String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
@@ -343,7 +364,7 @@ public class DbWriter {
             } else if (isFieldDateTime || isFieldTime) {
                 if (isFieldDateTime) {
                     if (value instanceof Long) {
-                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value));
+                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64(colName)));
                     }
                 } else if (isFieldTime) {
                     ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
