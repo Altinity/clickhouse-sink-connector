@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.db.Constants;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -30,6 +31,23 @@ public class DebeziumConverterTest {
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
         Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1979-12-31"));
+    }
+
+    @Test
+    public void testDateConverterMinRange() {
+
+        Integer date = -144450000;
+        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
+
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(Constants.CLICKHOUSE_MIN_SUPPORTED_DATE));
+    }
+    @Test
+    public void testDateConverterMaxRange() {
+
+        Integer date = 450000;
+        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
+
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(Constants.CLICKHOUSE_MAX_SUPPORTED_DATE));
     }
 
     @Test

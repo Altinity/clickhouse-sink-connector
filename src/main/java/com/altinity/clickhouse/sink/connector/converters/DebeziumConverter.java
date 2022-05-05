@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.db.Constants;
+
 import java.sql.Date;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
@@ -45,7 +47,11 @@ public class DebeziumConverter {
 
     public static class DateConverter {
 
+
         /**
+         * MySQL: The DATE type is used for values with a date part but no time part.
+         * MySQL retrieves and displays DATE values in 'YYYY-MM-DD' format. The supported range is '1000-01-01' to '9999-12-31'.
+         *
          * Function to convert Debezium Date fields
          * to java.sql.Date
          * @param value
@@ -54,7 +60,24 @@ public class DebeziumConverter {
         public static Date convert(Object value) {
             long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
             java.util.Date date = new java.util.Date(msSinceEpoch);
-            return new java.sql.Date(date.getTime());
+
+            java.util.Date modifiedDate = checkIfDateExceedsSupportedRange(date);
+
+            return new java.sql.Date(modifiedDate.getTime());
+        }
+
+        public static java.util.Date checkIfDateExceedsSupportedRange(java.util.Date providedDate) {
+            java.util.Date minSupportedDate = Date.valueOf(Constants.CLICKHOUSE_MIN_SUPPORTED_DATE);
+            java.util.Date maxSupportedDate = Date.valueOf(Constants.CLICKHOUSE_MAX_SUPPORTED_DATE);
+
+            if(providedDate.before(minSupportedDate)) {
+                return minSupportedDate;
+            } else if (providedDate.after(maxSupportedDate)){
+                return maxSupportedDate;
+            }
+
+            return providedDate;
+
         }
     }
 
