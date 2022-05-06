@@ -47,7 +47,10 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "topic.creation.default.partitions": 3,
 
     "store.raw.data": true,
-    "store.raw.data.column": "raw_data"
+    "store.raw.data.column": "raw_data",
+
+    "metrics.enable": true,
+    "metrics.port": 8084
 
 
   }

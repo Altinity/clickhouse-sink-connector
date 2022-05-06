@@ -82,14 +82,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                 MutablePair<Long, Long> offsets = writer.insert(entry.getValue());
                 context.stop();
 
-                Metrics.getClickHouseSinkRecordsCounter()
-                        .tag("UUID", blockUuid.toString())
-                        .tag("topic", topicName)
-                        .tag("table", tableName)
-                        .tag("minOffset", offsets.left.toString())
-                        .tag("maxOffset", offsets.right.toString())
-
-                        .register(Metrics.meterRegistry()).increment(numRecords);
+                Metrics.updateSinkRecordsCounter(blockUuid.toString(), topicName, tableName,
+                        offsets.left.toString(), offsets.right.toString(), numRecords);
 
             }
         }

@@ -220,6 +220,26 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS,
+                        Type.BOOLEAN,
+                        "true",
+                        Importance.LOW,
+                        "True, if the metrics endpoint has to be enabled, false otherwise",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT,
+                        Type.INT,
+                        8084,
+                        Importance.LOW,
+                        "Metrics endpoint Port",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA,
                         Type.BOOLEAN,
                         "false",

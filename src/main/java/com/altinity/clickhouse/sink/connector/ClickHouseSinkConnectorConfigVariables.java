@@ -33,4 +33,12 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Buffer flush time in seconds.
     public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";
 
+    // Flag to enable prometheus metrics and to start a prometheus scrape server endpoint.
+    public static final String ENABLE_METRICS = "metrics.enable";
+
+    // Defines the port in which the metrics endpoint will be started
+    // for prometheus to scrape metrics.
+    public static final String METRICS_ENDPOINT_PORT = "metrics.port";
+
+
 }

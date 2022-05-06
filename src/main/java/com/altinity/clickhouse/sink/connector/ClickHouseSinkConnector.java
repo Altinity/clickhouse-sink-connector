@@ -42,7 +42,8 @@ public class ClickHouseSinkConnector extends SinkConnector {
         this.ready = true;
 
         // Initialize Metrics
-        Metrics.initialize();
+        Metrics.initialize(this.config.get(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS),
+                this.config.get(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT));
     }
 
     /**
@@ -109,6 +110,10 @@ public class ClickHouseSinkConnector extends SinkConnector {
         conf.put(Const.NAME, "TEST_CONNECTOR");
         Config result = super.validate(conf);
         log.info("Config validated");
+
+        //ToDo: Also validate connection to clickhouse server
+        // and check if database and schema is valid.
+
         return result;
     }
 
