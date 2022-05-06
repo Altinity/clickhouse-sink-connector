@@ -33,7 +33,7 @@ public class DeDuplicator {
      * FIFO of de-duplication keys. Is limited by maxPoolSize. As soon as limit is exceeded, all older entries
      * are removed from both FIFO and the pool.
      */
-    private LinkedList<Object> queue;
+    private final LinkedList<Object> queue;
     /**
      * Max number of records in de-duplication pool.
      */
@@ -50,8 +50,8 @@ public class DeDuplicator {
      */
     public DeDuplicator(ClickHouseSinkConnectorConfig config) {
         this.config = config;
-        this.records = new HashMap<Object, Object>();
-        this.queue = new LinkedList<Object>();
+        this.records = new HashMap<>();
+        this.queue = new LinkedList<>();
         // Prepare configuration values
         this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
         this.policy = DeDuplicationPolicy.of(this.config.getString(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY));
