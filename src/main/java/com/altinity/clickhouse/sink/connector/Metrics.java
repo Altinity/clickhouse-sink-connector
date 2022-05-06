@@ -32,7 +32,12 @@ public class Metrics {
 
     private static Counter.Builder clickHouseSinkRecordsCounter;
     private static HttpServer server;
-    public static void initialize() {
+
+    private static boolean enableMetrics = false;
+
+    private static int port = 8084;
+
+    public static void initialize(String enableFlag, String metricsPort) {
         registry = new MetricRegistry();
         registry.register("memory", new MemoryUsageGaugeSet());
 
@@ -43,19 +48,38 @@ public class Metrics {
 //                .build();
 //        reporter.start(1, TimeUnit.MINUTES);
 
+        parseConfiguration(enableFlag, metricsPort);
 
-        meterRegistry =
-                new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        if(enableMetrics == true) {
+            meterRegistry =
+                    new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
 
-        exposePrometheusPort(meterRegistry);
-        registerMetrics();
+            exposePrometheusPort(meterRegistry);
+            registerMetrics();
+        }
+    }
+
+    private static void parseConfiguration(String enableFlag, String metricsPort) {
+        if(enableFlag != null) {
+            try {
+                enableMetrics = Boolean.parseBoolean(enableFlag);
+                log.info("METRICS enabled: " + enableMetrics);
+            } catch(Exception e) {
+                log.error("Exception parsing Metrics flag", e);
+            }
+        }
+        if(metricsPort != null) {
+            log.info("METRICS server started, Port: "+ metricsPort);
+            try {
+                port = Integer.parseInt(metricsPort);
+            } catch(NumberFormatException ne) {
+                log.error("Error parsing metrics port", ne);
+            }
+        }
     }
 
     private static void registerMetrics() {
-        //ToDO: Dont want to keep a strong reference.
-//        clickHouseSinkRecordsGauge = Gauge.builder("clickhouse.sink.records", 0, Integer::new)
-//                .register(Metrics.meterRegistry());
 
         clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
 
@@ -64,7 +88,7 @@ public class Metrics {
 
 
         try {
-            server = HttpServer.create(new InetSocketAddress(8084), 0);
+            server = HttpServer.create(new InetSocketAddress(port), 0);
             server.createContext("/metrics", httpExchange -> {
                 String response = prometheusMeterRegistry.scrape();
                 httpExchange.sendResponseHeaders(200, response.getBytes().length);
@@ -89,6 +113,20 @@ public class Metrics {
     }
 
     public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
+
+    public static void updateSinkRecordsCounter(String blockUUid, String topicName, String tableName,
+                                                String minOffset, String maxOffset, int numRecords) {
+        if(enableMetrics == false) {
+            Metrics.getClickHouseSinkRecordsCounter()
+                    .tag("UUID", blockUUid)
+                    .tag("topic", topicName)
+                    .tag("table", tableName)
+                    .tag("minOffset", minOffset)
+                    .tag("maxOffset", maxOffset)
+
+                    .register(Metrics.meterRegistry()).increment(numRecords);
+        }
+    }
 
     public static Gauge getClickHouseSinkRecordsGauge(){return clickHouseSinkRecordsGauge;}
 
