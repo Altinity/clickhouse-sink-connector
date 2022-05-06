@@ -13,6 +13,7 @@ import io.debezium.time.Date;
 import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -140,16 +141,20 @@ public class DbWriter {
     }
 
     /**
-     * Creates INSERT statement and runs it over connection
-     *
-     * @param records
+     * Function that uses clickhouse-jdbc library
+     * to insert records in bulk
+     * @param records Records to be inserted into clickhouse
+     * @return Tuple of minimum and maximum kafka offset
      */
-    public void insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public MutablePair<Long, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
 
         if (records.isEmpty()) {
             log.info("No Records to process");
-            return;
+            return new MutablePair<>(0L, 0L);
         }
+
+        long minOffset = 0;
+        long maxOffset = 0;
 
         // Get the first record to get length of columns
         //ToDo: This wont work where there are fields with different lengths.
@@ -163,6 +168,16 @@ public class DbWriter {
         Iterator iterator = records.iterator();
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
+
+            // Identify the min and max offsets of the bulk
+            // thats inserted.
+            if(record.getKafkaOffset() < minOffset) {
+                minOffset = record.getKafkaOffset();
+            }
+
+            if(record.getKafkaOffset() > maxOffset) {
+                maxOffset = record.getKafkaOffset();
+            }
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
                     (this.tableName, this.columnNameToDataTypeMap);
@@ -211,6 +226,8 @@ public class DbWriter {
                 log.warn("insert Batch exception", e);
             }
         }
+
+        return new MutablePair<>(minOffset, maxOffset);
     }
 
     /**

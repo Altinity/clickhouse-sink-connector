@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,13 +79,16 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-                writer.insert(entry.getValue());
+                MutablePair<Long, Long> offsets = writer.insert(entry.getValue());
                 context.stop();
 
                 Metrics.getClickHouseSinkRecordsCounter()
                         .tag("UUID", blockUuid.toString())
                         .tag("topic", topicName)
                         .tag("table", tableName)
+                        .tag("minOffset", offsets.left.toString())
+                        .tag("maxOffset", offsets.right.toString())
+
                         .register(Metrics.meterRegistry()).increment(numRecords);
 
             }
