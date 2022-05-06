@@ -182,6 +182,13 @@ kubectl -n $NAMESPACE rollout status -w deployment/schema-registry
 kubectl -n $NAMESPACE get pod
 ```
 
+Ensure schema registry is empty
+
+```bash
+kubectl -n registry port-forward service/schema-registry 8080:8080
+firefox http://localhost:8080/ui/artifacts
+```
+
 ### Strimzi
 
 ```bash
@@ -271,8 +278,21 @@ kubectl -n $NAMESPACE apply -f <( \
     envsubst )
 ```
 
+Ensure schema registry is **NOT empty**
+
+```bash
+kubectl -n registry port-forward service/schema-registry 8080:8080
+firefox http://localhost:8080/ui/artifacts
+```
+
+Ensure Kafka records
+
 ```bash
 rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
+```
+
+```bash
+kubectl -n redpanda exec redpanda-0 -c redpanda -- rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ```
 
 ### sink
@@ -344,12 +364,6 @@ kubectl -n $NAMESPACE apply -f <( \
     REGISTRY_URL="http://schema-registry.registry:8080/apis/registry/v2" \
     envsubst )
 ```
-
-```bash
-kubectl -n registry port-forward service/schema-registry 8080:8080
-firefox http://localhost:8080/ui/artifacts
-```
-
 
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
