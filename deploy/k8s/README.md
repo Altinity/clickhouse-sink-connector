@@ -127,6 +127,11 @@ kubectl create ns "${NAMESPACE}"
 kubectl -n "${NAMESPACE}" apply -f mysql.yaml
 ```
 
+```bash
+kubectl -n $NAMESPACE rollout status -w statefulset/mysql
+kubectl -n $NAMESPACE get statefulset
+```
+
 ### clickhouse
 
 ```bash
@@ -157,6 +162,11 @@ kubectl -n $NAMESPACE get pod
 NAMESPACE=clickhouse
 kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE apply -f clickhouse.yaml
+```
+
+```bash
+kubectl -n $NAMESPACE rollout status -w statefulset/chi-clickhouse-cluster-0-0
+kubectl -n $NAMESPACE get statefulset
 ```
 
 ### schema registry
