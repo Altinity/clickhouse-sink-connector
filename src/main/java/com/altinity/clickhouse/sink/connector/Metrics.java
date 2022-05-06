@@ -119,7 +119,7 @@ public class Metrics {
 
     public static void updateSinkRecordsCounter(String blockUUid, String topicName, String tableName,
                                                 HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap, int numRecords) {
-        if(enableMetrics == false) {
+        if(enableMetrics == true) {
             for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
 
                 MutablePair<Long, Long> offsetTuple = entry.getValue();
