@@ -69,8 +69,9 @@ public class ClickHouseBatchRunnable implements Runnable {
             if (entry.getValue().size() > 0) {
                 UUID blockUuid = UUID.randomUUID();
 
+                int numRecords = entry.getValue().size();
                 log.info("*************** BULK INSERT TO CLICKHOUSE **************");
-                log.info("*************** RECORDS: {}", entry.getValue().size());
+                log.info("*************** RECORDS: {}", numRecords);
 
                 // Initialize Timer to track time taken to transform and insert to Clickhouse.
                 Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + entry.getValue().size());
@@ -84,7 +85,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                         .tag("UUID", blockUuid.toString())
                         .tag("topic", topicName)
                         .tag("table", tableName)
-                        .register(Metrics.meterRegistry()).increment(entry.getValue().size());
+                        .register(Metrics.meterRegistry()).increment(numRecords);
 
             }
         }
