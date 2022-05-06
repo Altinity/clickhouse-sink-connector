@@ -5,7 +5,11 @@ The connector is tested with the following converters
 - JsonConverter
 - AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/))
 
-Currently the connector only supports <b>Insert</b> operations.
+
+- Currently the connector only supports <b>Insert</b> operations.
+- Deduplication logic to dedupe records from Kafka topic.
+- Exactly once semantics 
+- Bulk insert to Clickhouse.
 
 
 

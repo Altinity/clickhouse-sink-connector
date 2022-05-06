@@ -79,11 +79,11 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-                MutablePair<Long, Long> offsets = writer.insert(entry.getValue());
+                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetsMap = writer.insert(entry.getValue());
                 context.stop();
 
                 Metrics.updateSinkRecordsCounter(blockUuid.toString(), topicName, tableName,
-                        offsets.left.toString(), offsets.right.toString(), numRecords);
+                        partitionToOffsetsMap, numRecords);
 
             }
         }

@@ -146,15 +146,14 @@ public class DbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public MutablePair<Long, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public HashMap<Integer, MutablePair<Long, Long>> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+
+        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
             log.info("No Records to process");
-            return new MutablePair<>(0L, 0L);
+            return partitionToOffsetMap;
         }
-
-        long minOffset = 0;
-        long maxOffset = 0;
 
         // Get the first record to get length of columns
         //ToDo: This wont work where there are fields with different lengths.
@@ -169,14 +168,31 @@ public class DbWriter {
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
+            long minOffset = 0;
+            long maxOffset = 0;
+
             // Identify the min and max offsets of the bulk
             // thats inserted.
+            int recordPartition = record.getKafkaPartition();
+            if(partitionToOffsetMap.containsKey(recordPartition)) {
+                MutablePair<Long, Long> offsetsPair = partitionToOffsetMap.get(recordPartition);
+                minOffset = offsetsPair.left;
+                maxOffset = offsetsPair.right;
+            }
+
+            boolean offsetUpdated = false;
             if(record.getKafkaOffset() < minOffset) {
                 minOffset = record.getKafkaOffset();
+                offsetUpdated = true;
             }
 
             if(record.getKafkaOffset() > maxOffset) {
                 maxOffset = record.getKafkaOffset();
+                offsetUpdated = true;
+            }
+
+            if(true == offsetUpdated) {
+                partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
             }
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
@@ -227,7 +243,7 @@ public class DbWriter {
             }
         }
 
-        return new MutablePair<>(minOffset, maxOffset);
+        return partitionToOffsetMap;
     }
 
     /**

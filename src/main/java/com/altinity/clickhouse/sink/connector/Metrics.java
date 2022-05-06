@@ -9,11 +9,14 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Metrics class using io.dropwizard library
@@ -115,16 +118,21 @@ public class Metrics {
     public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
 
     public static void updateSinkRecordsCounter(String blockUUid, String topicName, String tableName,
-                                                String minOffset, String maxOffset, int numRecords) {
+                                                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap, int numRecords) {
         if(enableMetrics == false) {
-            Metrics.getClickHouseSinkRecordsCounter()
-                    .tag("UUID", blockUUid)
-                    .tag("topic", topicName)
-                    .tag("table", tableName)
-                    .tag("minOffset", minOffset)
-                    .tag("maxOffset", maxOffset)
+            for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
 
-                    .register(Metrics.meterRegistry()).increment(numRecords);
+                MutablePair<Long, Long> offsetTuple = entry.getValue();
+                Metrics.getClickHouseSinkRecordsCounter()
+                        .tag("UUID", blockUUid)
+                        .tag("topic", topicName)
+                        .tag("table", tableName)
+                        .tag("minOffset", offsetTuple.left.toString())
+                        .tag("maxOffset", offsetTuple.right.toString())
+                        .tag("partition", Integer.toString(entry.getKey()))
+
+                        .register(Metrics.meterRegistry()).increment(numRecords);
+            }
         }
     }
 
