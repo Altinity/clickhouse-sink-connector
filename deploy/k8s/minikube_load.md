@@ -52,5 +52,9 @@ minikube image load quay.io/strimzi/operator:0.28.0
 minikube image load quay.io/strimzi/kaniko-executor:0.28.0 
 
 ### debezium source connector 
-#docker   image pull sunsingerus/debezium-mysql-source-connector:latest
-#minikube image load sunsingerus/debezium-mysql-source-connector:latest
+docker   image pull sunsingerus/debezium-mysql-source-connector:latest
+minikube image load sunsingerus/debezium-mysql-source-connector:latest
+
+### clickhouse sink connector
+docker   image pull sunsingerus/clickhouse-kafka-sink-connector:latest
+minikube image load sunsingerus/clickhouse-kafka-sink-connector:latest
