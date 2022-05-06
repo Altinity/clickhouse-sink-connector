@@ -5,7 +5,6 @@ set -e
 
 # Source configuration
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-echo ${CUR_DIR}
 SRC_ROOT="$(realpath "${CUR_DIR}/..")"
 
 # Externally configurable build-dependent options
