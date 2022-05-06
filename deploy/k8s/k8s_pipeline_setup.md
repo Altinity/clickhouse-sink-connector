@@ -8,38 +8,6 @@
 5. Start streaming
 6. Clean up
 
-### minikube
-```bash
-wget https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-install minikube-linux-amd64 ~/bin/minikube
-rm minikube-linux-amd64 
-minikube version
-```
-
-```bash
-minikube start
-minikube status
-```
-
-### k9s
-```bash
-VERSION="v0.25.18"
-wget https://github.com/derailed/k9s/releases/download/$VERSION/k9s_Linux_x86_64.tar.gz
-install k9s ~/bin/k9s
-```
-
-### jq
-Ubuntu
-```bash
-sudo apt-get update && sudo apt-get install jq
-```
-
-### helm
-```bash
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | HELM_INSTALL_DIR=~/bin USE_SUDO=false bash
-helm version
-```
-
 ### cert-manager
 
 ```bash
@@ -56,6 +24,7 @@ cert-manager jetstack/cert-manager \
   --set installCRDs=true
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/cert-manager
 kubectl -n $NAMESPACE rollout status -w deployment/cert-manager-cainjector
@@ -80,7 +49,7 @@ helm install \
   --version $VERSION
 ```
 
-
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/redpanda-operator
 kubectl -n $NAMESPACE get pod
@@ -94,6 +63,12 @@ use CERT-MANAGER v 1.4
 NAMESPACE=redpanda
 kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE create -f redpanda-internal.yaml
+```
+
+Wait to start
+```bash
+kubectl -n $NAMESPACE rollout status -w statefulset/redpanda
+kubectl -n $NAMESPACE get statefulset
 ```
 
 ## mysql
@@ -114,7 +89,7 @@ helm install \
   --version $VERSION
 ```
 
-
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/mysql-operator
 kubectl -n $NAMESPACE get pod
@@ -127,9 +102,22 @@ kubectl create ns "${NAMESPACE}"
 kubectl -n "${NAMESPACE}" apply -f mysql.yaml
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w statefulset/mysql
 kubectl -n $NAMESPACE get statefulset
+```
+
+Fill MySQL with data
+```bash
+kubectl -n mysql port-forward service/mysql 3306:3306
+cat deploy/sql/mysql_schema_employees.sql | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
+cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+```
+
+```bash
+mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 ```
 
 ### clickhouse
@@ -153,10 +141,13 @@ kubectl -n ${NAMESPACE} apply -f <( \
     envsubst )
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/clickhouse-operator
 kubectl -n $NAMESPACE get pod
 ```
+
+### clickhouse-cluster
 
 ```bash
 NAMESPACE=clickhouse
@@ -164,6 +155,7 @@ kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE apply -f clickhouse.yaml
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w statefulset/chi-clickhouse-cluster-0-0
 kubectl -n $NAMESPACE get statefulset
@@ -177,13 +169,13 @@ kubectl create namespace ${NAMESPACE}
 kubectl -n ${NAMESPACE} apply -f schema-registry.yaml
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/schema-registry
 kubectl -n $NAMESPACE get pod
 ```
 
 Ensure schema registry is empty
-
 ```bash
 kubectl -n registry port-forward service/schema-registry 8080:8080
 firefox http://localhost:8080/ui/artifacts
@@ -205,54 +197,13 @@ helm install \
   --set watchAnyNamespace=true
 ```
 
+Wait to start
 ```bash
 kubectl -n $NAMESPACE rollout status -w deployment/strimzi-cluster-operator
 kubectl -n $NAMESPACE get pod
 ```
 
-```bash
-helm delete strimzi-kafka-operator
-```
-
-#$ helm install --name my-release --set logLevel=DEBUG,fullReconciliationIntervalMs=240000 strimzi/strimzi-kafka-operator
-
-#kafkaConnect.image.registry 	Override default Kafka Connect image registry 	nil
-#kafkaConnect.image.repository 	Override default Kafka Connect image repository 	nil
-#kafkaConnect.image.name 	Kafka Connect image name 	kafka
-#kafkaConnect.image.tagPrefix 	Override default Kafka Connect image tag prefix 	nil
-
 ### debezium
-
-```bash
-kubectl -n mysql port-forward service/mysql 3306:3306
-cat deploy/sql/mysql_schema_employees.sql | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
-cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-```
-
-```bash
-mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-```
-
-### create secret
-```bash
-NAMESPACE=debezium
-kubectl create ns ${NAMESPACE}
-kubectl -n ${NAMESPACE} create secret generic docker-access-secret \
-  --from-file=.dockerconfigjson=${HOME}/.docker/config.json \
-  --type=kubernetes.io/dockerconfigjson
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: debezium
-  name: docker-access-secret
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: cat ~/.docker/config.json | base64
-```
 
 ```bash
 NAMESPACE="debezium"
@@ -288,15 +239,16 @@ firefox http://localhost:8080/ui/artifacts
 Ensure Kafka records
 
 ```bash
-rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
-```
-
-```bash
 kubectl -n redpanda exec redpanda-0 -c redpanda -- rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
+
+```
+```bash
+rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ```
 
 ### sink
 
+### create schema
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
 cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
@@ -307,34 +259,7 @@ echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multili
 clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
 ```
 
-### create secret
-```bash
-NAMESPACE="sink"
-kubectl create namespace "${NAMESPACE}"
-kubectl -n ${NAMESPACE} create secret generic docker-access-secret \
-  --from-file=.dockerconfigjson=${HOME}/.docker/config.json \
-  --type=kubernetes.io/dockerconfigjson
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  namespace: debezium
-  name: docker-access-secret
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: cat ~/.docker/config.json | base64
-```
-
-```bash
-BASE=$(pwd)
-mvn clean compile package
-rm -f ${BASE}/deploy/k8s/artefacts/*.tgz
-(cd ${BASE}/deploy/libs; find . -name '*.jar' | xargs tar czvf ${BASE}/deploy/k8s/artefacts/libs.tgz)
-(cd ${BASE}/target;      find . -name '*.jar' | xargs tar czvf ${BASE}/deploy/k8s/artefacts/sink.tgz)
-```
-
+### sink-connector
 ```bash
 NAMESPACE="sink"
 kubectl create namespace "${NAMESPACE}"
@@ -365,6 +290,7 @@ kubectl -n $NAMESPACE apply -f <( \
     envsubst )
 ```
 
+Check data
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
 ```
