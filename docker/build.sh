@@ -13,7 +13,7 @@ DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector:${TAG}"
 
 # Externally configurable build-dependent options
 DOCKERFILE_DIR="${SRC_ROOT}/docker"
-DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile"
+DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-debezium-base"
 
 DOCKER_CMD="docker build -t ${DOCKER_IMAGE} -f ${DOCKERFILE} ${SRC_ROOT}"
 
