@@ -67,7 +67,7 @@ kubectl -n $NAMESPACE create -f redpanda-internal.yaml
 
 Wait to start
 ```bash
-kubectl -n $NAMESPACE rollout status -w statefulset/redpanda
+kubectl -n $NAMESPACE wait pod/redpanda-0 --for condition=Ready=True
 kubectl -n $NAMESPACE get statefulset
 ```
 
