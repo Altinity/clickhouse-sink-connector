@@ -3,6 +3,23 @@ FROM quay.io/strimzi/kafka:0.28.0-kafka-3.1.0
 LABEL maintainer="Altinity"
 
 USER root:root
-COPY deploy/libs/* /opt/kafka/plugins/clickhouse-kafka-sink-connector/
-COPY target/*.jar  /opt/kafka/plugins/clickhouse-kafka-sink-connector/
+
+RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/280d4c6e' \
+      && 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/280d4c6e.tgz' 'https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz' \
+      && 'tar' 'xvfz' '/opt/kafka/plugins/clickhouse-sink-connector/280d4c6e.tgz' '-C' '/opt/kafka/plugins/clickhouse-sink-connector/280d4c6e' \
+      && 'rm' '-vf' '/opt/kafka/plugins/clickhouse-sink-connector/280d4c6e.tgz'
+
+RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
+      && 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+      && 'tar' 'xvfz' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' '-C' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
+      && 'rm' '-vf' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz'
+
+RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/2824cdcf' \
+      && 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/2824cdcf.tgz' 'https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz' \
+      && 'tar' 'xvfz' '/opt/kafka/plugins/clickhouse-sink-connector/2824cdcf.tgz' '-C' '/opt/kafka/plugins/clickhouse-sink-connector/2824cdcf' \
+      && 'rm' '-vf' '/opt/kafka/plugins/clickhouse-sink-connector/2824cdcf.tgz'
+
 USER 1001
+
+#COPY deploy/libs/* /opt/kafka/plugins/clickhouse-kafka-sink-connector/
+#COPY target/*.jar  /opt/kafka/plugins/clickhouse-kafka-sink-connector/
