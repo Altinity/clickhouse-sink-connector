@@ -192,7 +192,11 @@ public class DbWriter {
             }
 
             if(true == offsetUpdated) {
-                partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
+                if(minOffset == 0) {
+                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(record.getKafkaOffset(), maxOffset));
+                } else {
+                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
+                }
             }
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
