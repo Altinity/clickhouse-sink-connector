@@ -155,6 +155,7 @@ kubectl -n $NAMESPACE get pod
 
 ```bash
 NAMESPACE=clickhouse
+kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE apply -f clickhouse.yaml
 ```
 
@@ -243,7 +244,7 @@ kubectl -n $NAMESPACE apply -f debezium-connect.yaml
 sleep 10
 kubectl -n $NAMESPACE rollout status -w deployment/debezium-connect
 kubectl -n $NAMESPACE get pod
-
+sleep 10
 kubectl -n $NAMESPACE apply -f <( \
   cat debezium-connector-avro.yaml | \
     MYSQL_HOST="mysql.mysql" \
@@ -269,7 +270,7 @@ rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
 cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
-echo "desc test.employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
+echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
 ```
 
 ```bash
@@ -308,17 +309,17 @@ rm -f ${BASE}/deploy/k8s/artefacts/*.tgz
 NAMESPACE="sink"
 kubectl create namespace "${NAMESPACE}"
 kubectl -n $NAMESPACE apply -f sink-connect.yaml
-sleep 5
-echo -n "Building"
-while kubectl -n $NAMESPACE get pod/sink-connect-build > /dev/null 2>&1; do
-  echo -n "."
-  sleep 1 
-done
-echo "done"
-sleep 5
+sleep 10
+#echo -n "Building"
+#while kubectl -n $NAMESPACE get pod/sink-connect-build > /dev/null 2>&1; do
+#  echo -n "."
+#  sleep 1 
+#done
+#echo "done"
+#sleep 5
 kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
 kubectl -n $NAMESPACE get pod
-sleep 5
+sleep 10
 kubectl -n $NAMESPACE apply -f <( \
   cat sink-connector-avro.yaml | \
     CLICKHOUSE_HOST="clickhouse-clickhouse.clickhouse" \
@@ -339,3 +340,12 @@ kubectl -n registry port-forward service/schema-registry 8080:8080
 firefox http://localhost:8080/ui/artifacts
 ```
 
+
+```bash
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
+```
+
+```bash
+echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+echo "select count() from employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+```
