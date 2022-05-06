@@ -2,5 +2,19 @@ FROM debezium/connect-base:1.9.2.Final
 
 LABEL maintainer="Altinity"
 
-COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
+USER root:root
+
+# Copy sink-connector
 COPY target/*.jar  /kafka/connect/clickhouse-kafka-sink-connector/
+
+# Copy libs
+COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
+
+# Copy apicurio
+RUN 'curl' '-L' '--output' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+      && 'tar' 'xvfz' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' '-C' '/kafka/connect/clickhouse-kafka-sink-connector' \
+      && 'rm' '-vf' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz/apicurio.tgz'
+
+RUN chown -R kafka:kafka /kafka/connect/
+
+USER kafka

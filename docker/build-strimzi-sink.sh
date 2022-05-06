@@ -15,6 +15,9 @@ DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector:${TAG}"
 DOCKERFILE_DIR="${SRC_ROOT}/docker"
 DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-strimzi-sink"
 
+echo "***************"
+echo "* Build image *"
+echo "***************"
 DOCKER_CMD="docker build -t ${DOCKER_IMAGE} -f ${DOCKERFILE} ${SRC_ROOT}"
 
 if ${DOCKER_CMD}; then
