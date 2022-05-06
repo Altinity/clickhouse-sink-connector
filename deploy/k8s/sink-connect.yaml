@@ -9,7 +9,7 @@ spec:
   version: 3.1.0
   replicas: 1
   #image: altinity/clickhouse-kafka-sink-connector:latest
-  #image: sunsingerus/clickhouse-kafka-sink-connector:latest
+  image: sunsingerus/clickhouse-kafka-sink-connector:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -17,20 +17,20 @@ spec:
 #        certificate: ca.crt
 
   # https://kafka.apache.org/documentation/#connectconfigs
-  build:
-    output:
-      type: docker
-      image: sunsingerus/clickhouse-sink-connector:latest
-      pushSecret: docker-access-secret
-    plugins:
-      - name: clickhouse-sink-connector
-        artifacts:
-          - type: tgz
-            url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
-          - type: tgz
-            url: https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz
-          - type: tgz
-            url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
+  #build:
+  #  output:
+  #    type: docker
+  #    image: sunsingerus/clickhouse-sink-connector:latest
+  #    pushSecret: docker-access-secret
+  #  plugins:
+  #    - name: clickhouse-sink-connector
+  #      artifacts:
+  #        - type: tgz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
+  #        - type: tgz
+  #          url: https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz
+  #        - type: tgz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
   config:
     group.id: 2
 
