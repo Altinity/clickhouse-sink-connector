@@ -20,4 +20,4 @@ jobs:
     - name: Build with Maven
       run: mvn -B package --file pom.xml
     - name: Build the Docker image
-      run: docker build . --file docker/Dockerfile --tag my-image-name:$(date +%s)
+      run: docker build . --file docker/Dockerfile-debezium-base --tag my-image-name:$(date +%s)
