@@ -70,8 +70,9 @@ public class ClickHouseBatchRunnable implements Runnable {
             if (entry.getValue().size() > 0) {
                 UUID blockUuid = UUID.randomUUID();
 
+                Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
                 int numRecords = entry.getValue().size();
-                log.info("*************** BULK INSERT TO CLICKHOUSE **************");
+                log.info("*************** BULK INSERT TO CLICKHOUSE ************** task:" + taskId);
                 log.info("*************** RECORDS: {}", numRecords);
 
                 // Initialize Timer to track time taken to transform and insert to Clickhouse.
@@ -82,7 +83,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetsMap = writer.insert(entry.getValue());
                 context.stop();
 
-                Metrics.updateSinkRecordsCounter(blockUuid.toString(), topicName, tableName,
+                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
                         partitionToOffsetsMap, numRecords);
 
             }

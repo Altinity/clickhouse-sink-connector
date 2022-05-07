@@ -117,13 +117,14 @@ public class Metrics {
 
     public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
 
-    public static void updateSinkRecordsCounter(String blockUUid, String topicName, String tableName,
+    public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,
                                                 HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap, int numRecords) {
         if(enableMetrics == true) {
             for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
 
                 MutablePair<Long, Long> offsetTuple = entry.getValue();
                 Metrics.getClickHouseSinkRecordsCounter()
+                        .tag("taskId", taskId.toString())
                         .tag("UUID", blockUUid)
                         .tag("topic", topicName)
                         .tag("table", tableName)
