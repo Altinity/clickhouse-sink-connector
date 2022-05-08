@@ -1,0 +1,23 @@
+FROM dongjinleekr/kafka-connect
+
+LABEL maintainer="Altinity"
+
+USER root:root
+
+# Copy sink-connector
+#COPY target/*.jar  /kafka/connect/clickhouse-kafka-sink-connector/
+
+# Copy libs
+#COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
+
+COPY target/*.jar /usr/local/share/kafka/plugins/
+COPY deploy/libs/* /usr/local/share/kafka/plugins/
+
+# Copy apicurio
+RUN 'curl' '-L' '--output' '/usr/local/share/kafka/plugins/apicurio.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+      && 'tar' 'xvfz' '/usr/local/share/kafka/plugins/apicurio.tgz' '-C' '/usr/local/share/kafka/plugins' \
+      && 'rm' '-vf' '/usr/local/share/kafka/plugins/apicurio.tgz'
+
+#RUN chown -R kafka:kafka /kafka/connect/
+
+#USER kafka
