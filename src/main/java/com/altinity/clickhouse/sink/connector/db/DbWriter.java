@@ -200,7 +200,7 @@ public class DbWriter {
             }
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
-                    (this.tableName, this.columnNameToDataTypeMap);
+                    (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap);
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
                 List<ClickHouseStruct> newList = new ArrayList<ClickHouseStruct>();
@@ -225,8 +225,8 @@ public class DbWriter {
                     List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
-                    insertPreparedStatement(ps, fields, record);
-                    //insertPreparedStatement(ps, record.getModifiedFields(), record);
+                    //insertPreparedStatement(ps, fields, record);
+                    insertPreparedStatement(ps, record.getModifiedFields(), record);
                     // Append parameters to the query
                     ps.addBatch();
                 }
@@ -279,11 +279,11 @@ public class DbWriter {
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
-        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-        //for(Field f: fields) {
+        //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+        for(Field f: fields) {
 
-            //String colName = f.name();
-            String colName = entry.getKey();
+            String colName = f.name();
+            //String colName = entry.getKey();
 
             // Kafka metdata columns.
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
@@ -329,7 +329,7 @@ public class DbWriter {
             //ToDo: Map the Clickhouse types as a Enum.
 
 
-            Field f = getFieldByColumnName(fields, colName);
+           // Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = record.getStruct().get(f);
