@@ -47,6 +47,12 @@ alter table employees add column `raw_data` Nullable(String);
 
 alter table employees add column `bytes_date` Nullable(String);
 
+alter table employees add column `binary_test_column` String;
+
+alter table employees add column `blob_med` String;
+
+alter table employees add column `blob_new` String;
+
 CREATE TABLE products(
   `productCode` String,
   `productName` String,

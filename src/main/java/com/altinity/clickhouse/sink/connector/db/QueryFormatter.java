@@ -71,7 +71,7 @@ public class QueryFormatter {
         colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
         colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
 
-        return String.format("insert into %s %s select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
+        return String.format("insert into %s(%s) select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
     }
     /**
      * Function to construct an INSERT query using input functions.
