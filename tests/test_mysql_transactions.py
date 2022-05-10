@@ -27,15 +27,17 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
+
+        table_name = 'products'
+
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+
         # Start transaction. auto_commit is set to true
         conn.get_connection().start_transaction();
 
         fake_row_1 = FakeData.get_fake_products_row()
         fake_row_2 = FakeData.get_fake_products_row()
-        table_name = 'products'
-
-        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         conn.execute_sql(sql_query, fake_row_1)
         conn.execute_sql(sql_query, fake_row_2)
