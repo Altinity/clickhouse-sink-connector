@@ -18,11 +18,11 @@ class MySqlConnection:
         self.conn:MySQLConnection = None
         self.cursor = None
 
-    def create_connection(self):
+    def create_connection(self, auto_commit=True):
 
         try:
             self.conn = mysql.connector.connect(host=self.db_host, database=self.db_name,
-                                   user=self.db_user, password=self.db_pass)
+                                   user=self.db_user, password=self.db_pass, autocommit=auto_commit)
 
         except Exception as e:
             print("Error creating connection", e)
