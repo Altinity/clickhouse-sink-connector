@@ -19,13 +19,7 @@ class MyTestCase(unittest.TestCase):
     def tearDownClass(cls):
         print("Teardown class")
 
-    def get_insert_sql_query(self, table_name, col_names, column_length):
 
-        values_template = ''
-        for i in range(1, column_length + 1):
-            values_template += f" %s, "
-
-        return f"insert into {table_name} ({col_names}) values({values_template.rstrip(', ')})"
 
     def generate_employees_fake_records(self):
         '''
@@ -41,7 +35,7 @@ class MyTestCase(unittest.TestCase):
         conn.execute_sql(f'select * from {table_name} limit 1')
 
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         x = range(1, 1000000)
         for n in x:
@@ -60,7 +54,7 @@ class MyTestCase(unittest.TestCase):
         conn.execute_sql(f'truncate table {table_name}')
         conn.execute_sql(f'select * from {table_name} limit 1')
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         #9999-12-31 or 1900-01-01
         fake_row_ch_invalid_date_range = FakeData.get_fake_employees_row_with_out_of_range_datetime(122323, date(1900,2,2), date(1910, 1, 1))
@@ -99,13 +93,13 @@ class MyTestCase(unittest.TestCase):
         conn.execute_sql(f"select * from {table_name} limit 1")
 
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query_1 = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        sql_query_1 = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
         fake_row_1 = FakeData.get_fake_products_row()
         conn.execute_sql(sql_query_1, fake_row_1)
 
         conn.execute_sql(f"truncate table {table_name}")
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query_2 = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        sql_query_2 = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
         conn.execute_sql(sql_query_2, fake_row_1)
 
 
@@ -128,7 +122,7 @@ class MyTestCase(unittest.TestCase):
         conn.execute_sql(f"select * from {table_name} limit 1")
 
         col_names = conn.get_column_names(f'select * from {table_name} limit 1')
-        sql_query = self.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         x = range(1, 1000000)
         for n in x:

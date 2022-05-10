@@ -1,6 +1,8 @@
 import mysql.connector
 import os
 
+from mysql.connector import MySQLConnection
+
 """
 Class related to operation in MySQL
 """
@@ -13,7 +15,7 @@ class MySqlConnection:
         self.db_name = os.environ.get('DB_NAME', 'test')
         self.db_user = os.environ.get('DB_USER_NAME', 'root')
         self.db_pass = os.environ.get('DB_USER_PASSWORD', 'root')
-        self.conn = None
+        self.conn:MySQLConnection = None
         self.cursor = None
 
     def create_connection(self):
@@ -64,6 +66,17 @@ class MySqlConnection:
                     self.conn.commit()
             except Exception as e:
                 print("Error executing SQL", e)
+
+    def get_connection(self) -> MySQLConnection:
+        return self.conn
+
+    def get_insert_sql_query(self, table_name, col_names, column_length):
+
+        values_template = ''
+        for i in range(1, column_length + 1):
+            values_template += f" %s, "
+
+        return f"insert into {table_name} ({col_names}) values({values_template.rstrip(', ')})"
 
     def close(self):
         # closing database connection.

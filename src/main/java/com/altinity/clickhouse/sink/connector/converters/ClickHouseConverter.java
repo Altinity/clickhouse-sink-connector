@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.KafkaSchemaRecordType;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -141,6 +142,36 @@ public class ClickHouseConverter implements AbstractConverter {
      *      op=u,
      *      ts_ms=1648575279856
      * }
+     * "Struct"{
+     *    "after=Struct"{
+     *       "productCode=synergize",
+     *       "productName=Sandra Mil",
+     *       "productLine=brand plug",
+     *       "productScale=redefine i",
+     *       "productVendor=Ford",
+     *       "Hunt",
+     *       "productDescription=Johnson-Fo",
+     *       quantityInStock=54,
+     *       buyPrice=0.31,
+     *       MSRP=0.24
+     *    },
+     *    "source=Struct"{
+     *       version=1.9.2.Final,
+     *       "connector=mysql",
+     *       name=SERVER5432,
+     *       ts_ms=1652122799000,
+     *       "snapshot=false",
+     *       "db=test",
+     *       "table=products",
+     *       server_id=1,
+     *       file=binlog.000002,
+     *       pos=775,
+     *       row=0,
+     *       thread=13
+     *    },
+     *    "op=c",
+     *    ts_ms=1652122799299
+     * }
      */
 
     /**
@@ -158,9 +189,9 @@ public class ClickHouseConverter implements AbstractConverter {
         ClickHouseStruct afterRecord = null;
 
         // Check "operation" represented by this record.
-        if (convertedValue.containsKey("op")) {
+        if (convertedValue.containsKey(SinkRecordColumns.OPERATION)) {
             // Operation (u, c)
-            String operation = (String) convertedValue.get("op");
+            String operation = (String) convertedValue.get(SinkRecordColumns.OPERATION);
             if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
                     operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
@@ -170,6 +201,7 @@ public class ClickHouseConverter implements AbstractConverter {
                             record.topic(), (Struct) record.key(), record.kafkaPartition(),
                             record.timestamp());
                     afterRecord.setStruct((Struct) convertedValue.get("after"));
+                    afterRecord.setAdditionalMetaData(convertedValue);
                 }
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.

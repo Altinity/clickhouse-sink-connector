@@ -51,7 +51,22 @@ public class ClickHouseTableMetaData {
             if (record.getKey() != null) {
                 ps.setString(index, record.getKey());
             }
-        } else {
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.TS_MS.getColumn())) {
+            ps.setLong(index, record.getTs_ms());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_ID.getColumn())) {
+            ps.setLong(index, record.getServerId());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.GTID.getColumn())) {
+            ps.setInt(index, record.getGtid());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_FILE.getColumn())) {
+            ps.setString(index, record.getFile());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_POSITION.getColumn())) {
+            ps.setLong(index, record.getPos());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_ROW.getColumn())) {
+            ps.setInt(index, record.getRow());
+        } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_THREAD.getColumn())) {
+            ps.setInt(index, record.getThread());
+        }
+        else {
             columnUpdated = false;
         }
 
