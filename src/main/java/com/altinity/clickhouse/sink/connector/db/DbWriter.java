@@ -200,7 +200,8 @@ public class DbWriter {
             }
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
-                    (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap);
+                    (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap,
+                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA));
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
                 List<ClickHouseStruct> newList = new ArrayList<ClickHouseStruct>();

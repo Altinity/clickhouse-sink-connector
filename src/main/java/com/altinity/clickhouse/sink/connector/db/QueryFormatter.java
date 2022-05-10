@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,7 +49,8 @@ public class QueryFormatter {
      * @return
      */
     public String getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
-                                                   Map<String, String> columnNameToDataTypeMap) {
+                                                   Map<String, String> columnNameToDataTypeMap,
+                                                   boolean includeKafkaMetaData) {
 
 
         StringBuffer colNamesDelimited = new StringBuffer();
@@ -65,7 +67,17 @@ public class QueryFormatter {
             } else {
                 log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnName));
             }
+        }
+        if(includeKafkaMetaData) {
+            for(KafkaMetaData metaDataColumn: KafkaMetaData.values()) {
+                String metaDataColName = metaDataColumn.getColumn();
+                if(columnNameToDataTypeMap.containsKey(metaDataColName)) {
+                    String dataType = columnNameToDataTypeMap.get(metaDataColName);
 
+                    colNamesDelimited.append(metaDataColName).append(",");
+                    colNamesToDataTypes.append(metaDataColName).append(" ").append(dataType).append(",");
+                }
+            }
         }
         //Remove terminating comma
         colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
