@@ -10,6 +10,7 @@ The connector is tested with the following converters
 - Deduplication logic to dedupe records from Kafka topic.
 - Exactly once semantics 
 - Bulk insert to Clickhouse.
+- Store Kafka metadata [Kafka Metadata](doc/Kafka_metadata.md)
 
 
 
