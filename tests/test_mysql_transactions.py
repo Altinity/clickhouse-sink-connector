@@ -22,7 +22,7 @@ class MyTestCase(unittest.TestCase):
 
     def test_mysql_transactions_insert(self):
 
-        time.sleep(20)
+        #time.sleep(20)
 
         conn = MySqlConnection()
         conn.create_connection()
