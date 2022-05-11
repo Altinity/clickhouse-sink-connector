@@ -9,11 +9,11 @@ SRC_ROOT="$(realpath "${CUR_DIR}/..")"
 
 # Externally configurable build-dependent options
 TAG="${TAG:-latest}"
-DOCKER_IMAGE="altinity/debezium-mysql-source-connector:${TAG}"
+DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector-debezium-graalvm:${TAG}"
 
 # Externally configurable build-dependent options
 DOCKERFILE_DIR="${SRC_ROOT}/docker"
-DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-strimzi-debezium"
+DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-sink-on-graalvm-image"
 
 echo "***************"
 echo "* Build image *"
@@ -26,6 +26,3 @@ else
     echo "FAILED"
     exit 1
 fi
-
-
-
