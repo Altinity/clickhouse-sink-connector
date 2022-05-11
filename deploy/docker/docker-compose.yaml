@@ -111,7 +111,7 @@ services:
 
   sink:
     container_name: sink
-    image: altinity/clickhouse-kafka-sink-connector-debezium-base:latest
+    image: altinity/clickhouse-kafka-sink-connector-on-debezium-base:latest
     restart: "no"
     ports:
       - "18083:8083"
