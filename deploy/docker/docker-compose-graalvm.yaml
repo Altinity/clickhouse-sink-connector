@@ -28,7 +28,7 @@ services:
 
   sink_graalvm:
     container_name: sink
-    image: altinity/clickhouse-kafka-sink-connector-debezium-graalvm:latest
+    image: altinity/clickhouse-kafka-sink-connector-on-graalvm:latest
     restart: "no"
     ports:
       - "18083:8083"
