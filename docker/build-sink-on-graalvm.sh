@@ -9,7 +9,7 @@ SRC_ROOT="$(realpath "${CUR_DIR}/..")"
 
 # Externally configurable build-dependent options
 TAG="${TAG:-latest}"
-DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector-graalvm:${TAG}"
+DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector-on-graalvm:${TAG}"
 
 # Externally configurable build-dependent options
 DOCKERFILE_DIR="${SRC_ROOT}/docker"
