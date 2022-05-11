@@ -13,7 +13,7 @@ DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector:${TAG}"
 
 # Externally configurable build-dependent options
 DOCKERFILE_DIR="${SRC_ROOT}/docker"
-DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-strimzi-sink"
+DOCKERFILE="${DOCKERFILE_DIR}/Dockerfile-sink-on-strimzi-image"
 
 echo "***************"
 echo "* Build image *"
