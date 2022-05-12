@@ -8,8 +8,7 @@ metadata:
 spec:
   version: 3.1.0
   replicas: 1
-  #image: altinity/clickhouse-kafka-sink-connector:latest
-  image: sunsingerus/clickhouse-kafka-sink-connector:latest
+  image: altinity/clickhouse-kafka-sink-connector:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -20,7 +19,7 @@ spec:
   #build:
   #  output:
   #    type: docker
-  #    image: sunsingerus/clickhouse-sink-connector:latest
+  #    image: altinity/clickhouse-sink-connector:latest
   #    pushSecret: docker-access-secret
   #  plugins:
   #    - name: clickhouse-sink-connector
