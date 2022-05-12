@@ -333,5 +333,7 @@ Check for data
 ```bash
 echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
 echo "select count() from employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+```
+```bash
 kill $KUBECTL_PORT_FORWARD_PID
 ```
