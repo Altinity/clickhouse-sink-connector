@@ -1,3 +1,5 @@
+minikube start --addons=registry && minikube addons list
+
 ### cert-manager
 docker image pull quay.io/jetstack/cert-manager-controller:v1.4.0
 docker image pull quay.io/jetstack/cert-manager-cainjector:v1.4.0
@@ -51,10 +53,17 @@ docker   image pull quay.io/strimzi/kaniko-executor:0.28.0
 minikube image load quay.io/strimzi/operator:0.28.0
 minikube image load quay.io/strimzi/kaniko-executor:0.28.0 
 
-### debezium source connector 
-#docker   image pull altinity/debezium-mysql-source-connector:latest
-minikube image load altinity/debezium-mysql-source-connector:latest
+### load images from local registry into minikube registry
+kubectl -n kube-system port-forward service/registry 5000:80 &
+KUBECTL_PORT_FORWARD_PID=$!
+sleep 5
 
 ### clickhouse sink connector
-#docker   image pull altinity/clickhouse-kafka-sink-connector:latest
-minikube image load altinity/clickhouse-kafka-sink-connector:latest
+docker image tag altinity/clickhouse-kafka-sink-connector:latest localhost:5000/altinity/clickhouse-kafka-sink-connector:latest
+docker image push localhost:5000/altinity/clickhouse-kafka-sink-connector:latest
+
+### debezium source connector
+docker image tag altinity/debezium-mysql-source-connector:latest localhost:5000/altinity/debezium-mysql-source-connector:latest
+docker image push localhost:5000/altinity/debezium-mysql-source-connector:latest
+
+kill $KUBECTL_PORT_FORWARD_PID
