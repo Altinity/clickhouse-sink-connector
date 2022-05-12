@@ -54,9 +54,9 @@ minikube image load quay.io/strimzi/operator:0.28.0
 minikube image load quay.io/strimzi/kaniko-executor:0.28.0 
 
 ### load images from local registry into minikube registry
-kubectl -n kube-system port-forward service/registry 5000:80 &
+kubectl -n kube-system port-forward service/registry 5000:80 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
-sleep 5
+sleep 10
 
 ### clickhouse sink connector
 docker image tag altinity/clickhouse-kafka-sink-connector:latest localhost:5000/altinity/clickhouse-kafka-sink-connector:latest
