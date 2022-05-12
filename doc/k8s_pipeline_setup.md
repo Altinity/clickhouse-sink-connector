@@ -116,7 +116,7 @@ Fill MySQL with data
 
 Port forward to make MySQL accessible 
 ```bash
-kubectl -n mysql port-forward service/mysql 3306:3306 &
+kubectl -n mysql port-forward service/mysql 3306:3306 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
 sleep 10
 ```
@@ -190,13 +190,13 @@ kubectl -n $NAMESPACE get pod
 Ensure schema registry is empty
 Port forward to make schema registry accessible
 ```bash
-kubectl -n registry port-forward service/schema-registry 8080:8080 &
+kubectl -n registry port-forward service/schema-registry 8080:8080 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
 sleep 10
 ```
 ```bash
 firefox http://localhost:8080/ui/artifacts
-sleep 5
+sleep 10
 kill $KUBECTL_PORT_FORWARD_PID
 ```
 
@@ -252,7 +252,7 @@ Ensure schema registry is **NOT empty**
 
 Port forward to make schema registry accessible
 ```bash
-kubectl -n registry port-forward service/schema-registry 8080:8080 &
+kubectl -n registry port-forward service/schema-registry 8080:8080 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
 sleep 10
 ```
@@ -277,7 +277,7 @@ rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ### create schema
 Port forward to make ClickHouse accessible
 ```bash
-kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
 sleep 10
 ```
@@ -308,7 +308,7 @@ kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
 kubectl -n $NAMESPACE get pod
 sleep 10
 kubectl -n $NAMESPACE apply -f <( \
-  cat $"{SRC_ROOT}/deploy/k8s/sink-connector-avro.yaml" | \
+  cat "${SRC_ROOT}/deploy/k8s/sink-connector-avro.yaml" | \
     CLICKHOUSE_HOST="clickhouse-clickhouse.clickhouse" \
     CLICKHOUSE_PORT=8123 \
     CLICKHOUSE_USER="clickhouse_operator" \
@@ -325,7 +325,7 @@ kubectl -n $NAMESPACE apply -f <( \
 Check data
 Port forward to make ClickHouse accessible
 ```bash
-kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 > /dev/null 2>&1 &
 KUBECTL_PORT_FORWARD_PID=$!
 sleep 10
 ```
