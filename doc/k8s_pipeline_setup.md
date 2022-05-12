@@ -8,6 +8,10 @@
 5. Start streaming
 6. Clean up
 
+```bash
+SRC_ROOT=.
+```
+
 ### cert-manager
 
 ```bash
@@ -62,7 +66,7 @@ use CERT-MANAGER v 1.4
 ```bash
 NAMESPACE=redpanda
 kubectl create namespace $NAMESPACE
-kubectl -n $NAMESPACE create -f redpanda-internal.yaml
+kubectl -n $NAMESPACE create -f "${SRC_ROOT}/deploy/k8s/redpanda-internal.yaml"
 ```
 
 Wait to start
@@ -99,7 +103,7 @@ kubectl -n $NAMESPACE get pod
 ```bash
 NAMESPACE="mysql"
 kubectl create ns "${NAMESPACE}"
-kubectl -n "${NAMESPACE}" apply -f mysql.yaml
+kubectl -n "${NAMESPACE}" apply -f "${SRC_ROOT}/deploy/k8s/mysql.yaml"
 ```
 
 Wait to start
@@ -114,11 +118,12 @@ Port forward to make MySQL accessible
 ```bash
 kubectl -n mysql port-forward service/mysql 3306:3306 &
 KUBECTL_PORT_FORWARD_PID=$!
+sleep 10
 ```
 Load
 ```bash
-cat deploy/sql/mysql_schema_employees.sql | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
-cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+cat "${SRC_ROOT}/deploy/sql/mysql_schema_employees.sql" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
+cat "${SRC_ROOT}/deploy/sql/mysql_dump_employees.sql"   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 kill $KUBECTL_PORT_FORWARD_PID
 ```
@@ -140,7 +145,7 @@ curl -s ${INSTALL_SH} | OPERATOR_NAMESPACE="${NAMESPACE}" bash
 NAMESPACE=clickhouse
 kubectl create namespace $NAMESPACE
 kubectl -n ${NAMESPACE} apply -f <( \
-  cat clickhouse-operator-install-template.yaml | \
+  cat "${SRC_ROOT}/deploy/k8s/clickhouse-operator-install-template.yaml" | \
     OPERATOR_NAMESPACE="clickhouse" \
     OPERATOR_IMAGE="altinity/clickhouse-operator:0.18.4" \
     METRICS_EXPORTER_IMAGE="altinity/metrics-exporter:0.18.4" \
@@ -159,7 +164,7 @@ kubectl -n $NAMESPACE get pod
 ```bash
 NAMESPACE=clickhouse
 kubectl create namespace $NAMESPACE
-kubectl -n $NAMESPACE apply -f clickhouse.yaml
+kubectl -n $NAMESPACE apply -f "${SRC_ROOT}/deploy/k8s/clickhouse.yaml"
 ```
 
 Wait to start
@@ -173,7 +178,7 @@ kubectl -n $NAMESPACE get statefulset
 ```bash
 NAMESPACE="registry"
 kubectl create namespace ${NAMESPACE}
-kubectl -n ${NAMESPACE} apply -f schema-registry.yaml
+kubectl -n ${NAMESPACE} apply -f "${SRC_ROOT}/deploy/k8s/schema-registry.yaml"
 ```
 
 Wait to start
@@ -187,6 +192,7 @@ Port forward to make schema registry accessible
 ```bash
 kubectl -n registry port-forward service/schema-registry 8080:8080 &
 KUBECTL_PORT_FORWARD_PID=$!
+sleep 10
 ```
 ```bash
 firefox http://localhost:8080/ui/artifacts
@@ -221,13 +227,13 @@ kubectl -n $NAMESPACE get pod
 ```bash
 NAMESPACE="debezium"
 kubectl create namespace "${NAMESPACE}"
-kubectl -n $NAMESPACE apply -f debezium-connect.yaml
+kubectl -n $NAMESPACE apply -f "${SRC_ROOT}/deploy/k8s/debezium-connect.yaml"
 sleep 10
 kubectl -n $NAMESPACE rollout status -w deployment/debezium-connect
 kubectl -n $NAMESPACE get pod
 sleep 10
 kubectl -n $NAMESPACE apply -f <( \
-  cat debezium-connector-avro.yaml | \
+  cat "${SRC_ROOT}/deploy/k8s/debezium-connector-avro.yaml" | \
     MYSQL_HOST="mysql.mysql" \
     MYSQL_PORT="3306" \
     MYSQL_USER="root" \
@@ -248,6 +254,7 @@ Port forward to make schema registry accessible
 ```bash
 kubectl -n registry port-forward service/schema-registry 8080:8080 &
 KUBECTL_PORT_FORWARD_PID=$!
+sleep 10
 ```
 ```bash
 firefox http://localhost:8080/ui/artifacts
@@ -272,9 +279,10 @@ Port forward to make ClickHouse accessible
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
 KUBECTL_PORT_FORWARD_PID=$!
+sleep 10
 ```
 ```bash
-cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
+cat "${SRC_ROOT}/deploy/sql/clickhouse_schema_employees.sql" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
 echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
 kill $KUBECTL_PORT_FORWARD_PID
 ```
@@ -287,7 +295,7 @@ clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=c
 ```bash
 NAMESPACE="sink"
 kubectl create namespace "${NAMESPACE}"
-kubectl -n $NAMESPACE apply -f sink-connect.yaml
+kubectl -n $NAMESPACE apply -f "${SRC_ROOT}/deploy/k8s/sink-connect.yaml"
 sleep 10
 #echo -n "Building"
 #while kubectl -n $NAMESPACE get pod/sink-connect-build > /dev/null 2>&1; do
@@ -300,7 +308,7 @@ kubectl -n $NAMESPACE rollout status -w deployment/sink-connect
 kubectl -n $NAMESPACE get pod
 sleep 10
 kubectl -n $NAMESPACE apply -f <( \
-  cat sink-connector-avro.yaml | \
+  cat $"{SRC_ROOT}/deploy/k8s/sink-connector-avro.yaml" | \
     CLICKHOUSE_HOST="clickhouse-clickhouse.clickhouse" \
     CLICKHOUSE_PORT=8123 \
     CLICKHOUSE_USER="clickhouse_operator" \
@@ -319,6 +327,7 @@ Port forward to make ClickHouse accessible
 ```bash
 kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
 KUBECTL_PORT_FORWARD_PID=$!
+sleep 10
 ```
 Check for data
 ```bash
