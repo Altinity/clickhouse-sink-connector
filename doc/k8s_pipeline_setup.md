@@ -112,13 +112,15 @@ Fill MySQL with data
 
 Port forward to make MySQL accessible 
 ```bash
-kubectl -n mysql port-forward service/mysql 3306:3306
+kubectl -n mysql port-forward service/mysql 3306:3306 &
+KUBECTL_PORT_FORWARD_PID=$!
 ```
 Load
 ```bash
 cat deploy/sql/mysql_schema_employees.sql | mysql --host=127.0.0.1 --port=3306 --user=root --password=root
 cat deploy/sql/mysql_dump_employees.sql   | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
 echo "select count(*) from test.employees" | mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+kill $KUBECTL_PORT_FORWARD_PID
 ```
 
 ```bash
@@ -183,10 +185,13 @@ kubectl -n $NAMESPACE get pod
 Ensure schema registry is empty
 Port forward to make schema registry accessible
 ```bash
-kubectl -n registry port-forward service/schema-registry 8080:8080
+kubectl -n registry port-forward service/schema-registry 8080:8080 &
+KUBECTL_PORT_FORWARD_PID=$!
 ```
 ```bash
 firefox http://localhost:8080/ui/artifacts
+sleep 5
+kill $KUBECTL_PORT_FORWARD_PID
 ```
 
 ### Strimzi
@@ -241,10 +246,13 @@ Ensure schema registry is **NOT empty**
 
 Port forward to make schema registry accessible
 ```bash
-kubectl -n registry port-forward service/schema-registry 8080:8080
+kubectl -n registry port-forward service/schema-registry 8080:8080 &
+KUBECTL_PORT_FORWARD_PID=$!
 ```
 ```bash
 firefox http://localhost:8080/ui/artifacts
+sleep 10
+kill $KUBECTL_PORT_FORWARD_PID
 ```
 
 Ensure Kafka records
@@ -262,11 +270,13 @@ rpk topic consume --offset=300000 --num=1 SERVER5432.test.employees
 ### create schema
 Port forward to make ClickHouse accessible
 ```bash
-kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
+KUBECTL_PORT_FORWARD_PID=$!
 ```
 ```bash
 cat deploy/sql/clickhouse_schema_employees.sql | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password
 echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+kill $KUBECTL_PORT_FORWARD_PID
 ```
 
 ```bash
@@ -307,10 +317,12 @@ kubectl -n $NAMESPACE apply -f <( \
 Check data
 Port forward to make ClickHouse accessible
 ```bash
-kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000
+kubectl -n clickhouse port-forward service/clickhouse-clickhouse 9000:9000 &
+KUBECTL_PORT_FORWARD_PID=$!
 ```
 Check for data
 ```bash
 echo "desc employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
 echo "select count() from employees" | clickhouse-client --host=127.0.0.1 --port=9000 --multiline --multiquery --user=clickhouse_operator --password=clickhouse_operator_password --database=test
+kill $KUBECTL_PORT_FORWARD_PID
 ```
