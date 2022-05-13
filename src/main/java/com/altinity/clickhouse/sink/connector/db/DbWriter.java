@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -160,7 +161,7 @@ public class DbWriter {
         //ToDo: It will happens with alter table and add columns
         //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
 
-        // Code block to create a Map of Query -> list of records
+        // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
         // so that all records belonging to the same  query
         // can be inserted as a batch.
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
@@ -204,7 +205,7 @@ public class DbWriter {
                             this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA));
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
-                List<ClickHouseStruct> newList = new ArrayList<ClickHouseStruct>();
+                List<ClickHouseStruct> newList = new ArrayList<>();
                 newList.add(record);
                 queryToRecordsMap.put(insertQueryTemplate, newList);
             } else {
@@ -217,6 +218,7 @@ public class DbWriter {
         for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
 
             String insertQuery = entry.getKey();
+            log.info("*** INSERT QUERY***" + insertQuery);
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
             try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
@@ -229,6 +231,8 @@ public class DbWriter {
                     //insertPreparedStatement(ps, fields, record);
                     insertPreparedStatement(ps, record.getModifiedFields(), record);
                     // Append parameters to the query
+
+
                     ps.addBatch();
                 }
 
@@ -286,22 +290,6 @@ public class DbWriter {
             String colName = f.name();
             //String colName = entry.getKey();
 
-            // Kafka metdata columns.
-            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
-               if (true == ClickHouseTableMetaData.addKafkaMetaData(colName, record, index, ps)) {
-                   index++;
-                   continue;
-               }
-            }
-
-            // Store raw data in JSON form.
-            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
-                if(colName.equalsIgnoreCase(this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN))) {
-                    ClickHouseTableMetaData.addRawData(colName, record, index, ps);
-                    index++;
-                    continue;
-                }
-            }
 
             //ToDO: Setting null to a non-nullable field
             // will throw an error.
@@ -425,7 +413,31 @@ public class DbWriter {
             }
 
             index++;
+
         }
+
+        // Kafka metadata columns.
+        for(KafkaMetaData metaDataColumn: KafkaMetaData.values()) {
+            String metaDataColName = metaDataColumn.getColumn();
+            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
+                if(true == this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
+                    if (true == ClickHouseTableMetaData.addKafkaMetaData(metaDataColName, record, index, ps)) {
+                        index++;
+                    }
+                }
+            }
+        }
+
+        // Store raw data in JSON form.
+        if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
+            String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
+            if(true == this.columnNameToDataTypeMap.containsKey(userProvidedColName)){
+
+                ClickHouseTableMetaData.addRawData(userProvidedColName, record, index, ps);
+                index++;
+            }
+        }
+
     }
 
     /**

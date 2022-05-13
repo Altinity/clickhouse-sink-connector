@@ -144,4 +144,25 @@ public class ClickHouseStruct {
             log.error("setAdditionalMetadata exception", e);
         }
     }
+    @Override
+    public String toString() {
+        //
+        this.kafkaOffset = kafkaOffset;
+        this.topic = topic;
+        this.kafkaPartition = kafkaPartition;
+        this.timestamp = timestamp;
+        this.key = key.toString();
+        return new StringBuffer()
+                .append(" offset:").append(kafkaOffset)
+                .append(" topic:").append(topic)
+                .append(" partition:").append(kafkaPartition)
+                .append(" key:").append(key)
+                .append(" ts_ms:").append(ts_ms)
+                .append(" snapshot:").append(snapshot)
+                .append(" server_id").append(serverId)
+                .append(" binlog_file").append(file)
+                .append(" binlog_pos").append(pos)
+                .append(" row").append(row)
+                .append(" server_thread").append(thread).toString();
+    }
 }
