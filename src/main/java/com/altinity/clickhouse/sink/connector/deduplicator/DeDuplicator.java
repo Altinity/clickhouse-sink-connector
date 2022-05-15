@@ -27,13 +27,15 @@ public class DeDuplicator {
      * Pool of record for de-duplication. Maps a deduplication key to a record.
      * In case such a deduplication key already exists deduplication policy comes into play - what record to keep
      * an old one (already registered) or a newly coming one.
+     * Key is topic name
      */
-    private Map<Object, Object> records;
+    // ToDo: How would this work when there are multiple tables assigned to one topic.
+    private Map<String, Map<Object, Object>> records;
     /**
      * FIFO of de-duplication keys. Is limited by maxPoolSize. As soon as limit is exceeded, all older entries
      * are removed from both FIFO and the pool.
      */
-    private final LinkedList<Object> queue;
+    private final Map<String, LinkedList<Object>> queue;
     /**
      * Max number of records in de-duplication pool.
      */
@@ -51,7 +53,7 @@ public class DeDuplicator {
     public DeDuplicator(ClickHouseSinkConnectorConfig config) {
         this.config = config;
         this.records = new HashMap<>();
-        this.queue = new LinkedList<>();
+        this.queue = new HashMap<>();
         // Prepare configuration values
         this.maxPoolSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT);
         this.policy = DeDuplicationPolicy.of(this.config.getString(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY));
@@ -65,7 +67,7 @@ public class DeDuplicator {
      * @param record record to check
      * @return whether this record is a new one or been already seen
      */
-    public boolean isNew(SinkRecord record) {
+    public boolean isNew(String topicName, SinkRecord record) {
         // In case de-duplicator is turned off no de-duplication is performed and all entries are considered to be new.
         if (this.isTurnedOff()) {
             return true;
@@ -74,35 +76,72 @@ public class DeDuplicator {
         // Fetch de-duplication key
         Object deDuplicationKey = this.prepareDeDuplicationKey(record);
 
-        // Check, may be this key has already been seen
-        if (this.records.containsKey(deDuplicationKey)) {
-            log.warn("already seen this key:" + deDuplicationKey);
-
-            if (this.policy == DeDuplicationPolicy.NEW) {
-                this.records.put(deDuplicationKey, record);
-                log.info("replace the key:" + deDuplicationKey);
-            }
-
+        
+        if (false == checkIfRecordIsDuplicate(topicName, deDuplicationKey, record)) {
             return false;
         }
 
+        updateDedupePool(deDuplicationKey);
+
+        return true;
+    }
+
+    public void updateDedupePool(Object deDuplicationKey) {
+
         log.debug("add new key to the pool:" + deDuplicationKey);
 
-        this.records.put(deDuplicationKey, record);
-        this.queue.add(deDuplicationKey);
+        // Iterate through all topics and corresponding pools.
 
-        while (this.queue.size() > this.maxPoolSize) {
-            log.info("records pool is too big, need to flush:" + this.queue.size());
-            Object key = this.queue.removeFirst();
-            if (key == null) {
-                log.warn("unable to removeFirst() in the queue");
-            } else {
-                this.records.remove(key);
-                log.info("removed key: " + key);
+        for(Map.Entry<String, LinkedList<Object>> entry: this.queue.entrySet()) {
+
+            LinkedList<Object> matchingQueue = entry.getValue();
+
+            while (matchingQueue.size() > this.maxPoolSize) {
+                log.info("records pool is too big, need to flush:" + this.queue.size());
+                Object key = matchingQueue.removeFirst();
+                if (key == null) {
+                    log.warn("unable to removeFirst() in the queue");
+                } else {
+                    matchingQueue.remove(key);
+                    log.info("removed key: " + key);
+                }
             }
         }
 
-        return true;
+    }
+    /**
+     * Function to check if the new record is a duplicate
+     * @param topicName
+     * @param record
+     * @return true if duplicate, false otherwise
+     */
+    public boolean checkIfRecordIsDuplicate(String topicName, Object deDuplicationKey, SinkRecord record) {
+        boolean result = false;
+
+        Map<Object, Object> matchingRecords = this.records.get(topicName);
+        
+        if(matchingRecords == null) {
+            // New record for topic.
+            matchingRecords = new HashMap<Object, Object>();
+            matchingRecords.put(deDuplicationKey, record);
+
+            this.records.put(topicName, matchingRecords);
+            result = true;
+            
+        } else {
+            if(matchingRecords.containsKey(deDuplicationKey)) {
+                log.warn("already seen this key:" + deDuplicationKey);
+
+                if (this.policy == DeDuplicationPolicy.NEW) {
+                    matchingRecords.put(deDuplicationKey, record);
+                    this.records.put(topicName, matchingRecords);
+                    log.info("replace the key:" + deDuplicationKey);
+                }
+                result = false;
+            }
+        }
+
+        return result;
     }
 
     /**
