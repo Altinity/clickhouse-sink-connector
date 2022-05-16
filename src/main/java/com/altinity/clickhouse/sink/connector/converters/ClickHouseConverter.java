@@ -196,20 +196,29 @@ public class ClickHouseConverter implements AbstractConverter {
                     operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 log.debug("CREATE received");
-                if (convertedValue.containsKey("after")) {
-                    afterRecord = new ClickHouseStruct(record.kafkaOffset(),
-                            record.topic(), (Struct) record.key(), record.kafkaPartition(),
-                            record.timestamp());
-                    afterRecord.setStruct((Struct) convertedValue.get("after"));
-                    afterRecord.setAdditionalMetaData(convertedValue);
-                }
+                afterRecord = readAfterSection(convertedValue, record);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
                 log.warn("UPDATE received -  ignored");
+                afterRecord = readAfterSection(convertedValue, record);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
                 log.warn("DELETE received - ignored");
             }
+        }
+
+        return afterRecord;
+    }
+
+    private ClickHouseStruct readAfterSection(Map<String, Object> convertedValue, SinkRecord record) {
+
+        ClickHouseStruct afterRecord = null;
+        if (convertedValue.containsKey("after")) {
+            afterRecord = new ClickHouseStruct(record.kafkaOffset(),
+                    record.topic(), (Struct) record.key(), record.kafkaPartition(),
+                    record.timestamp());
+            afterRecord.setStruct((Struct) convertedValue.get("after"));
+            afterRecord.setAdditionalMetaData(convertedValue);
         }
 
         return afterRecord;

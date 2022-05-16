@@ -22,10 +22,11 @@ class MySqlConnection:
 
         try:
             self.conn = mysql.connector.connect(host=self.db_host, database=self.db_name,
-                                   user=self.db_user, password=self.db_pass, autocommit=auto_commit)
+                                   user=self.db_user, password=self.db_pass, autocommit=auto_commit,
+                                                auth_plugin='mysql_native_password')
 
         except Exception as e:
-            print("Error creating connection", e)
+             print("Error creating connection", e)
 
         return self.conn
 

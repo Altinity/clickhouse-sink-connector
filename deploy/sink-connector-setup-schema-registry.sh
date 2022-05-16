@@ -46,7 +46,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "store.kafka.metadata": true,
     "topic.creation.default.partitions": 3,
 
-    "store.raw.data": true,
+    "store.raw.data": false,
     "store.raw.data.column": "raw_data",
 
     "metrics.enable": true,
