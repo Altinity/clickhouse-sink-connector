@@ -73,4 +73,11 @@ CREATE TABLE products(
   `raw_data` String
 )
 ENGINE = MergeTree
-PRIMARY KEY productCode
+PRIMARY KEY productCode;
+
+CREATE TABLE t1(
+`intcol1` UInt64,
+`charcol1` String
+)
+ENGINE = MergeTree
+PRIMARY KEY intcol1

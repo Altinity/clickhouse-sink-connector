@@ -54,7 +54,7 @@ public class ClickHouseTableMetaData {
         } else if (colName.equalsIgnoreCase(KafkaMetaData.TS_MS.getColumn())) {
             ps.setLong(index, record.getTs_ms());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_ID.getColumn())) {
-            ps.setLong(index, record.getServerId());
+            ps.setLong(index, record.getServerId()) ;
         } else if (colName.equalsIgnoreCase(KafkaMetaData.GTID.getColumn())) {
             ps.setInt(index, record.getGtid());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_FILE.getColumn())) {

@@ -34,6 +34,15 @@ public class Metrics {
     private static Gauge clickHouseSinkRecordsGauge;
 
     private static Counter.Builder clickHouseSinkRecordsCounter;
+
+    private static Counter.Builder minSourceLagCounter;
+
+    private static Counter.Builder maxSourceLagCounter;
+
+    private static Counter.Builder minConsumerLagCounter;
+
+    private static Counter.Builder maxConsumerLagCounter;
+
     private static HttpServer server;
 
     private static boolean enableMetrics = false;
@@ -86,6 +95,12 @@ public class Metrics {
 
         clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
 
+        minSourceLagCounter = Counter.builder("clickhouse.source.lag.min");
+        maxSourceLagCounter = Counter.builder("clickhouse.source.lag.max");
+
+        minConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.min");
+        maxConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.max");
+
     }
     private static void exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
 
@@ -118,21 +133,36 @@ public class Metrics {
     public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
 
     public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,
-                                                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap, int numRecords) {
+                                                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap,
+                                                int numRecords, long minSourceLag, long maxSourceLag,
+                                                long minConsumerLag, long maxConsumerLag) {
         if(enableMetrics == true) {
             for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
 
                 MutablePair<Long, Long> offsetTuple = entry.getValue();
+                long minOffset = offsetTuple.left;
+                long maxOffset = offsetTuple.right;
+                long totalRecords = maxOffset - minOffset;
+
                 Metrics.getClickHouseSinkRecordsCounter()
                         .tag("taskId", taskId.toString())
                         .tag("UUID", blockUUid)
                         .tag("topic", topicName)
                         .tag("table", tableName)
-                        .tag("minOffset", offsetTuple.left.toString())
-                        .tag("maxOffset", offsetTuple.right.toString())
+                        .tag("minOffset", Long.toString(minOffset))
+                        .tag("maxOffset", Long.toString(maxOffset))
                         .tag("partition", Integer.toString(entry.getKey()))
+                        .tag("totalRecords", Long.toString(totalRecords))
 
-                        .register(Metrics.meterRegistry()).increment(numRecords);
+                        .register(Metrics.meterRegistry()).increment(totalRecords);
+
+
+                minSourceLagCounter.register(Metrics.meterRegistry()).increment(minSourceLag);
+                maxSourceLagCounter.register(Metrics.meterRegistry()).increment(maxSourceLag);
+
+                minConsumerLagCounter.register(Metrics.meterRegistry()).increment(minConsumerLag);
+                maxConsumerLagCounter.register(Metrics.meterRegistry()).increment(maxConsumerLag);
+
             }
         }
     }

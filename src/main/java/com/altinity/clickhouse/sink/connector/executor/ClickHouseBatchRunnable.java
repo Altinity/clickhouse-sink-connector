@@ -5,9 +5,9 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.Metrics;
 import com.altinity.clickhouse.sink.connector.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
-import org.apache.commons.lang3.tuple.MutablePair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,11 +80,12 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetsMap = writer.insert(entry.getValue());
+                BlockMetaData bmd = writer.insert(entry.getValue());
                 context.stop();
 
                 Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
-                        partitionToOffsetsMap, numRecords);
+                        bmd.getPartitionToOffsetMap(), numRecords, bmd.getMinSourceLag(),
+                        bmd.getMaxSourceLag(), bmd.getMinConsumerLag(), bmd.getMaxConsumerLag());
 
             }
         }
