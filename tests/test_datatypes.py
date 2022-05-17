@@ -145,9 +145,9 @@ class MyTestCase(unittest.TestCase):
     def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()
+        self.generate_products_fake_records()
         #self.generate_products_fake_records()
-        #self.generate_products_fake_records()
-        self.generate_update_records()
+        #self.generate_update_records()
         #self.test_duplicate_inserts()
 
 

@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
@@ -147,13 +148,15 @@ public class DbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public HashMap<Integer, MutablePair<Long, Long>> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public BlockMetaData insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
 
+        BlockMetaData bmd = new BlockMetaData();
         HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
             log.info("No Records to process");
-            return partitionToOffsetMap;
+            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+            return bmd;
         }
 
         // Get the first record to get length of columns
@@ -161,6 +164,13 @@ public class DbWriter {
         //ToDo: It will happens with alter table and add columns
         //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
 
+        long minSourceOffset = -1;
+        long maxSourceOffset = -1;
+
+        long minConsumerOffset = -1;
+        long maxConsumerOffset = -1;
+
+        long clickHouseInsertionTime = System.currentTimeMillis();
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
         // so that all records belonging to the same  query
         // can be inserted as a batch.
@@ -172,6 +182,32 @@ public class DbWriter {
             long minOffset = 0;
             long maxOffset = 0;
 
+            long recordSourceOffset = record.getTs_ms() - clickHouseInsertionTime;
+            long recordConsumerOffset = record.getKafkaOffset() - clickHouseInsertionTime;
+
+            if(minSourceOffset == -1 && maxSourceOffset == -1) {
+                minSourceOffset = recordSourceOffset;
+                maxSourceOffset = recordSourceOffset;
+            } else {
+                if(minSourceOffset <= recordSourceOffset) {
+                    minSourceOffset = recordSourceOffset;
+                }
+                if(maxSourceOffset >= recordSourceOffset) {
+                    maxSourceOffset = recordSourceOffset;
+                }
+            }
+
+            if(minConsumerOffset == -1 && maxConsumerOffset == -1) {
+                minConsumerOffset = recordConsumerOffset;
+                maxConsumerOffset = recordConsumerOffset;
+            } else {
+                if(minConsumerOffset <= recordConsumerOffset) {
+                    minConsumerOffset = recordConsumerOffset;
+                }
+                if(maxConsumerOffset >= recordConsumerOffset) {
+                    maxConsumerOffset = recordConsumerOffset;
+                }
+            }
             // Identify the min and max offsets of the bulk
             // thats inserted.
             int recordPartition = record.getKafkaPartition();
@@ -252,7 +288,14 @@ public class DbWriter {
             }
         }
 
-        return partitionToOffsetMap;
+        bmd.setMinSourceLag(minSourceOffset);
+        bmd.setMaxConsumerLag(maxSourceOffset);
+
+        bmd.setMinConsumerLag(minConsumerOffset);
+        bmd.setMaxConsumerLag(maxConsumerOffset);
+
+        bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+        return bmd;
     }
 
     /**

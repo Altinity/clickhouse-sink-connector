@@ -87,7 +87,9 @@ public class ClickHouseStruct {
         this.topic = topic;
         this.kafkaPartition = kafkaPartition;
         this.timestamp = timestamp;
-        this.key = key.toString();
+        if(key != null) {
+            this.key = key.toString();
+        }
     }
 
     public void setStruct(Struct s) {
