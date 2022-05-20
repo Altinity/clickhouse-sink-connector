@@ -50,7 +50,9 @@ public class QueryFormatter {
      */
     public String getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
                                                    Map<String, String> columnNameToDataTypeMap,
-                                                   boolean includeKafkaMetaData) {
+                                                   boolean includeKafkaMetaData,
+                                                   boolean includeRawData,
+                                                   String rawDataColumn) {
 
 
         StringBuffer colNamesDelimited = new StringBuffer();
@@ -76,9 +78,29 @@ public class QueryFormatter {
 
                     colNamesDelimited.append(metaDataColName).append(",");
                     colNamesToDataTypes.append(metaDataColName).append(" ").append(dataType).append(",");
+                } else {
+                    log.error("RAW DATA enabled but column not added to clickhouse: "  + rawDataColumn );
                 }
             }
         }
+        if(includeRawData) {
+            if(columnNameToDataTypeMap.containsKey(rawDataColumn)) {
+                // Also check if the data type is String.
+                String dataType = columnNameToDataTypeMap.get(rawDataColumn);
+                if(dataType.equalsIgnoreCase("String")) {
+                    colNamesDelimited.append(rawDataColumn).append(",");
+                    ;
+                    colNamesToDataTypes.append(rawDataColumn).append(" ").append("String").append(",");
+                } else {
+                    log.error("RAW DATA column is not of String datatype: "  + rawDataColumn );
+
+                }
+            }
+            else {
+                log.error("RAW DATA enabled but column not added to clickhouse: "  + rawDataColumn );
+            }
+        }
+
         //Remove terminating comma
         colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
         colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));

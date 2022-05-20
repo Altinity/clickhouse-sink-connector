@@ -31,6 +31,7 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class that abstracts all functionality
@@ -182,8 +183,8 @@ public class DbWriter {
             long minOffset = 0;
             long maxOffset = 0;
 
-            long recordSourceOffset = record.getTs_ms() - clickHouseInsertionTime;
-            long recordConsumerOffset = record.getKafkaOffset() - clickHouseInsertionTime;
+            long recordSourceOffset = clickHouseInsertionTime -  record.getTs_ms();
+            long recordConsumerOffset = clickHouseInsertionTime - record.getTimestamp();
 
             if(minSourceOffset == -1 && maxSourceOffset == -1) {
                 minSourceOffset = recordSourceOffset;
@@ -238,7 +239,9 @@ public class DbWriter {
 
             String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
                     (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap,
-                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA));
+                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
+                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
+                            this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN));
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
                 List<ClickHouseStruct> newList = new ArrayList<>();
@@ -288,11 +291,11 @@ public class DbWriter {
             }
         }
 
-        bmd.setMinSourceLag(minSourceOffset);
-        bmd.setMaxConsumerLag(maxSourceOffset);
+        bmd.setMinSourceLag(TimeUnit.MILLISECONDS.toSeconds(minSourceOffset));
+        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxSourceOffset));
 
-        bmd.setMinConsumerLag(minConsumerOffset);
-        bmd.setMaxConsumerLag(maxConsumerOffset);
+        bmd.setMinConsumerLag(TimeUnit.MILLISECONDS.toSeconds(minConsumerOffset));
+        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxConsumerOffset));
 
         bmd.setPartitionToOffsetMap(partitionToOffsetMap);
         return bmd;
@@ -476,7 +479,7 @@ public class DbWriter {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
             if(true == this.columnNameToDataTypeMap.containsKey(userProvidedColName)){
 
-                ClickHouseTableMetaData.addRawData(userProvidedColName, record, index, ps);
+                ClickHouseTableMetaData.addRawData(record, index, ps);
                 index++;
             }
         }

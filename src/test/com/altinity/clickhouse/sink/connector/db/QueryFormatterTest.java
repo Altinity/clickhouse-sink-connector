@@ -36,10 +36,12 @@ public class QueryFormatterTest {
 
         String tableName = "products";
         boolean includeKafkaMetaData = true;
+        boolean includeRawData = false;
 
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData);
+        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData, null);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity,_topic) select customerName,occupation,quantity,_topic from input('customerName String,occupation String,quantity UInt32,_topic String')";
+        String expectedQuery = "insert into products(customerName,occupation,quantity,_topic) select customerName,occupation,quantity,_topic " +
+                "from input('customerName String,occupation String,quantity UInt32,_topic String')";
         Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
     }
 
@@ -49,10 +51,41 @@ public class QueryFormatterTest {
 
         String tableName = "products";
         boolean includeKafkaMetaData = false;
+        boolean includeRawData = false;
 
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData);
+        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData, null);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation String,quantity UInt32')";
+        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
+                "String,quantity UInt32')";
+        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+    }
+
+    @Test
+    public void testGetInsertQueryUsingInputFunctionWithRawDataEnabledButRawColumnNotProvided() {
+        QueryFormatter qf = new QueryFormatter();
+
+        String tableName = "products";
+        boolean includeKafkaMetaData = false;
+        boolean includeRawData = true;
+
+        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData, null);
+
+        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
+                "String,quantity UInt32')";
+        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+    }
+    @Test
+    public void testGetInsertQueryUsingInputFunctionWithRawDataEnabledButRawColumnProvided() {
+        QueryFormatter qf = new QueryFormatter();
+
+        String tableName = "products";
+        boolean includeKafkaMetaData = false;
+        boolean includeRawData = true;
+
+        columnNameToDataTypesMap.put("raw_column", "String");
+        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData, "raw_column");
+
+        String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
         Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
     }
 }
