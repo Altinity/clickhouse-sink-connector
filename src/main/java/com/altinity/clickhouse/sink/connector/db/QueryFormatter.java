@@ -91,10 +91,11 @@ public class QueryFormatter {
                     colNamesDelimited.append(rawDataColumn).append(",");
                     ;
                     colNamesToDataTypes.append(rawDataColumn).append(" ").append("String").append(",");
-                } else {
-                    log.error("RAW DATA column is not of String datatype: "  + rawDataColumn );
-
                 }
+//                else {
+//                    log.error("RAW DATA column is not of String datatype: "  + rawDataColumn );
+//
+//                }
             }
             else {
                 log.error("RAW DATA enabled but column not added to clickhouse: "  + rawDataColumn );
