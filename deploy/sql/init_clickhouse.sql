@@ -20,9 +20,10 @@ CREATE TABLE employees
     `_binlog_file` Nullable(String),
     `_binlog_pos` Nullable(Int32),
     `_binlog_row` Nullable(Int32),
-    `_server_thread` Nullable(Int32)
+    `_server_thread` Nullable(Int32),
+    `sign` Int8
 )
-ENGINE = MergeTree
+ENGINE = CollapsingMergeTree(sign)
 PRIMARY KEY emp_no
 ORDER BY emp_no;
 
@@ -70,9 +71,10 @@ CREATE TABLE products(
   `quantityInStock` Int32,
   `buyPrice` Decimal(10,2),
   `MSRP` Decimal(10,2),
-  `raw_data` String
+  `raw_data` String,
+  `sign` Int8
 )
-ENGINE = MergeTree
+ENGINE = CollapsingMergeTree(sign)
 PRIMARY KEY productCode;
 
 CREATE TABLE t1(

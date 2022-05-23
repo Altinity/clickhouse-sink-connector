@@ -102,6 +102,13 @@ public class QueryFormatter {
             }
         }
 
+        // Add sign column(-1 if its delete, 1 for update)
+        final String SIGN_COLUMN = "sign";
+        if(columnNameToDataTypeMap.containsKey(SIGN_COLUMN)) {
+            colNamesDelimited.append(SIGN_COLUMN).append(",");
+            colNamesToDataTypes.append(SIGN_COLUMN).append(" ").append(columnNameToDataTypeMap.get(SIGN_COLUMN)).append(",");
+        }
+
         //Remove terminating comma
         colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
         colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
