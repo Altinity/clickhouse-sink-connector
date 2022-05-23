@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.model;
 
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.kafka.connect.data.Field;
@@ -79,6 +80,10 @@ public class ClickHouseStruct {
     @Setter
     List<Field> modifiedFields;
 
+    @Getter
+    @Setter
+    ClickHouseConverter.CDC_OPERATION cdcOperation;
+
     private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition, Long timestamp) {
@@ -148,12 +153,6 @@ public class ClickHouseStruct {
     }
     @Override
     public String toString() {
-        //
-        this.kafkaOffset = kafkaOffset;
-        this.topic = topic;
-        this.kafkaPartition = kafkaPartition;
-        this.timestamp = timestamp;
-        this.key = key.toString();
         return new StringBuffer()
                 .append(" offset:").append(kafkaOffset)
                 .append(" topic:").append(topic)

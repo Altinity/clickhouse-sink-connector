@@ -3,6 +3,10 @@ package com.altinity.clickhouse.sink.connector.model;
 public class SinkRecordColumns {
     public static final String OPERATION = "op";
 
+    public static final String BEFORE = "before";
+
+    public static final String AFTER = "after";
+
     public static final String SOURCE = "source";
     public static final String TS_MS = "ts_ms";
 

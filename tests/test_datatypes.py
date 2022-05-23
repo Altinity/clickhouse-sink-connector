@@ -142,12 +142,24 @@ class MyTestCase(unittest.TestCase):
 
         conn.close()
 
+
+    def generate_delete_records(self):
+
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        table_name = 'products'
+        conn.execute_sql("delete from employees_predated where emp_no =10001");
+
+        conn.close()
+
     def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()
-        self.generate_products_fake_records()
+        #self.generate_products_fake_records()
         #self.generate_products_fake_records()
         #self.generate_update_records()
+        self.generate_delete_records()
         #self.test_duplicate_inserts()
 
 

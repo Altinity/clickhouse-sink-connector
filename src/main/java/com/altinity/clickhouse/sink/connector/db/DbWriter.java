@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -474,6 +475,14 @@ public class DbWriter {
             }
         }
 
+        // Sign column.
+        if(this.columnNameToDataTypeMap.containsKey("sign")) {
+            if(record.getCdcOperation().getOperation() == ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) {
+                ps.setInt(index, -1);
+            } else {
+                ps.setInt(index, 1);
+            }
+        }
         // Store raw data in JSON form.
         if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);

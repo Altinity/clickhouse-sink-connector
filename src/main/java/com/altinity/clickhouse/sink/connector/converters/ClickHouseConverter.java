@@ -33,6 +33,10 @@ public class ClickHouseConverter implements AbstractConverter {
 
         private final String operation;
 
+        public String getOperation() {
+            return operation;
+        }
+
         CDC_OPERATION(String op) {
             this.operation = op;
         }
@@ -186,8 +190,12 @@ public class ClickHouseConverter implements AbstractConverter {
 
         //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
-        ClickHouseStruct afterRecord = null;
+        ClickHouseStruct chStruct = null;
 
+        if(convertedValue == null) {
+            log.error("Error converting Kafka Sink Record");
+            return chStruct;
+        }
         // Check "operation" represented by this record.
         if (convertedValue.containsKey(SinkRecordColumns.OPERATION)) {
             // Operation (u, c)
@@ -196,55 +204,44 @@ public class ClickHouseConverter implements AbstractConverter {
                     operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 log.debug("CREATE received");
-                afterRecord = readAfterSection(convertedValue, record);
+                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.CREATE);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
-                log.warn("UPDATE received -  ignored");
-                afterRecord = readAfterSection(convertedValue, record);
+                log.warn("UPDATE received");
+                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.UPDATE);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
-                log.warn("DELETE received - ignored");
+                log.warn("DELETE received");
+                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.DELETE);
+
             }
         }
 
-        return afterRecord;
-    }
-
-    private ClickHouseStruct readAfterSection(Map<String, Object> convertedValue, SinkRecord record) {
-
-        ClickHouseStruct afterRecord = null;
-        if (convertedValue.containsKey("after")) {
-            afterRecord = new ClickHouseStruct(record.kafkaOffset(),
-                    record.topic(), (Struct) record.key(), record.kafkaPartition(),
-                    record.timestamp());
-            afterRecord.setStruct((Struct) convertedValue.get("after"));
-            afterRecord.setAdditionalMetaData(convertedValue);
-        }
-
-        return afterRecord;
+        return chStruct;
     }
 
     /**
-     * Function to retrieve the key/value pair in the
-     * struct
-     * value=Struct{after=Struct{emp_no=13,birth_date=3652,first_name=John,last_name=Doe,gender=M,hire_date=18993,salary=232323232},
      *
      * @param convertedValue
+     * @param record
+     * @param sectionKey
+     * @param operation
      * @return
      */
-    private Struct process(Map<String, Object> convertedValue) {
-        Struct afterRecord;
+    private ClickHouseStruct readBeforeOrAfterSection(Map<String, Object> convertedValue,
+                                              SinkRecord record, String sectionKey, CDC_OPERATION operation) {
 
-        afterRecord = (Struct) convertedValue.get("after");
-        List<Field> fields = afterRecord.schema().fields();
-
-        for (Field field : fields) {
-            log.info("Key" + field.name());
-            log.info("Value" + afterRecord.get(field));
-
+        ClickHouseStruct chStruct = null;
+        if (convertedValue.containsKey(sectionKey)) {
+            chStruct = new ClickHouseStruct(record.kafkaOffset(),
+                    record.topic(), (Struct) record.key(), record.kafkaPartition(),
+                    record.timestamp());
+            chStruct.setStruct((Struct) convertedValue.get(sectionKey));
+            chStruct.setAdditionalMetaData(convertedValue);
+            chStruct.setCdcOperation(operation);
         }
 
-        return afterRecord;
+        return chStruct;
     }
 
     @Override
@@ -268,13 +265,13 @@ public class ClickHouseConverter implements AbstractConverter {
         Map<String, Object> result = null;
 
         if (schema == null) {
-            log.debug("schema is null");
+            log.error("Schema is empty");
             if (obj instanceof Map) {
                 log.info("SCHEMA LESS RECORD");
             }
         } else {
             if (schema.type() != Schema.Type.STRUCT) {
-                log.warn("NON STRUCT records ignored");
+                log.error("NON STRUCT records ignored");
             } else {
                 // Convert STRUCT
                 log.debug("RECEIVED STRUCT");
