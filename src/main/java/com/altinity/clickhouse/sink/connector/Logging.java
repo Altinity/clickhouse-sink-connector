@@ -81,7 +81,7 @@ public class Logging {
     static final String SF_LOG_TAG = "[SF_KAFKA_CONNECTOR]";
 
     /*
-     * the following methods wrap log message with Snowflake tag. For example,
+     * the following methods wrap log message with ClickHouse tag. For example,
      *
      * [SF_KAFKA_CONNECTOR] this is a log message
      * [SF_KAFKA_CONNECTOR] this is the second line

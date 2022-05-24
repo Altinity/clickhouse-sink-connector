@@ -3,6 +3,8 @@ package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
+import com.altinity.clickhouse.sink.connector.validators.KafkaProviderValidator;
+import com.altinity.clickhouse.sink.connector.validators.TopicToTableValidator;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;

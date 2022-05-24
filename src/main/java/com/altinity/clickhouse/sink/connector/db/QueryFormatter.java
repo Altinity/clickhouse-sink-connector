@@ -79,7 +79,7 @@ public class QueryFormatter {
                     colNamesDelimited.append(metaDataColName).append(",");
                     colNamesToDataTypes.append(metaDataColName).append(" ").append(dataType).append(",");
                 } else {
-                    log.error("RAW DATA enabled but column not added to clickhouse: "  + rawDataColumn );
+                    log.error("Kafka metadata enabled but column not added to clickhouse: "  + rawDataColumn );
                 }
             }
         }
