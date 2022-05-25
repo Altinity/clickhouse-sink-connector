@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector;
 
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import org.junit.Assert;
 import org.junit.Test;
 

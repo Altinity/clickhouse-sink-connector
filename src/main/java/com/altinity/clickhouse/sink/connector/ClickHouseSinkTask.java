@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector;
 
+import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.common.Version;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;

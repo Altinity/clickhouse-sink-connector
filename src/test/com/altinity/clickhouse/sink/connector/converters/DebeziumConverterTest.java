@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.db.DataTypeRange;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import org.junit.Assert;
 import org.junit.Test;
 

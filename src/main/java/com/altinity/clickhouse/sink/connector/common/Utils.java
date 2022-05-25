@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package com.altinity.clickhouse.sink.connector;
+package com.altinity.clickhouse.sink.connector.common;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

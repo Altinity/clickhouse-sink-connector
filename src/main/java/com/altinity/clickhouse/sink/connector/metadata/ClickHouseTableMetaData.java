@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector.db;
+package com.altinity.clickhouse.sink.connector.metadata;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;

@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector.db;
+package com.altinity.clickhouse.sink.connector.metadata;
 
 public class DataTypeRange
 {

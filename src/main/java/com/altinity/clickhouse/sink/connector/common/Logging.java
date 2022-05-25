@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector;
+package com.altinity.clickhouse.sink.connector.common;
 
 
 import org.slf4j.Logger;
@@ -108,8 +108,8 @@ public class Logging {
      * @return log message wrapped by snowflake tag
      */
     public static String logMessage(String format, Object... vars) {
-        for (int i = 0; i < vars.length; i++) {
-            format = format.replaceFirst("\\{}", Objects.toString(vars[i]).replaceAll("\\$", "\\\\\\$"));
+        for (Object var : vars) {
+            format = format.replaceFirst("\\{}", Objects.toString(var).replaceAll("\\$", "\\\\\\$"));
         }
         return logMessage(format);
     }

@@ -1,6 +1,9 @@
 package com.altinity.clickhouse.sink.connector;
 
 
+import com.altinity.clickhouse.sink.connector.common.Const;
+import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.Version;
 import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.Task;
