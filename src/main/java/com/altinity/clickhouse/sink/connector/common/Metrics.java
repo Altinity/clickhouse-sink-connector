@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector;
+package com.altinity.clickhouse.sink.connector.common;
 
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;

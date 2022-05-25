@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.validators;
 
-import com.altinity.clickhouse.sink.connector.Utils;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 
