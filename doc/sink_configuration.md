@@ -14,6 +14,8 @@ JDBC Bulk Insert functionality.
 
 `store.raw.data.column`: Clickhouse table column to store the raw data in JSON form(String Clickhouse DataType)
 
+`clickhouse.sign.column`: Clickhouse table column to store sign values(-1 for deletes, 1 for other operations.)
+
 
 
 This is a sample configuration that's used in creating the connector using the Kafka connect REST API.

@@ -149,7 +149,7 @@ class MyTestCase(unittest.TestCase):
         conn.create_connection()
 
         table_name = 'products'
-        conn.execute_sql("delete from employees_predated where emp_no =10001");
+        conn.execute_sql("delete from employees_predated where emp_no =9999");
 
         conn.close()
 

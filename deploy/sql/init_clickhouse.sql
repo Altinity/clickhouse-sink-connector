@@ -75,7 +75,8 @@ CREATE TABLE products(
   `sign` Int8
 )
 ENGINE = CollapsingMergeTree(sign)
-PRIMARY KEY productCode;
+PRIMARY KEY productCode
+order by productCode;
 
 CREATE TABLE t1(
 `intcol1` UInt64,
