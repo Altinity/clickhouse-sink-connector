@@ -243,7 +243,8 @@ public class DbWriter {
                     (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap,
                             this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
                             this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
-                            this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN));
+                            this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
+                            this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN));
 
             if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
                 List<ClickHouseStruct> newList = new ArrayList<>();

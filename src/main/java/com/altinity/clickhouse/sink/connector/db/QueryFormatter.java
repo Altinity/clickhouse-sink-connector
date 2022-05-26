@@ -52,7 +52,8 @@ public class QueryFormatter {
                                                    Map<String, String> columnNameToDataTypeMap,
                                                    boolean includeKafkaMetaData,
                                                    boolean includeRawData,
-                                                   String rawDataColumn) {
+                                                   String rawDataColumn,
+                                                   String signColumn) {
 
 
         StringBuffer colNamesDelimited = new StringBuffer();
@@ -103,10 +104,9 @@ public class QueryFormatter {
         }
 
         // Add sign column(-1 if its delete, 1 for update)
-        final String SIGN_COLUMN = "sign";
-        if(columnNameToDataTypeMap.containsKey(SIGN_COLUMN)) {
-            colNamesDelimited.append(SIGN_COLUMN).append(",");
-            colNamesToDataTypes.append(SIGN_COLUMN).append(" ").append(columnNameToDataTypeMap.get(SIGN_COLUMN)).append(",");
+        if(signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
+            colNamesDelimited.append(signColumn).append(",");
+            colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
         }
 
         //Remove terminating comma
