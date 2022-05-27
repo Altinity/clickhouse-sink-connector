@@ -19,7 +19,7 @@ import java.util.List;
  * Class to perform all operations related
  * to adding metadata to Clickhouse tables.
  */
-public class ClickHouseTableMetaData {
+public class TableMetaDataWriter {
 
     /**
      * Function to add kafka metadata columns.

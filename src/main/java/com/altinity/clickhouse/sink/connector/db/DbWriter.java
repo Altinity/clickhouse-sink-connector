@@ -4,7 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
-import com.altinity.clickhouse.sink.connector.metadata.ClickHouseTableMetaData;
+import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
@@ -27,10 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Types;
+import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -113,6 +110,7 @@ public class DbWriter {
         }
         return result;
     }
+
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
@@ -470,7 +468,7 @@ public class DbWriter {
             String metaDataColName = metaDataColumn.getColumn();
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
                 if(true == this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
-                    if (true == ClickHouseTableMetaData.addKafkaMetaData(metaDataColName, record, index, ps)) {
+                    if (true == TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, index, ps)) {
                         index++;
                     }
                 }
@@ -490,7 +488,7 @@ public class DbWriter {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
             if(true == this.columnNameToDataTypeMap.containsKey(userProvidedColName)){
 
-                ClickHouseTableMetaData.addRawData(record, index, ps);
+                TableMetaDataWriter.addRawData(record, index, ps);
                 index++;
             }
         }
