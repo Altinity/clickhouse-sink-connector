@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.altinity.clickhouse.sink.connector.metadata.ClickHouseTableMetaData;
+import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
@@ -10,9 +10,9 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class ClickHouseTableMetaDataTest {
+public class TableMetaDataWriterTest {
 
-    public static final Logger log = LoggerFactory.getLogger(ClickHouseTableMetaData.class);
+    public static final Logger log = LoggerFactory.getLogger(TableMetaDataWriter.class);
     @Test
     public void testConvertRecordToJSON() {
         Schema kafkaConnectSchema = SchemaBuilder
@@ -37,7 +37,7 @@ public class ClickHouseTableMetaDataTest {
 
         String jsonString = null;
         try {
-            jsonString = ClickHouseTableMetaData.convertRecordToJSON(s);
+            jsonString = TableMetaDataWriter.convertRecordToJSON(s);
         } catch(Exception e) {
             log.error("Exception converting record to JSON" + e);
         }

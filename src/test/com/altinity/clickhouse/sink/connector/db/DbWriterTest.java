@@ -72,6 +72,21 @@ public class DbWriterTest {
     }
 
     @Test
+    @Tag("IntegrationTest")
+    public void testGetEngineType() {
+        String dbHostName = "localhost";
+        Integer port = 8123;
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<String, String>()));
+        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngine(writer.conn, "employees");
+        Assert.assertTrue(result == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
+    }
+    @Test
     public void testInsertPreparedStatement() {
         String hostName = "remoteClickHouse";
         Integer port = 8123;
