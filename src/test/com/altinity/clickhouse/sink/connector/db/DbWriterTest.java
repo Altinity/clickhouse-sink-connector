@@ -86,6 +86,34 @@ public class DbWriterTest {
         DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngine(writer.conn, "employees");
         Assert.assertTrue(result == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
     }
+
+    @Test
+    @Tag("IntegrationTest")
+    public void testGetEngineTypeUsingSystemTables() {
+        String dbHostName = "localhost";
+        Integer port = 8123;
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "employees");
+        Assert.assertTrue(result == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
+
+        DBMetadata.TABLE_ENGINE result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "products");
+        Assert.assertTrue(result_products == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
+
+        // Table does not exist.
+        DBMetadata.TABLE_ENGINE result_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "registration");
+        Assert.assertNull(result_registration);
+
+        DBMetadata.TABLE_ENGINE result_t1 = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "t1");
+        Assert.assertTrue(result_t1 == DBMetadata.TABLE_ENGINE.MERGE_TREE);
+
+    }
+
     @Test
     public void testInsertPreparedStatement() {
         String hostName = "remoteClickHouse";

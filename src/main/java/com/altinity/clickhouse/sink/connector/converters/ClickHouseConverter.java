@@ -178,6 +178,39 @@ public class ClickHouseConverter implements AbstractConverter {
      * }
      */
 
+    public CDC_OPERATION getOperation(final SinkRecord record) {
+        CDC_OPERATION cdcOperation = null;
+        log.debug("convert()");
+
+        //Map<String, Object> convertedKey = convertKey(record);
+        Map<String, Object> convertedValue = convertValue(record);
+        ClickHouseStruct chStruct = null;
+
+        if(convertedValue == null) {
+            log.error("Error converting Kafka Sink Record");
+            return null;
+        }
+        // Check "operation" represented by this record.
+        if (convertedValue.containsKey(SinkRecordColumns.OPERATION)) {
+            // Operation (u, c)
+            String operation = (String) convertedValue.get(SinkRecordColumns.OPERATION);
+            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
+                    operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
+                // Inserts.
+                cdcOperation = CDC_OPERATION.CREATE;
+            } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
+                // Updates.
+                log.warn("UPDATE received");
+                cdcOperation = CDC_OPERATION.UPDATE;
+            } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
+                // Deletes.
+                log.warn("DELETE received");
+                cdcOperation = CDC_OPERATION.DELETE;
+            }
+        }
+
+        return cdcOperation;
+    }
     /**
      * Primary functionality of parsing a CDC event in a SinkRecord.
      * This checks the operation flag( if its 'C' or 'U')
