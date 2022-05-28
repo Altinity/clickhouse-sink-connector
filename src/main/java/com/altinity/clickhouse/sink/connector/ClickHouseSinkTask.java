@@ -62,7 +62,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
-        this.records = new ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>();
+        this.records = new ConcurrentHashMap<>();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         this.executor = new ClickHouseBatchExecutor(1);
         this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.SECONDS);
@@ -108,12 +108,12 @@ public class ClickHouseSinkTask extends SinkTask {
     }
 
     private void appendToRecords(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs = null;
+        ConcurrentLinkedQueue<ClickHouseStruct> structs;
 
         if(this.records.containsKey(topicName)) {
             structs = this.records.get(topicName);
         } else {
-            structs = new ConcurrentLinkedQueue<ClickHouseStruct>();
+            structs = new ConcurrentLinkedQueue<>();
         }
         structs.add(chs);
         this.records.put(topicName, structs);

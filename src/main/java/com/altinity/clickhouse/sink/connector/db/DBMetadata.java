@@ -16,6 +16,8 @@ public class DBMetadata {
         COLLAPSING_MERGE_TREE("CollapsingMergeTree"),
         REPLACING_MERGE_TREE("ReplacingMergeTree"),
 
+        MERGE_TREE("MergeTree"),
+
         DEFAULT("default");
 
         private String engine;
@@ -48,6 +50,48 @@ public class DBMetadata {
                         result = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
                     } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
                         result = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                    } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
+                        result = TABLE_ENGINE.MERGE_TREE;
+                    }else {
+                        result = TABLE_ENGINE.DEFAULT;
+                    }
+                }
+                rs.close();
+                stmt.close();
+                log.info("ResultSet" + rs);
+            }
+        } catch(Exception e) {
+            log.error("getTableEngine exception", e);
+        }
+
+        return result;
+    }
+
+    /**
+     * Function to get table engine using system tables.
+     * @param conn ClickHouse Connection
+     * @param tableName Table Name.
+     * @return TABLE_ENGINE type
+     */
+    public TABLE_ENGINE getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String tableName) {
+        TABLE_ENGINE result = null;
+
+        try {
+            if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
+            try(Statement stmt = conn.createStatement()) {
+                String showSchemaQuery = String.format("select engine from system.tables where name='%s'", tableName);
+                ResultSet rs = stmt.executeQuery(showSchemaQuery);
+                if(rs.next()) {
+                    String response =  rs.getString(1);
+                    if(response.equalsIgnoreCase(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
+                        result = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                    } else if(response.equalsIgnoreCase(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+                        result = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                    } else if(response.equalsIgnoreCase(TABLE_ENGINE.MERGE_TREE.engine)) {
+                        result = TABLE_ENGINE.MERGE_TREE;
                     } else {
                         result = TABLE_ENGINE.DEFAULT;
                     }
