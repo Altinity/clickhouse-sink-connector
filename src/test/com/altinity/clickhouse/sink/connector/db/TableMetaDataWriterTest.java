@@ -33,11 +33,11 @@ public class TableMetaDataWriterTest {
 
         ClickHouseStruct s = new ClickHouseStruct(1, "test-topic", kafkaConnectStruct, 12,
                 122323L);
-        s.setStruct(kafkaConnectStruct);
+        s.setAfterStruct(kafkaConnectStruct);
 
         String jsonString = null;
         try {
-            jsonString = TableMetaDataWriter.convertRecordToJSON(s);
+            jsonString = TableMetaDataWriter.convertRecordToJSON(s.getAfterStruct());
         } catch(Exception e) {
             log.error("Exception converting record to JSON" + e);
         }

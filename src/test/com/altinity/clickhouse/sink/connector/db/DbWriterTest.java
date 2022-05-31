@@ -83,7 +83,7 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<String, String>()));
-        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngine(writer.conn, "employees");
+        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngineUsingShowTable(writer.conn, "employees");
         Assert.assertTrue(result == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
     }
 
@@ -99,17 +99,21 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "employees");
+        DBMetadata.TABLE_ENGINE result = new DBMetadata().getTableEngineUsingSystemTables(writer.conn,
+                "test", "employees");
         Assert.assertTrue(result == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
-        DBMetadata.TABLE_ENGINE result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "products");
+        DBMetadata.TABLE_ENGINE result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.conn,
+                "test", "products");
         Assert.assertTrue(result_products == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.
-        DBMetadata.TABLE_ENGINE result_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "registration");
+        DBMetadata.TABLE_ENGINE result_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.conn,
+                "test", "registration");
         Assert.assertNull(result_registration);
 
-        DBMetadata.TABLE_ENGINE result_t1 = new DBMetadata().getTableEngineUsingSystemTables(writer.conn, "t1");
+        DBMetadata.TABLE_ENGINE result_t1 = new DBMetadata().getTableEngineUsingSystemTables(writer.conn,
+                "test", "t1");
         Assert.assertTrue(result_t1 == DBMetadata.TABLE_ENGINE.MERGE_TREE);
 
     }

@@ -6,6 +6,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
+import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
@@ -21,6 +22,7 @@ import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,11 +43,13 @@ public class DbWriter {
     ClickHouseConnection conn;
     private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
 
-    private String tableName;
+    private final String tableName;
     // Map of column names to data types.
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 
-    private ClickHouseSinkConnectorConfig config;
+    private final DBMetadata.TABLE_ENGINE engine;
+
+    private final ClickHouseSinkConnectorConfig config;
 
     public DbWriter(
             String hostName,
@@ -67,6 +71,8 @@ public class DbWriter {
             // Order of the column names and the data type has to match.
             this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
         }
+
+        this.engine = new DBMetadata().getTableEngine(this.conn, database, tableName);
     }
 
     public String getConnectionString(String hostName, Integer port, String database) {
@@ -97,15 +103,16 @@ public class DbWriter {
     /**
      * Function to check if the column is of DateTime64
      * from the column type(string name)
+     *
      * @param columnType
      * @return true if its DateTime64, false otherwise.
      */
-    public static boolean isColumnDateTime64(String columnType){
+    public static boolean isColumnDateTime64(String columnType) {
         //ClickHouseDataType dt = ClickHouseDataType.of(columnType);
         //ToDo: Figure out a way to get the ClickHouseDataType
         // from column name.
         boolean result = false;
-        if(columnType.contains("DateTime64")){
+        if (columnType.contains("DateTime64")) {
             result = true;
         }
         return result;
@@ -119,7 +126,7 @@ public class DbWriter {
 
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
-            if(this.conn == null) {
+            if (this.conn == null) {
                 log.error("Error with DB connection");
                 return result;
             }
@@ -130,10 +137,10 @@ public class DbWriter {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
 
-                Object dataType = columns.getString("DATA_TYPE");
-                String columnSize = columns.getString("COLUMN_SIZE");
-                String isNullable = columns.getString("IS_NULLABLE");
-                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+//                Object dataType = columns.getString("DATA_TYPE");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
 
                 result.put(columnName, typeName);
             }
@@ -144,8 +151,181 @@ public class DbWriter {
     }
 
     /**
+     * Function which has logic of choosing between before and after fields
+     * based on CDC operation and Table Engine.
+     *
+     * @param engine
+     * @return
+     */
+    public List<Field> getModifiedFieldsBasedOnTableEngine(DBMetadata.TABLE_ENGINE engine, ClickHouseStruct record) {
+        List<Field> modifiedFields = null;
+        if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation())) {
+            modifiedFields = record.getAfterModifiedFields();
+        } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+            modifiedFields = record.getBeforeModifiedFields();
+        }
+
+        return modifiedFields;
+    }
+
+    /**
+     * Function
+     *
+     * @param operation
+     * @return
+     */
+    public CdcRecordState getCdcSectionBasedOnOperation(ClickHouseConverter.CDC_OPERATION operation) {
+        CdcRecordState state = CdcRecordState.CDC_RECORD_STATE_AFTER;
+
+        if (operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation()) ||
+                operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.READ.getOperation())) {
+            state = CdcRecordState.CDC_RECORD_STATE_AFTER;
+        } else if (operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+            state = CdcRecordState.CDC_RECORD_STATE_BEFORE;
+        } else if (operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+            state = CdcRecordState.CDC_RECORD_STATE_BOTH;
+        }
+
+        return state;
+    }
+
+
+    /**
+     * Function to group the Query with records.
+     *
+     * @param records
+     * @return
+     */
+    public BlockMetaData groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
+                                               Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
+
+
+        BlockMetaData bmd = new BlockMetaData();
+        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
+
+        if (records.isEmpty()) {
+            log.info("No Records to process");
+            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+            return bmd;
+        }
+
+        long minSourceOffset = -1;
+        long maxSourceOffset = -1;
+
+        long minConsumerOffset = -1;
+        long maxConsumerOffset = -1;
+
+        long clickHouseInsertionTime = System.currentTimeMillis();
+        // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
+        // so that all records belonging to the same  query
+        // can be inserted as a batch.
+        Iterator iterator = records.iterator();
+        while (iterator.hasNext()) {
+            ClickHouseStruct record = (ClickHouseStruct) iterator.next();
+
+            long minOffset = 0;
+            long maxOffset = 0;
+
+            long recordSourceOffset = clickHouseInsertionTime - record.getTs_ms();
+            long recordConsumerOffset = clickHouseInsertionTime - record.getTimestamp();
+
+            if (minSourceOffset == -1 && maxSourceOffset == -1) {
+                minSourceOffset = recordSourceOffset;
+                maxSourceOffset = recordSourceOffset;
+            } else {
+                if (minSourceOffset <= recordSourceOffset) {
+                    minSourceOffset = recordSourceOffset;
+                }
+                if (maxSourceOffset >= recordSourceOffset) {
+                    maxSourceOffset = recordSourceOffset;
+                }
+            }
+
+            if (minConsumerOffset == -1 && maxConsumerOffset == -1) {
+                minConsumerOffset = recordConsumerOffset;
+                maxConsumerOffset = recordConsumerOffset;
+            } else {
+                if (minConsumerOffset <= recordConsumerOffset) {
+                    minConsumerOffset = recordConsumerOffset;
+                }
+                if (maxConsumerOffset >= recordConsumerOffset) {
+                    maxConsumerOffset = recordConsumerOffset;
+                }
+            }
+            // Identify the min and max offsets of the bulk
+            // that's inserted.
+            int recordPartition = record.getKafkaPartition();
+            if (partitionToOffsetMap.containsKey(recordPartition)) {
+                MutablePair<Long, Long> offsetsPair = partitionToOffsetMap.get(recordPartition);
+                minOffset = offsetsPair.left;
+                maxOffset = offsetsPair.right;
+            }
+
+            boolean offsetUpdated = false;
+            if (record.getKafkaOffset() < minOffset) {
+                minOffset = record.getKafkaOffset();
+                offsetUpdated = true;
+            }
+
+            if (record.getKafkaOffset() > maxOffset) {
+                maxOffset = record.getKafkaOffset();
+                offsetUpdated = true;
+            }
+
+            if (offsetUpdated) {
+                if (minOffset == 0) {
+                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(record.getKafkaOffset(), maxOffset));
+                } else {
+                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
+                }
+            }
+
+            if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+            } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+            } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
+                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+            } else {
+                log.error("INVALID CDC RECORD STATE");
+            }
+        }
+
+        bmd.setMinSourceLag(TimeUnit.MILLISECONDS.toSeconds(minSourceOffset));
+        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxSourceOffset));
+
+        bmd.setMinConsumerLag(TimeUnit.MILLISECONDS.toSeconds(minConsumerOffset));
+        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxConsumerOffset));
+
+        bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+        return bmd;
+    }
+
+    public void updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
+                                        Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
+        String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
+                (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
+                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
+                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
+                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
+                        this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN));
+
+        if (!queryToRecordsMap.containsKey(insertQueryTemplate)) {
+            List<ClickHouseStruct> newList = new ArrayList<>();
+            newList.add(record);
+            queryToRecordsMap.put(insertQueryTemplate, newList);
+        } else {
+            List<ClickHouseStruct> recordsList = queryToRecordsMap.get(insertQueryTemplate);
+            recordsList.add(record);
+            queryToRecordsMap.put(insertQueryTemplate, recordsList);
+        }
+    }
+
+    /**
      * Function that uses clickhouse-jdbc library
      * to insert records in bulk
+     *
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
@@ -160,101 +340,22 @@ public class DbWriter {
             return bmd;
         }
 
-        // Get the first record to get length of columns
-        //ToDo: This wont work where there are fields with different lengths.
-        //ToDo: It will happens with alter table and add columns
-        //String insertQueryTemplate = this.getInsertQuery(tableName, peekRecord.schema().fields().size());
+        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        bmd = groupQueryWithRecords(records, queryToRecordsMap);
 
-        long minSourceOffset = -1;
-        long maxSourceOffset = -1;
+        addToPreparedStatementBatch(queryToRecordsMap, records);
 
-        long minConsumerOffset = -1;
-        long maxConsumerOffset = -1;
+        return bmd;
+    }
 
-        long clickHouseInsertionTime = System.currentTimeMillis();
-        // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
-        // so that all records belonging to the same  query
-        // can be inserted as a batch.
-        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
-        Iterator iterator = records.iterator();
-        while (iterator.hasNext()) {
-            ClickHouseStruct record = (ClickHouseStruct) iterator.next();
-
-            long minOffset = 0;
-            long maxOffset = 0;
-
-            long recordSourceOffset = clickHouseInsertionTime -  record.getTs_ms();
-            long recordConsumerOffset = clickHouseInsertionTime - record.getTimestamp();
-
-            if(minSourceOffset == -1 && maxSourceOffset == -1) {
-                minSourceOffset = recordSourceOffset;
-                maxSourceOffset = recordSourceOffset;
-            } else {
-                if(minSourceOffset <= recordSourceOffset) {
-                    minSourceOffset = recordSourceOffset;
-                }
-                if(maxSourceOffset >= recordSourceOffset) {
-                    maxSourceOffset = recordSourceOffset;
-                }
-            }
-
-            if(minConsumerOffset == -1 && maxConsumerOffset == -1) {
-                minConsumerOffset = recordConsumerOffset;
-                maxConsumerOffset = recordConsumerOffset;
-            } else {
-                if(minConsumerOffset <= recordConsumerOffset) {
-                    minConsumerOffset = recordConsumerOffset;
-                }
-                if(maxConsumerOffset >= recordConsumerOffset) {
-                    maxConsumerOffset = recordConsumerOffset;
-                }
-            }
-            // Identify the min and max offsets of the bulk
-            // thats inserted.
-            int recordPartition = record.getKafkaPartition();
-            if(partitionToOffsetMap.containsKey(recordPartition)) {
-                MutablePair<Long, Long> offsetsPair = partitionToOffsetMap.get(recordPartition);
-                minOffset = offsetsPair.left;
-                maxOffset = offsetsPair.right;
-            }
-
-            boolean offsetUpdated = false;
-            if(record.getKafkaOffset() < minOffset) {
-                minOffset = record.getKafkaOffset();
-                offsetUpdated = true;
-            }
-
-            if(record.getKafkaOffset() > maxOffset) {
-                maxOffset = record.getKafkaOffset();
-                offsetUpdated = true;
-            }
-
-            if(true == offsetUpdated) {
-                if(minOffset == 0) {
-                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(record.getKafkaOffset(), maxOffset));
-                } else {
-                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
-                }
-            }
-
-            String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
-                    (this.tableName, record.getModifiedFields(), this.columnNameToDataTypeMap,
-                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
-                            this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
-                            this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
-                            this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN));
-
-            if (false == queryToRecordsMap.containsKey(insertQueryTemplate)) {
-                List<ClickHouseStruct> newList = new ArrayList<>();
-                newList.add(record);
-                queryToRecordsMap.put(insertQueryTemplate, newList);
-            } else {
-                List<ClickHouseStruct> recordsList = queryToRecordsMap.get(insertQueryTemplate);
-                recordsList.add(record);
-                queryToRecordsMap.put(insertQueryTemplate, recordsList);
-            }
-        }
-
+    /**
+     * Function to iterate through records and add it to JDBC prepared statement
+     * batch
+     *
+     * @param queryToRecordsMap
+     */
+    private void addToPreparedStatementBatch(Map<String, List<ClickHouseStruct>> queryToRecordsMap,
+                                             ConcurrentLinkedQueue<ClickHouseStruct> records) {
         for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
 
             String insertQuery = entry.getKey();
@@ -265,11 +366,23 @@ public class DbWriter {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : recordsList) {
-                    List<Field> fields = record.getStruct().schema().fields();
+                    //List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
                     //insertPreparedStatement(ps, fields, record);
-                    insertPreparedStatement(ps, record.getModifiedFields(), record);
+
+                    if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct());
+                    } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct());
+                    } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
+                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct());
+                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct());
+                    } else {
+                        log.error("INVALID CDC RECORD STATE");
+                    }
+
+
                     // Append parameters to the query
 
 
@@ -291,15 +404,6 @@ public class DbWriter {
                 log.warn("insert Batch exception", e);
             }
         }
-
-        bmd.setMinSourceLag(TimeUnit.MILLISECONDS.toSeconds(minSourceOffset));
-        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxSourceOffset));
-
-        bmd.setMinConsumerLag(TimeUnit.MILLISECONDS.toSeconds(minConsumerOffset));
-        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxConsumerOffset));
-
-        bmd.setPartitionToOffsetMap(partitionToOffsetMap);
-        return bmd;
     }
 
     /**
@@ -326,13 +430,14 @@ public class DbWriter {
      * @param fields
      * @param record
      */
-    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields, ClickHouseStruct record) throws Exception {
+    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields,
+                                        ClickHouseStruct record, Struct struct) throws Exception {
 
         int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
         //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-        for(Field f: fields) {
+        for (Field f : fields) {
 
             String colName = f.name();
             //String colName = entry.getKey();
@@ -342,7 +447,7 @@ public class DbWriter {
             // will throw an error.
             // If the Received column is not a clickhouse column
             try {
-                Object value = record.getStruct().get(colName);
+                Object value = struct.get(colName);
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     index++;
@@ -356,7 +461,7 @@ public class DbWriter {
                 index++;
                 continue;
             }
-            if (false == this.columnNameToDataTypeMap.containsKey(colName)) {
+            if (!this.columnNameToDataTypeMap.containsKey(colName)) {
                 log.error(" ***** ERROR: Column:{} not found in ClickHouse", colName);
                 continue;
             }
@@ -365,10 +470,10 @@ public class DbWriter {
             //ToDo: Map the Clickhouse types as a Enum.
 
 
-           // Field f = getFieldByColumnName(fields, colName);
+            // Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
-            Object value = record.getStruct().get(f);
+            Object value = struct.get(f);
 
             //TinyINT -> INT16 -> TinyInt
             boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
@@ -425,9 +530,9 @@ public class DbWriter {
                     ps.setInt(index, (Integer) value);
                 }
             } else if (isFieldTypeFloat) {
-                if (true == value instanceof Float) {
+                if (value instanceof Float) {
                     ps.setFloat(index, (Float) value);
-                } else if (true == value instanceof Double) {
+                } else if (value instanceof Double) {
                     ps.setDouble(index, (Double) value);
                 }
             } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
@@ -451,7 +556,7 @@ public class DbWriter {
                 if (value instanceof byte[]) {
                     String hexValue = new String((byte[]) value);
                     ps.setString(index, hexValue);
-                } else if(value instanceof java.nio.ByteBuffer) {
+                } else if (value instanceof java.nio.ByteBuffer) {
                     ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
                 }
 
@@ -464,11 +569,11 @@ public class DbWriter {
         }
 
         // Kafka metadata columns.
-        for(KafkaMetaData metaDataColumn: KafkaMetaData.values()) {
+        for (KafkaMetaData metaDataColumn : KafkaMetaData.values()) {
             String metaDataColName = metaDataColumn.getColumn();
-            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA) == true) {
-                if(true == this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
-                    if (true == TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, index, ps)) {
+            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)) {
+                if (this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
+                    if (TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, index, ps)) {
                         index++;
                     }
                 }
@@ -476,19 +581,19 @@ public class DbWriter {
         }
 
         // Sign column.
-        if(this.columnNameToDataTypeMap.containsKey("sign")) {
-            if(record.getCdcOperation().getOperation() == ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) {
+        if (this.columnNameToDataTypeMap.containsKey("sign")) {
+            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(index, -1);
             } else {
                 ps.setInt(index, 1);
             }
         }
         // Store raw data in JSON form.
-        if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA) == true) {
+        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)) {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
-            if(true == this.columnNameToDataTypeMap.containsKey(userProvidedColName)){
+            if (this.columnNameToDataTypeMap.containsKey(userProvidedColName)) {
 
-                TableMetaDataWriter.addRawData(record, index, ps);
+                TableMetaDataWriter.addRawData(struct, index, ps);
                 index++;
             }
         }

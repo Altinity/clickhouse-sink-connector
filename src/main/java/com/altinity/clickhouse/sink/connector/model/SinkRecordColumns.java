@@ -4,7 +4,6 @@ public class SinkRecordColumns {
     public static final String OPERATION = "op";
 
     public static final String BEFORE = "before";
-
     public static final String AFTER = "after";
 
     public static final String SOURCE = "source";
@@ -23,3 +22,4 @@ public class SinkRecordColumns {
     public static final String SERVER_THREAD = "thread";
 
 }
+

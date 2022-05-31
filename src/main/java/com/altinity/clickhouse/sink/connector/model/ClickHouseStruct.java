@@ -74,11 +74,19 @@ public class ClickHouseStruct {
     // Inheritance doesn't work because of different package
     // error, composition.
     @Getter
-    Struct struct;
+    Struct beforeStruct;
+
+    @Getter
+    Struct afterStruct;
 
     @Getter
     @Setter
-    List<Field> modifiedFields;
+    List<Field> beforeModifiedFields;
+
+    @Getter
+    @Setter
+    List<Field> afterModifiedFields;
+
 
     @Getter
     @Setter
@@ -97,17 +105,33 @@ public class ClickHouseStruct {
         }
     }
 
-    public void setStruct(Struct s) {
-        this.struct = s;
+    public void setBeforeStruct(Struct s) {
+        this.beforeStruct = s;
 
         if(s != null) {
             List<Field> schemaFields = s.schema().fields();
-            this.modifiedFields = new ArrayList<Field>();
+            this.beforeModifiedFields = new ArrayList<Field>();
             for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
                 if (s.get(f) != null) {
-                    this.modifiedFields.add(f);
+                    this.beforeModifiedFields.add(f);
+                }
+            }
+        }
+    }
+
+    public void setAfterStruct(Struct s) {
+        this.afterStruct = s;
+
+        if(s != null) {
+            List<Field> schemaFields = s.schema().fields();
+            this.afterModifiedFields = new ArrayList<Field>();
+            for (Field f : schemaFields) {
+                // Identify the list of columns that were modified.
+                // Schema.fields() will give the list of columns in the schema.
+                if (s.get(f) != null) {
+                    this.afterModifiedFields.add(f);
                 }
             }
         }
