@@ -104,7 +104,7 @@ public class DBMetadata {
                 return result;
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("select engine from system.tables where name='%s' and database='%s",
+                String showSchemaQuery = String.format("select engine from system.tables where name='%s' and database='%s'",
                         tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.next()) {
