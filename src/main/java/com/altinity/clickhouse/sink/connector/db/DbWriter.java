@@ -372,12 +372,12 @@ public class DbWriter {
                     //insertPreparedStatement(ps, fields, record);
 
                     if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct());
+                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
                     } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct());
+                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct());
-                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct());
+                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -431,7 +431,7 @@ public class DbWriter {
      * @param record
      */
     public void insertPreparedStatement(PreparedStatement ps, List<Field> fields,
-                                        ClickHouseStruct record, Struct struct) throws Exception {
+                                        ClickHouseStruct record, Struct struct, boolean beforeSection) throws Exception {
 
         int index = 1;
 
@@ -584,6 +584,12 @@ public class DbWriter {
         if (this.columnNameToDataTypeMap.containsKey("sign")) {
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(index, -1);
+            } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
+                if(beforeSection == true) {
+                    ps.setInt(index, - 1);
+                } else {
+                    ps.setInt(index, 1);
+                }
             } else {
                 ps.setInt(index, 1);
             }
