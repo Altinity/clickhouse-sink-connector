@@ -73,19 +73,18 @@ public class TableMetaDataWriter {
         return columnUpdated;
     }
 
-    public static void addRawData(ClickHouseStruct record, int index, PreparedStatement ps) throws Exception {
-        String jsonRecord = convertRecordToJSON(record);
+    public static void addRawData(Struct s, int index, PreparedStatement ps) throws Exception {
+        String jsonRecord = convertRecordToJSON(s);
         ps.setString(index, jsonRecord);
     }
 
     /**
      * Function to convert the kafka record to JSON.
-     * @param record
+     * @param s
      * @return
      */
-    public static String convertRecordToJSON(ClickHouseStruct record) throws Exception {
+    public static String convertRecordToJSON(Struct s) throws Exception {
 
-        Struct s = record.getStruct();
         List<Field> fields = s.schema().fields();
 
         HashMap<String, Object> result = new HashMap<String, Object>();

@@ -20,11 +20,32 @@ public class DBMetadata {
 
         DEFAULT("default");
 
-        private String engine;
+        private final String engine;
+
+        public String getEngine() {
+            return engine;
+        }
 
         TABLE_ENGINE(String engine) {
             this.engine = engine;
         }
+    }
+
+    /**
+     * Wrapper function to get table engine.
+     * @param conn
+     * @param tableName
+     * @return
+     */
+    public TABLE_ENGINE getTableEngine(ClickHouseConnection conn, String databaseName, String tableName) {
+
+        TABLE_ENGINE result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
+
+        if(result == null) {
+            result = getTableEngineUsingShowTable(conn, tableName);
+        }
+
+        return result;
     }
     /**
      * Function to return Engine type for table.
@@ -33,7 +54,7 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public TABLE_ENGINE getTableEngine(ClickHouseConnection conn, String tableName) {
+    public TABLE_ENGINE getTableEngineUsingShowTable(ClickHouseConnection conn, String tableName) {
         TABLE_ENGINE result = null;
 
         try {
@@ -73,7 +94,8 @@ public class DBMetadata {
      * @param tableName Table Name.
      * @return TABLE_ENGINE type
      */
-    public TABLE_ENGINE getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String tableName) {
+    public TABLE_ENGINE getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String database,
+                                                        final String tableName) {
         TABLE_ENGINE result = null;
 
         try {
@@ -82,7 +104,8 @@ public class DBMetadata {
                 return result;
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("select engine from system.tables where name='%s'", tableName);
+                String showSchemaQuery = String.format("select engine from system.tables where name='%s' and database='%s",
+                        tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.next()) {
                     String response =  rs.getString(1);

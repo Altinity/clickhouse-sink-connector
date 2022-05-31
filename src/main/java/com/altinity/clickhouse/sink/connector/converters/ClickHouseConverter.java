@@ -269,7 +269,17 @@ public class ClickHouseConverter implements AbstractConverter {
             chStruct = new ClickHouseStruct(record.kafkaOffset(),
                     record.topic(), (Struct) record.key(), record.kafkaPartition(),
                     record.timestamp());
-            chStruct.setStruct((Struct) convertedValue.get(sectionKey));
+
+            Object beforeSection = convertedValue.get(SinkRecordColumns.BEFORE);
+            if(beforeSection != null) {
+                chStruct.setBeforeStruct((Struct) beforeSection);
+            }
+
+            Object afterSection = convertedValue.get(SinkRecordColumns.AFTER);
+            if(afterSection != null) {
+                chStruct.setAfterStruct((Struct) afterSection);
+            }
+
             chStruct.setAdditionalMetaData(convertedValue);
             chStruct.setCdcOperation(operation);
         }
