@@ -7,6 +7,10 @@ This doc describes how to set up CDC pipeline
 # Setup local pipeline
 
 ## Pre-requisites
+- Java JDK 11 (https://openjdk.java.net/projects/jdk/11/)
+- Maven (mvn) (https://maven.apache.org/download.cgi)
+- Docker and Docker-compose
+
 Sink connector image needs to be built locally.
 Use the following script to build the image
 `docker/package-build-sink-on-debezium-base.sh`
