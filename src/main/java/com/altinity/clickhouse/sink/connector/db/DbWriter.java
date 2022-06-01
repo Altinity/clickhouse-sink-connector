@@ -377,6 +377,7 @@ public class DbWriter {
                         insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                         insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                        ps.addBatch();
                         insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
                         log.error("INVALID CDC RECORD STATE");

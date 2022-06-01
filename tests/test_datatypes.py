@@ -138,7 +138,7 @@ class MyTestCase(unittest.TestCase):
         conn.create_connection()
 
         table_name = 'products'
-        conn.execute_sql("update products set buyPrice=300 where productCode='S10_1678'");
+        conn.execute_sql("update products set buyPrice=700 where productCode='S10_1678'");
 
         conn.close()
 
@@ -158,8 +158,8 @@ class MyTestCase(unittest.TestCase):
         #self.generate_employees_fake_records()
         #self.generate_products_fake_records()
         #self.generate_products_fake_records()
-        #self.generate_update_records()
-        self.generate_delete_records()
+        self.generate_update_records()
+        #self.generate_delete_records()
         #self.test_duplicate_inserts()
 
 
