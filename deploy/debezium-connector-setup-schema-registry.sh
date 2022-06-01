@@ -53,6 +53,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "database.server.id": "${DATABASE_SERVER_ID}",
     "database.server.name": "${DATABASE_SERVER_NAME}",
     "database.whitelist": "${MYSQL_DBS}",
+    "database.allowPublicKeyRetrieval":"true",
 
     "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
     "database.history.kafka.topic": "${KAFKA_TOPIC}",
