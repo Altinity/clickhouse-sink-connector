@@ -30,10 +30,13 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Column to store the raw data.
     public static final String STORE_RAW_DATA_COLUMN = "store.raw.data.column";
 
-    // Sign column is used to identify deletes for ReplacingMergeTree,
+    // Sign column is used to identify deletes for CollapsingMergeTree,
     // if sign is set to -1, the rows will be deleted by CH as part as the background
     // merge process.
     public static final String CLICKHOUSE_TABLE_SIGN_COLUMN ="sign.column";
+
+    // Version column is used to identify deletes for ReplacingMergeTree
+    public static final String CLICKHOUSE_TABLE_VERSION_COLUMN ="version.column";
 
     // Buffer flush time in seconds.
     public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";

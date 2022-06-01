@@ -376,8 +376,10 @@ public class DbWriter {
                     } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
-                        ps.addBatch();
+                        if(this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                            insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                            ps.addBatch();
+                        }
                         insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
                         log.error("INVALID CDC RECORD STATE");
@@ -582,7 +584,8 @@ public class DbWriter {
         }
 
         // Sign column.
-        if (this.columnNameToDataTypeMap.containsKey("sign")) {
+        String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
+        if (this.columnNameToDataTypeMap.containsKey(signColumn)) {
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(index, -1);
             } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
@@ -595,6 +598,17 @@ public class DbWriter {
                 ps.setInt(index, 1);
             }
         }
+
+        // Version column.
+        String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
+        if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
+            long currentTimeInMs = System.currentTimeMillis();
+            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
+                ps.setLong(index, currentTimeInMs);
+                index++;
+            }
+        }
+
         // Store raw data in JSON form.
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)) {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
