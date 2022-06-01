@@ -21,9 +21,9 @@ CREATE TABLE employees
     `_binlog_pos` Nullable(Int32),
     `_binlog_row` Nullable(Int32),
     `_server_thread` Nullable(Int32),
-    `sign` Int8
+    `ver` UInt32
 )
-ENGINE = CollapsingMergeTree(sign)
+ENGINE = ReplacingMergeTree(ver)
 PRIMARY KEY emp_no
 ORDER BY emp_no;
 
