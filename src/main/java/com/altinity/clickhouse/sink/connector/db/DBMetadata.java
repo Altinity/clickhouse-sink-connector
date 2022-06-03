@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.clickhouse.jdbc.ClickHouseConnection;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -88,6 +89,44 @@ public class DBMetadata {
         return result;
     }
 
+    public static final String COLLAPSING_MERGE_TREE_SIGN_PREFIX = "CollapsingMergeTree(";
+    public static final String REPLACING_MERGE_TREE_VER_PREFIX = "ReplacingMergeTree(";
+
+    /**
+     * Function to extract the sign column for CollapsingMergeTree
+     * @param createDML
+     * @return Sign column
+     */
+    public String getSignColumnForCollapsingMergeTree(String createDML) {
+
+        String signColumn = "sign";
+
+        if(createDML.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+            signColumn = StringUtils.substringBetween(createDML, COLLAPSING_MERGE_TREE_SIGN_PREFIX, ")");
+        } else {
+            log.error("Error: Trying to retrieve sign from table that is not CollapsingMergeTree");
+        }
+
+        return signColumn;
+    }
+
+    /**
+     * Function to extract the version column for ReplacingMergeTree
+     * @param createDML
+     * @return Sign column
+     */
+    public String getVersionColumnForReplacingMergeTree(String createDML) {
+
+        String signColumn = "sign";
+
+        if(createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            signColumn = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")");
+        } else {
+            log.error("Error: Trying to retrieve ver from table that is not ReplacingMergeTree");
+        }
+
+        return signColumn;
+    }
     /**
      * Function to get table engine using system tables.
      * @param conn ClickHouse Connection
