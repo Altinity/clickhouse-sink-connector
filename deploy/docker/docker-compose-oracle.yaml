@@ -8,70 +8,7 @@ version: "2.3"
 
 services:
 
-  mysql-master:
-    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-    # SHOW VARIABLES LIKE 'server_id';
-    # SHOW VARIABLES LIKE 'log_bin';
-    # SHOW MASTER STATUS;
-    container_name: mysql-master
-    image: docker.io/bitnami/mysql:latest
-#    command:
-#      --default-authentication-plugin=mysql_native_password
-#      --server-id=1
-#      --binlog_do_db=test
-    restart: "no"
-    ports:
-      - "3306"
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=test
-      - MYSQL_REPLICATION_MODE=master
-      - MYSQL_REPLICATION_USER=repl_user
-      - ALLOW_EMPTY_PASSWORD=yes
-    volumes:
-     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-    healthcheck:
-      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
-      interval: 15s
-      timeout: 5s
-      retries: 6
-    security_opt:
-      - seccomp:unconfined
 
-  mysql-slave:
-    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-    # SHOW VARIABLES LIKE 'server_id';
-    # SHOW VARIABLES LIKE 'log_bin';
-    # SHOW MASTER STATUS;
-    container_name: mysql-slave
-    image: docker.io/bitnami/mysql:8.0
-#    command:
-#      --default-authentication-plugin=mysql_native_password
-#      --server-id=1
-#      --binlog_do_db=test
-    restart: "no"
-    ports:
-      - "3306:3306"
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=test
-      - MYSQL_REPLICATION_MODE=slave
-      - MYSQL_REPLICATION_USER=repl_user
-      - MYSQL_MASTER_HOST=mysql-master
-      - MYSQL_MASTER_PORT_NUMBER=3306
-      - MYSQL_MASTER_ROOT_PASSWORD=root
-      - ALLOW_EMPTY_PASSWORD=yes
-   # volumes:
-   #   - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-    healthcheck:
-      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
-      interval: 15s
-      timeout: 5s
-      retries: 6
-    security_opt:
-      - seccomp:unconfined
-    depends_on:
-      - mysql-master
 
 
   schemaregistry:
@@ -92,38 +29,7 @@ services:
     depends_on:
       - kafka
 
-  debezium:
-    container_name: debezium
-    image: debezium/connect:1.9.2.Final
-    restart: "no"
-    ports:
-      - "8083:8083"
-    environment:
-      # Where to find Kafka broker
-      - BOOTSTRAP_SERVERS=kafka:9092
-      # Maps to rest.advertised.host.name
-      #- ADVERTISED_HOST_NAME=kafka
-      # Maps to rest.advertised.port
-      #- ADVERTISED_PORT=9092
-      - GROUP_ID=1
-      - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
-      - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
-      - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
-      - LOG_LEVEL=INFO
-      - ENABLE_APICURIO_CONVERTERS=true
-      - KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_KEY_CONVERTER_APICURIO.REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
-      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
-      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
-      - CONNECT_VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
-      #- LOG_LEVEL=DEBUG
-    depends_on:
-      - kafka
+
 
   kafka:
     container_name: kafka
@@ -153,11 +59,87 @@ services:
   #    image: vectorized/redpanda
   #    restart: always
 
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect-base:5.5.0
+    container_name: kafka-connect
+    ports:
+      - 8083:8083
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:29092"
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+      CONNECT_LOG4J_LOGGERS: "org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components/'
+      #
+      # Make sure you set this for the correct path that the library files for InstantClient have been installed into
+      LD_LIBRARY_PATH: '/usr/share/java/debezium-connector-oracle/instantclient_19_6/'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing connector plugins"
+        confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:5.5.0
+        confluent-hub install --no-prompt confluentinc/kafka-connect-datagen:0.3.2
+        #
+        echo "Downloading JDBC drivers"
+        cd /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib
+        curl https://maven.xwiki.org/externals/com/oracle/jdbc/ojdbc8/12.2.0.1/ojdbc8-12.2.0.1.jar -o ojdbc8-12.2.0.1.jar
+        # -----------
+        # Install Debezium Oracle connector and required libraries
+        # -- Download
+        curl "https://oss.sonatype.org/service/local/repositories/snapshots/content/io/debezium/debezium-connector-oracle/1.2.0-SNAPSHOT/debezium-connector-oracle-1.2.0-20200612.041347-34-plugin.tar.gz" | \
+          tar xvfz - --directory /usr/share/java/
+        # -- Install the required library files
+        apt-get update
+        apt-get install -y --force-yes unzip libaio1
+        wget "https://download.oracle.com/otn_software/linux/instantclient/19600/instantclient-basiclite-linux.x64-19.6.0.0.0dbru.zip" -O /tmp/ic.zip
+        unzip /tmp/ic.zip -d /usr/share/java/debezium-connector-oracle/
+        # -----------
+        # Launch the Kafka Connect worker
+        /etc/confluent/docker/run &
+        #
+        # Don't exit
+        sleep infinity
+    depends_on:
+      - kafka
 
-
+  # Other systems
+  oracle:
+    # You need to build this image first, following the instructions at
+    # https://github.com/oracle/docker-images/blob/master/OracleDatabase/SingleInstance/README.md
+    #
+    # NB: There's no sudo on the image but you can run stuff as root using
+    # docker exec -it -u root oracle <cmd>
+    # e.g.: docker exec -it -u root oracle bash -c "rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm &&  yum install -y rlwrap"
+    image: oracle/database:12.2.0.1-ee
+    container_name: oracle
+    environment:
+      - ORACLE_PWD=Admin123
+    ports:
+      - 1521:1521
+#    volumes:
+#      - $PWD/oradata:/opt/oracle/oradata
+#      - $PWD/oradata/recovery_area:/opt/oracle/oradata/recovery_area
+#      - $PWD/ora-setup-scripts:/opt/oracle/scripts/setup
+#      - $PWD/ora-startup-scripts:/opt/oracle/scripts/startup
+#      -
   sink:
     container_name: sink
-    image: altinity/clickhouse-sink-connector:latest
+    image: altinity/clickhouse-kafka-sink-connector-on-debezium-base:latest
     restart: "no"
     ports:
       - "18083:8083"
