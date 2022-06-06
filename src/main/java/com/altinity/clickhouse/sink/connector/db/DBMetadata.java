@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,11 +39,12 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public TABLE_ENGINE getTableEngine(ClickHouseConnection conn, String databaseName, String tableName) {
+    public MutablePair<TABLE_ENGINE, String> getTableEngine(ClickHouseConnection conn, String databaseName, String tableName) {
 
-        TABLE_ENGINE result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
+        MutablePair<TABLE_ENGINE, String> result;
+        result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
 
-        if(result == null) {
+        if(result.left == null) {
             result = getTableEngineUsingShowTable(conn, tableName);
         }
 
@@ -55,13 +57,13 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public TABLE_ENGINE getTableEngineUsingShowTable(ClickHouseConnection conn, String tableName) {
-        TABLE_ENGINE result = null;
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(ClickHouseConnection conn, String tableName) {
+        MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
         try {
             if (conn == null) {
                 log.error("Error with DB connection");
-                return result;
+                return new MutablePair<>(null, null);
             }
             try(Statement stmt = conn.createStatement()) {
                 String showSchemaQuery = String.format("show create table %s", tableName);
@@ -69,13 +71,15 @@ public class DBMetadata {
                 if(rs.next()) {
                     String response =  rs.getString(1);
                     if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                        result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                        result.right = getSignColumnForCollapsingMergeTree(response);
                     } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                        result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                        result.right = getVersionColumnForReplacingMergeTree(response);
                     } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.MERGE_TREE;
+                        result.left = TABLE_ENGINE.MERGE_TREE;
                     }else {
-                        result = TABLE_ENGINE.DEFAULT;
+                        result.left = TABLE_ENGINE.DEFAULT;
                     }
                 }
                 rs.close();
@@ -133,9 +137,10 @@ public class DBMetadata {
      * @param tableName Table Name.
      * @return TABLE_ENGINE type
      */
-    public TABLE_ENGINE getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String database,
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String database,
                                                         final String tableName) {
-        TABLE_ENGINE result = null;
+        MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
+
 
         try {
             if (conn == null) {
@@ -143,19 +148,21 @@ public class DBMetadata {
                 return result;
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("select engine from system.tables where name='%s' and database='%s'",
+                String showSchemaQuery = String.format("select engine_full from system.tables where name='%s' and database='%s'",
                         tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.next()) {
                     String response =  rs.getString(1);
-                    if(response.equalsIgnoreCase(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
-                    } else if(response.equalsIgnoreCase(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.REPLACING_MERGE_TREE;
-                    } else if(response.equalsIgnoreCase(TABLE_ENGINE.MERGE_TREE.engine)) {
-                        result = TABLE_ENGINE.MERGE_TREE;
+                    if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
+                        result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                        result.right = getSignColumnForCollapsingMergeTree(response);
+                    } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+                        result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                        result.right = getVersionColumnForReplacingMergeTree(response);
+                    } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
+                        result.left = TABLE_ENGINE.MERGE_TREE;
                     } else {
-                        result = TABLE_ENGINE.DEFAULT;
+                        result.left = TABLE_ENGINE.DEFAULT;
                     }
                 }
                 rs.close();
