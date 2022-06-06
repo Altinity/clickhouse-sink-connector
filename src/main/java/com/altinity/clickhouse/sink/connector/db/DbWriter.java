@@ -51,6 +51,12 @@ public class DbWriter {
 
     private final ClickHouseSinkConnectorConfig config;
 
+    // CollapsingMergeTree
+    private String signColumn = null;
+
+    // ReplacingMergeTree
+    private String versionColumn = null;
+
     public DbWriter(
             String hostName,
             Integer port,
@@ -72,7 +78,14 @@ public class DbWriter {
             this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
         }
 
-        this.engine = new DBMetadata().getTableEngine(this.conn, database, tableName);
+        DBMetadata metadata = new DBMetadata();
+        MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
+        this.engine = response.getLeft();
+        if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            this.versionColumn = response.getRight();
+        } else if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+            this.signColumn = response.getRight();
+        }
     }
 
     public String getConnectionString(String hostName, Integer port, String database) {
