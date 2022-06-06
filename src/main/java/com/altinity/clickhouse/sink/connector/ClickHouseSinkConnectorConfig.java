@@ -262,28 +262,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN,
-                        Type.STRING,
-                        "sign",
-                        Importance.LOW,
-                        "Column name to store sign value, -1 for deletes, 1 for other operations," +
-                                "CollapsingMergeTree uses this flag to delete rows",
-                        CONFIG_GROUP_CONNECTOR_CONFIG,
-                        1,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN)
-                .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN,
-                        Type.STRING,
-                        "ver",
-                        Importance.LOW,
-                        "Column name to store version column, used by ReplacingMergeTree to merge" +
-                                "updates",
-                        CONFIG_GROUP_CONNECTOR_CONFIG,
-                        1,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN)
-                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
                         Type.LONG,
                         30,

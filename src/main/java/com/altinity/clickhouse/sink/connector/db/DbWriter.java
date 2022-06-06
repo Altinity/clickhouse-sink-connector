@@ -322,7 +322,7 @@ public class DbWriter {
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
                         this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
-                        this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN));
+                        this.signColumn, this.versionColumn);
 
         if (!queryToRecordsMap.containsKey(insertQueryTemplate)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
@@ -597,7 +597,9 @@ public class DbWriter {
         }
 
         // Sign column.
-        String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
+        //String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
+        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
+        this.signColumn != null)
         if (this.columnNameToDataTypeMap.containsKey(signColumn)) {
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(index, -1);
@@ -610,13 +612,16 @@ public class DbWriter {
             } else {
                 ps.setInt(index, 1);
             }
+            index++;
         }
 
         // Version column.
-        String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
+        //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
+        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null)
         if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
             long currentTimeInMs = System.currentTimeMillis();
-            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
+            //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
+            {
                 ps.setLong(index, currentTimeInMs);
                 index++;
             }

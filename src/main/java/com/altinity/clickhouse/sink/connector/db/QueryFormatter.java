@@ -53,7 +53,8 @@ public class QueryFormatter {
                                                    boolean includeKafkaMetaData,
                                                    boolean includeRawData,
                                                    String rawDataColumn,
-                                                   String signColumn) {
+                                                   String signColumn,
+                                                   String versionColumn) {
 
 
         StringBuffer colNamesDelimited = new StringBuffer();
@@ -107,6 +108,12 @@ public class QueryFormatter {
         if(signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
             colNamesDelimited.append(signColumn).append(",");
             colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
+        }
+
+        // Add version column(Set timestamp))
+        if(versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
+            colNamesDelimited.append(versionColumn).append(",");
+            colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
         }
 
         //Remove terminating comma

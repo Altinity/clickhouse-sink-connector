@@ -138,8 +138,8 @@ class MyTestCase(unittest.TestCase):
         conn.create_connection()
 
         table_name = 'products'
-        conn.execute_sql("update products set buyPrice=700 where productCode='S10_1678'");
-
+        conn.execute_sql("update products set buyPrice=800 where productCode='S10_1678'");
+        conn.execute_sql("update employees_predated set salary=800 where emp_no='10001'");
         conn.close()
 
 
@@ -149,6 +149,8 @@ class MyTestCase(unittest.TestCase):
         conn.create_connection()
 
         table_name = 'products'
+
+        conn.execute_sql("delete from products where productCode='S10_1949'");
         conn.execute_sql("delete from employees_predated where emp_no =9999");
 
         conn.close()
