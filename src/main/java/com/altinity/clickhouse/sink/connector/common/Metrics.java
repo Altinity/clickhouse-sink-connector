@@ -3,7 +3,6 @@ package com.altinity.clickhouse.sink.connector.common;
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import com.codahale.metrics.jvm.MemoryUsageGaugeSet;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -52,7 +51,7 @@ public class Metrics {
 
     public static void initialize(String enableFlag, String metricsPort) {
         registry = new MetricRegistry();
-        registry.register("memory", new MemoryUsageGaugeSet());
+        // registry.register("memory", new MemoryUsageGaugeSet());
 
         // Register reporters here.
         reporter = ConsoleReporter.forRegistry(registry)
@@ -63,7 +62,7 @@ public class Metrics {
 
         parseConfiguration(enableFlag, metricsPort);
 
-        if(enableMetrics == true) {
+        if(enableMetrics) {
             meterRegistry =
                     new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
@@ -137,7 +136,7 @@ public class Metrics {
                                                 HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap,
                                                 int numRecords, long minSourceLag, long maxSourceLag,
                                                 long minConsumerLag, long maxConsumerLag) {
-        if(enableMetrics == true) {
+        if(enableMetrics) {
             for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
 
                 MutablePair<Long, Long> offsetTuple = entry.getValue();

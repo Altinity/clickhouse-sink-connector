@@ -1,5 +1,5 @@
 ## CollapsingMergeTree
-Sink Connector will attempt read the `engine_full` column from system.tables for the corresponding table and will 
+Sink Connector will attempt to read the `engine_full` column from system.tables for the corresponding table and will 
 identify the `engine` and the `sign` column.
 
 `CollapsingMergeTree(sign) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192`
@@ -21,3 +21,9 @@ After merging, ClickHouse will drop the previous insert since the update `versio
 than the insert record `version` value.
 
 For Deletes, the user provided `replacingmergetree.delete.column` will be set to `-1`
+
+
+## Other table Engines(MergeTree ...)
+
+
+   

@@ -262,6 +262,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)
                 .define(
+                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN,
+                    Type.STRING,
+                    "",
+                    Importance.LOW,
+                    "Column thats used to store the sign value when the engine is ReplacingMergeTree, when a " +
+                            "delete CDC record is received, this column is set to -1, 1 otherwise",
+                    CONFIG_GROUP_CONNECTOR_CONFIG,
+                    1,
+                    ConfigDef.Width.NONE,
+                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
                         Type.LONG,
                         30,

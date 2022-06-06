@@ -25,7 +25,7 @@ public class QueryFormatter {
      * @return
      */
     public String getInsertQuery(String tableName, int numFields) {
-        StringBuffer insertQuery = new StringBuffer()
+        StringBuilder insertQuery = new StringBuilder()
                 .append("insert into ")
                 .append(tableName)
                 .append(" values(");
@@ -54,11 +54,13 @@ public class QueryFormatter {
                                                    boolean includeRawData,
                                                    String rawDataColumn,
                                                    String signColumn,
-                                                   String versionColumn) {
+                                                   String versionColumn,
+                                                   String replacingMergeTreeDeleteColumn,
+                                                   DBMetadata.TABLE_ENGINE tableEngine) {
 
 
-        StringBuffer colNamesDelimited = new StringBuffer();
-        StringBuffer colNamesToDataTypes = new StringBuffer();
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
 
         for(Field f: fields) {
             String sourceColumnName = f.name();
@@ -91,7 +93,7 @@ public class QueryFormatter {
                 String dataType = columnNameToDataTypeMap.get(rawDataColumn);
                 if(dataType.equalsIgnoreCase("String")) {
                     colNamesDelimited.append(rawDataColumn).append(",");
-                    ;
+
                     colNamesToDataTypes.append(rawDataColumn).append(" ").append("String").append(",");
                 }
 //                else {
@@ -105,15 +107,25 @@ public class QueryFormatter {
         }
 
         // Add sign column(-1 if its delete, 1 for update)
-        if(signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
-            colNamesDelimited.append(signColumn).append(",");
-            colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
+        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            if (signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
+                colNamesDelimited.append(signColumn).append(",");
+                colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
+            }
         }
 
         // Add version column(Set timestamp))
-        if(versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
-            colNamesDelimited.append(versionColumn).append(",");
-            colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
+        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
+                colNamesDelimited.append(versionColumn).append(",");
+                colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
+            }
+
+            // Add replacingmergetree sign delete column.
+            if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+                colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
+                colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
+            }
         }
 
         //Remove terminating comma
@@ -131,8 +143,8 @@ public class QueryFormatter {
     public String getInsertQueryUsingInputFunction(String tableName,  Map<String, String> columnNameToDataTypeMap) {
         // "insert into mytable select col1, col2 from input('col1 String, col2 DateTime64(3), col3 Int32')"))
 
-        StringBuffer colNamesDelimited = new StringBuffer();
-        StringBuffer colNamesToDataTypes = new StringBuffer();
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
 
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             colNamesDelimited.append(entry.getKey()).append(",");

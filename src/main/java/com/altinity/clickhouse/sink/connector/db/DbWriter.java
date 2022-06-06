@@ -57,6 +57,9 @@ public class DbWriter {
     // ReplacingMergeTree
     private String versionColumn = null;
 
+    // Delete column for ReplacingMergeTree
+    private String replacingMergeTreeDeleteColumn;
+
     public DbWriter(
             String hostName,
             Integer port,
@@ -86,6 +89,8 @@ public class DbWriter {
         } else if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
             this.signColumn = response.getRight();
         }
+
+        this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
     }
 
     public String getConnectionString(String hostName, Integer port, String database) {
@@ -322,7 +327,7 @@ public class DbWriter {
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
                         this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
-                        this.signColumn, this.versionColumn);
+                        this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
         if (!queryToRecordsMap.containsKey(insertQueryTemplate)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
@@ -617,14 +622,25 @@ public class DbWriter {
 
         // Version column.
         //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
-        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null)
-        if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
-            long currentTimeInMs = System.currentTimeMillis();
-            //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
-            {
-                ps.setLong(index, currentTimeInMs);
+        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
+            if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
+                long currentTimeInMs = System.currentTimeMillis();
+                //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
+                {
+                    ps.setLong(index, currentTimeInMs);
+                    index++;
+                }
+            }
+            // Sign column to mark deletes in ReplacingMergeTree
+            if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+                if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                    ps.setInt(index, -1);
+                } else {
+                    ps.setInt(index, 1);
+                }
                 index++;
             }
+
         }
 
         // Store raw data in JSON form.

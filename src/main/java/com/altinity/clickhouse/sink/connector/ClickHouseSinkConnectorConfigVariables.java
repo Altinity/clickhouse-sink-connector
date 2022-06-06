@@ -40,5 +40,7 @@ public class ClickHouseSinkConnectorConfigVariables {
     // for prometheus to scrape metrics.
     public static final String METRICS_ENDPOINT_PORT = "metrics.port";
 
+    public static final String REPLACING_MERGE_TREE_DELETE_COLUMN = "replacingmergetree.delete.column";
+
 
 }
