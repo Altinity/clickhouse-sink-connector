@@ -83,7 +83,7 @@ public class QueryFormatter {
                     colNamesDelimited.append(metaDataColName).append(",");
                     colNamesToDataTypes.append(metaDataColName).append(" ").append(dataType).append(",");
                 } else {
-                    log.error("Kafka metadata enabled but column not added to clickhouse: "  + rawDataColumn );
+                    //log.error("Kafka metadata enabled but column not added to clickhouse: "  + rawDataColumn );
                 }
             }
         }
@@ -107,7 +107,7 @@ public class QueryFormatter {
         }
 
         // Add sign column(-1 if its delete, 1 for update)
-        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
             if (signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
                 colNamesDelimited.append(signColumn).append(",");
                 colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
