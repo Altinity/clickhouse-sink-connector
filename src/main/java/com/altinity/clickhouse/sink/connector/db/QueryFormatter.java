@@ -62,6 +62,10 @@ public class QueryFormatter {
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
 
+        if(fields == null) {
+            log.error("getInsertQueryUsingInputFunction, fields empty");
+            return null;
+        }
         for(Field f: fields) {
             String sourceColumnName = f.name();
             // Get Field Name and lookup in the Clickhouse column to datatype map.

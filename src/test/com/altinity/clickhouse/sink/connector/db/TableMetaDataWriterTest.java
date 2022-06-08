@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
@@ -32,8 +33,7 @@ public class TableMetaDataWriterTest {
         kafkaConnectStruct.put("employed", true);
 
         ClickHouseStruct s = new ClickHouseStruct(1, "test-topic", kafkaConnectStruct, 12,
-                122323L);
-        s.setAfterStruct(kafkaConnectStruct);
+                122323L, null, kafkaConnectStruct, null, ClickHouseConverter.CDC_OPERATION.UPDATE);
 
         String jsonString = null;
         try {

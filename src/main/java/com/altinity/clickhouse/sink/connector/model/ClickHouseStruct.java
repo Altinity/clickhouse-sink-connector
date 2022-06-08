@@ -94,7 +94,9 @@ public class ClickHouseStruct {
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
 
-    public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition, Long timestamp) {
+    public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,
+                            Long timestamp, Struct beforeStruct, Struct afterStruct, Map<String, Object> metadata,
+                            ClickHouseConverter.CDC_OPERATION operation) {
 
         this.kafkaOffset = kafkaOffset;
         this.topic = topic;
@@ -103,6 +105,10 @@ public class ClickHouseStruct {
         if(key != null) {
             this.key = key.toString();
         }
+        this.beforeStruct = beforeStruct;
+        this.afterStruct = afterStruct;
+        this.setAdditionalMetaData(metadata);
+        this.cdcOperation = operation;
     }
 
     public void setBeforeStruct(Struct s) {
@@ -144,7 +150,7 @@ public class ClickHouseStruct {
      */
     public void setAdditionalMetaData(Map<String, Object> convertedValue) {
 
-        if (false == convertedValue.containsKey(SOURCE)) {
+        if (convertedValue == null || false == convertedValue.containsKey(SOURCE)) {
             return;
         }
         Struct source = (Struct) convertedValue.get(SOURCE);
