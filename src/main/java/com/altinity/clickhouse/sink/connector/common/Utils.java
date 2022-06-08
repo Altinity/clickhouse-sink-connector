@@ -70,7 +70,6 @@ public class Utils {
             }
 
             if (topic2Table.containsValue(table)) {
-                // todo: support multiple topics map to one table ?
                 LOGGER.error(Logging.logMessage("table name {} is duplicated", table));
                 isInvalid = true;
             }

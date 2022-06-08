@@ -1,10 +1,15 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.client.data.ClickHouseArrayValue;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.SchemaBuilder;
+import org.apache.kafka.connect.data.Struct;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -12,6 +17,7 @@ import org.junit.jupiter.api.Tag;
 
 import java.sql.PreparedStatement;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class DbWriterTest {
 
@@ -31,14 +37,27 @@ public class DbWriterTest {
         this.writer = new DbWriter(hostName, port, tableName, database, userName, password, config);
 
     }
-//    @Test
-//    public void testInsertQuery() {
-//
-//        String query = writer.getInsertQuery("products", 4);
-//
-//        Assert.assertEquals(query, "insert into products values(?,?,?,?)");
-//
-//    }
+
+    private Struct getKafkaStruct() {
+        Schema kafkaConnectSchema = SchemaBuilder
+                .struct()
+                .field("first_name", Schema.STRING_SCHEMA)
+                .field("last_name", Schema.STRING_SCHEMA)
+                .field("quantity", Schema.INT32_SCHEMA)
+                .field("amount", Schema.FLOAT64_SCHEMA)
+                .field("employed", Schema.BOOLEAN_SCHEMA)
+                .build();
+
+        Struct kafkaConnectStruct = new Struct(kafkaConnectSchema);
+        kafkaConnectStruct.put("first_name", "John");
+        kafkaConnectStruct.put("last_name", "Doe");
+        kafkaConnectStruct.put("quantity", 100);
+        kafkaConnectStruct.put("amount", 23.223);
+        kafkaConnectStruct.put("employed", true);
+
+
+        return kafkaConnectStruct;
+    }
 
     @Test
     public void testGetConnectionUrl() {
@@ -125,14 +144,44 @@ public class DbWriterTest {
     }
 
     @Test
-    public void testInsertPreparedStatement() {
+    public void testGroupRecords() {
         String hostName = "remoteClickHouse";
         Integer port = 8123;
-        String database = "employees";
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
         String connectionUrl = writer.getConnectionString(hostName, port, database);
+        Properties properties = new Properties();
+        properties.setProperty("client_name", "Test_1");
+
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config);
+
+        ConcurrentLinkedQueue<ClickHouseStruct> records = new ConcurrentLinkedQueue<ClickHouseStruct>();
+
+        ClickHouseStruct ch1 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch2 = new ClickHouseStruct(8, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis() ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+
+
+        ClickHouseStruct ch4 = new ClickHouseStruct(1020, "topic_1", getKafkaStruct(), 3, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch5 = new ClickHouseStruct(1400, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch6 = new ClickHouseStruct(1010, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+
+        records.add(ch1);
+        records.add(ch2);
+        records.add(ch3);
+        records.add(ch4);
+        records.add(ch5);
+        records.add(ch6);
+
+        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
+
+        dbWriter.groupQueryWithRecords(records, queryToRecordsMap);
 
     }
-
 
     @Test
     public void testBatchArrays() {

@@ -195,6 +195,9 @@ public class DbWriter {
     public CdcRecordState getCdcSectionBasedOnOperation(ClickHouseConverter.CDC_OPERATION operation) {
         CdcRecordState state = CdcRecordState.CDC_RECORD_STATE_AFTER;
 
+        if(operation == null || operation.getOperation() == null) {
+            return state;
+        }
         if (operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation()) ||
                 operation.getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.READ.getOperation())) {
             state = CdcRecordState.CDC_RECORD_STATE_AFTER;
