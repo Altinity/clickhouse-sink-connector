@@ -87,7 +87,7 @@ public class DBMetadata {
                 log.info("ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngine exception", e);
+            log.error("getTableEngineUsingShowTable exception", e);
         }
 
         return result;
@@ -170,7 +170,7 @@ public class DBMetadata {
                 log.info("ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngine exception", e);
+            log.error("getTableEngineUsingSystemTables exception", e);
         }
 
         return result;
