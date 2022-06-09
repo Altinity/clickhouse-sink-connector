@@ -29,6 +29,7 @@ services:
       - MYSQL_REPLICATION_USER=repl_user
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
+     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
      - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
@@ -61,7 +62,9 @@ services:
       - MYSQL_MASTER_PORT_NUMBER=3306
       - MYSQL_MASTER_ROOT_PASSWORD=root
       - ALLOW_EMPTY_PASSWORD=yes
-   # volumes:
+    volumes:
+      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+    # volumes:
    #   - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
