@@ -24,7 +24,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-    "tasks.max": "3",
+    "tasks.max": "6",
     "topics": "${TOPICS}",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
@@ -50,11 +50,15 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "store.raw.data.column": "raw_data",
 
     "metrics.enable": true,
-    "metrics.port": 8084
+    "metrics.port": 8084,
+    "buffer.flush.time": 1
+
+
 
 
   }
 }
 EOF
+# "replacingmergetree.delete.column": "sign_delete"
 
 echo
