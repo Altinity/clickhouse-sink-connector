@@ -83,4 +83,13 @@ CREATE TABLE t1(
 `charcol1` String
 )
 ENGINE = MergeTree
-PRIMARY KEY intcol1
+PRIMARY KEY intcol1;
+
+CREATE TABLE sbtest1(
+`id` UInt64,
+`k` UInt64,
+`c` String,
+`pad` String
+)
+ENGINE = MergeTree
+PRIMARY KEY id
