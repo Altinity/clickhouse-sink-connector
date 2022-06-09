@@ -6,7 +6,7 @@ The connector is tested with the following converters
 - AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/))
 
 
-- Currently the connector only supports <b>Insert</b> operations.
+- Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree[Updates/Deletes](doc/mutable_data.md)
 - Deduplication logic to dedupe records from Kafka topic.
 - Exactly once semantics 
 - Bulk insert to Clickhouse.
