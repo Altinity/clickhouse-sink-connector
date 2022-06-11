@@ -10,3 +10,10 @@ The metrics can be read through the following URL
 http://localhost:9072/metrics
 
 A Grafana dashboard is included to view JMX metrics.
+
+
+Throughput
+Increase the `fetch.min.bytes` property to increase the size of message
+consumed \
+[1] https://strimzi.io/blog/2021/01/07/consumer-tuning/
+
