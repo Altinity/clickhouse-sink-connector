@@ -51,7 +51,8 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "metrics.enable": true,
     "metrics.port": 8084,
-    "buffer.flush.time": 1
+    "buffer.flush.time": 1,
+    "fetch.min.bytes": 52428800
 
 
 
