@@ -5,9 +5,9 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
-import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
+import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,12 +80,12 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-                BlockMetaData bmd = writer.insert(entry.getValue());
+                Map<TopicPartition, Long> partitionToOffsetMap = writer.insert(entry.getValue());
                 context.stop();
 
-                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
-                        bmd.getPartitionToOffsetMap(), numRecords, bmd.getMinSourceLag(),
-                        bmd.getMaxSourceLag(), bmd.getMinConsumerLag(), bmd.getMaxConsumerLag());
+//                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
+//                        bmd.getPartitionToOffsetMap(), numRecords, bmd.getMinSourceLag(),
+//                        bmd.getMaxSourceLag(), bmd.getMinConsumerLag(), bmd.getMaxConsumerLag());
 
             }
         }
