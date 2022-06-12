@@ -7,6 +7,7 @@ import com.clickhouse.client.data.ClickHouseArrayValue;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -170,6 +171,10 @@ public class DbWriterTest {
         ClickHouseStruct ch5 = new ClickHouseStruct(1400, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
         ClickHouseStruct ch6 = new ClickHouseStruct(1010, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
 
+        ClickHouseStruct ch7 = new ClickHouseStruct(-1, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch8 = new ClickHouseStruct(210, "topic_2", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+
+
         records.add(ch1);
         records.add(ch2);
         records.add(ch3);
@@ -177,9 +182,24 @@ public class DbWriterTest {
         records.add(ch5);
         records.add(ch6);
 
+        records.add(ch7);
+        records.add(ch8);
+
+
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
 
-        dbWriter.groupQueryWithRecords(records, queryToRecordsMap);
+        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(records, queryToRecordsMap);
+
+        Assert.assertTrue(result.isEmpty() == false);
+
+        long topic_1_2_offset = result.get(new TopicPartition("topic_1", 2));
+        Assert.assertTrue(topic_1_2_offset == 1000);
+
+        long topic_1_3_offset = result.get(new TopicPartition("topic_1", 3));
+        Assert.assertTrue(topic_1_3_offset == 1020);
+
+        long topic_2_2_offset = result.get(new TopicPartition("topic_2", 2));
+        Assert.assertTrue(topic_2_2_offset == 1400);
 
     }
 

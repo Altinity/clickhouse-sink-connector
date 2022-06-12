@@ -5,7 +5,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
-import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
@@ -19,6 +18,7 @@ import io.debezium.time.MicroTime;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -29,10 +29,12 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
-import java.sql.*;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Class that abstracts all functionality
@@ -210,6 +212,32 @@ public class DbWriter {
         return state;
     }
 
+    /**
+     * Function to update the map of topic/partition to offset(max)
+     * @param offsetToPartitionMap
+     * @param partition
+     * @param topic
+     * @param offset
+     */
+    private void updatePartitionOffsetMap(Map<TopicPartition, Long> offsetToPartitionMap, int partition, String topic,
+                                          long offset) {
+
+        TopicPartition tp = new TopicPartition(topic, partition);
+
+        // Check if record exists.
+        if(false == offsetToPartitionMap.containsKey(tp)) {
+            // Record does not exist;
+            offsetToPartitionMap.put(tp, offset);
+        } else {
+            // Record exists.
+            // Update only if the current offset
+            // is greater than the offset stored.
+            long storedOffset = offsetToPartitionMap.get(tp);
+            if(offset > storedOffset) {
+                offsetToPartitionMap.put(tp, offset);
+            }
+        }
+    }
 
     /**
      * Function to group the Query with records.
@@ -217,24 +245,17 @@ public class DbWriter {
      * @param records
      * @return
      */
-    public BlockMetaData groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
-                                               Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
+    public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
+                                                                        Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
 
 
-        BlockMetaData bmd = new BlockMetaData();
-        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
+        Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
+        //HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
             log.info("No Records to process");
-            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
-            return bmd;
+            return partitionToOffsetMap;
         }
-
-        long minSourceOffset = -1;
-        long maxSourceOffset = -1;
-
-        long minConsumerOffset = -1;
-        long maxConsumerOffset = -1;
 
         long clickHouseInsertionTime = System.currentTimeMillis();
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
@@ -244,62 +265,12 @@ public class DbWriter {
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
-            long minOffset = 0;
-            long maxOffset = 0;
+            updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
 
-            long recordSourceOffset = clickHouseInsertionTime - record.getTs_ms();
-            long recordConsumerOffset = clickHouseInsertionTime - record.getTimestamp();
-
-            if (minSourceOffset == -1 && maxSourceOffset == -1) {
-                minSourceOffset = recordSourceOffset;
-                maxSourceOffset = recordSourceOffset;
-            } else {
-                if (minSourceOffset <= recordSourceOffset) {
-                    minSourceOffset = recordSourceOffset;
-                }
-                if (maxSourceOffset >= recordSourceOffset) {
-                    maxSourceOffset = recordSourceOffset;
-                }
-            }
-
-            if (minConsumerOffset == -1 && maxConsumerOffset == -1) {
-                minConsumerOffset = recordConsumerOffset;
-                maxConsumerOffset = recordConsumerOffset;
-            } else {
-                if (minConsumerOffset <= recordConsumerOffset) {
-                    minConsumerOffset = recordConsumerOffset;
-                }
-                if (maxConsumerOffset >= recordConsumerOffset) {
-                    maxConsumerOffset = recordConsumerOffset;
-                }
-            }
             // Identify the min and max offsets of the bulk
             // that's inserted.
             int recordPartition = record.getKafkaPartition();
-            if (partitionToOffsetMap.containsKey(recordPartition)) {
-                MutablePair<Long, Long> offsetsPair = partitionToOffsetMap.get(recordPartition);
-                minOffset = offsetsPair.left;
-                maxOffset = offsetsPair.right;
-            }
 
-            boolean offsetUpdated = false;
-            if (record.getKafkaOffset() < minOffset) {
-                minOffset = record.getKafkaOffset();
-                offsetUpdated = true;
-            }
-
-            if (record.getKafkaOffset() > maxOffset) {
-                maxOffset = record.getKafkaOffset();
-                offsetUpdated = true;
-            }
-
-            if (offsetUpdated) {
-                if (minOffset == 0) {
-                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(record.getKafkaOffset(), maxOffset));
-                } else {
-                    partitionToOffsetMap.put(recordPartition, new MutablePair<>(minOffset, maxOffset));
-                }
-            }
 
             if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
@@ -312,15 +283,7 @@ public class DbWriter {
                 log.error("INVALID CDC RECORD STATE");
             }
         }
-
-        bmd.setMinSourceLag(TimeUnit.MILLISECONDS.toSeconds(minSourceOffset));
-        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxSourceOffset));
-
-        bmd.setMinConsumerLag(TimeUnit.MILLISECONDS.toSeconds(minConsumerOffset));
-        bmd.setMaxConsumerLag(TimeUnit.MILLISECONDS.toSeconds(maxConsumerOffset));
-
-        bmd.setPartitionToOffsetMap(partitionToOffsetMap);
-        return bmd;
+        return partitionToOffsetMap;
     }
 
     public void updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
@@ -350,23 +313,25 @@ public class DbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public BlockMetaData insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public Map<TopicPartition, Long>  insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
 
-        BlockMetaData bmd = new BlockMetaData();
-        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
+        Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
+
+//        BlockMetaData bmd = new BlockMetaData();
+//        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
             log.info("No Records to process");
-            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
-            return bmd;
+//            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+            return partitionToOffsetMap;
         }
 
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
-        bmd = groupQueryWithRecords(records, queryToRecordsMap);
+        partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
 
         addToPreparedStatementBatch(queryToRecordsMap, records);
 
-        return bmd;
+        return partitionToOffsetMap;
     }
 
     /**
