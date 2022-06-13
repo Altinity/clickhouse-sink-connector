@@ -95,6 +95,9 @@ public class DbWriter {
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
     }
 
+    public ClickHouseConnection getConnection() {
+        return this.conn;
+    }
     public String getConnectionString(String hostName, Integer port, String database) {
         return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port, database);
     }

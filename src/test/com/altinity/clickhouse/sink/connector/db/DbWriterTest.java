@@ -39,7 +39,7 @@ public class DbWriterTest {
 
     }
 
-    private Struct getKafkaStruct() {
+    public Struct getKafkaStruct() {
         Schema kafkaConnectSchema = SchemaBuilder
                 .struct()
                 .field("first_name", Schema.STRING_SCHEMA)
@@ -144,22 +144,7 @@ public class DbWriterTest {
 
     }
 
-    @Test
-    public void testGroupRecords() {
-        String hostName = "remoteClickHouse";
-        Integer port = 8123;
-        String database = "test";
-        String userName = "root";
-        String password = "root";
-        String tableName = "employees";
-
-        String connectionUrl = writer.getConnectionString(hostName, port, database);
-        Properties properties = new Properties();
-        properties.setProperty("client_name", "Test_1");
-
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config);
-
+    public ConcurrentLinkedQueue<ClickHouseStruct> getSampleRecords() {
         ConcurrentLinkedQueue<ClickHouseStruct> records = new ConcurrentLinkedQueue<ClickHouseStruct>();
 
         ClickHouseStruct ch1 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
@@ -185,10 +170,31 @@ public class DbWriterTest {
         records.add(ch7);
         records.add(ch8);
 
+        return records;
+    }
+
+    @Test
+    public void testGroupRecords() {
+        String hostName = "remoteClickHouse";
+        Integer port = 8123;
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
+        String connectionUrl = writer.getConnectionString(hostName, port, database);
+        Properties properties = new Properties();
+        properties.setProperty("client_name", "Test_1");
+
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config);
+
+
+
 
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
 
-        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(records, queryToRecordsMap);
+        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords(), queryToRecordsMap);
 
         Assert.assertTrue(result.isEmpty() == false);
 
@@ -204,6 +210,7 @@ public class DbWriterTest {
     }
 
     @Test
+    @Tag("IntegrationTest")
     public void testBatchArrays() {
         String hostName = "localhost";
         Integer port = 8123;
@@ -256,7 +263,8 @@ public class DbWriterTest {
 
     }
 
-    //@Test
+    @Test
+    @Tag("IntegrationTest")
     public void testBatchInsert() {
         String hostName = "localhost";
         Integer port = 8123;

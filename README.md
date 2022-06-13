@@ -1,4 +1,4 @@
-# ClickHouse Sink Connector
+# Altinity Sink Connector for ClickHouse
 
 Sink connector sinks data from Kafka into Clickhouse.
 The connector is tested with the following converters
