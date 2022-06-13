@@ -93,3 +93,11 @@ CREATE TABLE sbtest1(
 )
 ENGINE = MergeTree
 PRIMARY KEY id
+
+CREATE TABLE topic_offset_metadata(
+`_topic` String,
+`_partition` UInt64,
+`_offset` UInt64
+)
+ENGINE = MergeTree
+PRIMARY KEY topic

@@ -313,7 +313,7 @@ public class DbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public Map<TopicPartition, Long>  insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
 
@@ -395,6 +395,14 @@ public class DbWriter {
         }
     }
 
+
+
+    public void insertTopicOffsetMetadata(Map<TopicPartition, Long> topicPartitionToOffsetMap) {
+
+//        try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
+//
+//        }
+    }
     /**
      * Case-insensitive
      *
