@@ -27,6 +27,9 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Flag to store the raw data as JSON string in clickhouse.
     public static final String STORE_RAW_DATA ="store.raw.data";
 
+    public static final String ENABLE_KAFKA_OFFSET = "enable.kafka.offset";
+    public static final String KAFKA_OFFSET_METADATA_TABLE = "kafka.offset.metadata.table";
+
     // Column to store the raw data.
     public static final String STORE_RAW_DATA_COLUMN = "store.raw.data.column";
 

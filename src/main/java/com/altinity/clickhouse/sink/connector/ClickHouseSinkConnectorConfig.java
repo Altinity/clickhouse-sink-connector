@@ -273,6 +273,26 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.NONE,
                     ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET,
+                        Type.BOOLEAN,
+                        true,
+                        Importance.HIGH,
+                        "If enabled, topic offsets are stored in CH, if false topic offsets are managed in kafka topics",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE,
+                        Type.STRING,
+                        "topic_offset_metadata",
+                        Importance.HIGH,
+                        "Table name where the kafka offsets are stored",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
                         Type.LONG,
                         30,
