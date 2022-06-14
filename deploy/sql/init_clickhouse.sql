@@ -92,7 +92,7 @@ CREATE TABLE sbtest1(
 `pad` String
 )
 ENGINE = MergeTree
-PRIMARY KEY id
+PRIMARY KEY id;
 
 CREATE TABLE topic_offset_metadata(
 `_topic` String,
@@ -100,4 +100,7 @@ CREATE TABLE topic_offset_metadata(
 `_offset` UInt64
 )
 ENGINE = MergeTree
-PRIMARY KEY topic
+PRIMARY KEY _topic;
+
+CREATE MATERIALIZED VIEW mv_topic_offset_metadata_view to topic_offset_metadata
+AS select _topic, _partition, MAX(_offset) as _offset from topic_offset_metadata tom group by _topic, _partition;
