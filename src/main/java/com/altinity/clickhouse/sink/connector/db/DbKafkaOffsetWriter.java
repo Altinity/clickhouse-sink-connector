@@ -2,10 +2,15 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import org.apache.kafka.common.TopicPartition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.ref.WeakReference;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
 import java.util.Map;
 
 public class DbKafkaOffsetWriter {
@@ -15,6 +20,7 @@ public class DbKafkaOffsetWriter {
 
     Map<String, String> columnNamesToDataTypesMap;
 
+    private static final Logger log = LoggerFactory.getLogger(DbKafkaOffsetWriter.class);
 
 
     public DbKafkaOffsetWriter(WeakReference<DbWriter> writer, String tableName) {
@@ -25,7 +31,6 @@ public class DbKafkaOffsetWriter {
     }
 
     /**
-     *
      * @param topicPartitionToOffsetMap
      * @throws SQLException
      */
@@ -44,14 +49,14 @@ public class DbKafkaOffsetWriter {
                 long offset = entry.getValue();
 
                 int index = 1;
-                for(Map.Entry<String, String> colNamesEntry: this.columnNamesToDataTypesMap.entrySet()) {
+                for (Map.Entry<String, String> colNamesEntry : this.columnNamesToDataTypesMap.entrySet()) {
                     String columnName = colNamesEntry.getKey();
 
-                    if(columnName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
-                        ps.setString(index,  topicName);
-                    } else if(columnName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
+                    if (columnName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
+                        ps.setString(index, topicName);
+                    } else if (columnName.equalsIgnoreCase(KafkaMetaData.PARTITION.getColumn())) {
                         ps.setInt(index, partition);
-                    } else if(columnName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
+                    } else if (columnName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
                         ps.setLong(index, offset);
                     }
 
@@ -63,9 +68,27 @@ public class DbKafkaOffsetWriter {
             }
             ps.executeBatch();
 
+        } catch (Exception e) {
+            log.error("Error persisting offsets to CH", e);
         }
-        catch(Exception e) {
+    }
 
+    public Map<TopicPartition, Long> getStoredOffsets() throws SQLException {
+        Map<TopicPartition, Long> result = new HashMap<TopicPartition, Long>();
+
+        Statement stmt = this.writer.get().getConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("select * from mv_topic_offset_metadata_view");
+
+        while (rs.next()) {
+            String topicName = rs.getString(KafkaMetaData.TOPIC.getColumn());
+            int partition = rs.getInt(KafkaMetaData.PARTITION.getColumn());
+            long offset = rs.getLong(KafkaMetaData.OFFSET.getColumn());
+
+            TopicPartition tp = new TopicPartition(topicName, partition);
+
+            result.put(tp, offset);
         }
+
+        return result;
     }
 }
