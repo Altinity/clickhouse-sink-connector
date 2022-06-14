@@ -105,8 +105,9 @@ public class ClickHouseStruct {
         if(key != null) {
             this.key = key.toString();
         }
-        this.beforeStruct = beforeStruct;
-        this.afterStruct = afterStruct;
+        setBeforeStruct(beforeStruct);
+        setAfterStruct(afterStruct);
+
         this.setAdditionalMetaData(metadata);
         this.cdcOperation = operation;
     }
