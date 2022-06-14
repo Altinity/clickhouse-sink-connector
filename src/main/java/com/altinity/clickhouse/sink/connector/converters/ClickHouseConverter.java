@@ -267,14 +267,8 @@ public class ClickHouseConverter implements AbstractConverter {
         ClickHouseStruct chStruct = null;
         if (convertedValue.containsKey(sectionKey)) {
             Object beforeSection = convertedValue.get(SinkRecordColumns.BEFORE);
-            if(beforeSection != null) {
-                chStruct.setBeforeStruct((Struct) beforeSection);
-            }
-
             Object afterSection = convertedValue.get(SinkRecordColumns.AFTER);
-            if(afterSection != null) {
-                chStruct.setAfterStruct((Struct) afterSection);
-            }
+
             chStruct = new ClickHouseStruct(record.kafkaOffset(),
                     record.topic(), (Struct) record.key(), record.kafkaPartition(),
                     record.timestamp(), (Struct) beforeSection, (Struct) afterSection,

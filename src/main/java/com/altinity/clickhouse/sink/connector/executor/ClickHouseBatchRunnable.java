@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
@@ -11,6 +12,8 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.WeakReference;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -81,6 +84,13 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
                 Map<TopicPartition, Long> partitionToOffsetMap = writer.insert(entry.getValue());
+                DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(new WeakReference<>(writer),
+                        "topic_offset_metadata");
+                try {
+                    dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
+                } catch (SQLException e) {
+                    log.error("Error persisting offsets to CH", e);
+                }
                 context.stop();
 
 //                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
