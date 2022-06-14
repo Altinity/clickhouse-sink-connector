@@ -5,19 +5,21 @@ The connector is tested with the following converters
 - JsonConverter
 - AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/))
 
-
+# Features
 - Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree[Updates/Deletes](doc/mutable_data.md)
 - Deduplication logic to dedupe records from Kafka topic.
 - Exactly once semantics 
 - Bulk insert to Clickhouse.
 - Store Kafka metadata [Kafka Metadata](doc/Kafka_metadata.md)
 
-
+# Source Databases
+- MySQL (Debezium)
 
 ## Documentation
 - [Data Types](doc/DataTypes.md)
 - [Architecture](doc/architecture.md)
-- [Local Setup](doc/setup.md)
+- [Local Setup - Docker Compose](doc/setup.md)
+- [Kubernetes Setup](doc/k8s_pipeline_setup.md)
 - [Sink Configuration](doc/sink_configuration.md)
 - [Testing](doc/TESTING.md)
 - [Glossary](doc/glossary.md)
