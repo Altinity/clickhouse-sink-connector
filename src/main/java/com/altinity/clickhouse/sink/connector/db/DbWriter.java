@@ -10,8 +10,6 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
-import com.clickhouse.jdbc.ClickHouseConnection;
-import com.clickhouse.jdbc.ClickHouseDataSource;
 import com.google.common.io.BaseEncoding;
 import io.debezium.time.Date;
 import io.debezium.time.MicroTime;
@@ -40,9 +38,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * Class that abstracts all functionality
  * related to interacting with Clickhouse DB.
  */
-public class DbWriter {
+public class DbWriter extends BaseDbWriter {
     //ClickHouseNode server;
-    ClickHouseConnection conn;
     private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
 
     private final String tableName;
@@ -71,12 +68,12 @@ public class DbWriter {
             String password,
             ClickHouseSinkConnectorConfig config
     ) {
+        // Base class initiates connection using JDBC.
+        super(hostName, port, database, tableName, userName, password, config);
         this.tableName = tableName;
 
         this.config = config;
 
-        String connectionUrl = getConnectionString(hostName, port, database);
-        this.createConnection(connectionUrl, "Agent_1", userName, password);
 
         if (this.conn != null) {
             // Order of the column names and the data type has to match.
@@ -95,32 +92,10 @@ public class DbWriter {
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
     }
 
-    public ClickHouseConnection getConnection() {
-        return this.conn;
-    }
-    public String getConnectionString(String hostName, Integer port, String database) {
-        return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port, database);
-    }
 
-    /**
-     * Function to create Connection using the JDBC Driver
-     *
-     * @param url        url with the JDBC format jdbc:ch://localhost/test
-     * @param clientName Client Name
-     * @param userName   UserName
-     * @param password   Password
-     */
-    public void createConnection(String url, String clientName, String userName, String password) {
-        try {
-            Properties properties = new Properties();
-            properties.setProperty("client_name", clientName);
-            ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
 
-            this.conn = dataSource.getConnection(userName, password);
-        } catch (Exception e) {
-            log.warn("Error creating SQL connection" + e);
-        }
-    }
+
+
 
 
     /**

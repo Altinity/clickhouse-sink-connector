@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
@@ -13,7 +14,7 @@ import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
 
-public class DbKafkaOffsetWriter {
+public class DbKafkaOffsetWriter extends BaseDbWriter {
 
     WeakReference<DbWriter> writer;
     String query;
@@ -22,13 +23,23 @@ public class DbKafkaOffsetWriter {
 
     private static final Logger log = LoggerFactory.getLogger(DbKafkaOffsetWriter.class);
 
+    public DbKafkaOffsetWriter(
+            String hostName,
+            Integer port,
+            String database,
+            String tableName,
+            String userName,
+            String password,
+            ClickHouseSinkConnectorConfig config
+    ) {
 
-    public DbKafkaOffsetWriter(WeakReference<DbWriter> writer, String tableName) {
-        this.writer = writer;
+        super(hostName, port, database, tableName, userName, password, config);
+
         this.columnNamesToDataTypesMap = this.writer.get().getColumnsDataTypesForTable(tableName);
-
         this.query = new QueryFormatter().getInsertQueryUsingInputFunction(tableName, columnNamesToDataTypesMap);
+
     }
+
 
     /**
      * @param topicPartitionToOffsetMap
