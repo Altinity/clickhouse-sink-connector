@@ -275,7 +275,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET,
                         Type.BOOLEAN,
-                        true,
+                        false,
                         Importance.HIGH,
                         "If enabled, topic offsets are stored in CH, if false topic offsets are managed in kafka topics",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

@@ -77,7 +77,7 @@ public class DbKafkaOffsetWriter {
         Map<TopicPartition, Long> result = new HashMap<TopicPartition, Long>();
 
         Statement stmt = this.writer.get().getConnection().createStatement();
-        ResultSet rs = stmt.executeQuery("select * from mv_topic_offset_metadata_view");
+        ResultSet rs = stmt.executeQuery("select * from topic_offset_metadata");
 
         while (rs.next()) {
             String topicName = rs.getString(KafkaMetaData.TOPIC.getColumn());
