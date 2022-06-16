@@ -194,7 +194,8 @@ public class DbWriterTest {
 
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
 
-        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords(), queryToRecordsMap);
+        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords()
+                , queryToRecordsMap);
 
         Assert.assertTrue(result.isEmpty() == false);
 

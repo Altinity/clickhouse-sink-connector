@@ -151,6 +151,14 @@ public class ClickHouseSinkTask extends SinkTask {
 
         return committedOffsets;
     }
+/**
+    @Override
+    public void flush(Map<TopicPartition, OffsetAndMetadata> currentOffsets) {
+        // No-op. The connector is managing the offsets.
+        if(!this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
+            return currentOffsets;
+        }
+    }**/
 
     @Override
     public String version() {

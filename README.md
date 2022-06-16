@@ -22,4 +22,3 @@ The connector is tested with the following converters
 - [Kubernetes Setup](doc/k8s_pipeline_setup.md)
 - [Sink Configuration](doc/sink_configuration.md)
 - [Testing](doc/TESTING.md)
-- [Glossary](doc/glossary.md)
