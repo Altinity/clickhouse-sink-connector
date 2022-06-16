@@ -1,5 +1,6 @@
 #!/bin/bash
 
+ set -x
 # Source configuration
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/debezium-connector-config.sh"
@@ -8,14 +9,17 @@ source "${CUR_DIR}/debezium-connector-config.sh"
 # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
 # for the full list of available properties
 
-MYSQL_HOST="mysql-slave"
-MYSQL_PORT="3306"
-MYSQL_USER="root"
-MYSQL_PASSWORD="root"
+HOST="mysql-slave"
+PORT="3306"
+USER="root"
+PASSWORD="root"
 # Comma-separated list of regular expressions that match the databases for which to capture changes
-MYSQL_DBS="test"
+DBS="test"
 # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
-MYSQL_TABLES="employees"
+TABLES="employees"
+
+CONNECTOR_CLASS="io.debezium.connector.mysql.MySqlConnector"
+
 #KAFKA_BOOTSTRAP_SERVERS="one-node-cluster-0.one-node-cluster.redpanda.svc.cluster.local:9092"
 KAFKA_BOOTSTRAP_SERVERS="kafka:9092"
 KAFKA_TOPIC="schema-changes.test_db"
@@ -26,6 +30,26 @@ DATABASE_SERVER_ID="5432"
 # Unique across all other connectors, used as a prefix for Kafka topic names for events emitted by this connector.
 # Alphanumeric characters, hyphens, dots and underscores only.
 DATABASE_SERVER_NAME="SERVER5432"
+
+
+if [[ $1 == "postgres" ]]; then
+  echo "postgres database"
+  HOST="postgres"
+  PORT="5432"
+  USER="postgres_user"
+  PASSWORD="postgres"
+  # Comma-separated list of regular expressions that match the databases for which to capture changes
+  DBS="test"
+  # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
+  TABLES="employees"
+  CONNECTOR_CLASS="io.debezium.connector.postgresql.PostgresConnector"
+
+  curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @payload.json
+else
+  echo "MySQL Database"
+fi
+
+
 
     #"database.include.list": "${MYSQL_DBS}",
     #"table.include.list": "${MYSQL_TABLES}",
@@ -40,19 +64,19 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 {
   "name": "${CONNECTOR_NAME}",
   "config": {
-    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "connector.class": "${CONNECTOR_CLASS}",
     "tasks.max": "1",
     "snapshot.mode": "initial",
     "snapshot.locking.mode": "minimal",
     "snapshot.delay.ms": 10000,
     "include.schema.changes":"true",
-    "database.hostname": "${MYSQL_HOST}",
-    "database.port": "${MYSQL_PORT}",
-    "database.user": "${MYSQL_USER}",
-    "database.password": "${MYSQL_PASSWORD}",
+    "database.hostname": "${HOST}",
+    "database.port": "${PORT}",
+    "database.user": "${USER}",
+    "database.password": "${PASSWORD}",
     "database.server.id": "${DATABASE_SERVER_ID}",
     "database.server.name": "${DATABASE_SERVER_NAME}",
-    "database.whitelist": "${MYSQL_DBS}",
+    "database.whitelist": "${DBS}",
     "database.allowPublicKeyRetrieval":"true",
 
     "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
