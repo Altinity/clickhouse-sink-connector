@@ -7,7 +7,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.junit.jupiter.api.Tag;
 
-import java.lang.ref.WeakReference;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
@@ -30,8 +29,9 @@ public class DbKafkaOffsetWriterTest {
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(new WeakReference<>(writer),
-                "topic_offset_metadata");
+        DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                ;
 
         ConcurrentLinkedQueue<ClickHouseStruct> records = new ConcurrentLinkedQueue<ClickHouseStruct>();
 
@@ -57,8 +57,8 @@ public class DbKafkaOffsetWriterTest {
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(new WeakReference<>(writer),
-                "topic_offset_metadata");
+        DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         Map<TopicPartition, Long> offsetsMap = dbKafkaOffsetWriter.getStoredOffsets();
 

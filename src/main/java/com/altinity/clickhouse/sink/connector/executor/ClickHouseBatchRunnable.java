@@ -12,7 +12,6 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.ref.WeakReference;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
@@ -84,8 +83,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
                 Map<TopicPartition, Long> partitionToOffsetMap = writer.insert(entry.getValue());
-                DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(new WeakReference<>(writer),
-                        "topic_offset_metadata");
+                DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password, this.config);
                 try {
                     dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
                 } catch (SQLException e) {
