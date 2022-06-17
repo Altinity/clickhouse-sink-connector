@@ -28,8 +28,6 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -112,38 +110,6 @@ public class DbWriter extends BaseDbWriter {
         boolean result = false;
         if (columnType.contains("DateTime64")) {
             result = true;
-        }
-        return result;
-    }
-
-    /**
-     * Function that uses the DatabaseMetaData JDBC functionality
-     * to get the column name and column data type as key/value pair.
-     */
-    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
-
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (this.conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = this.conn.getMetaData().getColumns(null, null,
-                    tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
-
-//                Object dataType = columns.getString("DATA_TYPE");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                result.put(columnName, typeName);
-            }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
         }
         return result;
     }

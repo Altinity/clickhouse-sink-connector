@@ -11,7 +11,6 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class DbKafkaOffsetWriterTest {
 
@@ -31,12 +30,8 @@ public class DbKafkaOffsetWriterTest {
 
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
-                ;
-
-        ConcurrentLinkedQueue<ClickHouseStruct> records = new ConcurrentLinkedQueue<ClickHouseStruct>();
 
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
-
         Map<TopicPartition, Long> result = writer.groupQueryWithRecords(new DbWriterTest().getSampleRecords(), queryToRecordsMap);
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);
