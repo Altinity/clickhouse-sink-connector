@@ -6,7 +6,6 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.ref.WeakReference;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -16,7 +15,6 @@ import java.util.Map;
 
 public class DbKafkaOffsetWriter extends BaseDbWriter {
 
-    WeakReference<DbWriter> writer;
     String query;
 
     Map<String, String> columnNamesToDataTypesMap;
@@ -35,7 +33,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
 
         super(hostName, port, database, tableName, userName, password, config);
 
-        this.columnNamesToDataTypesMap = this.writer.get().getColumnsDataTypesForTable(tableName);
+        this.columnNamesToDataTypesMap = this.getColumnsDataTypesForTable(tableName);
         this.query = new QueryFormatter().getInsertQueryUsingInputFunction(tableName, columnNamesToDataTypesMap);
 
     }
@@ -47,7 +45,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
      */
     public void insertTopicOffsetMetadata(Map<TopicPartition, Long> topicPartitionToOffsetMap) throws SQLException {
 
-        try (PreparedStatement ps = this.writer.get().getConnection().prepareStatement(this.query)) {
+        try (PreparedStatement ps = this.getConnection().prepareStatement(this.query)) {
 
 
             for (Map.Entry<TopicPartition, Long> entry : topicPartitionToOffsetMap.entrySet()) {
@@ -87,7 +85,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
     public Map<TopicPartition, Long> getStoredOffsets() throws SQLException {
         Map<TopicPartition, Long> result = new HashMap<TopicPartition, Long>();
 
-        Statement stmt = this.writer.get().getConnection().createStatement();
+        Statement stmt = this.getConnection().createStatement();
         ResultSet rs = stmt.executeQuery("select * from topic_offset_metadata");
 
         while (rs.next()) {
