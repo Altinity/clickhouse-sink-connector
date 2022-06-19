@@ -24,7 +24,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-    "tasks.max": "6",
+    "tasks.max": "3",
     "topics": "${TOPICS}",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
@@ -44,15 +44,17 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "value.converter.apicurio.registry.auto-register": "true",
     "value.converter.apicurio.registry.find-latest": "true",
     "store.kafka.metadata": true,
-    "topic.creation.default.partitions": 3,
+    "topic.creation.default.partitions": 1,
 
     "store.raw.data": false,
     "store.raw.data.column": "raw_data",
 
     "metrics.enable": true,
     "metrics.port": 8084,
-    "buffer.flush.time": 1,
-    "fetch.min.bytes": 52428800
+    "buffer.flush.time": 10,
+    "fetch.min.bytes": 52428800,
+
+    "enable.kafka.offset": false
 
 
 

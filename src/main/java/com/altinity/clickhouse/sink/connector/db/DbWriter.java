@@ -273,8 +273,8 @@ public class DbWriter extends BaseDbWriter {
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
 
-        addToPreparedStatementBatch(queryToRecordsMap, records);
 
+        addToPreparedStatementBatch(queryToRecordsMap, records);
         return partitionToOffsetMap;
     }
 
@@ -286,6 +286,7 @@ public class DbWriter extends BaseDbWriter {
      */
     private void addToPreparedStatementBatch(Map<String, List<ClickHouseStruct>> queryToRecordsMap,
                                              ConcurrentLinkedQueue<ClickHouseStruct> records) {
+
         for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
 
             String insertQuery = entry.getKey();
@@ -320,6 +321,7 @@ public class DbWriter extends BaseDbWriter {
 
 
                     ps.addBatch();
+                    records.remove(record);
                 }
 
 
@@ -332,7 +334,7 @@ public class DbWriter extends BaseDbWriter {
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
-                records.clear();
+
             } catch (Exception e) {
                 log.warn("insert Batch exception", e);
             }
