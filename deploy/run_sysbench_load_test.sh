@@ -18,5 +18,8 @@ sysbench \
 --mysql-db=sbtest \
 --mysql-password=root \
 --tables=1 \
---table-size=1000000 \
+--table-size=10000 \
 run
+
+### TRY READ/WRITE LOADS ####
+###oltp_read_write.lua

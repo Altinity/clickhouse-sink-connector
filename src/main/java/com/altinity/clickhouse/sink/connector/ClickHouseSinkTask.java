@@ -43,6 +43,8 @@ public class ClickHouseSinkTask extends SinkTask {
 
     private ClickHouseSinkConnectorConfig config;
 
+    private long totalRecords;
+
     @Override
     public void start(Map<String, String> config) {
 
@@ -91,7 +93,9 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        log.debug("CLICKHOUSE received records" + records.size());
+        totalRecords += records.size();
+
+        log.info("CLICKHOUSE received records" + totalRecords);
         ClickHouseConverter converter = new ClickHouseConverter();
 
         for (SinkRecord record : records) {

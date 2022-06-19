@@ -16,7 +16,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Metrics class using io.dropwizard library
@@ -54,11 +53,11 @@ public class Metrics {
         // registry.register("memory", new MemoryUsageGaugeSet());
 
         // Register reporters here.
-        reporter = ConsoleReporter.forRegistry(registry)
-                .convertRatesTo(TimeUnit.SECONDS)
-                .convertDurationsTo(TimeUnit.SECONDS)
-                .build();
-        reporter.start(1, TimeUnit.MINUTES);
+//        reporter = ConsoleReporter.forRegistry(registry)
+//                .convertRatesTo(TimeUnit.SECONDS)
+//                .convertDurationsTo(TimeUnit.SECONDS)
+//                .build();
+//        reporter.start(1, TimeUnit.MINUTES);
 
         parseConfiguration(enableFlag, metricsPort);
 

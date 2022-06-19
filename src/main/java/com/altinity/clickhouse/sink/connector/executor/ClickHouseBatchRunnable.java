@@ -82,7 +82,10 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer.Context context = timer.time();
 
                 DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
-                Map<TopicPartition, Long> partitionToOffsetMap = writer.insert(entry.getValue());
+                Map<TopicPartition, Long> partitionToOffsetMap;
+                synchronized (this.records) {
+                    partitionToOffsetMap = writer.insert(entry.getValue());
+                }
                 DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password, this.config);
                 try {
                     dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
