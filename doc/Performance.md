@@ -2,6 +2,10 @@
 We use `SysBench` to perform load testing.
 https://github.com/akopytov/sysbench
 
+Before starting the connectors, create the topic with max partitions 
+
+`rpk topic create SERVER5432.sbtest.sbtest1  -p 6`
+
 To Run SysBench tests, run the `debezium-connector-setup-sysbench.sh` script in `deploy` folder to 
 create the MySQL debezium connector. The connector is setup to read from the `sbtest` table required by SysBench
 
@@ -9,7 +13,7 @@ For sink, the default `sink-connector-setup-schema-registry.sh` script can be ex
 the ClickHouse Sink Connector.
 
 ## Insert tests(SysBench)
-`run_sysbench_insert_load_test.sh` script executes the oltp_insert lua script in Sysbench.
+`sysbench/run_sysbench_insert_load_test.sh` script executes the oltp_insert lua script in Sysbench.
 
 ## Update/Delete tests(SysBench)
 
