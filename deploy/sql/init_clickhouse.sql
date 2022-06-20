@@ -89,10 +89,12 @@ CREATE TABLE sbtest1(
 `id` UInt64,
 `k` UInt64,
 `c` String,
-`pad` String
+`pad` String,
+`sign` Int8
 )
-ENGINE = MergeTree
-PRIMARY KEY id;
+ENGINE = CollapsingMergeTree(sign)
+PRIMARY KEY id
+ORDER by id;
 
 CREATE TABLE topic_offset_metadata(
 `_topic` String,
