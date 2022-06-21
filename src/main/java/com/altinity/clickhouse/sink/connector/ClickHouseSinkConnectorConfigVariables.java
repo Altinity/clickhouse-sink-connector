@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector;
 
 public class ClickHouseSinkConnectorConfigVariables {
 
+    public static final String THREAD_POOL_SIZE = "thread.pool.size";
     public static final String BUFFER_COUNT = "buffer.count";
     public static final long BUFFER_COUNT_DEFAULT = 100;
     public static final String DEDUPLICATION_POLICY = "deduplication.policy";

@@ -26,6 +26,10 @@ where event_date >= today() and event_type = 'NewPart'
 group by database, table, event_type, partition_id
 order by c desc`\
 
+`
+select sum(tmp.rows), tmp.event_time from (
+select rows,event_time ,event_type  from system.part_log pl where database='test' and table='sbtest1' and event_type='NewPart' order by event_time desc) tmp group by tmp.event_time`
+
 With the SysBench insert tests(6 Kafka partitions), the following are the numbers we observed on 12-core i7 64 GB RAM instance.\
 <b>ClickHouse Rows Insertion Rate: 9k/second, 2.1 MB/second.
 
