@@ -15,7 +15,7 @@ CLICKHOUSE_DATABASE="test"
 
 BUFFER_COUNT=10000
 
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, SERVER5432.transaction, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1"
+TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, SERVER5432.transaction, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
 TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
@@ -24,7 +24,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-    "tasks.max": "6",
+    "tasks.max": "10",
     "topics": "${TOPICS}",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",

@@ -8,7 +8,7 @@
 sysbench \
 /usr/share/sysbench/oltp_insert.lua \
 --report-interval=2 \
---threads=500 \
+--threads=3000 \
 --rate=0 \
 --time=0 \
 --db-driver=mysql \

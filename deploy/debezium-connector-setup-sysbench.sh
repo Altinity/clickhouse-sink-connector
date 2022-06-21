@@ -8,7 +8,7 @@ source "${CUR_DIR}/debezium-connector-config.sh"
 # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
 # for the full list of available properties
 
-MYSQL_HOST="mysql-slave"
+MYSQL_HOST="mysql-master"
 MYSQL_PORT="3306"
 MYSQL_USER="root"
 MYSQL_PASSWORD="root"

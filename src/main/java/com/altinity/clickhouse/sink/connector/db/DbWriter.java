@@ -226,6 +226,9 @@ public class DbWriter extends BaseDbWriter {
             } else {
                 log.error("INVALID CDC RECORD STATE");
             }
+
+            // Remove the record from shared records.
+            iterator.remove();
         }
         return partitionToOffsetMap;
     }
@@ -271,10 +274,12 @@ public class DbWriter extends BaseDbWriter {
         }
 
         Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
-        partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
 
-
-        addToPreparedStatementBatch(queryToRecordsMap, records);
+        // We are getting a subset of the records(Batch) to process.
+        synchronized (records) {
+            partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
+        }
+        addToPreparedStatementBatch(queryToRecordsMap);
         return partitionToOffsetMap;
     }
 
@@ -284,8 +289,7 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    private void addToPreparedStatementBatch(Map<String, List<ClickHouseStruct>> queryToRecordsMap,
-                                             ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    private void addToPreparedStatementBatch(Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
 
         for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
 
@@ -321,7 +325,7 @@ public class DbWriter extends BaseDbWriter {
 
 
                     ps.addBatch();
-                    records.remove(record);
+                    //records.remove(record);
                 }
 
 

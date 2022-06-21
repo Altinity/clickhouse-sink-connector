@@ -302,6 +302,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE,
+                        Type.SHORT,
+                        10,
+                        Importance.HIGH,
+                        "Number of threads in the Sink Task Thread pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE)
+
                 // ToDo: Add JVM Proxy
                 ;
     }

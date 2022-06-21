@@ -21,7 +21,7 @@ services:
 #      --binlog_do_db=test
     restart: "no"
     ports:
-      - "3306"
+      - "3306:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=test
@@ -52,7 +52,7 @@ services:
 #      --binlog_do_db=test
     restart: "no"
     ports:
-      - "3306:3306"
+      - "3306"
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_DATABASE=test
