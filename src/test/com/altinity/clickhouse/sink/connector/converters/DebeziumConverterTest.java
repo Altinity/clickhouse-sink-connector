@@ -75,4 +75,11 @@ public class DebeziumConverterTest {
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00"));
     }
+
+    @Test
+    public void testMicroTimestampConverter() {
+
+        String convertedString = DebeziumConverter.MicroTimestampConverter.convert(-248313600000000L);
+        Assert.assertTrue(convertedString.equalsIgnoreCase("1962-02-18 00:00:00"));
+    }
 }

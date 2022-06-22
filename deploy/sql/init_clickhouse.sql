@@ -85,6 +85,7 @@ CREATE TABLE t1(
 ENGINE = MergeTree
 PRIMARY KEY intcol1;
 
+-- Sysbench tables ---
 CREATE TABLE sbtest1(
 `id` UInt64,
 `k` UInt64,
@@ -96,6 +97,7 @@ ENGINE = CollapsingMergeTree(sign)
 PRIMARY KEY id
 ORDER by id;
 
+-- Metadata tables --
 CREATE TABLE topic_offset_metadata(
 `_topic` String,
 `_partition` UInt64,
@@ -103,3 +105,23 @@ CREATE TABLE topic_offset_metadata(
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (_topic, _partition);
+
+-- Postgres tables --
+CREATE TABLE Employee(
+`EmployeeId` UInt64,
+`LastName` String,
+`FirstName` String,
+`Title` String,
+`ReportsTo` UInt64,
+`BirthDate` DateTime64,
+ `HireDate` DateTime64,
+ `Address` String,
+ `City` String,
+ `State` String,
+ `Country` String,
+ `PostalCode` String,
+ `Phone` String,
+ `Fax` String,
+ `Email` String)
+ ENGINE = MergeTree
+ PRIMARY KEY EmployeeId;

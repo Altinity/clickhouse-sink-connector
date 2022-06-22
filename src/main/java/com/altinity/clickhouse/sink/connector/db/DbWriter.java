@@ -11,10 +11,8 @@ import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.google.common.io.BaseEncoding;
+import io.debezium.time.*;
 import io.debezium.time.Date;
-import io.debezium.time.MicroTime;
-import io.debezium.time.Timestamp;
-import io.debezium.time.ZonedTimestamp;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Decimal;
@@ -449,8 +447,10 @@ public class DbWriter extends BaseDbWriter {
                 // Time -> INT64 + io.debezium.time.MicroTime
                 if (schemaName != null && schemaName.equalsIgnoreCase(MicroTime.SCHEMA_NAME)) {
                     isFieldTime = true;
-                } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                } else if ((schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) ||
+                        (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME))) {
                     //DateTime -> INT64 + Timestamp(Debezium)
+                    // MicroTimestamp ("yyyy-MM-dd HH:mm:ss")
                     isFieldDateTime = true;
                 } else {
                     isFieldTypeBigInt = true;
@@ -488,7 +488,11 @@ public class DbWriter extends BaseDbWriter {
                 ps.setObject(index, value);
             } else if (isFieldDateTime || isFieldTime) {
                 if (isFieldDateTime) {
-                    if (value instanceof Long) {
+                    if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
+                        // Handle microtimestamp first
+                        ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                    }
+                    else if (value instanceof Long) {
                         ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64(colName)));
                     }
                 } else if (isFieldTime) {
