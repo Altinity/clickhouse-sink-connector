@@ -8,9 +8,13 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
 public class DebeziumConverter {
+
+    private static final int MICROS_IN_SEC = 1000000;
+    private static final int MICROS_IN_MILLI = 1000;
 
     public static class MicroTimeConverter {
         /**
@@ -25,6 +29,25 @@ public class DebeziumConverter {
 
             SimpleDateFormat bqTimeSecondsFormat = new SimpleDateFormat("HH:mm:ss");
             String formattedSecondsTimestamp = bqTimeSecondsFormat.format(date);
+            return formattedSecondsTimestamp;
+        }
+    }
+
+    public static class MicroTimestampConverter {
+
+        //ToDO: IF values exceed the ones supported by clickhouse
+        public static String convert(Object value) {
+            Long microTimestamp = (Long) value;
+
+            Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
+            java.util.Date date = new java.util.Date(milliTimestamp);
+
+            SimpleDateFormat bqDatetimeSecondsFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            bqDatetimeSecondsFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+            String formattedSecondsTimestamp = bqDatetimeSecondsFormat.format(date);
+
+            Long microRemainder = microTimestamp % MICROS_IN_SEC;
+
             return formattedSecondsTimestamp;
         }
     }

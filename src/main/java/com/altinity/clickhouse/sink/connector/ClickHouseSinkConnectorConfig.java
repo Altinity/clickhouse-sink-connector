@@ -304,7 +304,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
                 .define(
                         ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE,
-                        Type.SHORT,
+                        Type.INT,
                         10,
                         Importance.HIGH,
                         "Number of threads in the Sink Task Thread pool",
