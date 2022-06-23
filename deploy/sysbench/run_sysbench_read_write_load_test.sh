@@ -3,7 +3,7 @@
 sysbench \
 /usr/share/sysbench/oltp_read_write.lua \
 --report-interval=2 \
---threads=1000 \
+--threads=5000 \
 --rate=0 \
 --time=0 \
 --db-driver=mysql \

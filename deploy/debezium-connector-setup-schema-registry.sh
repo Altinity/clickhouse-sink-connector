@@ -69,7 +69,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "config": {
     "connector.class": "${CONNECTOR_CLASS}",
     "tasks.max": "1",
-    "snapshot.mode": "${SNAPSHOT_MODE}"
+    "snapshot.mode": "${SNAPSHOT_MODE}",
     "snapshot.locking.mode": "minimal",
     "snapshot.delay.ms": 10000,
     "include.schema.changes":"true",
@@ -81,7 +81,6 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "database.server.name": "${DATABASE_SERVER_NAME}",
     "database.whitelist": "${DBS}",
     "database.allowPublicKeyRetrieval":"true",
-    "table.include.list": "public.Employee",
 
     "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
     "database.history.kafka.topic": "${KAFKA_TOPIC}",
