@@ -16,6 +16,7 @@ import java.util.Map;
  */
 public class ClickHouseDataTypeMapper {
     static Map<MutablePair<Schema.Type, String>, ClickHouseDataType> dataTypesMap;
+
     static {
         dataTypesMap = new HashMap<>();
 
@@ -34,21 +35,22 @@ public class ClickHouseDataTypeMapper {
 
 
     }
- 
+
     static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {
-     
+
         ClickHouseDataType matchingDataType = null;
-        for(Map.Entry<MutablePair<Schema.Type, String>, ClickHouseDataType> entry: dataTypesMap.entrySet()) {
+        for (Map.Entry<MutablePair<Schema.Type, String>, ClickHouseDataType> entry : dataTypesMap.entrySet()) {
             //   return dataTypesMap.get(kafkaConnectType);
 
             MutablePair mp = entry.getKey();
 
-            if(kafkaConnectType == mp.left && schemaName == mp.right) {
+            if (kafkaConnectType == mp.left && schemaName == mp.right) {
                 // Founding matching type.
                 matchingDataType = entry.getValue();
             }
 
-    }
+        }
 
-    return matchingDataType;
+        return matchingDataType;
+    }
 }

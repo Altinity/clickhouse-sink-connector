@@ -1,9 +1,11 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import java.util.Map;
-
+import com.clickhouse.client.ClickHouseDataType;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
+
+import java.util.HashMap;
+import java.util.Map;
 
 
 public class ClickHouseAutoCreateTable {
