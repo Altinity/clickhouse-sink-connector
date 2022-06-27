@@ -9,8 +9,8 @@ public class ClickHouseDataTypeMapperTest {
 
     @Test
     public void getClickHouseDataType() {
-        ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.Type.FLOAT32);
+        ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.Type.INT16, null);
 
-        Assert.assertTrue(chDataType.name().equalsIgnoreCase("FLOAT32"));
+        Assert.assertTrue(chDataType.name().equalsIgnoreCase("INT16"));
     }
 }

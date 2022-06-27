@@ -45,13 +45,15 @@ public class ClickHouseAutoCreateTable {
 
         for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
             createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
-
         }
+        createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         createTableSyntax.append(")");
-
-        createTableSyntax.append(" ENGINE = MergeTree");
+        createTableSyntax.append(" ");
+        createTableSyntax.append("ENGINE = MergeTree");
+        createTableSyntax.append(" ");
         createTableSyntax.append("PRIMARY KEY ").append(primaryKey);
+        createTableSyntax.append(" ");
         createTableSyntax.append("ORDER BY ").append(primaryKey);
 
         return createTableSyntax.toString();
