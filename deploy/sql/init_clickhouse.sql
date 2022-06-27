@@ -91,7 +91,7 @@ CREATE TABLE sbtest1(
 `k` UInt64,
 `c` String,
 `pad` String,
---`sign` Int8
+`sign` Int8,
  `ver` UInt64
 )
 ENGINE = ReplacingMergeTree(ver)

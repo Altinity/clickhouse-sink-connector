@@ -264,7 +264,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                     ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN,
                     Type.STRING,
-                    "",
+                    "sign",
                     Importance.LOW,
                     "Column thats used to store the sign value when the engine is ReplacingMergeTree, when a " +
                             "delete CDC record is received, this column is set to -1, 1 otherwise",
