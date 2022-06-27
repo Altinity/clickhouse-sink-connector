@@ -22,7 +22,6 @@ public class BaseDbWriter {
             String hostName,
             Integer port,
             String database,
-            String tableName,
             String userName,
             String password,
             ClickHouseSinkConnectorConfig config
@@ -55,7 +54,7 @@ public class BaseDbWriter {
 
             this.conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
-            log.warn("Error creating SQL connection" + e);
+            log.error("Error creating ClickHouse connection" + e);
         }
     }
 

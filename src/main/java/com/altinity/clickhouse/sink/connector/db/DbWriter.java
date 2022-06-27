@@ -53,7 +53,7 @@ public class DbWriter extends BaseDbWriter {
     private String versionColumn = null;
 
     // Delete column for ReplacingMergeTree
-    private String replacingMergeTreeDeleteColumn;
+    private final String replacingMergeTreeDeleteColumn;
 
     public DbWriter(
             String hostName,
@@ -65,7 +65,7 @@ public class DbWriter extends BaseDbWriter {
             ClickHouseSinkConnectorConfig config
     ) {
         // Base class initiates connection using JDBC.
-        super(hostName, port, database, tableName, userName, password, config);
+        super(hostName, port, database, userName, password, config);
         this.tableName = tableName;
 
         this.config = config;
@@ -167,7 +167,7 @@ public class DbWriter extends BaseDbWriter {
         TopicPartition tp = new TopicPartition(topic, partition);
 
         // Check if record exists.
-        if(false == offsetToPartitionMap.containsKey(tp)) {
+        if(!offsetToPartitionMap.containsKey(tp)) {
             // Record does not exist;
             offsetToPartitionMap.put(tp, offset);
         } else {
