@@ -31,7 +31,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
             ClickHouseSinkConnectorConfig config
     ) {
 
-        super(hostName, port, database, tableName, userName, password, config);
+        super(hostName, port, database, userName, password, config);
 
         this.columnNamesToDataTypesMap = this.getColumnsDataTypesForTable(tableName);
         this.query = new QueryFormatter().getInsertQueryUsingInputFunction(tableName, columnNamesToDataTypesMap);
@@ -83,7 +83,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
     }
 
     public Map<TopicPartition, Long> getStoredOffsets() throws SQLException {
-        Map<TopicPartition, Long> result = new HashMap<TopicPartition, Long>();
+        Map<TopicPartition, Long> result = new HashMap<>();
 
         Statement stmt = this.getConnection().createStatement();
         ResultSet rs = stmt.executeQuery("select * from topic_offset_metadata");
