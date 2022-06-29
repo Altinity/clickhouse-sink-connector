@@ -70,3 +70,4 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   }
 }
 EOF
+#binary.handling.mode
