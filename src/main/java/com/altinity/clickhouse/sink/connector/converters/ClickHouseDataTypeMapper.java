@@ -25,13 +25,13 @@ public class ClickHouseDataTypeMapper {
         dataTypesMap.put(new MutablePair(Schema.INT32_SCHEMA.type(), null), ClickHouseDataType.Int32);
         dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), null), ClickHouseDataType.Int64);
 
-        // dataTypesMap.put(Schema.FLOAT32_SCHEMA.type(), ClickHouseDataType.Float32);
-        // dataTypesMap.put(Schema.FLOAT64_SCHEMA.type(), ClickHouseDataType.Float64);
+         dataTypesMap.put(new MutablePair(Schema.FLOAT32_SCHEMA.type(), null), ClickHouseDataType.Float32);
+         dataTypesMap.put(new MutablePair(Schema.FLOAT64_SCHEMA.type(), null), ClickHouseDataType.Float64);
 
-        // dataTypesMap.put(Schema.STRING_SCHEMA.type(), ClickHouseDataType.String);
+         dataTypesMap.put(new MutablePair(Schema.STRING_SCHEMA.type(), null), ClickHouseDataType.String);
 
-        // // BLOB -> String
-        // dataTypesMap.put(Schema.BYTES_SCHEMA.type(), ClickHouseDataType.String);
+         // BLOB -> String
+         dataTypesMap.put(new MutablePair(Schema.BYTES_SCHEMA.type(), null), ClickHouseDataType.String);
 
 
     }

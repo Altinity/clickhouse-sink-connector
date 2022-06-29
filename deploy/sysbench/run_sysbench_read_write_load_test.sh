@@ -3,7 +3,7 @@
 sysbench \
 /usr/share/sysbench/oltp_read_write.lua \
 --report-interval=2 \
---threads=1000 \
+--threads=16 \
 --rate=0 \
 --time=0 \
 --db-driver=mysql \
@@ -14,4 +14,6 @@ sysbench \
 --mysql-password=root \
 --tables=1 \
 --table-size=10000 \
+--debug \
+--verbosity=5 \
 run
