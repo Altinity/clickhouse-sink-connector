@@ -275,6 +275,10 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <!-- Define test source directory -->
+        <testSourceDirectory>${project.basedir}/src/test</testSourceDirectory>
+
     </build>
     <dependencies>
         <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcpkix-fips -->

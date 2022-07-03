@@ -74,9 +74,11 @@ public class ClickHouseStruct {
     // Inheritance doesn't work because of different package
     // error, composition.
     @Getter
+    @Setter
     Struct beforeStruct;
 
     @Getter
+    @Setter
     Struct afterStruct;
 
     @Getter
