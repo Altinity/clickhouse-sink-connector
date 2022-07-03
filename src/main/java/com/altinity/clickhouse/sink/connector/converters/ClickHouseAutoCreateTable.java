@@ -21,6 +21,11 @@ public class ClickHouseAutoCreateTable {
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
+    /**
+     * Function to create clickhouse create table
+     * syntax.
+     * @param fields
+     */
     public void createClickHouseTableSyntax(Field[] fields) {
 
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
