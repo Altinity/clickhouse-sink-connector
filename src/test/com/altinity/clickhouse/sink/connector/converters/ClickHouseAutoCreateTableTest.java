@@ -3,12 +3,15 @@ package com.altinity.clickhouse.sink.connector.converters;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.jupiter.api.Tag;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -38,6 +41,35 @@ public class ClickHouseAutoCreateTableTest {
 
         this.conn = writer.getConnection();
 
+    }
+
+    private Field[] createFields() {
+        ArrayList<Field> fields = new ArrayList<>();
+        fields.add(new Field("customerName", 0, Schema.STRING_SCHEMA));
+        fields.add(new Field("occupation", 1, Schema.STRING_SCHEMA));
+        fields.add(new Field("quantity", 2, Schema.INT32_SCHEMA));
+
+        fields.add(new Field("amount_1", 3, Schema.FLOAT32_SCHEMA));
+
+        fields.add(new Field("amount", 3, Schema.FLOAT64_SCHEMA));
+        fields.add(new Field("employed", 4, Schema.BOOLEAN_SCHEMA));
+
+        fields.add(new Field("blob_storage", 5, Schema.BYTES_SCHEMA));
+
+
+
+
+        Field[] result = new Field[fields.size()];
+        fields.toArray(result);
+        return result;
+    }
+    @Test
+    public void getColumnNameToCHDataTypeMappingTest() {
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        Field[] fields = createFields();
+        Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields);
+
+        Assert.assertFalse(colNameToDataTypeMap.isEmpty());
     }
     @Test
     public void testCreateTableSyntax() {
