@@ -26,7 +26,7 @@ public class ClickHouseAutoCreateTable {
      * syntax.
      * @param fields
      */
-    public void createClickHouseTableSyntax(Field[] fields) {
+    public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields) {
 
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         
@@ -41,9 +41,15 @@ public class ClickHouseAutoCreateTable {
             // Input: 
             ClickHouseDataType dataType = mapper.getClickHouseDataType(type, schemaName);
             if(dataType != null) {
-
+                columnToDataTypesMap.put(colName, dataType.name());
             }
+//
+//            if(columnToDataTypesMap.isEmpty() == false) {
+//                String createTableQuery = this.createTableSyntax(primaryKey, tableName, columnToDataTypesMap);
+//            }
         }
+
+        return columnToDataTypesMap;
     }
 
     /**
