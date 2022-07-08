@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,10 @@ public class ClickHouseStruct {
     @Getter
     @Setter
     private String key;
+
+    @Getter
+    @Setter
+    private String primaryKey;
 
     @Getter
     @Setter
@@ -106,6 +111,16 @@ public class ClickHouseStruct {
         this.timestamp = timestamp;
         if(key != null) {
             this.key = key.toString();
+            Schema pkSchema = key.schema();
+            if(pkSchema != null) {
+                List<Field> fields = pkSchema.fields();
+                if(fields != null && fields.isEmpty() == false) {
+                    // ToDO: can the Key be more than one field.
+                    if(fields.get(0) != null) {
+                        this.primaryKey = fields.get(0).name();
+                    }
+                }
+            }
         }
         setBeforeStruct(beforeStruct);
         setAfterStruct(afterStruct);

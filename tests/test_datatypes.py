@@ -159,7 +159,7 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        #conn.execute_sql("alter table products add column source json");
+        conn.execute_sql("alter table products add column source json");
 
         conn.execute_sql("insert into products(source, productCode, productName, productLine, productScale,productVendor, "
                          "productDescription, quantityInStock, buyPrice, MSRP) "
@@ -171,13 +171,27 @@ class MyTestCase(unittest.TestCase):
         # clickhouse_conn.execute_sql('alter table products add column source String')
         # #conn.execute_sql("")
 
-    def test_multiple_tables(self):
+    def test_alter_table(self):
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        conn.execute_sql("alter table products add column emp_user_id varchar(15)");
+        conn.close()
+
+        conn.create_connection()
+        conn.execute_sql("insert into products(emp_user_id, productCode, productName, productLine, productScale,productVendor, "
+                         "productDescription, quantityInStock, buyPrice, MSRP) "
+                         "values('11', 'S10_122225', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
+        conn.close()
+
+def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()
         #self.generate_products_fake_records()
         #self.generate_products_fake_records()
-        self.generate_update_records()
-        self.test_json_data_type()
+        #self.generate_update_records()
+        #self.test_json_data_type()
+        self.test_alter_table()
         #self.generate_delete_records()
         #self.test_duplicate_inserts()
 
