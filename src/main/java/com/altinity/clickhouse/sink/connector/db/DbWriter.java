@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
@@ -223,10 +224,18 @@ public class DbWriter extends BaseDbWriter {
             // that's inserted.
             int recordPartition = record.getKafkaPartition();
 
+            boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
 
             if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                if(enableSchemaEvolution) {
+                    try {
+                        alterTable(record.getAfterModifiedFields());
+                    } catch(Exception e) {
+                        log.error("**** ERROR ALTER TABLE: " + tableName, e);
+                    }
+                }
                 updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
@@ -258,6 +267,30 @@ public class DbWriter extends BaseDbWriter {
             List<ClickHouseStruct> recordsList = queryToRecordsMap.get(insertQueryTemplate);
             recordsList.add(record);
             queryToRecordsMap.put(insertQueryTemplate, recordsList);
+        }
+    }
+
+    /**
+     *
+     * @param modifiedFields
+     */
+    public void alterTable(List<Field> modifiedFields) {
+        List<Field> missingFieldsInCH = new ArrayList<Field>();
+        // Identify the columns that need to be added/removed in ClickHouse.
+        for(Field f: modifiedFields) {
+            String colName = f.name();
+
+            if(this.columnNameToDataTypeMap.containsKey(colName) == false) {
+                missingFieldsInCH.add(f);
+            }
+        }
+
+        if(!missingFieldsInCH.isEmpty()) {
+            ClickHouseAlterTable cat = new ClickHouseAlterTable();
+            Field[] missingFieldsArray = new Field[missingFieldsInCH.size()];
+            Map<String, String> colNameToDataTypeMap = cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
+
+            cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
         }
     }
 
