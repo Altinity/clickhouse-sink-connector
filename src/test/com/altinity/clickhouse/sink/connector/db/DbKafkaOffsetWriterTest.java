@@ -26,7 +26,7 @@ public class DbKafkaOffsetWriterTest {
         String tableName = "employees";
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
 
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
@@ -50,7 +50,7 @@ public class DbKafkaOffsetWriterTest {
         String tableName = "employees";
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
 
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));

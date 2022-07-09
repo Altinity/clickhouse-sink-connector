@@ -52,9 +52,12 @@ public class ClickHouseDataTypeMapper {
         // BLOB -> String
         dataTypesMap.put(new MutablePair(Schema.Type.BYTES, null), ClickHouseDataType.String);
 
+        // Boolean -> Boolean
+        dataTypesMap.put(new MutablePair<>(Schema.Type.BOOLEAN, null), ClickHouseDataType.Bool);
+
     }
 
-    static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {
+    public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {
 
         ClickHouseDataType matchingDataType = null;
         for (Map.Entry<MutablePair<Schema.Type, String>, ClickHouseDataType> entry : dataTypesMap.entrySet()) {

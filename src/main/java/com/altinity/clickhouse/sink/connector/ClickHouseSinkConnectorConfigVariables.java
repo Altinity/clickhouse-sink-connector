@@ -46,5 +46,11 @@ public class ClickHouseSinkConnectorConfigVariables {
 
     public static final String REPLACING_MERGE_TREE_DELETE_COLUMN = "replacingmergetree.delete.column";
 
+    //Config variable for auto creating tables if they dont exist.
+    public static final String AUTO_CREATE_TABLES = "auto.create.tables";
+
+    // Config variable when set to true, columns will be added.
+    public static final String ENABLE_SCHEMA_EVOLUTION = "schema.evolution";
+
 
 }

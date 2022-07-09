@@ -81,7 +81,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + entry.getValue().size());
                 Timer.Context context = timer.time();
 
-                DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config);
+                DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config,  entry.getValue().peek());
                 Map<TopicPartition, Long> partitionToOffsetMap;
                 synchronized (this.records) {
                     partitionToOffsetMap = writer.insert(entry.getValue());
