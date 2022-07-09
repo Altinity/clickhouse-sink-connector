@@ -283,6 +283,26 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES,
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, tables are created in ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION,
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, schema changes will be applied in ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE,
                         Type.STRING,
                         "topic_offset_metadata",

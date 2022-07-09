@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -62,14 +64,14 @@ public class DbWriter extends BaseDbWriter {
             String tableName,
             String userName,
             String password,
-            ClickHouseSinkConnectorConfig config
-    ) {
+            ClickHouseSinkConnectorConfig config,
+            ClickHouseStruct record
+    )  {
         // Base class initiates connection using JDBC.
         super(hostName, port, database, userName, password, config);
         this.tableName = tableName;
 
         this.config = config;
-
 
         if (this.conn != null) {
             // Order of the column names and the data type has to match.
@@ -79,6 +81,20 @@ public class DbWriter extends BaseDbWriter {
         DBMetadata metadata = new DBMetadata();
         MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
         this.engine = response.getLeft();
+
+        //ToDO: Is this a reliable way of checking if the table exists already.
+        if(this.engine == null) {
+            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
+                log.info("**** AUTO CREATE TABLE" + tableName);
+                ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+                try {
+                    act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterModifiedFields().toArray(new Field[0]), this.conn);
+                } catch (SQLException se) {
+                    log.error("**** Error creating table ***" + tableName, se);
+                }
+            }
+        }
+
         if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
             this.versionColumn = response.getRight();
         } else if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
@@ -87,12 +103,6 @@ public class DbWriter extends BaseDbWriter {
 
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
     }
-
-
-
-
-
-
 
     /**
      * Function to check if the column is of DateTime64
@@ -383,10 +393,8 @@ public class DbWriter extends BaseDbWriter {
         // Use this map's key natural ordering as the source of truth.
         //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
         for (Field f : fields) {
-
             String colName = f.name();
             //String colName = entry.getKey();
-
 
             //ToDO: Setting null to a non-nullable field
             // will throw an error.
