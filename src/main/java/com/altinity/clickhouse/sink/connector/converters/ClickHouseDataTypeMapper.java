@@ -4,6 +4,7 @@ import com.clickhouse.client.ClickHouseDataType;
 import io.debezium.time.MicroTime;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
+import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
 
@@ -55,6 +56,8 @@ public class ClickHouseDataTypeMapper {
         // Boolean -> Boolean
         dataTypesMap.put(new MutablePair<>(Schema.Type.BOOLEAN, null), ClickHouseDataType.Bool);
 
+        // ZonedTimestamp -> String
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTimestamp.SCHEMA_NAME), ClickHouseDataType.String);
     }
 
     public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {

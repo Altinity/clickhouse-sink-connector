@@ -2,10 +2,10 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
-import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -13,8 +13,8 @@ import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.google.common.io.BaseEncoding;
-import io.debezium.time.*;
 import io.debezium.time.Date;
+import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Decimal;
@@ -28,7 +28,6 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -45,7 +44,7 @@ public class DbWriter extends BaseDbWriter {
     // Map of column names to data types.
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 
-    private final DBMetadata.TABLE_ENGINE engine;
+    private DBMetadata.TABLE_ENGINE engine;
 
     private final ClickHouseSinkConnectorConfig config;
 
@@ -74,34 +73,40 @@ public class DbWriter extends BaseDbWriter {
 
         this.config = config;
 
-        if (this.conn != null) {
-            // Order of the column names and the data type has to match.
-            this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
-        }
+        try {
+            if (this.conn != null) {
+                // Order of the column names and the data type has to match.
+                this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+            }
 
-        DBMetadata metadata = new DBMetadata();
-        MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
-        this.engine = response.getLeft();
+            DBMetadata metadata = new DBMetadata();
+            MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
+            this.engine = response.getLeft();
 
-        //ToDO: Is this a reliable way of checking if the table exists already.
-        if(this.engine == null) {
-            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
-                log.info("**** AUTO CREATE TABLE" + tableName);
-                ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
-                try {
-                    act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterModifiedFields().toArray(new Field[0]), this.conn);
-                } catch (SQLException se) {
-                    log.error("**** Error creating table ***" + tableName, se);
+            //ToDO: Is this a reliable way of checking if the table exists already.
+            if (this.engine == null) {
+                if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
+                    log.info("**** AUTO CREATE TABLE" + tableName);
+                    ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+                    try {
+                        act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterModifiedFields().toArray(new Field[0]), this.conn);
+                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+                        response = metadata.getTableEngine(this.conn, database, tableName);
+                        this.engine = response.getLeft();
+                    } catch (Exception e) {
+                        log.error("**** Error creating table ***" + tableName, e);
+                    }
                 }
             }
-        }
 
-        if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            this.versionColumn = response.getRight();
-        } else if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
-            this.signColumn = response.getRight();
+            if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+                this.versionColumn = response.getRight();
+            } else if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                this.signColumn = response.getRight();
+            }
+        } catch(Exception e) {
+            log.error("***** DBWriter error initializing ****", e);
         }
-
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
     }
 
@@ -232,10 +237,13 @@ public class DbWriter extends BaseDbWriter {
                 if(enableSchemaEvolution) {
                     try {
                         alterTable(record.getAfterModifiedFields());
+                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
                 }
+
                 updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
@@ -288,9 +296,12 @@ public class DbWriter extends BaseDbWriter {
         if(!missingFieldsInCH.isEmpty()) {
             ClickHouseAlterTable cat = new ClickHouseAlterTable();
             Field[] missingFieldsArray = new Field[missingFieldsInCH.size()];
+            missingFieldsInCH.toArray(missingFieldsArray);
             Map<String, String> colNameToDataTypeMap = cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
 
-            cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+            if(!colNameToDataTypeMap.isEmpty()) {
+                cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+            }
         }
     }
 
