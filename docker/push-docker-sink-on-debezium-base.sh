@@ -8,6 +8,6 @@ docker push altinity/clickhouse-sink-connector:latest
 
 
 
-Kafka(Partitions - 10) -> SinkTask(10) -> topics, partitions -> Thread Pool(10) -> DB Connection ->
+#Kafka(Partitions - 10) -> SinkTask(10) -> topics, partitions -> Thread Pool(10) -> DB Connection ->
 
-put() -> Shared Queue(1000) -> Thread1- 200 -> CH , THread 2 -200 -> CH
+#put() -> Shared Queue(1000) -> Thread1- 200 -> CH , THread 2 -200 -> CH
