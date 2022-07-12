@@ -36,8 +36,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
-    security_opt:
-      - seccomp:unconfined
+    #security_opt:
+    #  - seccomp:unconfined
 
   mysql-slave:
     # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
@@ -71,8 +71,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
-    security_opt:
-      - seccomp:unconfined
+    #security_opt:
+    #  - seccomp:unconfined
     depends_on:
       - mysql-master
 
