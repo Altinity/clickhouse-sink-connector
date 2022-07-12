@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.Assert;
 import org.junit.Test;
@@ -31,7 +32,7 @@ public class DbKafkaOffsetWriterTest {
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> result = writer.groupQueryWithRecords(new DbWriterTest().getSampleRecords(), queryToRecordsMap);
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);

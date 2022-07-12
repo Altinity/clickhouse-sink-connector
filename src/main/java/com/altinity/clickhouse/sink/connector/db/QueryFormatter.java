@@ -1,10 +1,12 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -48,16 +50,19 @@ public class QueryFormatter {
      * @param fields
      * @return
      */
-    public String getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
-                                                   Map<String, String> columnNameToDataTypeMap,
-                                                   boolean includeKafkaMetaData,
-                                                   boolean includeRawData,
-                                                   String rawDataColumn,
-                                                   String signColumn,
-                                                   String versionColumn,
-                                                   String replacingMergeTreeDeleteColumn,
-                                                   DBMetadata.TABLE_ENGINE tableEngine) {
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
+                                                                                      Map<String, String> columnNameToDataTypeMap,
+                                                                                      boolean includeKafkaMetaData,
+                                                                                      boolean includeRawData,
+                                                                                      String rawDataColumn,
+                                                                                      String signColumn,
+                                                                                      String versionColumn,
+                                                                                      String replacingMergeTreeDeleteColumn,
+                                                                                      DBMetadata.TABLE_ENGINE tableEngine) {
 
+
+        Map<String, Integer> colNameToIndexMap = new HashMap<String, Integer>();
+        int index = 1;
 
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
@@ -74,6 +79,7 @@ public class QueryFormatter {
             if(dataType != null) {
                 colNamesDelimited.append(sourceColumnName).append(",");
                 colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
+                colNameToIndexMap.put(sourceColumnName, index++);
             } else {
                 log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnName));
             }
@@ -86,6 +92,7 @@ public class QueryFormatter {
 
                     colNamesDelimited.append(metaDataColName).append(",");
                     colNamesToDataTypes.append(metaDataColName).append(" ").append(dataType).append(",");
+                    colNameToIndexMap.put(metaDataColName, index++);
                 } else {
                     //log.error("Kafka metadata enabled but column not added to clickhouse: "  + rawDataColumn );
                 }
@@ -95,10 +102,11 @@ public class QueryFormatter {
             if(columnNameToDataTypeMap.containsKey(rawDataColumn)) {
                 // Also check if the data type is String.
                 String dataType = columnNameToDataTypeMap.get(rawDataColumn);
-                if(dataType.equalsIgnoreCase("String")) {
+                if(dataType.contains("String")) {
                     colNamesDelimited.append(rawDataColumn).append(",");
 
                     colNamesToDataTypes.append(rawDataColumn).append(" ").append("String").append(",");
+                    colNameToIndexMap.put(rawDataColumn, index++);
                 }
 //                else {
 //                    log.error("RAW DATA column is not of String datatype: "  + rawDataColumn );
@@ -111,24 +119,29 @@ public class QueryFormatter {
         }
 
         // Add sign column(-1 if its delete, 1 for update)
-        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
             if (signColumn != null && columnNameToDataTypeMap.containsKey(signColumn)) {
                 colNamesDelimited.append(signColumn).append(",");
                 colNamesToDataTypes.append(signColumn).append(" ").append(columnNameToDataTypeMap.get(signColumn)).append(",");
+                colNameToIndexMap.put(signColumn, index++);
+
             }
         }
 
         // Add version column(Set timestamp))
-        if(tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
             if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
                 colNamesDelimited.append(versionColumn).append(",");
                 colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
+                colNameToIndexMap.put(versionColumn, index++);
+
             }
 
             // Add replacingmergetree sign delete column.
             if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
                 colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
                 colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
+                colNameToIndexMap.put(replacingMergeTreeDeleteColumn, index++);
             }
         }
 
@@ -136,7 +149,13 @@ public class QueryFormatter {
         colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
         colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
 
-        return String.format("insert into %s(%s) select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
+        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<String, Map<String, Integer>>();
+
+        response.left = insertQuery;
+        response.right = colNameToIndexMap;
+
+        return response;
     }
     /**
      * Function to construct an INSERT query using input functions.

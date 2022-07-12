@@ -12,7 +12,7 @@ public class DebeziumConverterTest {
         Object timeInMicroSeconds = 3723000000L;
         String formattedTime = DebeziumConverter.MicroTimeConverter.convert(timeInMicroSeconds);
 
-        Assert.assertTrue(formattedTime.equalsIgnoreCase("20:02:03"));
+        Assert.assertTrue(formattedTime.equalsIgnoreCase("19:02:03"));
     }
 
     @Test
@@ -21,7 +21,7 @@ public class DebeziumConverterTest {
         Object timestampEpoch = 1640995260000L;
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31T19:01:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31T18:01:00"));
     }
 
     @Test

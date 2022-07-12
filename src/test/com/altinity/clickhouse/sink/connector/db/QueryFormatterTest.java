@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
@@ -41,12 +42,12 @@ public class QueryFormatterTest {
 
         DBMetadata.TABLE_ENGINE engine = DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE;
 
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData,
+        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData,
                 null, null, null, null, engine);
 
         String expectedQuery = "insert into products(customerName,occupation,quantity,_topic) select customerName,occupation,quantity,_topic " +
                 "from input('customerName String,occupation String,quantity UInt32,_topic String')";
-        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 
     @Test
@@ -59,12 +60,12 @@ public class QueryFormatterTest {
 
         DBMetadata.TABLE_ENGINE engine = DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE;
 
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
+        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, null, null, null, engine);
 
         String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
                 "String,quantity UInt32')";
-        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 
     @Test
@@ -78,12 +79,12 @@ public class QueryFormatterTest {
 
         DBMetadata.TABLE_ENGINE engine = DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE;
 
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
+        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, null, null, null, engine);
 
         String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
                 "String,quantity UInt32')";
-        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
     @Test
     public void testGetInsertQueryUsingInputFunctionWithRawDataEnabledButRawColumnProvided() {
@@ -97,11 +98,11 @@ public class QueryFormatterTest {
         DBMetadata.TABLE_ENGINE engine = DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE;
 
         columnNameToDataTypesMap.put("raw_column", "String");
-        String insertQuery =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
+        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, "raw_column", null, null,
                 null,  engine);
 
         String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
-        Assert.assertTrue(insertQuery.equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 }

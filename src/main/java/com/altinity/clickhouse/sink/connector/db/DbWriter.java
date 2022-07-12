@@ -204,7 +204,7 @@ public class DbWriter extends BaseDbWriter {
      * @return
      */
     public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
-                                                                        Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
+                                                                        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
@@ -259,28 +259,42 @@ public class DbWriter extends BaseDbWriter {
     }
 
     public void updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
-                                        Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
-        String insertQueryTemplate = new QueryFormatter().getInsertQueryUsingInputFunction
+                                        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+        MutablePair<String, Map<String, Integer>>  response= new QueryFormatter().getInsertQueryUsingInputFunction
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
                         this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
-        if (!queryToRecordsMap.containsKey(insertQueryTemplate)) {
+        String insertQueryTemplate = response.getKey();
+        if(response.getValue() == null) {
+            log.error("********* COLUMN TO INDEX MAP EMPTY");
+            return;
+          //  this.columnNametoIndexMap = response.right;
+        }
+
+        MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
+        mp.setLeft(insertQueryTemplate);
+        mp.setRight(response.getValue());
+
+        if (!queryToRecordsMap.containsKey(mp)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
             newList.add(record);
-            queryToRecordsMap.put(insertQueryTemplate, newList);
+
+            queryToRecordsMap.put(mp, newList);
         } else {
-            List<ClickHouseStruct> recordsList = queryToRecordsMap.get(insertQueryTemplate);
+            List<ClickHouseStruct> recordsList = queryToRecordsMap.get(mp);
             recordsList.add(record);
-            queryToRecordsMap.put(insertQueryTemplate, recordsList);
+
+            queryToRecordsMap.put(mp, recordsList);
         }
     }
 
     /**
      *
-     * @param modifiedFields
+     * @para
+     * m modifiedFields
      */
     public void alterTable(List<Field> modifiedFields) {
         List<Field> missingFieldsInCH = new ArrayList<Field>();
@@ -325,7 +339,7 @@ public class DbWriter extends BaseDbWriter {
             return partitionToOffsetMap;
         }
 
-        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
         // We are getting a subset of the records(Batch) to process.
         synchronized (records) {
@@ -341,11 +355,11 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    private void addToPreparedStatementBatch(Map<String, List<ClickHouseStruct>> queryToRecordsMap) {
+    private void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
-        for (Map.Entry<String, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
+        for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
 
-            String insertQuery = entry.getKey();
+            String insertQuery = entry.getKey().getKey();
             log.info("*** INSERT QUERY***" + insertQuery);
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
@@ -359,15 +373,15 @@ public class DbWriter extends BaseDbWriter {
                     //insertPreparedStatement(ps, fields, record);
 
                     if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                        insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
                     } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
+                        insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                         if(this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
-                            insertPreparedStatement(ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
                             ps.addBatch();
                         }
-                        insertPreparedStatement(ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
+                        insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -387,12 +401,13 @@ public class DbWriter extends BaseDbWriter {
                 // but if any of the records were not processed successfully
                 // How to we rollback or what action needs to be taken.
                 int[] result = ps.executeBatch();
+                log.info("*** EXECUTED BATCH Successfully" + recordsList.size());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
 
             } catch (Exception e) {
-                log.warn("insert Batch exception", e);
+                log.error("******* ERROR inserting Batch *****************", e);
             }
         }
     }
@@ -429,15 +444,29 @@ public class DbWriter extends BaseDbWriter {
      * @param fields
      * @param record
      */
-    public void insertPreparedStatement(PreparedStatement ps, List<Field> fields,
+    public void insertPreparedStatement(Map<String, Integer> columnNameToIndexMap, PreparedStatement ps, List<Field> fields,
                                         ClickHouseStruct record, Struct struct, boolean beforeSection) throws Exception {
 
-        int index = 1;
 
         // Use this map's key natural ordering as the source of truth.
         //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
         for (Field f : fields) {
             String colName = f.name();
+            if(colName == null) {
+                continue;
+            }
+            if(columnNameToIndexMap == null) {
+                log.error("Column Name to Index map error");
+            }
+
+            int index = -1;
+            if(true == columnNameToIndexMap.containsKey(colName)) {
+                index = columnNameToIndexMap.get(colName);
+            } else {
+                log.error("***** Column index missing for column ****" + colName);
+                continue;
+            }
+
             //String colName = entry.getKey();
 
             //ToDO: Setting null to a non-nullable field
@@ -447,7 +476,6 @@ public class DbWriter extends BaseDbWriter {
                 Object value = struct.get(colName);
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
-                    index++;
                     continue;
                 }
             } catch (DataException e) {
@@ -455,7 +483,7 @@ public class DbWriter extends BaseDbWriter {
                 // if the field is not present.
                 // If the record was not supplied, we need to set it as null.
                 ps.setNull(index, Types.OTHER);
-                index++;
+
                 continue;
             }
             if (!this.columnNameToDataTypeMap.containsKey(colName)) {
@@ -567,7 +595,6 @@ public class DbWriter extends BaseDbWriter {
                 log.error("Data Type not supported: {}", colName);
             }
 
-            index++;
 
         }
 
@@ -576,8 +603,7 @@ public class DbWriter extends BaseDbWriter {
             String metaDataColName = metaDataColumn.getColumn();
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)) {
                 if (this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
-                    if (TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, index, ps)) {
-                        index++;
+                    if (TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps)) {
                     }
                 }
             }
@@ -588,18 +614,19 @@ public class DbWriter extends BaseDbWriter {
         if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
         this.signColumn != null)
         if (this.columnNameToDataTypeMap.containsKey(signColumn)) {
+            int signColumnIndex = columnNameToIndexMap.get(signColumn);
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                ps.setInt(index, -1);
+                ps.setInt(signColumnIndex, -1);
             } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
                 if(beforeSection == true) {
-                    ps.setInt(index, - 1);
+                    ps.setInt(signColumnIndex, - 1);
                 } else {
-                    ps.setInt(index, 1);
+                    ps.setInt(signColumnIndex, 1);
                 }
             } else {
-                ps.setInt(index, 1);
+                ps.setInt(signColumnIndex, 1);
             }
-            index++;
+
         }
 
         // Version column.
@@ -609,18 +636,18 @@ public class DbWriter extends BaseDbWriter {
                 long currentTimeInMs = System.currentTimeMillis();
                 //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
                 {
-                    ps.setLong(index, currentTimeInMs);
-                    index++;
+                    ps.setLong(columnNameToIndexMap.get(versionColumn), currentTimeInMs);
+
                 }
             }
             // Sign column to mark deletes in ReplacingMergeTree
             if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
                 if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    ps.setInt(index, -1);
+                    ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
                 } else {
-                    ps.setInt(index, 1);
+                    ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
                 }
-                index++;
+
             }
 
         }
@@ -628,10 +655,11 @@ public class DbWriter extends BaseDbWriter {
         // Store raw data in JSON form.
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)) {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
-            if (this.columnNameToDataTypeMap.containsKey(userProvidedColName)) {
+            String rawDataColumnDataType = this.columnNameToDataTypeMap.get(userProvidedColName);
+            if (this.columnNameToDataTypeMap.containsKey(userProvidedColName) &&  rawDataColumnDataType.contains("String")) {
 
-                TableMetaDataWriter.addRawData(struct, index, ps);
-                index++;
+                TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(userProvidedColName), ps);
+
             }
         }
 

@@ -190,7 +190,7 @@ public class DbWriterTest {
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
 
-        Map<String, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<String, List<ClickHouseStruct>>();
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
         Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords()
                 , queryToRecordsMap);
