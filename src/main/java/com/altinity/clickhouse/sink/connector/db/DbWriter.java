@@ -636,8 +636,12 @@ public class DbWriter extends BaseDbWriter {
                 long currentTimeInMs = System.currentTimeMillis();
                 //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
                 {
-                    ps.setLong(columnNameToIndexMap.get(versionColumn), currentTimeInMs);
-
+                    //ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                    if(record.getGtid() != -1) {
+                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                    } else {
+                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                    }
                 }
             }
             // Sign column to mark deletes in ReplacingMergeTree

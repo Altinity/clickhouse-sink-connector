@@ -184,6 +184,16 @@ class MyTestCase(unittest.TestCase):
                          "values('11', 'S10_122227', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
         conn.close()
 
+    def test_update_primary_key(self):
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        conn.execute_sql('update sbtest.sbtest1 set k=k+1 where id=2317')
+
+        conn.close()
+
+    d
+
 def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()

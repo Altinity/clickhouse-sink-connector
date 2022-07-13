@@ -99,25 +99,30 @@ public class ClickHouseAutoCreateTableTest {
 
     @Test
     public void testCreateTableSyntax() {
-        String primaryKey = "customer_id";
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customer_id");
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
-        String query = act.createTableSyntax(primaryKey, "auto_create_table", this.columnToDataTypesMap);
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String) ENGINE = MergeTree PRIMARY KEY customer_id ORDER BY customer_id";
+        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String) ENGINE = MergeTree PRIMARY KEY(customer_id) ORDER BY(customer_id)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
 
-    @Tag("IntegrationTest")
     @Test
-    public void testRunCreateTableQuery() throws SQLException {
+    public void testCreateTableMultiplePrimaryKeys() {
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customer_id");
+        primaryKeys.add("customer_name");
+
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
-        String primaryKey = "customer_id";
-        String query = act.createTableSyntax(primaryKey, "auto_create_table", this.columnToDataTypesMap);
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
 
-        act.runQuery(query, this.conn);
+        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String) ENGINE = MergeTree PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
+        Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
+        System.out.println(query);
     }
 
     @Test
@@ -134,8 +139,11 @@ public class ClickHouseAutoCreateTableTest {
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
         try {
-            act.createNewTable("customerName", "auto_create_table", this.createFields(), writer.getConnection());
+            act.createNewTable(primaryKeys, "auto_create_table", this.createFields(), writer.getConnection());
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

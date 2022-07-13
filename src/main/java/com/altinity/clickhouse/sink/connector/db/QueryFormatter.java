@@ -19,30 +19,6 @@ public class QueryFormatter {
     private static final Logger log = LoggerFactory.getLogger(QueryFormatter.class);
 
     /**
-     * Formatter for SQL 'Insert' query with placeholders for values
-     * insert into <table name> values(?, ?, ?)
-     *
-     * @param tableName Table Name
-     * @param numFields Number of fields with placeholders
-     * @return
-     */
-    public String getInsertQuery(String tableName, int numFields) {
-        StringBuilder insertQuery = new StringBuilder()
-                .append("insert into ")
-                .append(tableName)
-                .append(" values(");
-        for (int i = 0; i < numFields; i++) {
-            insertQuery.append("?");
-            if (i == numFields - 1) {
-                insertQuery.append(")");
-            } else {
-                insertQuery.append(",");
-            }
-        }
-        return insertQuery.toString();
-    }
-
-    /**
      * There could be a possibility that the column count will not match
      * between Source and Clickhouse.
      * - We will drop records if the columns are not present in clickhouse.
