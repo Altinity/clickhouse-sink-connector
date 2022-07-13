@@ -200,11 +200,11 @@ public class ClickHouseConverter implements AbstractConverter {
                 cdcOperation = CDC_OPERATION.CREATE;
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
-                log.warn("UPDATE received");
+                log.debug("UPDATE received");
                 cdcOperation = CDC_OPERATION.UPDATE;
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
-                log.warn("DELETE received");
+                log.debug("DELETE received");
                 cdcOperation = CDC_OPERATION.DELETE;
             }
         }

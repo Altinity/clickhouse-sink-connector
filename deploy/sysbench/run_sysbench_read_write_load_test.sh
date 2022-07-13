@@ -1,7 +1,7 @@
 #!/bin/bash
 
 sysbench \
-/usr/share/sysbench/oltp_read_write.lua \
+/usr/share/sysbench/oltp_update_index.lua \
 --report-interval=2 \
 --threads=16 \
 --rate=0 \

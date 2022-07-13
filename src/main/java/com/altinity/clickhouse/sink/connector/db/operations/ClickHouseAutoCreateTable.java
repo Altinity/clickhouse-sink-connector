@@ -6,7 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Class that wraps all functionality
@@ -17,7 +19,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
-    public void createNewTable(String primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
+    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, colNameToDataTypeMap);
 
@@ -26,11 +28,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     /**
      * Function to generate CREATE TABLE for ClickHouse.
+     *
      * @param primaryKey
      * @param columnToDataTypesMap
      * @return CREATE TABLE query
      */
-    public String createTableSyntax(String primaryKey, String tableName, Map<String, String> columnToDataTypesMap) {
+    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Map<String, String> columnToDataTypesMap) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
@@ -45,10 +48,14 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append(" ");
         createTableSyntax.append("ENGINE = MergeTree");
         createTableSyntax.append(" ");
-        createTableSyntax.append("PRIMARY KEY ").append(primaryKey);
-        createTableSyntax.append(" ");
-        createTableSyntax.append("ORDER BY ").append(primaryKey);
+        createTableSyntax.append("PRIMARY KEY(");
 
-        return createTableSyntax.toString();
+        createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+        createTableSyntax.append(") ");
+        createTableSyntax.append("ORDER BY(");
+        createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+        createTableSyntax.append(")");
+
+       return createTableSyntax.toString();
     }
 }

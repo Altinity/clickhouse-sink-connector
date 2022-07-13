@@ -74,7 +74,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
                 int numRecords = entry.getValue().size();
-                log.info("*************** BULK INSERT TO CLICKHOUSE ************** task:" + taskId);
+                log.info("*************** BULK INSERT TO CLICKHOUSE ************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
                 log.info("*************** RECORDS: {}", numRecords);
 
                 // Initialize Timer to track time taken to transform and insert to Clickhouse.

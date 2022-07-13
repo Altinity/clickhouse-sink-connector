@@ -15,7 +15,8 @@ CLICKHOUSE_DATABASE="test"
 
 BUFFER_COUNT=10000
 
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, SERVER5432.transaction, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
+#SERVER5432.transaction
+TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
 TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
@@ -56,10 +57,10 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "enable.kafka.offset": false,
 
-    "replacingmergetree.delete.column": "sign"
+    "replacingmergetree.delete.column": "sign",
 
-
-
+    "auto.create.tables": true,
+    "schema.evolution": false
 
   }
 }

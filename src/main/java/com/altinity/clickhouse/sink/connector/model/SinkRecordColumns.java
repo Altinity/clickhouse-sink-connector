@@ -21,5 +21,7 @@ public class SinkRecordColumns {
 
     public static final String SERVER_THREAD = "thread";
 
+    public static final String GTID = "gtid";
+
 }
 

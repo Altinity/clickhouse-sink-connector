@@ -41,7 +41,7 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
-    private String primaryKey;
+    private ArrayList<String> primaryKey;
 
     @Getter
     @Setter
@@ -73,7 +73,7 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
-    private int gtid;
+    private int gtid = -1;
 
 
     // Inheritance doesn't work because of different package
@@ -115,13 +115,13 @@ public class ClickHouseStruct {
             if(pkSchema != null) {
                 List<Field> fields = pkSchema.fields();
                 if(fields != null && fields.isEmpty() == false) {
-                    // ToDO: can the Key be more than one field.
-                    if(fields.get(0) != null) {
-                        this.primaryKey = fields.get(0).name();
+                    for(Field f: fields) {
+                        this.primaryKey.add(f.name());
                     }
+                   }
                 }
             }
-        }
+
         setBeforeStruct(beforeStruct);
         setAfterStruct(afterStruct);
 
@@ -195,9 +195,26 @@ public class ClickHouseStruct {
             if (source.get(SERVER_THREAD) != null && source.get(SERVER_THREAD) instanceof Integer) {
                 this.setThread((Integer) convertedValue.get(SERVER_THREAD));
             }
+            if(source.get(GTID) != null && source.get(GTID) instanceof String) {
+                String[] gtidArray = ((String) source.get(GTID)).split(":");
+                if(gtidArray.length == 2) {
+                    this.setGtid(Integer.parseInt(gtidArray[1]));
+                }
+            }
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);
         }
+    }
+
+    public int getTransactionId(String gtiId) {
+        int result = -1;
+
+        String[] gtidArray = (gtiId).split(":");
+        if(gtidArray.length == 2) {
+            result = Integer.parseInt(gtidArray[1]);
+        }
+
+        return result;
     }
     @Override
     public String toString() {

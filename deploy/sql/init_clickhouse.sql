@@ -96,8 +96,7 @@ CREATE TABLE sbtest1(
 )
 ENGINE = ReplacingMergeTree(ver)
 -- ENGINE = CollapsingMergeTree(sign)
-PRIMARY KEY id
-ORDER by id;
+ORDER by(id, k);
 
 -- Metadata tables --
 CREATE TABLE topic_offset_metadata(
