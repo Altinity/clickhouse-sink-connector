@@ -106,7 +106,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String) ENGINE = MergeTree PRIMARY KEY(customer_id) ORDER BY(customer_id)";
+        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String,`sign` Int8,`ver` UInt64) ENGINE = ReplacingMergeTree(ver) PRIMARY KEY(customer_id) ORDER BY(customer_id)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
 
@@ -120,7 +120,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String) ENGINE = MergeTree PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
+        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String,`sign` Int8,`ver` UInt64) ENGINE = ReplacingMergeTree(ver) PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
         System.out.println(query);
     }

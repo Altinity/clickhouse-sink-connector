@@ -86,17 +86,17 @@ ENGINE = MergeTree
 PRIMARY KEY intcol1;
 
 -- Sysbench tables ---
-CREATE TABLE sbtest1(
-`id` UInt64,
-`k` UInt64,
-`c` String,
-`pad` String,
-`sign` Int8,
- `ver` UInt64
-)
-ENGINE = ReplacingMergeTree(ver)
--- ENGINE = CollapsingMergeTree(sign)
-ORDER by(id, k);
+--CREATE TABLE sbtest1(
+--`id` UInt64,
+--`k` UInt64,
+--`c` String,
+--`pad` String,
+--`sign` Int8,
+-- `ver` UInt64
+--)
+--ENGINE = ReplacingMergeTree(ver)
+---- ENGINE = CollapsingMergeTree(sign)
+--ORDER by(id, k);
 
 -- Metadata tables --
 CREATE TABLE topic_offset_metadata(

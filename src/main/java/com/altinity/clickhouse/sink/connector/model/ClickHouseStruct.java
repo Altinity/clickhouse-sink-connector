@@ -115,8 +115,11 @@ public class ClickHouseStruct {
             if(pkSchema != null) {
                 List<Field> fields = pkSchema.fields();
                 if(fields != null && fields.isEmpty() == false) {
+                    this.primaryKey = new ArrayList<>();
                     for(Field f: fields) {
-                        this.primaryKey.add(f.name());
+                        if(f.name() != null) {
+                            this.primaryKey.add(f.name());
+                        }
                     }
                    }
                 }
