@@ -1,7 +1,7 @@
 #!/bin/bash
 
 sysbench \
-/usr/share/sysbench/oltp_update_index.lua \
+/usr/share/sysbench/oltp_update_non_index.lua \
 --report-interval=2 \
 --threads=16 \
 --rate=0 \
@@ -19,7 +19,7 @@ sysbench \
 cleanup
 
 sysbench \
-/usr/share/sysbench/oltp_update_index.lua \
+/usr/share/sysbench/oltp_update_non_index.lua \
 --report-interval=2 \
 --threads=16 \
 --rate=0 \
@@ -37,7 +37,7 @@ sysbench \
 prepare
 
 sysbench \
-/usr/share/sysbench/oltp_update_index.lua \
+/usr/share/sysbench/oltp_update_non_index.lua \
 --report-interval=2 \
 --threads=16 \
 --rate=0 \

@@ -20,13 +20,15 @@ TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, SERVER5432
 TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
+#"topics": "${TOPICS}",
+
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
   "name": "${CONNECTOR_NAME}",
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
     "tasks.max": "10",
-    "topics": "${TOPICS}",
+    "topics.regex": "SERVER5432.sbtest.(.*)",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
     "clickhouse.server.user": "${CLICKHOUSE_USER}",

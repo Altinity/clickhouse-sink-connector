@@ -12,6 +12,15 @@ create the MySQL debezium connector. The connector is setup to read from the `sb
 For sink, the default `sink-connector-setup-schema-registry.sh` script can be executed to create 
 the ClickHouse Sink Connector.
 
+## SysBench Tests
+| SysBench Test         | Status |
+|-----------------------|--------|
+| oltp_insert           | Pass   |
+| oltp_read_write       | Pass   |
+| oltp_update_index     | Pass   |
+| oltp_update_non_index | Pass   |
+| bulk_insert           |        |
+
 ## Insert tests(SysBench)
 `sysbench/run_sysbench_insert_load_test.sh` script executes the oltp_insert lua script in Sysbench.
 

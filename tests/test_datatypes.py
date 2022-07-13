@@ -192,7 +192,11 @@ class MyTestCase(unittest.TestCase):
 
         conn.close()
 
-    d
+    def test_bulk_inserts(self):
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        conn.execute_sql("insert into sbtest.sbtest1 values(12323555, 1), (243434555, 2), (334345553, 3), (434355544, 4), (534555343, 5)")
 
 def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()

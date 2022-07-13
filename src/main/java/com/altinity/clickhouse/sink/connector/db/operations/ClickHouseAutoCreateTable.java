@@ -42,11 +42,15 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
             createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
         }
-        createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
+        //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
+
+        // Append sign and version columns
+        createTableSyntax.append("`sign` Int8").append(",");
+        createTableSyntax.append("`ver` UInt64");
 
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
-        createTableSyntax.append("ENGINE = MergeTree");
+        createTableSyntax.append("ENGINE = ReplacingMergeTree(ver)");
         createTableSyntax.append(" ");
         createTableSyntax.append("PRIMARY KEY(");
 
