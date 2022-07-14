@@ -198,6 +198,23 @@ class MyTestCase(unittest.TestCase):
 
         conn.execute_sql("insert into sbtest.sbtest1 values(12323555, 1), (243434555, 2), (334345553, 3), (434355544, 4), (534555343, 5)")
 
+    '''
+    Test for auto create tables to make sure the decimal precision is mapped
+    properly to ClickHouse
+    '''
+    def test_create_table_decimal(self):
+
+        conn = MySqlConnection()
+        conn.create_connection(
+        )
+        conn.execute_sql("drop table test.dec_test")
+        conn.execute_sql("create table test.dec_test(product_val decimal(30, 10))")
+
+        conn.execute_sql("insert into test.dec_test values(1.232323233)")
+
+        conn.execute_sql("")
+        conn.close()
+
 def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()
         #self.generate_employees_fake_records()

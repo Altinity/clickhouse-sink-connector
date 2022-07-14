@@ -42,13 +42,23 @@ public class ClickHouseTableOperationsBase {
             // Input:
             ClickHouseDataType dataType = mapper.getClickHouseDataType(type, schemaName);
             if(dataType != null) {
-                // ToDO: ClickHouse needs a precision for Decimal,
-                // Hardcode to 10, 2
                 if(dataType == ClickHouseDataType.Decimal) {
-                    columnToDataTypesMap.put(colName, "Decimal(10, 2)");
+                    //Get Scale, precision from parameters.
+                    Map<String, String> params = f.schema().parameters();
+
+                    String SCALE = "scale";
+                    String PRECISION = "connect.decimal.precision";
+
+                    if(params != null && params.containsKey(SCALE) && params.containsKey(PRECISION)) {
+                        columnToDataTypesMap.put(colName, "Decimal(" + params.get(PRECISION) + "," + params.get(SCALE) + ")");
+                    } else {
+                        columnToDataTypesMap.put(colName, "Decimal(10, 2)");
+                    }
                 } else {
                     columnToDataTypesMap.put(colName, dataType.name());
                 }
+            }else {
+                log.error(" **** DATA TYPE MAPPING not found: " + "TYPE:" + type.getName() + "SCHEMA NAME:" + schemaName);
             }
 //
 //            if(columnToDataTypesMap.isEmpty() == false) {
