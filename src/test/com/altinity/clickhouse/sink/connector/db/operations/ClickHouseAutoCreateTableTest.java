@@ -60,6 +60,11 @@ public class ClickHouseAutoCreateTableTest {
         fields.add(new Field("blob_storage", 6, SchemaBuilder.type(Schema.BYTES_SCHEMA.type()).
                 name(Decimal.LOGICAL_NAME).build()));
 
+        Schema decimalSchema = SchemaBuilder.type(Schema.BYTES_SCHEMA.type()).parameter("scale", "10")
+                        .parameter("connect.decimal.precision", "30")
+                                .name(Decimal.LOGICAL_NAME).build();
+
+        fields.add(new Field("blob_storage_scale", 6, decimalSchema));
 
         Field[] result = new Field[fields.size()];
         fields.toArray(result);
@@ -93,7 +98,7 @@ public class ClickHouseAutoCreateTableTest {
 
         Map<String, String> expectedColNameToDataTypeMap = getExpectedColumnToDataTypesMap();
 
-        //Assert.assertTrue(colNameToDataTypeMap.equals(expectedColNameToDataTypeMap));
+        Assert.assertTrue(colNameToDataTypeMap.equals(expectedColNameToDataTypeMap));
         Assert.assertFalse(colNameToDataTypeMap.isEmpty());
     }
 

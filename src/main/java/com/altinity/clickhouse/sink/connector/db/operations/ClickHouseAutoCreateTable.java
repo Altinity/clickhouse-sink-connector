@@ -22,7 +22,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
     public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
-
+        log.info("**** AUTO CREATE TABLE " + createTableQuery);
         this.runQuery(createTableQuery, connection);
     }
 

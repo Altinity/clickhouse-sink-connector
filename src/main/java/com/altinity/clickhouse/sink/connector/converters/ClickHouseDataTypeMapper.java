@@ -1,15 +1,10 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.clickhouse.client.ClickHouseDataType;
-import io.debezium.time.MicroTime;
-import io.debezium.time.MicroTimestamp;
-import io.debezium.time.Timestamp;
-import io.debezium.time.ZonedTimestamp;
+import io.debezium.time.*;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
-
-import org.apache.commons.lang3.tuple.MutablePair;
-
 
 import java.util.HashMap;
 import java.util.Map;
@@ -41,6 +36,11 @@ public class ClickHouseDataTypeMapper {
          // BLOB -> String
          dataTypesMap.put(new MutablePair(Schema.BYTES_SCHEMA.type(), Decimal.LOGICAL_NAME), ClickHouseDataType.Decimal);
 
+         // DATE
+        dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Date.SCHEMA_NAME), ClickHouseDataType.Date32);
+
+        // TIME
+        dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Time.SCHEMA_NAME), ClickHouseDataType.String);
 
         // debezium.time.MicroTime -> String (Time does not exist in CH)
         dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTime.SCHEMA_NAME), ClickHouseDataType.String);
@@ -68,7 +68,8 @@ public class ClickHouseDataTypeMapper {
 
             MutablePair mp = entry.getKey();
 
-            if (kafkaConnectType == mp.left && schemaName == mp.right) {
+            if((schemaName == null && mp.right == null && kafkaConnectType == mp.left)  ||
+                    (kafkaConnectType == mp.left && (schemaName != null && schemaName.equalsIgnoreCase((String) mp.right)))) {
                 // Founding matching type.
                 matchingDataType = entry.getValue();
             }
