@@ -25,12 +25,12 @@ public class ClickHouseAutoCreateTableTest {
     ClickHouseConnection conn;
     @Before
     public void initialize() throws SQLException {
-        this.columnToDataTypesMap = new HashMap<>();
+        this.columnToDataTypesMap =  getExpectedColumnToDataTypesMap();
 
-        this.columnToDataTypesMap.put("customer_id", "Int32");
-        this.columnToDataTypesMap.put("address", "String");
-        this.columnToDataTypesMap.put("first_name", "String");
-        this.columnToDataTypesMap.put("amount", "Int32");
+//        this.columnToDataTypesMap.put("customer_id", "Int32");
+//        this.columnToDataTypesMap.put("address", "String");
+//        this.columnToDataTypesMap.put("first_name", "String");
+//        this.columnToDataTypesMap.put("amount", "Int32");
 
         String hostName = "localhost";
         Integer port = 8123;
@@ -100,11 +100,11 @@ public class ClickHouseAutoCreateTableTest {
     @Test
     public void testCreateTableSyntax() {
         ArrayList<String> primaryKeys = new ArrayList<>();
-        primaryKeys.add("customer_id");
+        primaryKeys.add("customerName");
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
-        String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
         String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String,`sign` Int8,`ver` UInt64) ENGINE = ReplacingMergeTree(ver) PRIMARY KEY(customer_id) ORDER BY(customer_id)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
@@ -118,7 +118,7 @@ public class ClickHouseAutoCreateTableTest {
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
-        String query = act.createTableSyntax(primaryKeys, "auto_create_table", this.columnToDataTypesMap);
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
         String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String,`sign` Int8,`ver` UInt64) ENGINE = ReplacingMergeTree(ver) PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));

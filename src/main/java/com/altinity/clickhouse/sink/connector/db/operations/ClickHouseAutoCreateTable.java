@@ -21,7 +21,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
-        String createTableQuery = this.createTableSyntax(primaryKey, tableName, colNameToDataTypeMap);
+        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
 
         this.runQuery(createTableQuery, connection);
     }
@@ -33,15 +33,31 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
      * @param columnToDataTypesMap
      * @return CREATE TABLE query
      */
-    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Map<String, String> columnToDataTypesMap) {
+    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields, Map<String, String> columnToDataTypesMap) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
         createTableSyntax.append("CREATE TABLE").append(" ").append(tableName).append("(");
 
-        for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
-            createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
+        for(Field f: fields) {
+            String colName = f.name();
+            String dataType = columnToDataTypesMap.get(colName);
+            boolean isNull = false;
+            if(f.schema().isOptional() == true) {
+                isNull = true;
+            }
+            createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
+            if(isNull) {
+                createTableSyntax.append(" NULL");
+            } else {
+                createTableSyntax.append(" NOT NULL");
+            }
+            createTableSyntax.append(",");
+
         }
+//        for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
+//            createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
+//        }
         //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
