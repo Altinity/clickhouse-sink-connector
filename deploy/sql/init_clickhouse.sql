@@ -99,13 +99,13 @@ PRIMARY KEY intcol1;
 --ORDER by(id, k);
 
 -- Metadata tables --
-CREATE TABLE topic_offset_metadata(
-`_topic` String,
-`_partition` UInt64,
-`_offset` SimpleAggregateFunction(max, UInt64)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (_topic, _partition);
+--CREATE TABLE topic_offset_metadata(
+--`_topic` String,
+--`_partition` UInt64,
+--`_offset` SimpleAggregateFunction(max, UInt64)
+--)
+--ENGINE = AggregatingMergeTree
+--ORDER BY (_topic, _partition);
 
 -- Postgres tables --
 CREATE TABLE Employee(

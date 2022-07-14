@@ -86,11 +86,14 @@ public class ClickHouseBatchRunnable implements Runnable {
                 synchronized (this.records) {
                     partitionToOffsetMap = writer.insert(entry.getValue());
                 }
-                DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password, this.config);
-                try {
-                    dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
-                } catch (SQLException e) {
-                    log.error("Error persisting offsets to CH", e);
+                if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
+                    log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
+                    DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password, this.config);
+                    try {
+                        dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
+                    } catch (SQLException e) {
+                        log.error("Error persisting offsets to CH", e);
+                    }
                 }
                 context.stop();
 
