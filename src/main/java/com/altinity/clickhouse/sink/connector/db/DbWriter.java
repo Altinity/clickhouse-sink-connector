@@ -236,7 +236,7 @@ public class DbWriter extends BaseDbWriter {
             } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 if(enableSchemaEvolution) {
                     try {
-                        alterTable(record.getAfterModifiedFields());
+                        alterTable(record.getAfterStruct().schema().fields());
                         this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
 
                     } catch(Exception e) {
@@ -308,13 +308,21 @@ public class DbWriter extends BaseDbWriter {
         }
 
         if(!missingFieldsInCH.isEmpty()) {
+            log.info("***** ALTER TABLE ****");
             ClickHouseAlterTable cat = new ClickHouseAlterTable();
             Field[] missingFieldsArray = new Field[missingFieldsInCH.size()];
             missingFieldsInCH.toArray(missingFieldsArray);
             Map<String, String> colNameToDataTypeMap = cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
 
             if(!colNameToDataTypeMap.isEmpty()) {
-                cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+                String alterTableQuery = cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+                log.info(" ***** ALTER TABLE QUERY **** " + alterTableQuery);
+
+                try {
+                    cat.runQuery(alterTableQuery, this.getConnection());
+                } catch(Exception e) {
+                    log.error(" **** ALTER TABLE EXCEPTION ", e);
+                }
             }
         }
     }
@@ -326,7 +334,8 @@ public class DbWriter extends BaseDbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records,
+                                            Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
 
@@ -339,13 +348,11 @@ public class DbWriter extends BaseDbWriter {
             return partitionToOffsetMap;
         }
 
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
-
         // We are getting a subset of the records(Batch) to process.
         synchronized (records) {
             partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
         }
-        addToPreparedStatementBatch(queryToRecordsMap);
+        //addToPreparedStatementBatch(queryToRecordsMap);
         return partitionToOffsetMap;
     }
 
@@ -355,10 +362,11 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    private void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    public void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
-        for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry : queryToRecordsMap.entrySet()) {
-
+        Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
+        while(iter.hasNext()) {
+            Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
             String insertQuery = entry.getKey().getKey();
             log.info("*** INSERT QUERY***" + insertQuery);
             // Create Hashmap of PreparedStatement(Query) -> Set of records
@@ -377,7 +385,7 @@ public class DbWriter extends BaseDbWriter {
                     } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                        if(this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                        if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
                             ps.addBatch();
                         }
@@ -401,7 +409,9 @@ public class DbWriter extends BaseDbWriter {
                 // but if any of the records were not processed successfully
                 // How to we rollback or what action needs to be taken.
                 int[] result = ps.executeBatch();
-                log.info("*** EXECUTED BATCH Successfully" + recordsList.size());
+
+                long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+                log.info("*************** EXECUTED BATCH Successfully" + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
@@ -409,6 +419,8 @@ public class DbWriter extends BaseDbWriter {
             } catch (Exception e) {
                 log.error("******* ERROR inserting Batch *****************", e);
             }
+
+            iter.remove();
         }
     }
 
@@ -611,7 +623,7 @@ public class DbWriter extends BaseDbWriter {
 
         // Sign column.
         //String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
-        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
+        if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
         this.signColumn != null)
         if (this.columnNameToDataTypeMap.containsKey(signColumn)) {
             int signColumnIndex = columnNameToIndexMap.get(signColumn);
@@ -631,7 +643,7 @@ public class DbWriter extends BaseDbWriter {
 
         // Version column.
         //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
-        if(this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
+        if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
             if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
                 long currentTimeInMs = System.currentTimeMillis();
                 //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))

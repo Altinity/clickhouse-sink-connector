@@ -30,7 +30,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
     "tasks.max": "10",
-    "topics.regex": "SERVER5432.test.(.*)",
+    "topics.regex": "SERVER5432.sbtest.(.*)",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
     "clickhouse.server.user": "${CLICKHOUSE_USER}",
@@ -56,7 +56,8 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "metrics.enable": true,
     "metrics.port": 8084,
-    "buffer.flush.time": 1,
+    "buffer.flush.time": 100,
+    "thread.pool.size": 1,
     "fetch.min.bytes": 52428800,
 
     "enable.kafka.offset": false,
@@ -64,7 +65,9 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "replacingmergetree.delete.column": "sign",
 
     "auto.create.tables": true,
-    "schema.evolution": false
+    "schema.evolution": false,
+
+    "deduplication.policy": "off"
 
   }
 }

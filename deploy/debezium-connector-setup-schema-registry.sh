@@ -49,7 +49,7 @@ if [[ $1 == "postgres" ]]; then
   exit
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="initial"
+  SNAPSHOT_MODE="initial_only"
 fi
 
 
@@ -73,6 +73,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "snapshot.locking.mode": "minimal",
     "snapshot.delay.ms": 10000,
     "include.schema.changes":"true",
+    "include.schema.comments": "true",
     "database.hostname": "${HOST}",
     "database.port": "${PORT}",
     "database.user": "${USER}",

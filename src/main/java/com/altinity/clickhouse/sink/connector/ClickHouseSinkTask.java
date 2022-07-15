@@ -69,7 +69,7 @@ public class ClickHouseSinkTask extends SinkTask {
         this.records = new ConcurrentHashMap<>();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         this.executor = new ClickHouseBatchExecutor(this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE));
-        this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.SECONDS);
+        this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.MILLISECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
     }
@@ -97,7 +97,8 @@ public class ClickHouseSinkTask extends SinkTask {
     public void put(Collection<SinkRecord> records) {
         totalRecords += records.size();
 
-        log.debug("CLICKHOUSE received records" + totalRecords);
+        long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+        log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
         for (SinkRecord record : records) {
