@@ -8,12 +8,14 @@ import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.codahale.metrics.Timer;
+import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +34,13 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private final Map<String, String> topic2TableMap;
 
+    private Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap;
+
+    private long lastFlushTimeInMs = 0;
+
+
+    private DbWriter writer;
+
     public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
@@ -42,6 +51,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         } else {
             this.topic2TableMap = topic2TableMap;
         }
+
+        this.queryToRecordsMap = new HashMap<>();
     }
 
     @Override
@@ -55,6 +66,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         //String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE);
 
 
+        // Topic Name -> List of records
         for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
 
             String topicName = entry.getKey();
@@ -74,17 +86,42 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
                 int numRecords = entry.getValue().size();
-                log.info("*************** BULK INSERT TO CLICKHOUSE ************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
-                log.info("*************** RECORDS: {}", numRecords);
+                log.debug("*************** BULK INSERT TO CLICKHOUSE - RECORDS:" + numRecords + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // Initialize Timer to track time taken to transform and insert to Clickhouse.
                 Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + entry.getValue().size());
                 Timer.Context context = timer.time();
 
-                DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config,  entry.getValue().peek());
+                if(this.writer == null) {
+                    this.writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config, entry.getValue().peek());
+                }
                 Map<TopicPartition, Long> partitionToOffsetMap;
                 synchronized (this.records) {
-                    partitionToOffsetMap = writer.insert(entry.getValue());
+
+                    partitionToOffsetMap = writer.insert(entry.getValue(), queryToRecordsMap);
+
+                    long currentTime = System.currentTimeMillis();
+                    long diffInMs = currentTime - lastFlushTimeInMs;
+
+                    if(diffInMs > 1000) {
+                        // Time to flush.
+                        log.info("**** TIME EXCEEDED 1 SEC to FLUSH");
+                        writer.addToPreparedStatementBatch(queryToRecordsMap);
+                        lastFlushTimeInMs = currentTime;
+                    } else {
+                        long totalSize = 0;
+                        for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> mutablePairListEntry : queryToRecordsMap.entrySet()) {
+                            totalSize += mutablePairListEntry.getValue().size();
+                        }
+                        long minRecordsToFlush = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS);
+
+                        if(totalSize >= minRecordsToFlush) {
+                            log.info("**** MAX RECORDS EXCEEDED to FLUSH:" + "Total Records: " + totalSize);
+                            writer.addToPreparedStatementBatch(queryToRecordsMap);
+                            lastFlushTimeInMs = currentTime;
+                        }
+
+                    }
                 }
                 if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
                     log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");

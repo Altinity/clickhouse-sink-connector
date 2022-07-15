@@ -187,7 +187,7 @@ public class ClickHouseConverter implements AbstractConverter {
         ClickHouseStruct chStruct = null;
 
         if(convertedValue == null) {
-            log.error("Error converting Kafka Sink Record");
+            log.debug("Error converting Kafka Sink Record");
             return null;
         }
         // Check "operation" represented by this record.
@@ -226,7 +226,7 @@ public class ClickHouseConverter implements AbstractConverter {
         ClickHouseStruct chStruct = null;
 
         if(convertedValue == null) {
-            log.error("Error converting Kafka Sink Record");
+            log.debug("Error converting Kafka Sink Record");
             return chStruct;
         }
         // Check "operation" represented by this record.
@@ -240,11 +240,11 @@ public class ClickHouseConverter implements AbstractConverter {
                 chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.CREATE);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
-                log.warn("UPDATE received");
+                log.debug("UPDATE received");
                 chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.UPDATE);
             } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
-                log.warn("DELETE received");
+                log.debug("DELETE received");
                 chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.DELETE);
 
             }
@@ -300,7 +300,7 @@ public class ClickHouseConverter implements AbstractConverter {
         Map<String, Object> result = null;
 
         if (schema == null) {
-            log.error("Schema is empty");
+            log.debug("Schema is empty");
             if (obj instanceof Map) {
                 log.info("SCHEMA LESS RECORD");
             }

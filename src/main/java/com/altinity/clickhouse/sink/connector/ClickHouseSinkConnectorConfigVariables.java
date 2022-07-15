@@ -37,6 +37,9 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Buffer flush time in seconds.
     public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";
 
+    // Maximum size of buffer before its flushed.
+    public static final String BUFFER_MAX_RECORDS = "buffer.max.records";
+
     // Flag to enable prometheus metrics and to start a prometheus scrape server endpoint.
     public static final String ENABLE_METRICS = "metrics.enable";
 

@@ -181,7 +181,7 @@ class MyTestCase(unittest.TestCase):
         conn.create_connection()
         conn.execute_sql("insert into products(emp_user_id, productCode, productName, productLine, productScale,productVendor, "
                          "productDescription, quantityInStock, buyPrice, MSRP) "
-                         "values('11', 'S10_122227', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
+                         "values('11', 'S10_122243', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
         conn.close()
 
     def test_update_primary_key(self):

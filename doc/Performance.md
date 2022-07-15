@@ -19,7 +19,8 @@ the ClickHouse Sink Connector.
 | oltp_read_write       | Pass   |
 | oltp_update_index     | Pass   |
 | oltp_update_non_index | Pass   |
-| bulk_insert           |        |
+| oltp_delete           | Pass   |
+| bulk_insert           | Pass   |
 
 ## Insert tests(SysBench)
 `sysbench/run_sysbench_insert_load_test.sh` script executes the oltp_insert lua script in Sysbench.

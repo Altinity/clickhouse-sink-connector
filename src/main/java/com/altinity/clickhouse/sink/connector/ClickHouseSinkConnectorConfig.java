@@ -323,6 +323,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS,
+                        Type.LONG,
+                        100000,
+                        Importance.LOW,
+                        "Maximum records in the buffer before its flushed",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE,
                         Type.INT,
                         10,
