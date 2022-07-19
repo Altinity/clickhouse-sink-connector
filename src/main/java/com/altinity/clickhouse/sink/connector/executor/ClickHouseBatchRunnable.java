@@ -102,10 +102,11 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                     long currentTime = System.currentTimeMillis();
                     long diffInMs = currentTime - lastFlushTimeInMs;
+                    long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT);
 
-                    if(diffInMs > 1000) {
+                    if(diffInMs > bufferFlushTimeout) {
                         // Time to flush.
-                        log.info("**** TIME EXCEEDED 1 SEC to FLUSH");
+                        log.info("**** TIME EXCEEDED %s to FLUSH", bufferFlushTimeout);
                         writer.addToPreparedStatementBatch(queryToRecordsMap);
                         lastFlushTimeInMs = currentTime;
                     } else {

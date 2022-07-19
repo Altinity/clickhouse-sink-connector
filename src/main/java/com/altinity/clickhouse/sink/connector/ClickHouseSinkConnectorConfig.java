@@ -323,6 +323,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT,
+                        Type.LONG,
+                        1000,
+                        Importance.LOW,
+                        "Timeout period for flushing records to ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS,
                         Type.LONG,
                         100000,

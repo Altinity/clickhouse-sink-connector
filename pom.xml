@@ -352,7 +352,7 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.12.6</version>
         </dependency>
-        <dependency>
+       <!-- <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>kafka-schema-registry-client</artifactId>
             <version>6.2.0</version>
@@ -385,14 +385,14 @@
                     <artifactId>common-utils</artifactId>
                 </exclusion>
             </exclusions>
-        </dependency>
+        </dependency> -->
         <!-- https://mvnrepository.com/artifact/io.confluent/kafka-connect-avro-converter -->
-        <dependency>
+        <!-- <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>kafka-connect-avro-converter</artifactId>
             <version>5.5.1</version>
             <scope>test</scope>
-        </dependency>
+        </dependency> -->
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>

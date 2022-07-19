@@ -3,8 +3,9 @@
 # Production docker image builder
 set -e
 
-docker tag altinity/clickhouse-kafka-sink-connector-on-debezium-base:latest altinity/clickhouse-sink-connector:latest
-docker push altinity/clickhouse-sink-connector:latest
+today_date=$(date +%F)
+docker tag altinity/clickhouse-kafka-sink-connector-on-debezium-base:${today_date} altinity/clickhouse-sink-connector:${today_date}
+docker push altinity/clickhouse-sink-connector:${today_date}
 
 
 
