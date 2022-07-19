@@ -67,7 +67,7 @@ The sink connector can be deleted using the following script
 Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
 [docker-compose.yaml]: ../deploy/docker/docker-compose.yaml
-[Dockerfile]: ../docker/Dockerfile
+[Dockerfile]: ../docker/Dockerfile-sink-on-debezium-base-image
 
 
 # Topic Partitions.
