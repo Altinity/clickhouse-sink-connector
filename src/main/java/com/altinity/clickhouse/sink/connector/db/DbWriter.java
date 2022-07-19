@@ -86,7 +86,7 @@ public class DbWriter extends BaseDbWriter {
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
-                    log.info("**** AUTO CREATE TABLE" + tableName);
+                    log.info("**** AUTO CREATE TABLE " + tableName);
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
                         act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterStruct().schema().fields().toArray(new Field[0]), this.conn);
@@ -364,6 +364,8 @@ public class DbWriter extends BaseDbWriter {
      */
     public void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
+        boolean success = false;
+
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
         while(iter.hasNext()) {
             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
@@ -387,7 +389,6 @@ public class DbWriter extends BaseDbWriter {
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                         if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
-                            ps.addBatch();
                         }
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
@@ -409,6 +410,7 @@ public class DbWriter extends BaseDbWriter {
                 // but if any of the records were not processed successfully
                 // How to we rollback or what action needs to be taken.
                 int[] result = ps.executeBatch();
+                success = true;
 
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
                 log.info("*************** EXECUTED BATCH Successfully" + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
@@ -418,9 +420,12 @@ public class DbWriter extends BaseDbWriter {
 
             } catch (Exception e) {
                 log.error("******* ERROR inserting Batch *****************", e);
+                success = false;
             }
 
-            iter.remove();
+            if(success) {
+                iter.remove();
+            }
         }
     }
 
@@ -615,7 +620,8 @@ public class DbWriter extends BaseDbWriter {
             String metaDataColName = metaDataColumn.getColumn();
             if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)) {
                 if (this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
-                    if (TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps)) {
+                    if(columnNameToIndexMap != null && columnNameToIndexMap.containsKey(metaDataColName)) {
+                        TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps);
                     }
                 }
             }
@@ -625,7 +631,7 @@ public class DbWriter extends BaseDbWriter {
         //String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
         if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
         this.signColumn != null)
-        if (this.columnNameToDataTypeMap.containsKey(signColumn)) {
+        if (this.columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
             int signColumnIndex = columnNameToIndexMap.get(signColumn);
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(signColumnIndex, -1);
@@ -649,23 +655,25 @@ public class DbWriter extends BaseDbWriter {
                 //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
                 {
                     //ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
-                    if(record.getGtid() != -1) {
-                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
-                    } else {
-                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                    if(columnNameToIndexMap.containsKey(versionColumn)) {
+                        if (record.getGtid() != -1) {
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                        } else {
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                        }
                     }
                 }
             }
             // Sign column to mark deletes in ReplacingMergeTree
             if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
-                if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
-                } else {
-                    ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                if(columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn)) {
+                    if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                    } else {
+                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                    }
                 }
-
             }
-
         }
 
         // Store raw data in JSON form.
@@ -673,12 +681,11 @@ public class DbWriter extends BaseDbWriter {
             String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
             String rawDataColumnDataType = this.columnNameToDataTypeMap.get(userProvidedColName);
             if (this.columnNameToDataTypeMap.containsKey(userProvidedColName) &&  rawDataColumnDataType.contains("String")) {
-
-                TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(userProvidedColName), ps);
-
+                if(columnNameToIndexMap.containsKey(userProvidedColName)) {
+                    TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(userProvidedColName), ps);
+                }
             }
         }
-
     }
 
     /**

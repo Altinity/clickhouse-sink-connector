@@ -39,7 +39,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     private long lastFlushTimeInMs = 0;
 
 
-    private DbWriter writer;
+    private Map<String, DbWriter> topicToWriterMap;
 
     public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
@@ -53,6 +53,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
 
         this.queryToRecordsMap = new HashMap<>();
+        this.topicToWriterMap = new HashMap<>();
     }
 
     @Override
@@ -70,6 +71,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
 
             String topicName = entry.getKey();
+            DbWriter writer = null;
 
             //The user parameter will override the topic mapping to table.
             String tableName;
@@ -92,8 +94,13 @@ public class ClickHouseBatchRunnable implements Runnable {
                 Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + entry.getValue().size());
                 Timer.Context context = timer.time();
 
-                if(this.writer == null) {
-                    this.writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config, entry.getValue().peek());
+                // Check if DB instance exists for the current topic
+                // or else create a new one.
+                if(this.topicToWriterMap.containsKey(topicName)) {
+                    writer = this.topicToWriterMap.get(topicName);
+                } else {
+                    writer = new DbWriter(dbHostName, port, database, tableName, userName, password, this.config, entry.getValue().peek());
+                    this.topicToWriterMap.put(topicName, writer);
                 }
                 Map<TopicPartition, Long> partitionToOffsetMap;
                 synchronized (this.records) {
@@ -133,7 +140,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                         log.error("Error persisting offsets to CH", e);
                     }
                 }
-                context.stop();
+                //context.stop();
 
 //                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
 //                        bmd.getPartitionToOffsetMap(), numRecords, bmd.getMinSourceLag(),

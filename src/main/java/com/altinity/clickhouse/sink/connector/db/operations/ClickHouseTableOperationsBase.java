@@ -83,7 +83,7 @@ public class ClickHouseTableOperationsBase {
 
         Statement stmt = conn.createStatement();
         stmt.executeQuery(query);
-
+        stmt.close();
     }
 
 }
