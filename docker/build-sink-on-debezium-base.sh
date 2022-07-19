@@ -8,7 +8,8 @@ CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SRC_ROOT="$(realpath "${CUR_DIR}/..")"
 
 # Externally configurable build-dependent options
-TAG="${TAG:-latest}"
+TAG=$(date +%F)
+#TAG="${TAG:-latest}"
 DOCKER_IMAGE="altinity/clickhouse-kafka-sink-connector-on-debezium-base:${TAG}"
 
 # Externally configurable build-dependent options

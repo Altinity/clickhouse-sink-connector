@@ -27,11 +27,24 @@ It will start:
 5. clickhouse-kafka-sink-connector
 6. Clickhouse
 
+The `start-docker-compose.sh` by default uses the `latest` tag, you could also pass the docker tag to the script.
+Altinity sink images are tagged on every successful build with the following format(yyyy-mm-dd) Example(2022-07-19)
 ```bash
 cd deploy/docker
-docker-compose up
+./start-docker-compose.sh 
 ```
 
+### Start Docker-compose with a specific docker tag
+```bash
+cd deploy/docker
+./start-docker-compose.sh 2022-07-19
+```
+
+### Stop Docker-compose
+```bash
+cd deploy/docker
+./stop-docker-compose.sh
+```
 # Source connector
 After all the docker containers are up and running, execute the following command
 to create the Debezium MySQL connector.

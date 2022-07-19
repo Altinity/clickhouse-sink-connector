@@ -49,7 +49,7 @@ if [[ $1 == "postgres" ]]; then
   exit
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="initial_only"
+  SNAPSHOT_MODE="initial"
 fi
 
 

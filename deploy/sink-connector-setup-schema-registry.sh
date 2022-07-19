@@ -22,7 +22,7 @@ TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.
 
 #"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
 
-#"topics": "${TOPICS}",
+"topics": "${TOPICS}",
 
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
@@ -30,7 +30,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
     "tasks.max": "10",
-    "topics.regex": "SERVER5432.sbtest.(.*)",
+    "topics": "${TOPICS}",
     "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
     "clickhouse.server.user": "${CLICKHOUSE_USER}",
@@ -56,7 +56,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "metrics.enable": true,
     "metrics.port": 8084,
-    "buffer.flush.time": 100,
+    "buffer.flush.time": 500,
     "thread.pool.size": 1,
     "fetch.min.bytes": 52428800,
 

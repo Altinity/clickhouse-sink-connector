@@ -160,7 +160,7 @@ services:
 
   sink:
     container_name: sink
-    image: altinity/clickhouse-sink-connector:latest
+    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
     restart: "no"
     ports:
       - "18083:8083"
