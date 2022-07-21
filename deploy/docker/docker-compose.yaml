@@ -79,7 +79,7 @@ services:
 
   schemaregistry:
     container_name: schemaregistry
-    image: apicurio/apicurio-registry-mem:2.0.0.Final
+    image: apicurio/apicurio-registry-mem:latest-release
     #image: confluentinc/cp-schema-registry:latest
     restart: "no"
     ports:
@@ -97,7 +97,7 @@ services:
 
   debezium:
     container_name: debezium
-    image: debezium/connect:1.9.2.Final
+    image: debezium/connect:2.0
     restart: "no"
     ports:
       - "8083:8083"

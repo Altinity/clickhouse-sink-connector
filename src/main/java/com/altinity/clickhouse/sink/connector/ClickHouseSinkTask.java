@@ -123,7 +123,9 @@ public class ClickHouseSinkTask extends SinkTask {
             structs = new ConcurrentLinkedQueue<>();
         }
         structs.add(chs);
-        this.records.put(topicName, structs);
+        synchronized (this.records) {
+            this.records.put(topicName, structs);
+        }
     }
 
     /**
