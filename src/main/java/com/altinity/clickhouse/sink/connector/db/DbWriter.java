@@ -199,7 +199,8 @@ public class DbWriter extends BaseDbWriter {
 
     /**
      * Function to group the Query with records.
-     *
+     * Also this slices a chunk of records for processing
+     * from the shared data structure(ConcurrentLinkedQueue<ClickHouseStruct>)
      * @param records
      * @return
      */
@@ -211,7 +212,7 @@ public class DbWriter extends BaseDbWriter {
         //HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
             return partitionToOffsetMap;
         }
 
@@ -343,7 +344,7 @@ public class DbWriter extends BaseDbWriter {
 //        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
 //            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
             return partitionToOffsetMap;
         }
@@ -413,7 +414,7 @@ public class DbWriter extends BaseDbWriter {
                 success = true;
 
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
-                log.info("*************** EXECUTED BATCH Successfully" + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
+                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.

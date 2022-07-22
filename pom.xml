@@ -396,7 +396,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
-            <version>1.8.1.Final</version>
+            <version>1.9.5.Final</version>
         </dependency>
 
         <dependency>
