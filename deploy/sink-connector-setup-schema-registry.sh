@@ -22,7 +22,7 @@ TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.
 
 #"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
 
-"topics": "${TOPICS}",
+#"topics": "${TOPICS}",
 
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
