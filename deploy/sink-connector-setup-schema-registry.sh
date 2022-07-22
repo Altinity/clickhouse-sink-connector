@@ -16,7 +16,7 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 #SERVER5432.transaction
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, , SERVER5432.test.customers, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
+TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, , SERVER5432.test.customers, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
 TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
