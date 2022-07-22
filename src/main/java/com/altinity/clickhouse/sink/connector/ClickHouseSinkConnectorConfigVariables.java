@@ -34,8 +34,8 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Column to store the raw data.
     public static final String STORE_RAW_DATA_COLUMN = "store.raw.data.column";
 
-    // Buffer flush time in seconds.
-    public static final String BUFFER_FLUSH_TIME = "buffer.flush.time";
+    // Buffer flush time in milliseconds.
+    public static final String BUFFER_FLUSH_TIME = "buffer.flush.time.ms";
 
     // Maximum size of buffer before its flushed.
     public static final String BUFFER_MAX_RECORDS = "buffer.max.records";
