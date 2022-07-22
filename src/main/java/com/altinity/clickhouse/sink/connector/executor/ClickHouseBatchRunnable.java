@@ -213,30 +213,33 @@ public class ClickHouseBatchRunnable implements Runnable {
         long diffInMs = currentTime - lastFlushTimeInMs;
         long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT);
 
-        // Step 2: Check if the buffer can be flushed
-        // One if the max buffer size is reached
-        // or if the Buffer flush timeout is reached.
-        if (diffInMs > bufferFlushTimeout) {
-            // Time to flush.
-            log.info(String.format("*** TIME EXCEEDED %s to FLUSH", bufferFlushTimeout));
-            writer.addToPreparedStatementBatch(queryToRecordsMap);
-            lastFlushTimeInMs = currentTime;
-            result = true;
-        } else {
-            long totalSize = 0;
-            for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>
-                    mutablePairListEntry : queryToRecordsMap.entrySet()) {
-                totalSize += mutablePairListEntry.getValue().size();
-            }
-            long minRecordsToFlush = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS);
-
-            if (totalSize >= minRecordsToFlush) {
-                log.info("**** MAX RECORDS EXCEEDED to FLUSH:" + "Total Records: " + totalSize);
-                writer.addToPreparedStatementBatch(queryToRecordsMap);
-                lastFlushTimeInMs = currentTime;
-                result = true;
-            }
-        }
+        writer.addToPreparedStatementBatch(queryToRecordsMap);
+        result = true;
+//
+//        // Step 2: Check if the buffer can be flushed
+//        // One if the max buffer size is reached
+//        // or if the Buffer flush timeout is reached.
+//        if (diffInMs > bufferFlushTimeout) {
+//            // Time to flush.
+//            log.info(String.format("*** TIME EXCEEDED %s to FLUSH", bufferFlushTimeout));
+//            writer.addToPreparedStatementBatch(queryToRecordsMap);
+//            lastFlushTimeInMs = currentTime;
+//            result = true;
+//        } else {
+//            long totalSize = 0;
+//            for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>
+//                    mutablePairListEntry : queryToRecordsMap.entrySet()) {
+//                totalSize += mutablePairListEntry.getValue().size();
+//            }
+//            long minRecordsToFlush = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS);
+//
+//            if (totalSize >= minRecordsToFlush) {
+//                log.info("**** MAX RECORDS EXCEEDED to FLUSH:" + "Total Records: " + totalSize);
+//                writer.addToPreparedStatementBatch(queryToRecordsMap);
+//                lastFlushTimeInMs = currentTime;
+//                result = true;
+//            }
+//        }
 
         return result;
     }

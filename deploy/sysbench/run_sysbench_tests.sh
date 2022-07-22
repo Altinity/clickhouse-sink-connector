@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set +x
 
 SHORT=t:,h
 LONG=test-name:,help
@@ -8,8 +9,8 @@ OPTS=$(getopt -a -n run_sysbench_tests --options $SHORT --longoptions $LONG -- "
 eval set -- "$OPTS"
 
 help() {
-  echo "./run_sysbench_tests.sh <test_name>, test_name should be one of the following
-              bulk_insert, oltp_insert, oltp_update_index, oltp_update_index, oltp_update_non_index"
+  echo "./run_sysbench_tests.sh -t <test_name>, test_name should be one of the following
+              bulk_insert, oltp_insert, oltp_delete, oltp_update_index, oltp_update_non_index"
 }
 
 ### Supported Sysbench tests
@@ -76,6 +77,7 @@ do
       exit 2
       ;;
     --)
+      help
       shift;
       break
       ;;
