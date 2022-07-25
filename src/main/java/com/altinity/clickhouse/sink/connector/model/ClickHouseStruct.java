@@ -209,16 +209,6 @@ public class ClickHouseStruct {
         }
     }
 
-    public int getTransactionId(String gtiId) {
-        int result = -1;
-
-        String[] gtidArray = (gtiId).split(":");
-        if(gtidArray.length == 2) {
-            result = Integer.parseInt(gtidArray[1]);
-        }
-
-        return result;
-    }
     @Override
     public String toString() {
         return new StringBuffer()

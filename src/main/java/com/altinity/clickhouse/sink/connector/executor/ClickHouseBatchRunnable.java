@@ -129,15 +129,15 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         // Check if DB instance exists for the current topic
         // or else create a new one.
-        if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-        } else {
+//        if (this.topicToDbWriterMap.containsKey(topicName)) {
+//            writer = this.topicToDbWriterMap.get(topicName);
+//        } else {
             writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
                     this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record);
             this.topicToDbWriterMap.put(topicName, writer);
-        }
-
+//        }
+//
         return writer;
     }
 //

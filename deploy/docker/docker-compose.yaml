@@ -97,10 +97,17 @@ services:
 
   debezium:
     container_name: debezium
-    image: debezium/connect:2.0
+    #image: debezium/connect:2.0
+    build:
+      context: ../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 2.0
+        JMX_AGENT_VERSION: 0.15.0
     restart: "no"
     ports:
       - "8083:8083"
+      - "1976:1976"
+
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
@@ -124,6 +131,9 @@ services:
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
+      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
+      - JMXHOST=localhost
+      - JMXPORT=1976
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -236,14 +246,21 @@ services:
       - ../config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
 
   grafana:
-    container_name: grafana
-    image: grafana/grafana
+    build:
+      context: ../../docker/grafana
+      args:
+        GRAFANA_VERSION: 7.5.5
+    #container_name: grafana
+    #image: grafana/grafana
     restart: "no"
-    volumes:
-      - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
-
+    links:
+      - prometheus
+    environment:
+      - DS_PROMETHEUS=prometheus
   #### END OF MONITORING ###
 
   bash:
