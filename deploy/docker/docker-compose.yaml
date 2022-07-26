@@ -166,6 +166,21 @@ services:
   #    image: vectorized/redpanda
   #    restart: always
 
+#  kafka-minion:
+#   # build:
+#   #   context: .
+#   #   dockerfile: ./Dockerfile
+#    image: quay.io/cloudhut/kminion:master
+#    hostname: kafka-minion
+#    container_name: kafka-minion
+#    depends_on:
+#      - kafka
+#    ports:
+#      - 8080:8080
+#    environment:
+#      KAFKA_BROKERS: kafka:19092
+#    restart: unless-stopped
+
 
 
   sink:
@@ -228,13 +243,13 @@ services:
       SERVICE_PORT: 9072
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
-
-  blackbox_exporter:
-    container_name: blackbox_exporter
-    image: prom/blackbox-exporter:master
-    restart: "no"
-    ports:
-      - "9115:9115"
+#
+#  blackbox_exporter:
+#    container_name: blackbox_exporter
+#    image: prom/blackbox-exporter:master
+#    restart: "no"
+#    ports:
+#      - "9115:9115"
 
   prometheus:
     container_name: prometheus

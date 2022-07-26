@@ -1,13 +1,16 @@
 package com.altinity.clickhouse.sink.connector.common;
 
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Gauge;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import io.prometheus.client.CollectorRegistry;
+import io.prometheus.client.Gauge;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.slf4j.Logger;
 
@@ -28,6 +31,8 @@ public class Metrics {
 
     private static ConsoleReporter reporter = null;
 
+    private static CollectorRegistry collectorRegistry;
+
     private static PrometheusMeterRegistry meterRegistry;
 
     private static Gauge clickHouseSinkRecordsGauge;
@@ -41,6 +46,13 @@ public class Metrics {
     private static Counter.Builder minConsumerLagCounter;
 
     private static Counter.Builder maxConsumerLagCounter;
+
+
+    private static Counter.Builder topicsNumRecordsCounter;
+
+    private static Gauge maxBinLogPositionCounter;
+
+    private static Gauge gtidCounter;
 
     private static HttpServer server;
 
@@ -62,12 +74,13 @@ public class Metrics {
         parseConfiguration(enableFlag, metricsPort);
 
         if(enableMetrics) {
+            collectorRegistry = new CollectorRegistry();
             meterRegistry =
-                    new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+                    new PrometheusMeterRegistry(PrometheusConfig.DEFAULT, collectorRegistry, Clock.SYSTEM);
 
 
             exposePrometheusPort(meterRegistry);
-            registerMetrics();
+            registerMetrics(collectorRegistry);
         }
     }
 
@@ -90,7 +103,7 @@ public class Metrics {
         }
     }
 
-    private static void registerMetrics() {
+    private static void registerMetrics(CollectorRegistry collectorRegistry) {
 
         clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
 
@@ -99,6 +112,11 @@ public class Metrics {
 
         minConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.min");
         maxConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.max");
+
+        maxBinLogPositionCounter = Gauge.build().name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
+        gtidCounter = Gauge.build().name("clickhouse_sink_gtid").help("GTID Transaction Id").register(collectorRegistry);
+
+        topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
 
     }
     private static void exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
@@ -112,6 +130,7 @@ public class Metrics {
                 try (OutputStream os = httpExchange.getResponseBody()) {
                     os.write(response.getBytes());
                 }
+
             });
 
             new Thread(server::start).start();
@@ -130,6 +149,16 @@ public class Metrics {
     }
 
     public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
+
+
+    public static void updateMetrics(BlockMetaData bmd) {
+        maxBinLogPositionCounter.set(bmd.getBinLogPosition());
+                //tag("partition", Integer.toString(bmd.getPartition())).
+
+        gtidCounter.set(bmd.getTransactionId());
+                //tag("partition", Integer.toString(bmd.getPartition())).
+                //register(Metrics.meterRegistry()).increment(bmd.getTransactionId());
+    }
 
     public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,
                                                 HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap,
@@ -175,4 +204,9 @@ public class Metrics {
         return registry.timer(MetricRegistry.name(first, keys));
     }
 
+    public static void updateCounters(String topicName, int numRecords) {
+        topicsNumRecordsCounter
+        .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+
+    }
 }
