@@ -2,11 +2,13 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
@@ -363,7 +365,8 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    public void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    public BlockMetaData addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
 
         boolean success = false;
 
@@ -378,6 +381,7 @@ public class DbWriter extends BaseDbWriter {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : recordsList) {
+                    bmd.update(record);
                     //List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
@@ -424,10 +428,14 @@ public class DbWriter extends BaseDbWriter {
                 success = false;
             }
 
+            Metrics.updateCounters(topicName, entry.getValue().size());
+
             if(success) {
                 iter.remove();
             }
         }
+
+        return bmd;
     }
 
 

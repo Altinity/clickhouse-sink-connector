@@ -97,9 +97,9 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "value.converter.apicurio.registry.auto-register": "true",
     "value.converter.apicurio.registry.find-latest": "true",
 
-    "topic.creation.$alias.partitions": 6,
+    "topic.creation.$alias.partitions": 1,
     "topic.creation.default.replication.factor": 1,
-    "topic.creation.default.partitions": 6,
+    "topic.creation.default.partitions": 1,
 
     "provide.transaction.metadata": "true"
   }

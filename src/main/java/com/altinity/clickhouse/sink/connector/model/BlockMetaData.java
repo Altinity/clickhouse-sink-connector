@@ -51,5 +51,40 @@ public class BlockMetaData {
     @Setter
     long maxConsumerLag;
 
+    @Getter
+    @Setter
+    long binLogPosition = -1;
 
+
+    @Getter
+    @Setter
+    int transactionId = -1;
+
+    @Getter
+    @Setter
+    int partition = -1;
+
+
+    @Getter
+    @Setter
+    String topicName = null;
+
+    public void update(ClickHouseStruct record) {
+
+        int gtId = record.getGtid();
+        if(gtId != -1) {
+            if(gtId > this.transactionId) {
+                this.transactionId = gtId;
+            }
+        }
+        if(record.getPos() > binLogPosition) {
+            this.binLogPosition = record.getPos();
+        }
+
+        this.partition = record.getKafkaPartition();
+
+
+        this.topicName = record.getTopic();
+
+    }
 }
