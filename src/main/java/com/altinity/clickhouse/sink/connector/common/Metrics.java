@@ -52,6 +52,8 @@ public class Metrics {
 
     private static Gauge maxBinLogPositionCounter;
 
+    private static Gauge partitionOffsetCounter;
+
     private static Gauge gtidCounter;
 
     private static HttpServer server;
@@ -116,6 +118,10 @@ public class Metrics {
         maxBinLogPositionCounter = Gauge.build().name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
         gtidCounter = Gauge.build().name("clickhouse_sink_gtid").help("GTID Transaction Id").register(collectorRegistry);
 
+        partitionOffsetCounter = Gauge.build().
+        labelNames("Topic", "Partition").
+                name("clickhouse_sink_partition_offset").help("Kafka partition Offset").register(collectorRegistry);
+
         topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
 
     }
@@ -158,6 +164,17 @@ public class Metrics {
         gtidCounter.set(bmd.getTransactionId());
                 //tag("partition", Integer.toString(bmd.getPartition())).
                 //register(Metrics.meterRegistry()).increment(bmd.getTransactionId());
+
+        HashMap<String, MutablePair<Integer, Long>> partitionToOffsetMap = bmd.getPartitionToOffsetMap();
+
+        if(!partitionToOffsetMap.isEmpty()) {
+            for(Map.Entry<String, MutablePair<Integer, Long>> entry : partitionToOffsetMap.entrySet()) {
+                MutablePair<Integer, Long> mp = entry.getValue();
+                partitionOffsetCounter.labels(entry.getKey(), Integer.toString(mp.left))
+                        .set(mp.right);
+            }
+
+        }
     }
 
     public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,
