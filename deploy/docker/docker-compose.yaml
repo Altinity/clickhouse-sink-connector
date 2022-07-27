@@ -181,6 +181,25 @@ services:
 #      KAFKA_BROKERS: kafka:19092
 #    restart: unless-stopped
 
+  console:
+    image: docker.redpanda.com/vectorized/console:master-217260f
+    restart: on-failure
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["kafka:9092"]
+        connect:
+          enabled: true
+          clusters:
+            - name: datagen
+              url: http://debezium:8083
+    ports:
+      - "8089:8080"
+    depends_on:
+      - kafka
 
 
   sink:

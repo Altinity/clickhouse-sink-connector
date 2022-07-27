@@ -16,7 +16,7 @@ public class BlockMetaData {
     // Map of partitions to offsets.
     @Getter
     @Setter
-    HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap;
+    HashMap<String, MutablePair<Integer, Long>> partitionToOffsetMap = new HashMap<>();
 
     @Getter
     @Setter
@@ -72,19 +72,34 @@ public class BlockMetaData {
     public void update(ClickHouseStruct record) {
 
         int gtId = record.getGtid();
-        if(gtId != -1) {
-            if(gtId > this.transactionId) {
+        if (gtId != -1) {
+            if (gtId > this.transactionId) {
                 this.transactionId = gtId;
             }
         }
-        if(record.getPos() > binLogPosition) {
+        if (record.getPos() > binLogPosition) {
             this.binLogPosition = record.getPos();
         }
 
         this.partition = record.getKafkaPartition();
-
+        long offset = record.getKafkaOffset();
 
         this.topicName = record.getTopic();
 
+        if (partitionToOffsetMap.containsKey(this.topicName)) {
+            MutablePair<Integer, Long> mp = partitionToOffsetMap.get(this.topicName);
+            if (offset >= mp.right) {
+                // Update ap.
+                mp.right = offset;
+                mp.left = partition;
+                partitionToOffsetMap.put(topicName, mp);
+            }
+        } else {
+            MutablePair<Integer, Long> mp = new MutablePair<>();
+            mp.right = offset;
+            mp.left = partition;
+            partitionToOffsetMap.put(topicName, mp);
+        }
     }
+
 }
