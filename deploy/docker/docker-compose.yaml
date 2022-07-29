@@ -97,10 +97,17 @@ services:
 
   debezium:
     container_name: debezium
-    image: debezium/connect:2.0
+    #image: debezium/connect:2.0
+    build:
+      context: ../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 2.0
+        JMX_AGENT_VERSION: 0.15.0
     restart: "no"
     ports:
       - "8083:8083"
+      - "1976:1976"
+
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
@@ -124,6 +131,9 @@ services:
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
       - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
+      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
+      - JMXHOST=localhost
+      - JMXPORT=1976
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -156,6 +166,40 @@ services:
   #    image: vectorized/redpanda
   #    restart: always
 
+#  kafka-minion:
+#   # build:
+#   #   context: .
+#   #   dockerfile: ./Dockerfile
+#    image: quay.io/cloudhut/kminion:master
+#    hostname: kafka-minion
+#    container_name: kafka-minion
+#    depends_on:
+#      - kafka
+#    ports:
+#      - 8080:8080
+#    environment:
+#      KAFKA_BROKERS: kafka:19092
+#    restart: unless-stopped
+
+  console:
+    image: docker.redpanda.com/vectorized/console:master-217260f
+    restart: on-failure
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["kafka:9092"]
+        connect:
+          enabled: true
+          clusters:
+            - name: datagen
+              url: http://debezium:8083
+    ports:
+      - "8089:8080"
+    depends_on:
+      - kafka
 
 
   sink:
@@ -218,13 +262,13 @@ services:
       SERVICE_PORT: 9072
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
-
-  blackbox_exporter:
-    container_name: blackbox_exporter
-    image: prom/blackbox-exporter:master
-    restart: "no"
-    ports:
-      - "9115:9115"
+#
+#  blackbox_exporter:
+#    container_name: blackbox_exporter
+#    image: prom/blackbox-exporter:master
+#    restart: "no"
+#    ports:
+#      - "9115:9115"
 
   prometheus:
     container_name: prometheus
@@ -236,14 +280,21 @@ services:
       - ../config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
 
   grafana:
-    container_name: grafana
-    image: grafana/grafana
+    build:
+      context: ../../docker/grafana
+      args:
+        GRAFANA_VERSION: 7.5.5
+    #container_name: grafana
+    #image: grafana/grafana
     restart: "no"
-    volumes:
-      - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
-
+    links:
+      - prometheus
+    environment:
+      - DS_PROMETHEUS=prometheus
   #### END OF MONITORING ###
 
   bash:
