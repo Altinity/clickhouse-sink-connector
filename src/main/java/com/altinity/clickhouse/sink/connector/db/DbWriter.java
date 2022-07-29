@@ -2,11 +2,13 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
@@ -199,7 +201,8 @@ public class DbWriter extends BaseDbWriter {
 
     /**
      * Function to group the Query with records.
-     *
+     * Also this slices a chunk of records for processing
+     * from the shared data structure(ConcurrentLinkedQueue<ClickHouseStruct>)
      * @param records
      * @return
      */
@@ -211,7 +214,7 @@ public class DbWriter extends BaseDbWriter {
         //HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
             return partitionToOffsetMap;
         }
 
@@ -343,7 +346,7 @@ public class DbWriter extends BaseDbWriter {
 //        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
 //            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
             return partitionToOffsetMap;
         }
@@ -362,7 +365,8 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    public void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    public BlockMetaData addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
 
         boolean success = false;
 
@@ -377,6 +381,7 @@ public class DbWriter extends BaseDbWriter {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : recordsList) {
+                    bmd.update(record);
                     //List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
@@ -413,7 +418,7 @@ public class DbWriter extends BaseDbWriter {
                 success = true;
 
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
-                log.info("*************** EXECUTED BATCH Successfully" + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
+                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
@@ -423,10 +428,14 @@ public class DbWriter extends BaseDbWriter {
                 success = false;
             }
 
+            Metrics.updateCounters(topicName, entry.getValue().size());
+
             if(success) {
                 iter.remove();
             }
         }
+
+        return bmd;
     }
 
 

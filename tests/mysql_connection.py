@@ -50,6 +50,7 @@ class MySqlConnection:
 
     def execute_sql(self, sql, data=None):
 
+        result = None
         if self.conn.is_connected():
             self.cursor = self.conn.cursor()
 
@@ -67,6 +68,8 @@ class MySqlConnection:
                     self.conn.commit()
             except Exception as e:
                 print("Error executing SQL", e)
+
+        return result
 
     def get_connection(self) -> MySQLConnection:
         return self.conn

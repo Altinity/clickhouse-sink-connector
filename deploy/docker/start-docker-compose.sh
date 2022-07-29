@@ -1,5 +1,6 @@
 #!/bin/bash
 
+./stop-docker-compose.sh
 # Altinity sink images are tagged daily with this tag yyyy-mm-dd(2022-07-19)
 
 if [ -z $1 ]
@@ -10,5 +11,4 @@ else
   export SINK_VERSION=$1
 fi
 
-docker-compose up
-
+docker-compose up  --remove-orphans --force-recreate --renew-anon-volumes

@@ -18,3 +18,6 @@ class ClickHouseConnection:
     def execute_sql(self, query):
         result = self.client.execute(query)
         return result
+
+    def close(self):
+        self.client.disconnect()

@@ -51,3 +51,9 @@ order by c desc`
 
 Target: 
 5 threads , 600k/second
+
+## Binary logs
+
+`show binary logs;`
+
+`show binlog events in `mysql-bin.000003`

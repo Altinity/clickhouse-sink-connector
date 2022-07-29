@@ -10,3 +10,11 @@ scrape_configs:
     static_configs:
       - targets:
           - sink:8084
+  - job_name: redpanda
+    static_configs:
+      - targets:
+          - kafka:9644
+  - job_name: debezium
+    static_configs:
+      - targets:
+          - debezium:8080

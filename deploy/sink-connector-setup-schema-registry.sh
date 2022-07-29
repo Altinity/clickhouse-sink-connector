@@ -16,13 +16,13 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 #SERVER5432.transaction
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, , SERVER5432.test.customers, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
+TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.customers"
 TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 #TOPICS="SERVER5432"
 
 #"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
 
-"topics": "${TOPICS}",
+#"topics": "${TOPICS}",
 
 cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
 {
@@ -56,7 +56,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
 
     "metrics.enable": true,
     "metrics.port": 8084,
-    "buffer.flush.time": 500,
+    "buffer.flush.time.ms": 500,
     "thread.pool.size": 1,
     "fetch.min.bytes": 52428800,
 
