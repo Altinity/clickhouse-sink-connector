@@ -2,9 +2,11 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -129,15 +131,15 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         // Check if DB instance exists for the current topic
         // or else create a new one.
-        if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-        } else {
+//        if (this.topicToDbWriterMap.containsKey(topicName)) {
+//            writer = this.topicToDbWriterMap.get(topicName);
+//        } else {
             writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
                     this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record);
             this.topicToDbWriterMap.put(topicName, writer);
-        }
-
+//        }
+//
         return writer;
     }
 //
@@ -174,8 +176,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
 
         Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
+        BlockMetaData bmd = new BlockMetaData();
 
-        if(flushRecordsToClickHouse(writer, queryToRecordsMap)) {
+        if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd)) {
             // Remove the entry.
             queryToRecordsMap.remove(topicName);
         }
@@ -205,7 +208,8 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param queryToRecordsMap
      * @return
      */
-    private boolean flushRecordsToClickHouse(DbWriter writer, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
 
         boolean result = false;
 
@@ -213,7 +217,13 @@ public class ClickHouseBatchRunnable implements Runnable {
         long diffInMs = currentTime - lastFlushTimeInMs;
         long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT);
 
-        writer.addToPreparedStatementBatch(queryToRecordsMap);
+        writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
+
+        try {
+            Metrics.updateMetrics(bmd);
+        } catch(Exception e) {
+            log.error("****** Error updating Metrics ******");
+        }
         result = true;
 //
 //        // Step 2: Check if the buffer can be flushed
