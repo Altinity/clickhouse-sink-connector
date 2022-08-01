@@ -295,6 +295,7 @@ services:
       - prometheus
     environment:
       - DS_PROMETHEUS=prometheus
+      - GF_USERS_DEFAULT_THEME=light
   #### END OF MONITORING ###
 
   bash:
