@@ -16,15 +16,19 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 #SERVER5432.transaction
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.customers"
-TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
+if [[ $1 == "postgres" ]]; then
+  TOPICS="SERVER5432.public.Employee"
+else
+  TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.customers"
+  TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
+fi
 #TOPICS="SERVER5432"
 
 #"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
 
 #"topics": "${TOPICS}",
 
-if [[ $1 == "apicurio" ]]; then
+if [[ $2 == "apicurio" ]]; then
       echo "APICURIO SCHEMA REGISTRY"
     cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
     {
@@ -32,6 +36,7 @@ if [[ $1 == "apicurio" ]]; then
       "config": {
         "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
         "tasks.max": "10",
+
         "topics": "${TOPICS}",
         "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
         "clickhouse.server.url": "${CLICKHOUSE_HOST}",
@@ -66,7 +71,7 @@ if [[ $1 == "apicurio" ]]; then
 
         "replacingmergetree.delete.column": "sign",
 
-        "auto.create.tables": true,
+        "auto.create.tables": false,
         "schema.evolution": false,
 
         "deduplication.policy": "off"
@@ -110,7 +115,7 @@ else
 
       "replacingmergetree.delete.column": "sign",
 
-      "auto.create.tables": true,
+      "auto.create.tables": false,
       "schema.evolution": false,
 
       "deduplication.policy": "off"
