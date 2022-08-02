@@ -108,7 +108,7 @@ services:
 
   sink:
     container_name: sink
-    image: altinity/clickhouse-sink-connector:latest
+    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
     restart: "no"
     ports:
       - "18083:8083"
@@ -167,12 +167,12 @@ services:
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
 
-  blackbox_exporter:
-    container_name: blackbox_exporter
-    image: prom/blackbox-exporter:master
-    restart: "no"
-    ports:
-      - "9115:9115"
+#  blackbox_exporter:
+#    container_name: blackbox_exporter
+#    image: prom/blackbox-exporter:master
+#    restart: "no"
+#    ports:
+#      - "9115:9115"
 
   prometheus:
     container_name: prometheus

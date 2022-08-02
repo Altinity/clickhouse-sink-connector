@@ -15,6 +15,7 @@ import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.google.common.io.BaseEncoding;
+import io.debezium.data.Json;
 import io.debezium.time.Date;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -381,7 +382,11 @@ public class DbWriter extends BaseDbWriter {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : recordsList) {
-                    bmd.update(record);
+                    try {
+                        bmd.update(record);
+                    } catch(Exception e) {
+                        log.error("**** ERROR: updating Prometheus", e);
+                    }
                     //List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
@@ -569,7 +574,10 @@ public class DbWriter extends BaseDbWriter {
                     // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
                     ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
 
-                } else {
+                } else if(schemaName != null && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
+                    // if the column is JSON, it should be written, String otherwise
+                    ps.setObject(index, value);
+                }else {
                     ps.setString(index, (String) value);
                 }
             } else if (isFieldTypeInt) {
@@ -617,7 +625,8 @@ public class DbWriter extends BaseDbWriter {
                     ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
                 }
 
-            } else {
+            }
+            else {
                 log.error("Data Type not supported: {}", colName);
             }
 

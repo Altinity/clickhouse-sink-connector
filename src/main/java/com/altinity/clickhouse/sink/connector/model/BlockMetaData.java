@@ -77,14 +77,19 @@ public class BlockMetaData {
                 this.transactionId = gtId;
             }
         }
-        if (record.getPos() > binLogPosition) {
+        if (record.getPos() != null && record.getPos() > binLogPosition) {
             this.binLogPosition = record.getPos();
         }
 
-        this.partition = record.getKafkaPartition();
+        if(record.getKafkaPartition() != null) {
+            this.partition = record.getKafkaPartition();
+        }
+
         long offset = record.getKafkaOffset();
 
-        this.topicName = record.getTopic();
+        if(record.getTopic() != null) {
+            this.topicName = record.getTopic();
+        }
 
         if (partitionToOffsetMap.containsKey(this.topicName)) {
             MutablePair<Integer, Long> mp = partitionToOffsetMap.get(this.topicName);

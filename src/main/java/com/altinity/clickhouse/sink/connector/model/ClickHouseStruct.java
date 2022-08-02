@@ -57,11 +57,11 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
-    private String file;
+    private String file = "";
 
     @Getter
     @Setter
-    private Long pos;
+    private Long pos = 0L;
 
     @Getter
     @Setter
