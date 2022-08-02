@@ -122,8 +122,13 @@ public class QueryFormatter {
         }
 
         //Remove terminating comma
-        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
-        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
+        int colNamesIndex = colNamesDelimited.lastIndexOf(",");
+        if(colNamesIndex != -1 )
+            colNamesDelimited.deleteCharAt(colNamesIndex);
+
+        int colNamesToDataTypesIndex = colNamesToDataTypes.lastIndexOf(",");
+        if(colNamesToDataTypesIndex != -1)
+            colNamesToDataTypes.deleteCharAt(colNamesToDataTypesIndex);
 
         String insertQuery = String.format("insert into %s(%s) select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
         MutablePair<String, Map<String, Integer>> response = new MutablePair<String, Map<String, Integer>>();
