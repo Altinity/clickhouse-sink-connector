@@ -86,10 +86,12 @@ public class DbWriter extends BaseDbWriter {
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
+            long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
-                    log.info("**** AUTO CREATE TABLE " + tableName);
+                    log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
                         act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterStruct().schema().fields().toArray(new Field[0]), this.conn);
@@ -99,6 +101,8 @@ public class DbWriter extends BaseDbWriter {
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
                     }
+                } else {
+                    log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
                 }
             }
 
@@ -111,6 +115,16 @@ public class DbWriter extends BaseDbWriter {
             log.error("***** DBWriter error initializing ****", e);
         }
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
+    }
+
+    public boolean wasTableMetaDataRetrieved() {
+        boolean result = true;
+
+        if(this.engine == null || this.columnNameToDataTypeMap == null || this.columnNameToDataTypeMap.isEmpty()) {
+            result = false;
+        }
+
+        return result;
     }
 
     /**
@@ -235,8 +249,10 @@ public class DbWriter extends BaseDbWriter {
 
             boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
 
+            boolean result = false;
+
             if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 if(enableSchemaEvolution) {
                     try {
@@ -248,21 +264,23 @@ public class DbWriter extends BaseDbWriter {
                     }
                 }
 
-                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
-                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else {
                 log.error("INVALID CDC RECORD STATE");
             }
 
             // Remove the record from shared records.
-            iterator.remove();
+            if(result) {
+                iterator.remove();
+            }
         }
         return partitionToOffsetMap;
     }
 
-    public void updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
+    public boolean updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
                                         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
         MutablePair<String, Map<String, Integer>>  response= new QueryFormatter().getInsertQueryUsingInputFunction
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
@@ -272,9 +290,9 @@ public class DbWriter extends BaseDbWriter {
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
         String insertQueryTemplate = response.getKey();
-        if(response.getValue() == null) {
-            log.error("********* COLUMN TO INDEX MAP EMPTY");
-            return;
+        if(response.getKey() == null || response.getValue() == null) {
+            log.error("********* QUERY or COLUMN TO INDEX MAP EMPTY");
+            return false;
           //  this.columnNametoIndexMap = response.right;
         }
 
@@ -293,6 +311,8 @@ public class DbWriter extends BaseDbWriter {
 
             queryToRecordsMap.put(mp, recordsList);
         }
+
+        return true;
     }
 
     /**

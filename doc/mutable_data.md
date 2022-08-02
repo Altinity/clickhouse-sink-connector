@@ -9,6 +9,8 @@ For inserts, record will be inserted with `sign` set to `1`
 For updates, `before` value will be inserted with `sign` set to `-1`
 and `after` value will be inserted with `sign` set to `1`
 
+![](img/replacingmergetree_update_delete.jpg) \
+
 When `optimize table <table_name> final` of `select .. final` is performed and when the merges are performed by
 ClickHouse in the background, the initial insert record will be merged along the `before` record.
 
@@ -18,8 +20,6 @@ Non Primary key updates create a record with operation as 'u'
 SinkRecord{kafkaOffset=62984, timestampType=CreateTime} ConnectRecord{topic='SERVER5432.sbtest.sbtest1', kafkaPartition=0, key=Struct{id=2317,k=3739}, keySchema=Schema{SERVER5432.sbtest.sbtest1.Key:STRUCT}, value=Struct{before=Struct{id=2317,k=3739,c=20488251985-66135155553-00362235007-72249840112-70784105787-84584360668-65106023418-49140058226-99031281108-48426083028,pad=18846546959-44726413785-66695616247-63594911107-83062207348},after=Struct{id=2317,k=3739,c=20488251985-66135155553-00362235007-72249840112-70784105787-84584360668-65106023418-49140058226-99031281108-48426083029,pad=18846546959-44726413785-66695616247-63594911107-83062207348},source=Struct{version=1.9.2.Final,connector=mysql,name=SERVER5432,ts_ms=1657658606000,snapshot=false,db=sbtest,table=sbtest1,server_id=842,file=mysql-bin.000003,pos=16210729,row=0,thread=22},op=u,ts_ms=1657658606611,transaction=Struct{id=file=mysql-bin.000003,pos=16210580,total_order=1,data_collection_order=1}}, valueSchema=Schema{SERVER5432.sbtest.sbtest1.Envelope:STRUCT}, timestamp=1657658607050, headers=ConnectHeaders(headers=)}
 
 ```
-
-
 ### Updates on Primary Key: Debezium
 
 Debezium handles updates on Primary key in the same way as Primary Key changes.

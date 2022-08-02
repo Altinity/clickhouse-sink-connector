@@ -138,9 +138,9 @@ else
           "key.converter.schema.registry.url": "http://schemaregistry:8081",
           "value.converter.schema.registry.url":"http://schemaregistry:8081",
 
-          "topic.creation.$alias.partitions": 6,
+          "topic.creation.$alias.partitions": 1,
           "topic.creation.default.replication.factor": 1,
-          "topic.creation.default.partitions": 6,
+          "topic.creation.default.partitions": 1,
 
           "provide.transaction.metadata": "true"
         }

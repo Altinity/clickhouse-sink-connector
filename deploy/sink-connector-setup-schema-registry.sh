@@ -115,7 +115,7 @@ else
 
       "replacingmergetree.delete.column": "sign",
 
-      "auto.create.tables": false,
+      "auto.create.tables": true,
       "schema.evolution": false,
 
       "deduplication.policy": "off"

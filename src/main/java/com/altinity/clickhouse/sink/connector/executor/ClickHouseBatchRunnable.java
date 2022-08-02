@@ -92,17 +92,21 @@ public class ClickHouseBatchRunnable implements Runnable {
     public void run() {
 
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
-        int numRecords = records.size();
-        if (numRecords <= 0) {
-            log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
-            return;
-        }
-
-        // Topic Name -> List of records
-        for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
-            if (entry.getValue().size() > 0) {
-                processRecordsByTopic(entry.getKey(), entry.getValue());
+        try {
+            int numRecords = records.size();
+            if (numRecords <= 0) {
+                log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
+                return;
             }
+
+            // Topic Name -> List of records
+            for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
+                if (entry.getValue().size() > 0) {
+                    processRecordsByTopic(entry.getKey(), entry.getValue());
+                }
+            }
+        } catch(Exception e) {
+            log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
         }
     }
 
@@ -163,6 +167,10 @@ public class ClickHouseBatchRunnable implements Runnable {
         String tableName = getTableFromTopic(topicName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, records.peek());
 
+        if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
+            log.error("*** TABLE METADATA not retrieved, retry next time");
+            return;
+        }
         // Step 1: The Batch Insert with preparedStatement in JDBC
         // works by forming the Query and then adding records to the Batch.
         // This step creates a Map of Query -> Records(List of ClickHouseStruct)
