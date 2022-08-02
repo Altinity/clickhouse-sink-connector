@@ -95,7 +95,7 @@ else
       "value.converter.schema.registry.url":"http://schemaregistry:8081",
 
       "store.kafka.metadata": true,
-      "topic.creation.default.partitions": 6,
+      "topic.creation.default.partitions": 1,
 
       "store.raw.data": false,
       "store.raw.data.column": "raw_data",
