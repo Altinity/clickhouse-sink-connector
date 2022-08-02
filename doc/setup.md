@@ -26,12 +26,21 @@ It will start:
 4. RedPanda
 5. clickhouse-kafka-sink-connector
 6. Clickhouse
+7. Confluent Schema registry or Apicurio Schema registry
 
 The `start-docker-compose.sh` by default uses the `latest` tag, you could also pass the docker tag to the script.
 Altinity sink images are tagged on every successful build with the following format(yyyy-mm-dd) Example(2022-07-19)
+
+### MySQL:
 ```bash
 cd deploy/docker
 ./start-docker-compose.sh 
+```
+
+### Postgres:
+```bash
+cd deploy/docker
+docker-compose -f docker-compose-postgresql.yaml up
 ```
 
 ### Start Docker-compose with a specific docker tag
@@ -48,13 +57,34 @@ cd deploy/docker
 # Source connector
 After all the docker containers are up and running, execute the following command
 to create the Debezium MySQL connector.
-Make sure MySQL master/slave is up and running before executing the following script.
+
+Make sure MySQL master/slave is up and running before executing the following script.\
+
+### MySQL:
+```bash
+    ../deploy/debezium-connector-setup-schema-registry.sh
+```
 [debezium-connector-setup-schema-registry.sh](../deploy/debezium-connector-setup-schema-registry.sh)
+
+### Postgres(Using Apicurio):
+```bash
+../deploy/debezium-connector-setup-schema-registry.sh postgres apicurio
+```
 
 # Sink Connector
 After the source connector is created, 
 execute the script [sink-connector-setup-schema-registry.sh](../deploy/sink-connector-setup-schema-registry.sh)
 to create the Clickhouse Sink connector using Kafka connect REST API
+
+### MySQL:
+```bash
+    ../deploy/sink-connector-setup-schema-registry.sh
+```
+### Postgres(Using Apicurio):
+```bash
+../deploy/sink-connector-setup-schema-registry.sh postgres apicurio
+```
+
 
 # Deleting connectors
 The source connector can be deleted using the following script
@@ -66,7 +96,7 @@ The sink connector can be deleted using the following script
 # References
 Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
-[docker-compose.yaml]: ../deploy/docker/docker-compose.yaml
+[docker-compose.yaml]: ../deploy/docker/docker-compose-apicurio-schema-registry.yaml
 [Dockerfile]: ../docker/Dockerfile-sink-on-debezium-base-image
 
 
