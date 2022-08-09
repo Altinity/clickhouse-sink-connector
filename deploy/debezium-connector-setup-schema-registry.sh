@@ -142,7 +142,9 @@ else
           "topic.creation.default.replication.factor": 1,
           "topic.creation.default.partitions": 1,
 
-          "provide.transaction.metadata": "true"
+          "provide.transaction.metadata": "true",
+          "max.batch.size": 128000,
+          "max.queue.size": 512000
         }
       }
 EOF
