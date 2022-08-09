@@ -3,7 +3,7 @@
 Sink connector sinks data from Kafka into Clickhouse.
 The connector is tested with the following converters
 - JsonConverter
-- AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/) and Confluent Schema Registry)
+- AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/) or Confluent Schema Registry)
 
 ![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
