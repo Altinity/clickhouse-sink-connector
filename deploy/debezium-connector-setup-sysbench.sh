@@ -27,47 +27,90 @@ DATABASE_SERVER_ID="5432"
 # Alphanumeric characters, hyphens, dots and underscores only.
 DATABASE_SERVER_NAME="SERVER5432"
 
+if [[ $2 == "apicurio" ]]; then
+  echo "APICURIO SCHEMA REGISTRY"
+  ######       Connector for sysbench test ######
+  cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+  {
+    "name": "${CONNECTOR_NAME}",
+    "config": {
+      "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+      "tasks.max": "1",
+      "snapshot.mode": "initial",
+      "snapshot.locking.mode": "minimal",
+      "snapshot.delay.ms": 10000,
+      "include.schema.changes":"true",
+      "database.hostname": "${MYSQL_HOST}",
+      "database.port": "${MYSQL_PORT}",
+      "database.user": "${MYSQL_USER}",
+      "database.password": "${MYSQL_PASSWORD}",
+      "database.server.id": "${DATABASE_SERVER_ID}",
+      "database.server.name": "${DATABASE_SERVER_NAME}",
+      "database.whitelist": "${MYSQL_DBS}",
+      "database.allowPublicKeyRetrieval":"true",
 
-######       Connector for sysbench test ######
-cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
-{
-  "name": "${CONNECTOR_NAME}",
-  "config": {
-    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
-    "tasks.max": "1",
-    "snapshot.mode": "initial",
-    "snapshot.locking.mode": "minimal",
-    "snapshot.delay.ms": 10000,
-    "include.schema.changes":"true",
-    "database.hostname": "${MYSQL_HOST}",
-    "database.port": "${MYSQL_PORT}",
-    "database.user": "${MYSQL_USER}",
-    "database.password": "${MYSQL_PASSWORD}",
-    "database.server.id": "${DATABASE_SERVER_ID}",
-    "database.server.name": "${DATABASE_SERVER_NAME}",
-    "database.whitelist": "${MYSQL_DBS}",
-    "database.allowPublicKeyRetrieval":"true",
+      "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+      "database.history.kafka.topic": "${KAFKA_TOPIC}",
 
-    "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
-    "database.history.kafka.topic": "${KAFKA_TOPIC}",
+      "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+      "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
 
-    "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+      "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+      "key.converter.apicurio.registry.auto-register": "true",
+      "key.converter.apicurio.registry.find-latest": "true",
 
-    "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "key.converter.apicurio.registry.auto-register": "true",
-    "key.converter.apicurio.registry.find-latest": "true",
+      "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+      "value.converter.apicurio.registry.auto-register": "true",
+      "value.converter.apicurio.registry.find-latest": "true",
 
-    "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "value.converter.apicurio.registry.auto-register": "true",
-    "value.converter.apicurio.registry.find-latest": "true",
+      "topic.creation.$alias.partitions": 1,
+      "topic.creation.default.replication.factor": 1,
+      "topic.creation.default.partitions": 1,
 
-    "topic.creation.$alias.partitions": 3,
-    "topic.creation.default.replication.factor": 1,
-    "topic.creation.default.partitions": 6,
-
-    "provide.transaction.metadata": "true"
+      "provide.transaction.metadata": "true"
+    }
   }
-}
 EOF
+else
+ echo "Using confluent schema registry"
+#https://debezium.io/documentation/reference/stable/configuration/avro.html
+      cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+      {
+        "name": "${CONNECTOR_NAME}",
+        "config": {
+          "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+          "tasks.max": "1",
+          "snapshot.mode": "initial",
+          "snapshot.locking.mode": "minimal",
+          "snapshot.delay.ms": 10000,
+          "include.schema.changes":"true",
+          "include.schema.comments": "true",
+          "database.hostname": "${MYSQL_HOST}",
+          "database.port": "${MYSQL_PORT}",
+          "database.user": "${MYSQL_USER}",
+          "database.password": "${MYSQL_PASSWORD}",
+          "database.server.id": "${DATABASE_SERVER_ID}",
+          "database.server.name": "${DATABASE_SERVER_NAME}",
+          "database.whitelist": "${MYSQL_DBS}",
+          "database.allowPublicKeyRetrieval":"true",
+          "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+          "database.history.kafka.topic": "${KAFKA_TOPIC}",
+
+          "key.converter": "io.confluent.connect.avro.AvroConverter",
+          "value.converter": "io.confluent.connect.avro.AvroConverter",
+
+          "key.converter.schema.registry.url": "http://schemaregistry:8081",
+          "value.converter.schema.registry.url":"http://schemaregistry:8081",
+
+          "topic.creation.$alias.partitions": 6,
+          "topic.creation.default.replication.factor": 1,
+          "topic.creation.default.partitions": 6,
+
+          "provide.transaction.metadata": "true",
+          "max.batch.size": 128000,
+          "max.queue.size": 512000
+        }
+      }
+EOF
+fi
 #binary.handling.mode

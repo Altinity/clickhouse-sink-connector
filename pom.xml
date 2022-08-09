@@ -396,7 +396,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
-            <version>1.8.1.Final</version>
+            <version>1.9.5.Final</version>
         </dependency>
 
         <dependency>
@@ -423,7 +423,7 @@
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.3.2-patch8</version>
+            <version>0.3.2-patch11</version>
             <!-- below is only needed when all you want is a shaded jar -->
             <classifier>http</classifier>
             <exclusions>

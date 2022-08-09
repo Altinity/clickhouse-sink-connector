@@ -1,0 +1,75 @@
+FROM debezium/connect-base:1.9.5.Final
+
+#https://github.com/debezium/container-images/blob/main/connect-base/1.2/Dockerfile
+
+LABEL maintainer="Altinity"
+
+USER root:root
+
+RUN mkdir /kafka/connect/mysql-connector
+# Copy debezium jar files
+RUN 'curl' '-L' '--output' '/kafka/libs/debezium-core-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-core/1.9.5.Final/debezium-core-1.9.5.Final.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/debezium-core-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-core/1.9.5.Final/debezium-core-1.9.5.Final.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/debezium-connector-mysql-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.5.Final/debezium-connector-mysql-1.9.5.Final.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/debezium-connector-mysql-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.5.Final/debezium-connector-mysql-1.9.5.Final.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/debezium-api-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-api/1.9.5.Final/debezium-api-1.9.5.Final.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/debezium-api-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-api/1.9.5.Final/debezium-api-1.9.5.Final.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/mysql-connector-java-8.0.30.jar' 'https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.30/mysql-connector-java-8.0.30.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/mysql-connector-java-8.0.30.jar' 'https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.30/mysql-connector-java-8.0.30.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/debezium-ddl-parser-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-ddl-parser/1.9.5.Final/debezium-ddl-parser-1.9.5.Final.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/debezium-ddl-parser-1.9.5.Final.jar' 'https://repo1.maven.org/maven2/io/debezium/debezium-ddl-parser/1.9.5.Final/debezium-ddl-parser-1.9.5.Final.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/antlr4-runtime-4.8.jar' 'https://repo1.maven.org/maven2/org/antlr/antlr4-runtime/4.8/antlr4-runtime-4.8.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/antlr4-runtime-4.8.jar' 'https://repo1.maven.org/maven2/org/antlr/antlr4-runtime/4.8/antlr4-runtime-4.8.jar'
+
+RUN 'curl' '-L' '--output' '/kafka/libs/mysql-binlog-connector-java-0.26.1.jar' 'https://repo1.maven.org/maven2/com/zendesk/mysql-binlog-connector-java/0.26.1/mysql-binlog-connector-java-0.26.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/connect/mysql-connector/mysql-binlog-connector-java-0.26.1.jar' 'https://repo1.maven.org/maven2/com/zendesk/mysql-binlog-connector-java/0.26.1/mysql-binlog-connector-java-0.26.1.jar'
+
+
+#https://repo1.maven.org/maven2/com/github/shyiko/mysql-binlog-connector-java/0.21.0/mysql-binlog-connector-java-0.21.0.jar
+
+#https://repo1.maven.org/maven2/io/debezium/debezium-core/1.9.5.Final/debezium-core-1.9.5.Final.jar
+# Copy sink-connector
+#COPY target/*.jar  /kafka/connect/clickhouse-kafka-sink-connector/
+
+# Copy libs
+#COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
+#
+#docker-maven-download confluent kafka-connect-avro-converter "$CONFLUENT_VERSION" 16c38a7378032f850f0293b7654aa6bf && \
+#    docker-maven-download confluent kafka-connect-avro-data "$CONFLUENT_VERSION" 63022db9533689968540f45be705786d && \
+#    docker-maven-download confluent kafka-avro-serializer "$CONFLUENT_VERSION" b1379606e1dcc5d7b809c82abe294cc7 && \
+#    docker-maven-download confluent kafka-schema-serializer "$CONFLUENT_VERSION" b68a7eebf7ce6a1b826bd5bbb443b176 && \
+#    docker-maven-download confluent kafka-schema-registry-client "$CONFLUENT_VERSION" e3631a8a3fe10312a727e9d50fcd5527 && \
+#    docker-maven-download confluent common-config "$CONFLUENT_VERSION" e1a4dc2b6d1d8d8c2df47db580276f38 && \
+#    docker-maven-download confluent common-utils "$CONFLUENT_VERSION" ad9e39d87c6a9fa1a9b19e6ce80392fa && \
+
+# Copy apicurio
+#RUN 'curl' '-L' '--output' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+#      && 'tar' 'xvfz' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' '-C' '/kafka/connect/clickhouse-kafka-sink-connector' \
+#      && 'rm' '-vf' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz/apicurio.tgz'
+
+# Copy confluent
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
+
+
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/libs/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/libs/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
+
+RUN chown -R kafka:kafka /kafka/connect/
+
+USER kafka
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["start"]

@@ -1,0 +1,308 @@
+version: "2.3"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  mysql-master:
+    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+    # SHOW VARIABLES LIKE 'server_id';
+    # SHOW VARIABLES LIKE 'log_bin';
+    # SHOW MASTER STATUS;
+    container_name: mysql-master
+    image: docker.io/bitnami/mysql:latest
+#    command:
+#      --default-authentication-plugin=mysql_native_password
+#      --server-id=1
+#      --binlog_do_db=test
+    restart: "no"
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+    healthcheck:
+      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    #security_opt:
+    #  - seccomp:unconfined
+
+#  mysql-slave:
+#    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+#    # SHOW VARIABLES LIKE 'server_id';
+#    # SHOW VARIABLES LIKE 'log_bin';
+#    # SHOW MASTER STATUS;
+#    container_name: mysql-slave
+#    image: docker.io/bitnami/mysql:8.0
+##    command:
+##      --default-authentication-plugin=mysql_native_password
+##      --server-id=1
+##      --binlog_do_db=test
+#    restart: "no"
+#    ports:
+#      - "3306"
+#    environment:
+#      - MYSQL_ROOT_PASSWORD=root
+#      - MYSQL_DATABASE=test
+#      - MYSQL_REPLICATION_MODE=slave
+#      - MYSQL_REPLICATION_USER=repl_user
+#      - MYSQL_MASTER_HOST=mysql-master
+#      - MYSQL_MASTER_PORT_NUMBER=3306
+#      - MYSQL_MASTER_ROOT_PASSWORD=root
+#      - ALLOW_EMPTY_PASSWORD=yes
+#    volumes:
+#      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+#    # volumes:
+#   #   - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+#    healthcheck:
+#      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+#      interval: 15s
+#      timeout: 5s
+#      retries: 6
+#    #security_opt:
+#    #  - seccomp:unconfined
+#    depends_on:
+#      - mysql-master
+
+
+  schemaregistry:
+    container_name: schemaregistry
+    image: apicurio/apicurio-registry-mem:latest-release
+    #image: confluentinc/cp-schema-registry:latest
+    restart: "no"
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    #    environment:
+    #      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092
+    #      - SCHEMA_REGISTRY_HOST_NAME=localhost
+    #      - SCHEMA_REGISTRY_LISTENERS=http://localhost:8081
+    #      - SCHEMA_REGISTRY_DEBUG=true
+
+    depends_on:
+      - kafka
+
+  debezium:
+    container_name: debezium
+    #image: debezium/connect:2.0
+    build:
+      context: ../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 2.0
+        JMX_AGENT_VERSION: 0.15.0
+    restart: "no"
+    ports:
+      - "8083:8083"
+      - "1976:1976"
+
+    environment:
+      # Where to find Kafka broker
+      - BOOTSTRAP_SERVERS=kafka:9092
+      # Maps to rest.advertised.host.name
+      #- ADVERTISED_HOST_NAME=kafka
+      # Maps to rest.advertised.port
+      #- ADVERTISED_PORT=9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
+      - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
+      - LOG_LEVEL=INFO
+      - ENABLE_APICURIO_CONVERTERS=true
+      - KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_KEY_CONVERTER_APICURIO.REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
+      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
+      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
+      - CONNECT_VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
+      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
+      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
+      - JMXHOST=localhost
+      - JMXPORT=1976
+      #- LOG_LEVEL=DEBUG
+    depends_on:
+      - kafka
+
+  kafka:
+    container_name: kafka
+    image: vectorized/redpanda
+    restart: "no"
+    #    ports:
+    #      - "8081:8081"
+    #      - "8082:8082"
+    #      - "9091:9091"
+    #      - "9092:9092"
+    ports:
+      # Expose LOCALHOST_NETWORK listener on localhost
+      - "19092:19092"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      # Setup listeners for docker network and localhost network
+      - --kafka-addr
+      - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
+#    volumes:
+#      - test:/
+  #  kafka2:
+  #    container_name: kafka2
+  #    image: vectorized/redpanda
+  #    restart: always
+
+#  kafka-minion:
+#   # build:
+#   #   context: .
+#   #   dockerfile: ./Dockerfile
+#    image: quay.io/cloudhut/kminion:master
+#    hostname: kafka-minion
+#    container_name: kafka-minion
+#    depends_on:
+#      - kafka
+#    ports:
+#      - 8080:8080
+#    environment:
+#      KAFKA_BROKERS: kafka:19092
+#    restart: unless-stopped
+
+  console:
+    image: docker.redpanda.com/vectorized/console:master-217260f
+    restart: on-failure
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["kafka:9092"]
+        connect:
+          enabled: true
+          clusters:
+            - name: datagen
+              url: http://debezium:8083
+    ports:
+      - "8089:8080"
+    depends_on:
+      - kafka
+
+
+  sink:
+    container_name: sink
+    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
+    restart: "no"
+    ports:
+      - "18083:8083"
+      - "5005:5005"
+      - "39999:39999"
+    environment:
+      # Where to find Kafka broker
+      - BOOTSTRAP_SERVERS=kafka:9092
+      # Maps to rest.advertised.host.name
+      #- ADVERTISED_HOST_NAME=kafka
+      # Maps to rest.advertised.port
+      #- ADVERTISED_PORT=9092
+      - GROUP_ID=2
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
+      - STATUS_STORAGE_TOPIC=status-storage-topic-sink
+      - LOG_LEVEL=INFO
+      - JAVA_DEBUG_PORT=*:5005
+      - DEFAULT_JAVA_DEBUG_PORT=*:5005
+      - KAFKA_DEBUG=true
+      - JMX_PORT=39999
+      #- LOG_LEVEL=DEBUG
+    depends_on:
+      - kafka
+
+  clickhouse:
+    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
+    container_name: clickhouse
+    image: clickhouse/clickhouse-server:latest
+    restart: "no"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_USER=root
+      - CLICKHOUSE_PASSWORD=root
+      - CLICKHOUSE_DB=test
+    ulimits:
+      nofile:
+        soft: "262144"
+        hard: "262144"
+    volumes:
+      - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
+
+  ##### MONITORING #####
+  #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
+  # Bitnami bitnami/jmx-exporter vs sscaling images
+  jmx_exporter:
+    container_name: jmx_exporter
+    image: sscaling/jmx-prometheus-exporter
+    restart: "no"
+    ports:
+      - "9072:9072"
+    environment:
+      SERVICE_PORT: 9072
+    volumes:
+      - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
+#
+#  blackbox_exporter:
+#    container_name: blackbox_exporter
+#    image: prom/blackbox-exporter:master
+#    restart: "no"
+#    ports:
+#      - "9115:9115"
+
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus
+    restart: "no"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+
+  grafana:
+    build:
+      context: ../../docker/grafana
+      args:
+        GRAFANA_VERSION: 7.5.5
+    #container_name: grafana
+    #image: grafana/grafana
+    restart: "no"
+    #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    links:
+      - prometheus
+    environment:
+      - DS_PROMETHEUS=prometheus
+      - GF_USERS_DEFAULT_THEME=light
+  #### END OF MONITORING ###
+
+  bash:
+    container_name: bash
+    image: ubuntu
+    restart: "no"
+    entrypoint:
+      - /bin/sleep
+    command:
+      - infinity

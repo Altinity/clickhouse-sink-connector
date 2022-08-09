@@ -16,62 +16,112 @@ CLICKHOUSE_DATABASE="test"
 BUFFER_COUNT=10000
 
 #SERVER5432.transaction
-TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.products, , SERVER5432.test.customers, SERVER5432.test.t1, SERVER5432.sbtest.sbtest1, SERVER5432.public.Employee"
-TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
+if [[ $1 == "postgres" ]]; then
+  TOPICS="SERVER5432.public.Employee"
+else
+  TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.customers"
+  TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
+fi
 #TOPICS="SERVER5432"
 
 #"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
 
-"topics": "${TOPICS}",
+#"topics": "${TOPICS}",
 
-cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
-{
-  "name": "${CONNECTOR_NAME}",
-  "config": {
-    "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-    "tasks.max": "10",
-    "topics": "${TOPICS}",
-    "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
-    "clickhouse.server.url": "${CLICKHOUSE_HOST}",
-    "clickhouse.server.user": "${CLICKHOUSE_USER}",
-    "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
-    "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
-    "clickhouse.server.port": ${CLICKHOUSE_PORT},
-    "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
-    "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+if [[ $2 == "apicurio" ]]; then
+      echo "APICURIO SCHEMA REGISTRY"
+    cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+    {
+      "name": "${CONNECTOR_NAME}",
+      "config": {
+        "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
+        "tasks.max": "10",
 
-    "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "key.converter.apicurio.registry.auto-register": "true",
-    "key.converter.apicurio.registry.find-latest": "true",
+        "topics": "${TOPICS}",
+        "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
+        "clickhouse.server.url": "${CLICKHOUSE_HOST}",
+        "clickhouse.server.user": "${CLICKHOUSE_USER}",
+        "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
+        "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
+        "clickhouse.server.port": ${CLICKHOUSE_PORT},
+        "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
+        "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+        "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
 
-    "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "value.converter.apicurio.registry.auto-register": "true",
-    "value.converter.apicurio.registry.find-latest": "true",
-    "store.kafka.metadata": true,
-    "topic.creation.default.partitions": 6,
+        "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+        "key.converter.apicurio.registry.auto-register": "true",
+        "key.converter.apicurio.registry.find-latest": "true",
 
-    "store.raw.data": false,
-    "store.raw.data.column": "raw_data",
+        "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+        "value.converter.apicurio.registry.auto-register": "true",
+        "value.converter.apicurio.registry.find-latest": "true",
+        "store.kafka.metadata": true,
+        "topic.creation.default.partitions": 6,
 
-    "metrics.enable": true,
-    "metrics.port": 8084,
-    "buffer.flush.time": 500,
-    "thread.pool.size": 1,
-    "fetch.min.bytes": 52428800,
+        "store.raw.data": false,
+        "store.raw.data.column": "raw_data",
 
-    "enable.kafka.offset": false,
+        "metrics.enable": true,
+        "metrics.port": 8084,
+        "buffer.flush.time.ms": 500,
+        "thread.pool.size": 1,
+        "fetch.min.bytes": 52428800,
 
-    "replacingmergetree.delete.column": "sign",
+        "enable.kafka.offset": false,
 
-    "auto.create.tables": true,
-    "schema.evolution": false,
+        "replacingmergetree.delete.column": "sign",
 
-    "deduplication.policy": "off"
+        "auto.create.tables": false,
+        "schema.evolution": false,
 
-  }
-}
+        "deduplication.policy": "off"
+        }
+    }
 EOF
-# "replacingmergetree.delete.column": "sign_delete"
+else
+ echo "Using confluent schema registry"
+  cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+  {
+    "name": "${CONNECTOR_NAME}",
+    "config": {
+      "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
+      "tasks.max": "10",
+      "topics": "${TOPICS}",
+      "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
+      "clickhouse.server.url": "${CLICKHOUSE_HOST}",
+      "clickhouse.server.user": "${CLICKHOUSE_USER}",
+      "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
+      "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
+      "clickhouse.server.port": ${CLICKHOUSE_PORT},
+      "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
+      "key.converter": "io.confluent.connect.avro.AvroConverter",
+      "value.converter": "io.confluent.connect.avro.AvroConverter",
+      "key.converter.schema.registry.url": "http://schemaregistry:8081",
+      "value.converter.schema.registry.url":"http://schemaregistry:8081",
 
-echo
+      "store.kafka.metadata": true,
+      "topic.creation.default.partitions": 6,
+
+      "store.raw.data": false,
+      "store.raw.data.column": "raw_data",
+
+      "metrics.enable": true,
+      "metrics.port": 8084,
+      "buffer.flush.time.ms": 500,
+      "thread.pool.size": 1,
+      "fetch.min.bytes": 52428800,
+
+      "enable.kafka.offset": false,
+
+      "replacingmergetree.delete.column": "sign",
+
+      "auto.create.tables": true,
+      "schema.evolution": false,
+
+      "deduplication.policy": "off"
+      }
+  }
+EOF
+
+fi
+# "replacingmergetree.delete.column": "sign_delete"

@@ -3,8 +3,9 @@
 Sink connector sinks data from Kafka into Clickhouse.
 The connector is tested with the following converters
 - JsonConverter
-- AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/))
+- AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/) and Confluent Schema Registry)
 
+![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
 - Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree - [Updates/Deletes](doc/mutable_data.md)
 - Deduplication logic to dedupe records from Kafka topic.(Based on Primary Key)
@@ -17,6 +18,10 @@ The connector is tested with the following converters
 - Kafka Offset management in ClickHouse
 - Increased Parallelism(Customize thread pool for JDBC connections)
 
+
+
+### Grafana Dashboard
+![](doc/img/Grafana_dashboard.png) \
 # Source Databases
 - MySQL (Debezium)
 - PostgreSQL (Debezium) (Testing in progress)

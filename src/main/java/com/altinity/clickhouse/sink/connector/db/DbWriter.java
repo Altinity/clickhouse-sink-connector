@@ -2,17 +2,20 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.google.common.io.BaseEncoding;
+import io.debezium.data.Json;
 import io.debezium.time.Date;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -83,10 +86,12 @@ public class DbWriter extends BaseDbWriter {
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
+            long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
-                    log.info("**** AUTO CREATE TABLE " + tableName);
+                    log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
                         act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterStruct().schema().fields().toArray(new Field[0]), this.conn);
@@ -96,6 +101,8 @@ public class DbWriter extends BaseDbWriter {
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
                     }
+                } else {
+                    log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
                 }
             }
 
@@ -108,6 +115,16 @@ public class DbWriter extends BaseDbWriter {
             log.error("***** DBWriter error initializing ****", e);
         }
         this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
+    }
+
+    public boolean wasTableMetaDataRetrieved() {
+        boolean result = true;
+
+        if(this.engine == null || this.columnNameToDataTypeMap == null || this.columnNameToDataTypeMap.isEmpty()) {
+            result = false;
+        }
+
+        return result;
     }
 
     /**
@@ -199,7 +216,8 @@ public class DbWriter extends BaseDbWriter {
 
     /**
      * Function to group the Query with records.
-     *
+     * Also this slices a chunk of records for processing
+     * from the shared data structure(ConcurrentLinkedQueue<ClickHouseStruct>)
      * @param records
      * @return
      */
@@ -211,7 +229,7 @@ public class DbWriter extends BaseDbWriter {
         //HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
             return partitionToOffsetMap;
         }
 
@@ -231,8 +249,10 @@ public class DbWriter extends BaseDbWriter {
 
             boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
 
+            boolean result = false;
+
             if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 if(enableSchemaEvolution) {
                     try {
@@ -244,21 +264,23 @@ public class DbWriter extends BaseDbWriter {
                     }
                 }
 
-                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
-                updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else {
                 log.error("INVALID CDC RECORD STATE");
             }
 
             // Remove the record from shared records.
-            iterator.remove();
+            if(result) {
+                iterator.remove();
+            }
         }
         return partitionToOffsetMap;
     }
 
-    public void updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
+    public boolean updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
                                         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
         MutablePair<String, Map<String, Integer>>  response= new QueryFormatter().getInsertQueryUsingInputFunction
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
@@ -268,9 +290,9 @@ public class DbWriter extends BaseDbWriter {
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
         String insertQueryTemplate = response.getKey();
-        if(response.getValue() == null) {
-            log.error("********* COLUMN TO INDEX MAP EMPTY");
-            return;
+        if(response.getKey() == null || response.getValue() == null) {
+            log.error("********* QUERY or COLUMN TO INDEX MAP EMPTY");
+            return false;
           //  this.columnNametoIndexMap = response.right;
         }
 
@@ -289,6 +311,8 @@ public class DbWriter extends BaseDbWriter {
 
             queryToRecordsMap.put(mp, recordsList);
         }
+
+        return true;
     }
 
     /**
@@ -343,7 +367,7 @@ public class DbWriter extends BaseDbWriter {
 //        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
         if (records.isEmpty()) {
-            log.info("No Records to process");
+            log.debug("No Records to process");
 //            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
             return partitionToOffsetMap;
         }
@@ -362,7 +386,8 @@ public class DbWriter extends BaseDbWriter {
      *
      * @param queryToRecordsMap
      */
-    public void addToPreparedStatementBatch(Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    public BlockMetaData addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
 
         boolean success = false;
 
@@ -377,6 +402,11 @@ public class DbWriter extends BaseDbWriter {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : recordsList) {
+                    try {
+                        bmd.update(record);
+                    } catch(Exception e) {
+                        log.error("**** ERROR: updating Prometheus", e);
+                    }
                     //List<Field> fields = record.getStruct().schema().fields();
 
                     //ToDO:
@@ -413,7 +443,7 @@ public class DbWriter extends BaseDbWriter {
                 success = true;
 
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
-                log.info("*************** EXECUTED BATCH Successfully" + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
+                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
@@ -423,10 +453,14 @@ public class DbWriter extends BaseDbWriter {
                 success = false;
             }
 
+            Metrics.updateCounters(topicName, entry.getValue().size());
+
             if(success) {
                 iter.remove();
             }
         }
+
+        return bmd;
     }
 
 
@@ -560,7 +594,10 @@ public class DbWriter extends BaseDbWriter {
                     // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
                     ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
 
-                } else {
+                } else if(schemaName != null && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
+                    // if the column is JSON, it should be written, String otherwise
+                    ps.setObject(index, value);
+                }else {
                     ps.setString(index, (String) value);
                 }
             } else if (isFieldTypeInt) {
@@ -608,7 +645,8 @@ public class DbWriter extends BaseDbWriter {
                     ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
                 }
 
-            } else {
+            }
+            else {
                 log.error("Data Type not supported: {}", colName);
             }
 

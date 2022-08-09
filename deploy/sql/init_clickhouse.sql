@@ -107,6 +107,8 @@ PRIMARY KEY intcol1;
 --ENGINE = AggregatingMergeTree
 --ORDER BY (_topic, _partition);
 
+SET allow_experimental_object_type = 1;
+
 -- Postgres tables --
 CREATE TABLE Employee(
 `EmployeeId` UInt64,
@@ -123,6 +125,7 @@ CREATE TABLE Employee(
  `PostalCode` String,
  `Phone` String,
  `Fax` String,
- `Email` String)
+ `Email` String,
+ `json_data` String)
  ENGINE = MergeTree
  PRIMARY KEY EmployeeId;
