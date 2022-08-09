@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -30,7 +31,7 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
             if(operation.name().equalsIgnoreCase(ALTER_TABLE_OPERATION.ADD.op)) {
                 alterTableSyntax.append("add column ");
             } else {
-                alterTableSyntax.append("delete column ");
+                alterTableSyntax.append("drop column ");
             }
             alterTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
         }

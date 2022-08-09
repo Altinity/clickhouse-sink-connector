@@ -8,6 +8,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -76,6 +77,24 @@ public class DbWriterTest {
     public void testIsColumnTypeDate64() {
        boolean result = DbWriter.isColumnDateTime64("Nullable(DateTime64(3))");
     }
+
+    @Test
+    public void testGetAlterColumns() {
+        List<Field> fields = new ArrayList<>();
+
+        columnNameToDataTypesMap.put("customerName", "String");
+        columnNameToDataTypesMap.put("occupation", "String");
+        columnNameToDataTypesMap.put("quantity", "UInt32");
+        columnNameToDataTypesMap.put("_topic", "String");
+
+        fields.add(new Field("customerName", 0, Schema.STRING_SCHEMA));
+        fields.add(new Field("occupation", 1, Schema.STRING_SCHEMA));
+        fields.add(new Field("quantity", 2, Schema.INT32_SCHEMA));
+        fields.add(new Field("amount", 3, Schema.FLOAT64_SCHEMA));
+        fields.add(new Field("employed", 4, Schema.BOOLEAN_SCHEMA));
+
+    }
+
     @Test
     @Tag("IntegrationTest")
     public void testGetColumnsDataTypesForTable() {

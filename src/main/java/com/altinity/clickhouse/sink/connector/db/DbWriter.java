@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable.ALTER_TABLE_OPERATION;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -321,25 +322,40 @@ public class DbWriter extends BaseDbWriter {
      * m modifiedFields
      */
     public void alterTable(List<Field> modifiedFields) {
-        List<Field> missingFieldsInCH = new ArrayList<Field>();
+        List<Field> addColumns = new ArrayList<Field>();
+        List<Field> dropColumns = new ArrayList<Field>();
+        
+        getAlterColumns(modifiedFields, addColumns, dropColumns);
+    }
+
+
+    public void getAlterColumns(List<Field> modifiedFields, 
+    List<Field> addColumns, List<Field> dropColumns) {
         // Identify the columns that need to be added/removed in ClickHouse.
         for(Field f: modifiedFields) {
             String colName = f.name();
 
+            // If the columns are missing in ClickHouse
             if(this.columnNameToDataTypeMap.containsKey(colName) == false) {
-                missingFieldsInCH.add(f);
+                addColumns.add(f);
+            } else {
+                dropColumns.add(f);
             }
         }
+    } 
 
-        if(!missingFieldsInCH.isEmpty()) {
+
+    public void handleAlterColumns(ArrayList<Field> columns, ALTER_TABLE_OPERATION operation)  {
+        if(!columns.isEmpty()) {
             log.info("***** ALTER TABLE ****");
             ClickHouseAlterTable cat = new ClickHouseAlterTable();
-            Field[] missingFieldsArray = new Field[missingFieldsInCH.size()];
-            missingFieldsInCH.toArray(missingFieldsArray);
+            Field[] missingFieldsArray = new Field[columns.size()];
+            columns.toArray(missingFieldsArray);
             Map<String, String> colNameToDataTypeMap = cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
 
             if(!colNameToDataTypeMap.isEmpty()) {
-                String alterTableQuery = cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+                String alterTableQuery = cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, 
+                operation);
                 log.info(" ***** ALTER TABLE QUERY **** " + alterTableQuery);
 
                 try {
