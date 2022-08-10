@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
-import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Class that handles logic related to alter table
@@ -18,7 +18,7 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
             this.op = op;
         }
     }
-    public String createAlterTableSyntax(String tableName, Map<String, String> colNameToDataTypesMap, ALTER_TABLE_OPERATION operation) {
+    public String createAlterTableSyntaxAddColumn(String tableName, Map<String, String> colNameToDataTypesMap, ALTER_TABLE_OPERATION operation) {
         // alter table <table_name>
         // add column `col_name_1` data_type_1,
         // add column `col_name_2` data_type_2
@@ -30,8 +30,6 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
         for(Map.Entry<String, String>  entry: colNameToDataTypesMap.entrySet()) {
             if(operation.name().equalsIgnoreCase(ALTER_TABLE_OPERATION.ADD.op)) {
                 alterTableSyntax.append("add column ");
-            } else {
-                alterTableSyntax.append("drop column ");
             }
             alterTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
         }
@@ -40,4 +38,19 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
 
         return alterTableSyntax.toString();
     }
+
+    public String createAlterTableSyntaxDropColumn(String tableName, Set<String> columnNames) {
+        // alter table <table_name>
+        // add column `col_name_1` data_type_1,
+        // add column `col_name_2` data_type_2
+
+        StringBuilder alterTableSyntax = new StringBuilder();
+
+        alterTableSyntax.append("ALTER TABLE").append(" ").append(tableName).append(" ").append("drop column ");
+
+        alterTableSyntax.append(String.join(",", columnNames));
+
+        return alterTableSyntax.toString();
+    }
+
 }

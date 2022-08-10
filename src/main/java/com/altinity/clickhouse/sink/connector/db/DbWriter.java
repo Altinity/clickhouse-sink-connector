@@ -15,6 +15,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
+import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.Json;
 import io.debezium.time.Date;
@@ -325,23 +326,28 @@ public class DbWriter extends BaseDbWriter {
         List<Field> addColumns = new ArrayList<Field>();
         List<Field> dropColumns = new ArrayList<Field>();
         
-        getAlterColumns(modifiedFields, addColumns, dropColumns);
+        //getAlterColumns(modifiedFields, addColumns, dropColumns, this.columnNameToDataTypeMap);
     }
 
 
-    public void getAlterColumns(List<Field> modifiedFields, 
-    List<Field> addColumns, List<Field> dropColumns) {
-        // Identify the columns that need to be added/removed in ClickHouse.
-        for(Field f: modifiedFields) {
-            String colName = f.name();
+    public void getAlterColumns(List<Field> sourceFields,
+                                Set<Field> addColumns, Set<String> dropColumns, Map<String, String> columnNameToDataTypeMap) {
 
+        Set<String> sourceColumnNames = new HashSet<>();
+        // Identify the columns that need to be added/removed in ClickHouse.
+        for(Field f: sourceFields) {
+            java.lang.String colName = f.name();
+            sourceColumnNames.add(colName);
+            columnNameToDataTypeMap.keySet();
             // If the columns are missing in ClickHouse
-            if(this.columnNameToDataTypeMap.containsKey(colName) == false) {
+            if(columnNameToDataTypeMap.containsKey(colName) == false) {
                 addColumns.add(f);
-            } else {
-                dropColumns.add(f);
             }
         }
+
+        Sets.SetView<String> difference = Sets.difference(sourceColumnNames, columnNameToDataTypeMap.keySet());
+        dropColumns.addAll(difference);
+        System.out.println();
     } 
 
 
@@ -354,7 +360,7 @@ public class DbWriter extends BaseDbWriter {
             Map<String, String> colNameToDataTypeMap = cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
 
             if(!colNameToDataTypeMap.isEmpty()) {
-                String alterTableQuery = cat.createAlterTableSyntax(this.tableName, colNameToDataTypeMap, 
+                String alterTableQuery = cat.createAlterTableSyntaxAddColumn(this.tableName, colNameToDataTypeMap,
                 operation);
                 log.info(" ***** ALTER TABLE QUERY **** " + alterTableQuery);
 

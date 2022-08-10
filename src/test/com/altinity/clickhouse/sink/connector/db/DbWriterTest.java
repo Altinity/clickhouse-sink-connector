@@ -18,7 +18,6 @@ import org.junit.Test;
 import org.junit.jupiter.api.Tag;
 
 import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -27,7 +26,7 @@ public class DbWriterTest {
     DbWriter writer;
 
     @Before
-    public void init() throws SQLException {
+    public void init() {
 
         String hostName = "remoteClickHouse";
         Integer port = 8000;
@@ -82,6 +81,9 @@ public class DbWriterTest {
     public void testGetAlterColumns() {
         List<Field> fields = new ArrayList<>();
 
+        // Columns to be dropped.
+        Map<String, String> columnNameToDataTypesMap = new HashMap<String, String>();
+
         columnNameToDataTypesMap.put("customerName", "String");
         columnNameToDataTypesMap.put("occupation", "String");
         columnNameToDataTypesMap.put("quantity", "UInt32");
@@ -91,7 +93,15 @@ public class DbWriterTest {
         fields.add(new Field("occupation", 1, Schema.STRING_SCHEMA));
         fields.add(new Field("quantity", 2, Schema.INT32_SCHEMA));
         fields.add(new Field("amount", 3, Schema.FLOAT64_SCHEMA));
-        fields.add(new Field("employed", 4, Schema.BOOLEAN_SCHEMA));
+        //fields.add(new Field("employed", 4, Schema.BOOLEAN_SCHEMA));
+
+        List<Field> addColumns = new ArrayList<Field>();
+        List<Field> dropColumns = new ArrayList<Field>();
+
+        //writer.getAlterColumns(fields, addColumns, dropColumns, columnNameToDataTypesMap );
+
+        Assert.assertFalse(addColumns.isEmpty());
+        Assert.assertFalse(dropColumns.isEmpty());
 
     }
 
