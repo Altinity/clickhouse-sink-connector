@@ -46,9 +46,14 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
 
         StringBuilder alterTableSyntax = new StringBuilder();
 
-        alterTableSyntax.append("ALTER TABLE").append(" ").append(tableName).append(" ").append("drop column ");
+        alterTableSyntax.append("ALTER TABLE").append(" ").append(tableName).append(" ");
 
-        alterTableSyntax.append(String.join(",", columnNames));
+        for(String colName: columnNames) {
+            alterTableSyntax.append("drop column").append(colName).append(",");
+        }
+        //.append("drop column ");
+
+        //alterTableSyntax.append(String.join(",", columnNames));
 
         return alterTableSyntax.toString();
     }
