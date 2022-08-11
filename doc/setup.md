@@ -49,6 +49,10 @@ cd deploy/docker
 ./start-docker-compose.sh 2022-07-19
 ```
 
+### Load Airline data set
+```bash
+docker-compose -f docker-compose.yaml -f docker-compose-airline-data.yaml up
+```
 ### Stop Docker-compose
 ```bash
 cd deploy/docker

@@ -1,0 +1,33 @@
+version: "2.3"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  mysql-master:
+    container_name: mysql-master
+    image: docker.io/bitnami/mysql:latest
+    restart: "no"
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+     - ../sql/ontime_1.sql:/docker-entrypoint-initdb.d/ontime_1.sql
+     - ../sql/ontime_2.sql:/docker-entrypoint-initdb.d/ontime_2.sql
+     - ../sql/ontime_3.sql:/docker-entrypoint-initdb.d/ontime_3.sql
+     - ../sql/ontime_4.sql:/docker-entrypoint-initdb.d/ontime_4.sql
+    healthcheck:
+      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
