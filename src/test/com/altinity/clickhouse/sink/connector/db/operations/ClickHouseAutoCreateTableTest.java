@@ -116,6 +116,16 @@ public class ClickHouseAutoCreateTableTest {
     }
 
     @Test
+    public void testCreateTableEmptyPrimaryKey() {
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+
+        String query = act.createTableSyntax(null, "auto_create_table", createFields(), this.columnToDataTypesMap);
+
+        String expectedQuery = "CREATE TABLE auto_create_table(`amount` Int32,`address` String,`customer_id` Int32,`first_name` String,`sign` Int8,`ver` UInt64) ENGINE = ReplacingMergeTree(ver) ORDER BY(ver)";
+        Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
+    }
+    @Test
     public void testCreateTableMultiplePrimaryKeys() {
         ArrayList<String> primaryKeys = new ArrayList<>();
         primaryKeys.add("customer_id");
