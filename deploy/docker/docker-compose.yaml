@@ -282,11 +282,11 @@ services:
     #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
-    links:
-      - prometheus
     environment:
       - DS_PROMETHEUS=prometheus
       - GF_USERS_DEFAULT_THEME=light
+    depends_on:
+      - prometheus
   #### END OF MONITORING ###
 
   bash:
