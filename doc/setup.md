@@ -40,7 +40,7 @@ cd deploy/docker
 ### Postgres:
 ```bash
 cd deploy/docker
-docker-compose -f docker-compose-postgresql.yaml up
+docker-compose -f docker-compose.yaml -f docker-compose-postgresql.yaml up
 ```
 
 ### Start Docker-compose with a specific docker tag
@@ -88,7 +88,6 @@ to create the Clickhouse Sink connector using Kafka connect REST API
 ```bash
 ../deploy/sink-connector-setup-schema-registry.sh postgres apicurio
 ```
-
 
 # Deleting connectors
 The source connector can be deleted using the following script

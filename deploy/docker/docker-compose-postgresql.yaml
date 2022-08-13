@@ -45,10 +45,17 @@ services:
 
   debezium:
     container_name: debezium
-    image: debezium/connect:1.9.2.Final
+    #image: debezium/connect:2.0
+    build:
+      context: ../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 1.9.5.Final
+        JMX_AGENT_VERSION: 0.15.0
     restart: "no"
     ports:
       - "8083:8083"
+      - "1976:1976"
+
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
@@ -76,129 +83,3 @@ services:
     depends_on:
       - kafka
 
-  kafka:
-    container_name: kafka
-    image: vectorized/redpanda
-    restart: "no"
-    #    ports:
-    #      - "8081:8081"
-    #      - "8082:8082"
-    #      - "9091:9091"
-    #      - "9092:9092"
-    ports:
-      # Expose LOCALHOST_NETWORK listener on localhost
-      - "19092:19092"
-    command:
-      - redpanda
-      - start
-      - --overprovisioned
-      # Setup listeners for docker network and localhost network
-      - --kafka-addr
-      - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
-      - --advertise-kafka-addr
-      - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
-#    volumes:
-#      - test:/
-  #  kafka2:
-  #    container_name: kafka2
-  #    image: vectorized/redpanda
-  #    restart: always
-
-
-
-  sink:
-    container_name: sink
-    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
-    restart: "no"
-    ports:
-      - "18083:8083"
-      - "5005:5005"
-      - "39999:39999"
-    environment:
-      # Where to find Kafka broker
-      - BOOTSTRAP_SERVERS=kafka:9092
-      # Maps to rest.advertised.host.name
-      #- ADVERTISED_HOST_NAME=kafka
-      # Maps to rest.advertised.port
-      #- ADVERTISED_PORT=9092
-      - GROUP_ID=2
-      - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
-      - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
-      - STATUS_STORAGE_TOPIC=status-storage-topic-sink
-      - LOG_LEVEL=INFO
-      - JAVA_DEBUG_PORT=*:5005
-      - DEFAULT_JAVA_DEBUG_PORT=*:5005
-      - KAFKA_DEBUG=true
-      - JMX_PORT=39999
-      #- LOG_LEVEL=DEBUG
-    depends_on:
-      - kafka
-
-  clickhouse:
-    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
-    container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
-    restart: "no"
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      - CLICKHOUSE_USER=root
-      - CLICKHOUSE_PASSWORD=root
-      - CLICKHOUSE_DB=test
-    ulimits:
-      nofile:
-        soft: "262144"
-        hard: "262144"
-    volumes:
-      - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
-
-  ##### MONITORING #####
-  #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
-  # Bitnami bitnami/jmx-exporter vs sscaling images
-  jmx_exporter:
-    container_name: jmx_exporter
-    image: sscaling/jmx-prometheus-exporter
-    restart: "no"
-    ports:
-      - "9072:9072"
-    environment:
-      SERVICE_PORT: 9072
-    volumes:
-      - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
-
-#  blackbox_exporter:
-#    container_name: blackbox_exporter
-#    image: prom/blackbox-exporter:master
-#    restart: "no"
-#    ports:
-#      - "9115:9115"
-
-  prometheus:
-    container_name: prometheus
-    image: bitnami/prometheus
-    restart: "no"
-    ports:
-      - "9090:9090"
-    volumes:
-      - ../config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
-
-  grafana:
-    container_name: grafana
-    image: grafana/grafana
-    restart: "no"
-    volumes:
-      - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
-    ports:
-      - "3000:3000"
-
-  #### END OF MONITORING ###
-
-  bash:
-    container_name: bash
-    image: ubuntu
-    restart: "no"
-    entrypoint:
-      - /bin/sleep
-    command:
-      - infinity
