@@ -1,0 +1,10 @@
+version: "3.4"
+
+
+# Useful to connect to a local MySQL instance
+services:
+  mysql-master:
+    container_name: mysql-master
+    image: alpine
+    ports:
+      - "3307:3307"

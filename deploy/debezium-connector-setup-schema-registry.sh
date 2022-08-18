@@ -47,6 +47,9 @@ if [[ $1 == "postgres" ]]; then
 
   curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @payload.json
   exit
+elif [[ $1 == "mysql_external" ]]; then
+  echo "MySQL external database"
+  HOST="host.docker.internal"
 else
   echo "MySQL Database"
   SNAPSHOT_MODE="initial"
