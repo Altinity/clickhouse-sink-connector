@@ -19,7 +19,7 @@ BUFFER_COUNT=10000
 if [[ $1 == "postgres" ]]; then
   TOPICS="SERVER5432.public.Employee"
 else
-  TOPICS="SERVER5432.test.employees_predated, SERVER5432.test.customers"
+  TOPICS="SERVER5432.test.ontime"
   TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
 fi
 #TOPICS="SERVER5432"
@@ -85,7 +85,7 @@ else
     "name": "${CONNECTOR_NAME}",
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-      "tasks.max": "10",
+      "tasks.max": "20",
       "topics": "${TOPICS}",
       "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
       "clickhouse.server.url": "${CLICKHOUSE_HOST}",

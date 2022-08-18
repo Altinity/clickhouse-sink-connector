@@ -1,0 +1,26 @@
+services:
+  mysql-master:
+    container_name: mysql-master
+    image: percona/percona-server
+    restart: "no"
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+      - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+
+  pmm-data:
+    image: percona/pmm-server:latest
+    container_name: pmm-data
+    volumes:
+      - /your/host/prometheus/data:/opt/prometheus/data
+      - /your/host/consul-data:/opt/consul-data
+      - /your/host/mysql:/var/lib/mysql
+      - /your/host/grafana:/var/lib/grafana
+    entrypoint: /bin/true

@@ -1,4 +1,4 @@
-version: "2.3"
+version: "3.4"
 
 # Ubuntu , set this for redpanda to start
 # https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
@@ -8,34 +8,34 @@ version: "2.3"
 
 services:
 
-  mysql-master:
-    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-    # SHOW VARIABLES LIKE 'server_id';
-    # SHOW VARIABLES LIKE 'log_bin';
-    # SHOW MASTER STATUS;
-    container_name: mysql-master
-    image: docker.io/bitnami/mysql:latest
-#    command:
-#      --default-authentication-plugin=mysql_native_password
-#      --server-id=1
-#      --binlog_do_db=test
-    restart: "no"
-    ports:
-      - "3306:3306"
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=test
-      - MYSQL_REPLICATION_MODE=master
-      - MYSQL_REPLICATION_USER=repl_user
-      - ALLOW_EMPTY_PASSWORD=yes
-    volumes:
-     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-    healthcheck:
-      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
-      interval: 15s
-      timeout: 5s
-      retries: 6
+#  mysql-master:
+#    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
+#    # SHOW VARIABLES LIKE 'server_id';
+#    # SHOW VARIABLES LIKE 'log_bin';
+#    # SHOW MASTER STATUS;
+#    container_name: mysql-master
+#    image: docker.io/bitnami/mysql:latest
+##    command:
+##      --default-authentication-plugin=mysql_native_password
+##      --server-id=1
+##      --binlog_do_db=test
+#    restart: "no"
+#    ports:
+#      - "3306:3306"
+#    environment:
+#      - MYSQL_ROOT_PASSWORD=root
+#      - MYSQL_DATABASE=test
+#      - MYSQL_REPLICATION_MODE=master
+#      - MYSQL_REPLICATION_USER=repl_user
+#      - ALLOW_EMPTY_PASSWORD=yes
+#    volumes:
+#     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+#     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+#    healthcheck:
+#      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+#      interval: 15s
+#      timeout: 5s
+#      retries: 6
     #security_opt:
     #  - seccomp:unconfined
 
@@ -97,16 +97,18 @@ services:
 
   debezium:
     container_name: debezium
-    #image: debezium/connect:2.0
-    build:
-      context: ../../docker/debezium_jmx
-      args:
-        DEBEZIUM_VERSION: 1.9.5.Final
-        JMX_AGENT_VERSION: 0.15.0
+    image: debezium/connect:1.9.5.Final
+#    build:
+#      context: ../../docker/debezium_jmx
+#      args:
+#        DEBEZIUM_VERSION: 1.9.5.Final
+#        JMX_AGENT_VERSION: 0.15.0
     restart: "no"
     ports:
       - "8083:8083"
       - "1976:1976"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     environment:
       # Where to find Kafka broker
@@ -122,9 +124,9 @@ services:
       - LOG_LEVEL=INFO
       - KEY_CONVERTER=io.confluent.connect.avro.AvroConverter
       - VALUE_CONVERTER=io.confluent.connect.avro.AvroConverter
-      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
-      - JMXHOST=localhost
-      - JMXPORT=1976
+#      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
+#      - JMXHOST=localhost
+#      - JMXPORT=1976
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
