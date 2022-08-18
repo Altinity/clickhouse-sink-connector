@@ -36,8 +36,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
-    security_opt:
-      - seccomp:unconfined
+#    security_opt:
+#      - seccomp:unconfined
 
 #  mysql-slave:
 #    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
@@ -124,9 +124,9 @@ services:
       - LOG_LEVEL=INFO
       - KEY_CONVERTER=io.confluent.connect.avro.AvroConverter
       - VALUE_CONVERTER=io.confluent.connect.avro.AvroConverter
-#      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
-#      - JMXHOST=localhost
-#      - JMXPORT=1976
+      - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
+      - JMXHOST=localhost
+      - JMXPORT=1976
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
