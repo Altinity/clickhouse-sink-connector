@@ -79,7 +79,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             createTableSyntax.append(")");
         } else {
             // ToDO:
-            createTableSyntax.append("ORDER BY(ver)");
+            createTableSyntax.append("ORDER BY tuple()");
         }
        return createTableSyntax.toString();
     }
