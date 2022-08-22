@@ -1,0 +1,68 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: schema-registry
+data:
+  SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: redpanda.redpanda:9092
+  SCHEMA_REGISTRY_HOST_NAME: schema-registry
+  SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+  SCHEMA_REGISTRY_DEBUG: true
+  #APPLICATION_ID: schema-registry
+  #QUARKUS_PROFILE: prod # dev/prod
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: schema-registry
+  labels:
+    app: schema-registry
+spec:
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+    spec:
+      containers:
+        - name: schema-registry
+          image: confluentinc/cp-schema-registry:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: schema-registry
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: schema-registry
+spec:
+  selector:
+    app: schema-registry
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080

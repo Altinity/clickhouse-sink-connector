@@ -68,6 +68,10 @@ NAMESPACE=redpanda
 kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE create -f "${SRC_ROOT}/deploy/k8s/redpanda-internal.yaml"
 ```
+To deploy 3-node cluster
+```bash
+kubectl -n $NAMESPACE create -f redpanda-external.yaml
+```
 
 Wait to start
 ```bash
