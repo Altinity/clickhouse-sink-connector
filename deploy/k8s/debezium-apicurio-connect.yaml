@@ -2,13 +2,13 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
   namespace: debezium
-  name: debezium-kafkaconnect
+  name: debezium
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.1.0
   replicas: 1
-  image: subkanthi/debezium-mysql-source-connector:latest
+  image: localhost:5000/altinity/debezium-mysql-source-connector:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -44,5 +44,5 @@ spec:
     status.storage.replication.factor: 1
     status.storage.partitions: 1
 
-    key.converter: "io.confluent.connect.avro.AvroConverter"
-    value.converter: "io.confluent.connect.avro.AvroConverter"
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"

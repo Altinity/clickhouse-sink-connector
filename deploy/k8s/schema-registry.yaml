@@ -1,0 +1,90 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: schema-registry
+data:
+  SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: redpanda.redpanda:9092
+  SCHEMA_REGISTRY_HOST_NAME: avro-schema-registry
+  SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+  SCHEMA_REGISTRY_DEBUG: "true"
+  #APPLICATION_ID: schema-registry
+  #QUARKUS_PROFILE: prod # dev/prod
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: schema-registry
+  labels:
+    app: schema-registry
+spec:
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: schema-registry
+          env:
+            - name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+              value: redpanda.redpanda:9092
+            - name: SCHEMA_REGISTRY_HOST_NAME
+              value: schema-registry
+            - name: SCHEMA_REGISTRY_LISTENERS
+              value: http://0.0.0.0:8081
+            - name: SCHEMA_REGISTRY_DEBUG
+              value: "true"
+          image: confluentinc/cp-schema-registry:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8081
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+#          livenessProbe:
+#            httpGet:
+#              path: /health/live
+#              port: 8081
+#              scheme: HTTP
+#            initialDelaySeconds: 5
+#            timeoutSeconds: 5
+#            periodSeconds: 10
+#            successThreshold: 1
+#            failureThreshold: 3
+#          readinessProbe:
+#            httpGet:
+#              path: /health/ready
+#              port: 8081
+#              scheme: HTTP
+#            initialDelaySeconds: 5
+#            timeoutSeconds: 5
+#            periodSeconds: 10
+#            successThreshold: 1
+#            failureThreshold: 3
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: schema-registry
+spec:
+  selector:
+    app: schema-registry
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081

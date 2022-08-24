@@ -14,4 +14,20 @@ RUN 'mkdir' '-p' '/opt/kafka/plugins/debezium-mysql-connector/3542976d' \
       && 'tar' 'xvfz' '/opt/kafka/plugins/debezium-mysql-connector/3542976d.tgz' '-C' '/opt/kafka/plugins/debezium-mysql-connector/3542976d' \
       && 'rm' '-vf' '/opt/kafka/plugins/debezium-mysql-connector/3542976d.tgz'
 
-USER 1001
+
+# Copy confluent
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-connect-avro-converter-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/3.1.0/kafka-connect-avro-converter-3.1.0.jar'
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-avro-serializer-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/3.1.0/kafka-avro-serializer-3.1.0.jar'
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-schema-registry-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/3.1.0/kafka-schema-registry-3.1.0.jar'
+
+
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-schema-registry-client-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/3.1.0/kafka-schema-registry-client-3.1.0.jar'
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/common-config-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/3.1.0/common-config-3.1.0.jar'
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/common-utils-3.1.0.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/3.1.0/common-utils-3.1.0.jar'
+
+RUN 'curl' '-L' '--output' '/opt/kafka/libs/avro-1.10.1.jar' 'https://repo1.maven.org/maven2/org/apache/avro/avro/1.10.1/avro-1.10.1.jar'
+
+#RUN 'curl' '-L' '--output' '/opt/kafka/plugins/debezium-mysql-connector/3542976d/kafka-serde-tools-package-3.1.0-tests.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/3.1.0/kafka-serde-tools-package-3.1.0-tests.jar'
+
+
+#USER 1001

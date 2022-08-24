@@ -2,13 +2,16 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnector
 metadata:
   namespace: debezium
-  name: debezium-kctr
+  name: debezium
   labels:
-    strimzi.io/cluster: debezium-kafkaconnect
+    strimzi.io/cluster: debezium
 spec:
   class: io.debezium.connector.mysql.MySqlConnector
   tasksMax: 1
   config:
+    # List of mysql options:
+    # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
+
     snapshot.mode: "initial"
     snapshot.locking.mode: "minimal"
     snapshot.delay.ms: "10000"
@@ -26,8 +29,8 @@ spec:
     database.allowPublicKeyRetrieval: "true"
     database.useSSL: "false"
 
-    database.history.kafka.bootstrap.servers: "redpanda.redpanda:9092"
-    database.history.kafka.topic: "schema-changes.dashboard"
+    database.history.kafka.bootstrap.servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+    database.history.kafka.topic: "${KAFKA_TOPIC}"
 
     # List of topic options:
     # https://debezium.io/documentation/reference/stable/configuration/topic-auto-create-config.html
@@ -38,8 +41,12 @@ spec:
 
     # Avro serialization description:
     # https://debezium.io/documentation/reference/stable/configuration/avro.html
-    key.converter: "io.confluent.connect.avro.AvroConverter"
-    value.converter: "io.confluent.connect.avro.AvroConverter"
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    key.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    key.converter.apicurio.registry.auto-register: "true"
+    key.converter.apicurio.registry.find-latest: "true"
 
-    key.converter.schema.registry.url : "http://schemaregistry.registry:8081"
-    value.converter.schema.registry.url: "http://schemaregistry.registry:8081"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    value.converter.apicurio.registry.auto-register: "true"
+    value.converter.apicurio.registry.find-latest: "true"

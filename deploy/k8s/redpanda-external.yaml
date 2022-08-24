@@ -27,4 +27,4 @@ spec:
           enabled: true
     adminApi:
       - port: 9644
-    developerMode: true
+    developerMode: false
