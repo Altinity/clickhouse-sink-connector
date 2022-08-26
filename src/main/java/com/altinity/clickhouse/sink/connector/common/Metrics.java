@@ -222,8 +222,9 @@ public class Metrics {
     }
 
     public static void updateCounters(String topicName, int numRecords) {
-        topicsNumRecordsCounter
-        .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
-
+        if(enableMetrics) {
+            topicsNumRecordsCounter
+                    .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+        }
     }
 }
