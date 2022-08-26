@@ -158,6 +158,9 @@ public class Metrics {
 
 
     public static void updateMetrics(BlockMetaData bmd) {
+        if(!enableMetrics) {
+            return;
+        }
         maxBinLogPositionCounter.set(bmd.getBinLogPosition());
                 //tag("partition", Integer.toString(bmd.getPartition())).
 
