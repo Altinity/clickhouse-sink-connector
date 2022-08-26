@@ -627,7 +627,11 @@ public class DbWriter extends BaseDbWriter {
                         ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value));
                     }
                     else if (value instanceof Long) {
-                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64(colName)));
+                        boolean isColumnDateTime64 = false;
+                        if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
+                            isColumnDateTime64 = true;
+                        }
+                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
                     }
                 } else if (isFieldTime) {
                     ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));

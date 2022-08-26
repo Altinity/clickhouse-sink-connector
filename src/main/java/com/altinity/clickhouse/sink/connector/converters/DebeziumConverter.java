@@ -64,9 +64,10 @@ public class DebeziumConverter {
             LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
 
             LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, isDateTime64);
-            DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
+            //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-            return modifiedDate.format(formatter);
+            return modifiedDate.format(destFormatter);
         }
 
         public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {

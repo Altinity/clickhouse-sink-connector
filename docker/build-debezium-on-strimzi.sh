@@ -9,7 +9,7 @@ SRC_ROOT="$(realpath "${CUR_DIR}/..")"
 
 # Externally configurable build-dependent options
 TAG="${TAG:-latest}"
-DOCKER_IMAGE="altinity/debezium-mysql-source-connector:${TAG}"
+DOCKER_IMAGE="subkanthi/debezium-mysql-source-connector:${TAG}"
 
 # Externally configurable build-dependent options
 DOCKERFILE_DIR="${SRC_ROOT}/docker"

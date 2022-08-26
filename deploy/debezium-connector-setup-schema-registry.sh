@@ -120,7 +120,7 @@ else
           "connector.class": "${CONNECTOR_CLASS}",
           "tasks.max": "1",
           "snapshot.mode": "${SNAPSHOT_MODE}",
-          "snapshot.locking.mode": "minimal",
+          "snapshot.locking.mode": "none",
           "snapshot.delay.ms": 10000,
           "include.schema.changes":"true",
           "include.schema.comments": "true",
