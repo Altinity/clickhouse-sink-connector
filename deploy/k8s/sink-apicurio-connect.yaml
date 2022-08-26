@@ -1,14 +1,14 @@
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
-  namespace: debezium
-  name: debezium-kafkaconnect
+  namespace: sink
+  name: sink-kctr
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.1.0
   replicas: 1
-  image: subkanthi/debezium-mysql-source-connector:latest
+  image:  altinity/clickhouse-kafka-sink-connector:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -19,30 +19,37 @@ spec:
   #build:
   #  output:
   #    type: docker
-  #    image: altinity/debezium-mysql-source-connector:latest
+  #    image: altinity/clickhouse-sink-connector:latest
   #    pushSecret: docker-access-secret
   #  plugins:
-  #    - name: debezium-mysql-connector
+  #    - name: clickhouse-sink-connector
   #      artifacts:
   #        - type: tgz
-  #          url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.9.2.Final/debezium-connector-mysql-1.9.2.Final-plugin.tar.gz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
   #        - type: tgz
   #          url: https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz
+  #        - type: tgz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
   config:
-    group.id: 1
+    group.id: 2
 
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.topic: config-storage-topic-debezium-2
+    config.storage.topic: config-storage-topic-sink
     config.storage.replication.factor: 1
     config.storage.partitions: 1
 
-    offset.storage.topic: offset-storage-topic-debezium-2
+    offset.storage.topic: offset-storage-topic-sink
     offset.storage.replication.factor: 1
     offset.storage.partitions: 1
 
-    status.storage.topic: status-storage-topic-debezium-2
+    status.storage.topic: status-storage-topic-sink
     status.storage.replication.factor: 1
     status.storage.partitions: 1
 
-    key.converter: "io.confluent.connect.avro.AvroConverter"
-    value.converter: "io.confluent.connect.avro.AvroConverter"
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+
+  logging:
+    type: inline
+    loggers:
+      log4j.rootLogger: "DEBUG"

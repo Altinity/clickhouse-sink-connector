@@ -23,11 +23,11 @@ spec:
         - name: GROUP_ID
           value: "1"
         - name: CONFIG_STORAGE_TOPIC
-          value: config-storage-topic-debezium
+          value: config-storage-topic-debezium-2
         - name: OFFSET_STORAGE_TOPIC
-          value: offset-storage-topic-debezium
+          value: offset-storage-topic-debezium-2
         - name: STATUS_STORAGE_TOPIC
-          value: status-storage-topic-debezium
+          value: status-storage-topic-debezium-2
         - name: LOG_LEVEL
           value: info
         - name: KEY_CONVERTER

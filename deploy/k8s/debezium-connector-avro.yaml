@@ -10,7 +10,7 @@ spec:
   tasksMax: 1
   config:
     snapshot.mode: "initial"
-    snapshot.locking.mode: "minimal"
+    snapshot.locking.mode: "none"
     snapshot.delay.ms: "10000"
     include.schema.changes: "true"
 
@@ -21,6 +21,7 @@ spec:
     database.server.id: "${DATABASE_SERVER_ID}"
     database.server.name: "${DATABASE_SERVER_NAME}"
     database.include.list: "${MYSQL_DBS}"
+    table.include.list: "dashboard.basket_items, dashboard.baskets, dashboard.client_generated_matches, dashboard.client_settings, dashboard.matches_user_deleted, dashboard.partners, dashboard.product_notes, dashboard.promotional_mechanics, dashboard.summary_matched_client_new_dates, dashboard.summary_matched_user_deleted, dashboard.user_default_filters, dashboard.user_pins, dashboard.users"
     # In order to deal with exception
     # "message": "Connector configuration is invalid and contains the following 1 error(s):\nUnable to connect: Public Key Retrieval is not allowed\nYou can also find the above list of errors at the endpoint `/{connectorType}/config/validate`"
     database.allowPublicKeyRetrieval: "true"
@@ -41,5 +42,5 @@ spec:
     key.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter: "io.confluent.connect.avro.AvroConverter"
 
-    key.converter.schema.registry.url : "http://schemaregistry.registry:8081"
-    value.converter.schema.registry.url: "http://schemaregistry.registry:8081"
+    key.converter.schema.registry.url : "http://schema-registry.registry:8081"
+    value.converter.schema.registry.url: "http://schema-registry.registry:8081"
