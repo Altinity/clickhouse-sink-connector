@@ -32,15 +32,15 @@ spec:
     group.id: 1
 
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.topic: config-storage-topic-debezium-2
+    config.storage.topic: config-storage-topic-debezium-5
     config.storage.replication.factor: 1
     config.storage.partitions: 1
 
-    offset.storage.topic: offset-storage-topic-debezium-2
+    offset.storage.topic: offset-storage-topic-debezium-5
     offset.storage.replication.factor: 1
     offset.storage.partitions: 1
 
-    status.storage.topic: status-storage-topic-debezium-2
+    status.storage.topic: status-storage-topic-debezium-5
     status.storage.replication.factor: 1
     status.storage.partitions: 1
 

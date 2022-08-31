@@ -2,7 +2,7 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnector
 metadata:
   namespace: sink
-  name: sink-kctr
+  name: sink-kctr-2
   labels:
     # The strimzi.io/cluster label identifies the KafkaConnect instance
     # in which to create this connector. That KafkaConnect instance
@@ -13,7 +13,7 @@ spec:
   class: com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
   tasksMax: 1
   config:
-    topics: "SERVER2.dashboard.basket_items, SERVER2.dashboard.baskets, SERVER2.dashboard.client_generated_matches, SERVER2.dashboard.client_settings, SERVER2.dashboard.matches_user_deleted, SERVER2.dashboard.partners, SERVER2.dashboard.product_notes, SERVER2.dashboard.promotional_mechanics,SERVER2.dashboard.summary_matched_client_new_dates,SERVER2.dashboard.summary_matched_user_deleted,SERVER2.dashboard.user_default_filters,SERVER2.dashboard.user_pins,SERVER2.dashboard.users,SERVER2.dashboard.feed"
+    topics: "SERVER2.dashboard.feed"
     clickhouse.server.url: "${CLICKHOUSE_HOST}"
     clickhouse.server.user: "${CLICKHOUSE_USER}"
     clickhouse.server.pass: "${CLICKHOUSE_PASSWORD}"

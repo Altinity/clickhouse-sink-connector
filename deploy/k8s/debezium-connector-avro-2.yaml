@@ -1,0 +1,56 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  namespace: debezium
+  name: debezium-kctr-2
+  labels:
+    strimzi.io/cluster: debezium-kafkaconnect
+spec:
+  class: io.debezium.connector.mysql.MySqlConnector
+  tasksMax: 1
+  config:
+    snapshot.mode: "initial"
+    snapshot.locking.mode: "none"
+    snapshot.delay.ms: "10000"
+    include.schema.changes: "true"
+
+
+    #mysqldump -h dashboard-aurora-production.cluster-ccbfmfpvq6ba.eu-west-2.rds.amazonaws.com -u altinity_readonly -pn2uG4Kd9H4HCg6AaVmQTbU8fHeFUmPH8 -t -Tdump dashboard feed --fields-terminated-by=','
+
+    database.hostname: "${MYSQL_HOST}"
+    database.port: "${MYSQL_PORT}"
+    database.user: "${MYSQL_USER}"
+    database.password: "${MYSQL_PASSWORD}"
+    database.server.id: "${DATABASE_SERVER_ID}"
+    database.server.name: "${DATABASE_SERVER_NAME}"
+    database.include.list: "${MYSQL_DBS}"
+    #table.include.list: "dashboard.feed, dashboard.feed_assortment, dashboard.feed_brands,dashbaoard.matches, dashboard.matches_brands,dashboard.scrape, dashboard.scrape_assortment, dashboard.summary_matched, dashboard.summary_matched_brands"
+    # In order to deal with exception
+    # "message": "Connector configuration is invalid and contains the following 1 error(s):\nUnable to connect: Public Key Retrieval is not allowed\nYou can also find the above list of errors at the endpoint `/{connectorType}/config/validate`"
+    database.allowPublicKeyRetrieval: "true"
+    database.useSSL: "false"
+
+
+    snapshot.fetch.size: 500
+
+    database.history.kafka.bootstrap.servers: "redpanda.redpanda:9092"
+    database.history.kafka.topic: "schema-changes.dashboard"
+
+    # List of topic options:
+    # https://debezium.io/documentation/reference/stable/configuration/topic-auto-create-config.html
+    topic.creation.default.replication.factor: "1"
+    topic.creation.default.partitions: "1"
+    # ?
+    topic.creation.$alias.partitions: "1"
+
+    # Avro serialization description:
+    # https://debezium.io/documentation/reference/stable/configuration/avro.html
+    key.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+
+    key.converter.schema.registry.url : "http://schema-registry.registry:8081"
+    value.converter.schema.registry.url: "http://schema-registry.registry:8081"
+    snapshot.select.statement.overrides: "dashboard.feed"
+    #snapshot.select.statement.overrides.dashboard.feed: "SELECT * FROM dashboard.feed WHERE DATE(valid_at) > '2019-06-01' and DATE(valid_at) < '2020-06-01'"
+    #snapshot.select.statement.overrides.dashboard.feed: "SELECT * FROM dashboard.feed WHERE DATE(valid_at) >= '2020-06-01' and DATE(valid_at) < '2021-06-01'"
+    snapshot.select.statement.overrides.dashboard.feed: "SELECT * FROM dashboard.feed WHERE DATE(valid_at) >= '2021-06-01' and DATE(valid_at) < '2021-07-01'"
