@@ -52,7 +52,7 @@ elif [[ $1 == "mysql_external" ]]; then
   HOST="host.docker.internal"
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="initial"
+upd  SNAPSHOT_MODE="schema_only"
 fi
 
 

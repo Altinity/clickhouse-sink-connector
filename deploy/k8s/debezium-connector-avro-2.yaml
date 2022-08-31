@@ -15,7 +15,6 @@ spec:
     include.schema.changes: "true"
 
 
-    #mysqldump -h dashboard-aurora-production.cluster-ccbfmfpvq6ba.eu-west-2.rds.amazonaws.com -u altinity_readonly -pn2uG4Kd9H4HCg6AaVmQTbU8fHeFUmPH8 -t -Tdump dashboard feed --fields-terminated-by=','
 
     database.hostname: "${MYSQL_HOST}"
     database.port: "${MYSQL_PORT}"
