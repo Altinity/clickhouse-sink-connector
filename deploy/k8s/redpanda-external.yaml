@@ -6,14 +6,14 @@ metadata:
 spec:
   image: "vectorized/redpanda"
   version: "latest"
-  replicas: 1
+  replicas: 3
   resources:
     requests:
       cpu: 1
-      memory: 1.2Gi
+      memory: 4Gi
     limits:
       cpu: 1
-      memory: 1.2Gi
+      memory: 4Gi
   configuration:
     rpcServer:
       port: 33145
@@ -27,4 +27,4 @@ spec:
           enabled: true
     adminApi:
       - port: 9644
-    developerMode: true
+    developerMode: false

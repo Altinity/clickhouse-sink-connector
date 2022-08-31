@@ -52,7 +52,7 @@ elif [[ $1 == "mysql_external" ]]; then
   HOST="host.docker.internal"
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="initial"
+upd  SNAPSHOT_MODE="schema_only"
 fi
 
 
@@ -120,7 +120,7 @@ else
           "connector.class": "${CONNECTOR_CLASS}",
           "tasks.max": "1",
           "snapshot.mode": "${SNAPSHOT_MODE}",
-          "snapshot.locking.mode": "minimal",
+          "snapshot.locking.mode": "none",
           "snapshot.delay.ms": 10000,
           "include.schema.changes":"true",
           "include.schema.comments": "true",

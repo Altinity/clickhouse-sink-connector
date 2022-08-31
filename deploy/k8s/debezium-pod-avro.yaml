@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment 
+metadata:
+  labels:
+    app: debezium-connector
+  name: debezium-connector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: debezium-connector 
+  template:
+    metadata:
+      labels:
+        app: debezium-connector
+    spec: 
+      containers:
+      - name: debezium-connector
+        image: debezium/connect:1.9.5.Final
+        env:
+        - name: BOOTSTRAP_SERVERS
+          value: "redpanda.redpanda:9092"
+        - name: GROUP_ID
+          value: "1"
+        - name: CONFIG_STORAGE_TOPIC
+          value: config-storage-topic-debezium-5
+        - name: OFFSET_STORAGE_TOPIC
+          value: offset-storage-topic-debezium-5
+        - name: STATUS_STORAGE_TOPIC
+          value: status-storage-topic-debezium-5
+        - name: LOG_LEVEL
+          value: info
+        - name: KEY_CONVERTER
+          value: "io.confluent.connect.avro.AvroConverter"
+        - name: VALUE_CONVERTER
+          value: "io.confluent.connect.avro.AvroConverter"
+        ports:
+          - containerPort: 8083
+            name: web
+          - containerPort: 1976
+            name: udp

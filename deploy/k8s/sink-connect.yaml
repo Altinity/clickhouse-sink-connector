@@ -2,13 +2,13 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
   namespace: sink
-  name: sink
+  name: sink-kafkaconnect
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.1.0
   replicas: 1
-  image: localhost:5000/altinity/clickhouse-kafka-sink-connector:latest
+  image: subkanthi/clickhouse-kafka-sink-connector-strimzi:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -34,22 +34,22 @@ spec:
     group.id: 2
 
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.topic: config-storage-topic-sink
+    config.storage.topic: config-storage-topic-sink-7
     config.storage.replication.factor: 1
     config.storage.partitions: 1
 
-    offset.storage.topic: offset-storage-topic-sink
+    offset.storage.topic: offset-storage-topic-sink-7
     offset.storage.replication.factor: 1
     offset.storage.partitions: 1
 
-    status.storage.topic: status-storage-topic-sink
+    status.storage.topic: status-storage-topic-sink-7
     status.storage.replication.factor: 1
     status.storage.partitions: 1
 
-    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
-    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
-
-  logging:
-    type: inline
-    loggers:
-      log4j.rootLogger: "DEBUG"
+    key.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+#
+#  logging:
+#    type: inline
+#    loggers:
+#      log4j.rootLogger: "DEBUG"

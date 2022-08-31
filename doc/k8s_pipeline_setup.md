@@ -1,3 +1,7 @@
+## Start local Docker registry
+```bash
+docker run -d -p 5000:5000 --restart=always --name registry registry:2
+```
 
 ## RedPanda
 
@@ -67,6 +71,10 @@ use CERT-MANAGER v 1.4
 NAMESPACE=redpanda
 kubectl create namespace $NAMESPACE
 kubectl -n $NAMESPACE create -f "${SRC_ROOT}/deploy/k8s/redpanda-internal.yaml"
+```
+To deploy 3-node cluster
+```bash
+kubectl -n $NAMESPACE create -f redpanda-external.yaml
 ```
 
 Wait to start
@@ -173,7 +181,7 @@ kubectl -n $NAMESPACE rollout status -w statefulset/chi-clickhouse-cluster-0-0
 kubectl -n $NAMESPACE get statefulset
 ```
 
-### schema registry
+### schema registry(Confluent)
 
 ```bash
 NAMESPACE="registry"

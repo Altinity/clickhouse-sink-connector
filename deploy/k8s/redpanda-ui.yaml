@@ -1,0 +1,49 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  namespace: redpanda
+  name: redpanda-ui
+  labels:
+    app: redpanda-ui
+spec:
+  selector:
+    matchLabels:
+      app: redpanda-ui
+  template:
+    metadata:
+      labels:
+        app: redpanda-ui
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: redpanda-ui
+          env:
+            - name: CONFIG_FILEPATH
+              value: /tmp/config.yml
+            - name: CONSOLE_CONFIG_FILE
+              value:  |
+                kafka:
+                  brokers: ["redpanda.redpanda:9092"]
+                connect:
+                  enabled: true
+                  clusters:
+                    - name: datagen
+                      url: http://debezium:8083
+          image: docker.redpanda.com/vectorized/console:master-217260f
+          command: [ "/bin/sh" ]
+          args: [ "-c", "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console" ]
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: redpanda-ui
+spec:
+  selector:
+    app: redpanda-ui
+  ports:
+    - protocol: TCP
+      port: 8089
+      targetPort: 8080
