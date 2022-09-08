@@ -62,7 +62,7 @@ public class BaseDbWriter {
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
      */
-    protected Map<String, String> getColumnsDataTypesForTable(String tableName) {
+    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
 
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {

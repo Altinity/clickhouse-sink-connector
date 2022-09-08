@@ -2,13 +2,13 @@ apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
   namespace: debezium
-  name: debezium
+  name: debezium-kafkaconnect
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
   version: 3.1.0
   replicas: 1
-  image: localhost:5000/altinity/debezium-mysql-source-connector:latest
+  image: subkanthi/debezium-mysql-source-connector:latest
   bootstrapServers: redpanda.redpanda:9092
 #  tls:
 #    trustedCertificates:
@@ -32,17 +32,17 @@ spec:
     group.id: 1
 
     # -1 means it will use the default replication factor configured in the broker
-    config.storage.topic: config-storage-topic-debezium
+    config.storage.topic: config-storage-topic-debezium-2
     config.storage.replication.factor: 1
     config.storage.partitions: 1
 
-    offset.storage.topic: offset-storage-topic-debezium
+    offset.storage.topic: offset-storage-topic-debezium-2
     offset.storage.replication.factor: 1
     offset.storage.partitions: 1
 
-    status.storage.topic: status-storage-topic-debezium
+    status.storage.topic: status-storage-topic-debezium-2
     status.storage.replication.factor: 1
     status.storage.partitions: 1
 
-    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
-    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    key.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"

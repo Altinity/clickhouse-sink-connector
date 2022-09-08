@@ -1,4 +1,4 @@
-version: "2.3"
+version: "3.4"
 
 # Ubuntu , set this for redpanda to start
 # https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
@@ -36,8 +36,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
-    #security_opt:
-    #  - seccomp:unconfined
+#    security_opt:
+#      - seccomp:unconfined
 
 #  mysql-slave:
 #    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
@@ -97,7 +97,7 @@ services:
 
   debezium:
     container_name: debezium
-    #image: debezium/connect:2.0
+    #image: debezium/connect:1.9.5.Final
     build:
       context: ../../docker/debezium_jmx
       args:
@@ -107,6 +107,8 @@ services:
     ports:
       - "8083:8083"
       - "1976:1976"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     environment:
       # Where to find Kafka broker
@@ -282,11 +284,11 @@ services:
     #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
-    links:
-      - prometheus
     environment:
       - DS_PROMETHEUS=prometheus
       - GF_USERS_DEFAULT_THEME=light
+    depends_on:
+      - prometheus
   #### END OF MONITORING ###
 
   bash:

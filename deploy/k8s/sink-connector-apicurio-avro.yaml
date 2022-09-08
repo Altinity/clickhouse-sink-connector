@@ -1,0 +1,41 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  namespace: sink
+  name: sink
+  labels:
+    # The strimzi.io/cluster label identifies the KafkaConnect instance
+    # in which to create this connector. That KafkaConnect instance
+    # must have the strimzi.io/use-connector-resources annotation
+    # set to true.
+    strimzi.io/cluster: sink
+spec:
+  class: com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    topics: "${TOPICS}"
+    clickhouse.topic2table.map: "${TOPICS_TABLE_MAP}"
+    clickhouse.server.url: "${CLICKHOUSE_HOST}"
+    clickhouse.server.user: "${CLICKHOUSE_USER}"
+    clickhouse.server.pass: "${CLICKHOUSE_PASSWORD}"
+    clickhouse.server.database: "${CLICKHOUSE_DATABASE}"
+    clickhouse.server.port: "${CLICKHOUSE_PORT}"
+    clickhouse.table.name: "${CLICKHOUSE_TABLE}"
+
+    store.kafka.metadata: "true"
+    topic.creation.default.partitions: "1"
+
+    store.raw.data: "true"
+    store.raw.data.column: "raw_data"
+
+    # Avro serialization description:
+    # https://debezium.io/documentation/reference/stable/configuration/avro.html
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    key.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    key.converter.apicurio.registry.auto-register: "true"
+    key.converter.apicurio.registry.find-latest: "true"
+
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    value.converter.apicurio.registry.auto-register: "true"
+    value.converter.apicurio.registry.find-latest: "true"

@@ -1,0 +1,55 @@
+services:
+
+  kafka:
+    container_name: kafka
+    image: vectorized/redpanda
+    restart: "no"
+    #    ports:
+    #      - "8081:8081"
+    #      - "8082:8082"
+    #      - "9091:9091"
+    #      - "9092:9092"
+    ports:
+      # Expose LOCALHOST_NETWORK listener on localhost
+      - "19092:19092"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      # Setup listeners for docker network and localhost network
+      - --kafka-addr
+      - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
+  #  kafka2:
+  #    container_name: kafka2
+  #    image: vectorized/redpanda
+  #    restart: always
+
+  sink_graalvm:
+    container_name: sink
+    image: altinity/clickhouse-kafka-sink-connector-on-graalvm:latest
+    restart: "no"
+    ports:
+      - "18083:8083"
+      - "5005:5005"
+      - "39999:39999"
+    environment:
+      # Where to find Kafka broker
+      - CONNECT_BOOTSTRAP_SERVERS=kafka:9092
+      # Maps to rest.advertised.host.name
+      #- ADVERTISED_HOST_NAME=kafka
+      # Maps to rest.advertised.port
+      #- ADVERTISED_PORT=9092
+      - GROUP_ID=2
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
+      - STATUS_STORAGE_TOPIC=status-storage-topic-sink
+      - LOG_LEVEL=INFO
+      #- JAVA_DEBUG_PORT=*:5005
+      #- DEFAULT_JAVA_DEBUG_PORT=*:5005
+      - KAFKA_DEBUG=true
+      - JMX_PORT=39999
+      #- LOG_LEVEL=DEBUG
+    depends_on:
+      - kafka

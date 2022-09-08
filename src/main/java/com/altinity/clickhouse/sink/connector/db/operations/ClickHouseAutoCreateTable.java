@@ -68,14 +68,19 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append(" ");
         createTableSyntax.append("ENGINE = ReplacingMergeTree(ver)");
         createTableSyntax.append(" ");
-        createTableSyntax.append("PRIMARY KEY(");
 
-        createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
-        createTableSyntax.append(") ");
-        createTableSyntax.append("ORDER BY(");
-        createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
-        createTableSyntax.append(")");
+        if(primaryKey != null) {
+            createTableSyntax.append("PRIMARY KEY(");
+            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(") ");
 
+            createTableSyntax.append("ORDER BY(");
+            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(")");
+        } else {
+            // ToDO:
+            createTableSyntax.append("ORDER BY tuple()");
+        }
        return createTableSyntax.toString();
     }
 }

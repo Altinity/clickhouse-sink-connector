@@ -1,0 +1,55 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  namespace: sink
+  name: sink-kctr
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: 3.1.0
+  replicas: 1
+  image:  altinity/clickhouse-kafka-sink-connector:latest
+  bootstrapServers: redpanda.redpanda:9092
+#  tls:
+#    trustedCertificates:
+#      - secretName: my-cluster-cluster-ca-cert
+#        certificate: ca.crt
+
+  # https://kafka.apache.org/documentation/#connectconfigs
+  #build:
+  #  output:
+  #    type: docker
+  #    image: altinity/clickhouse-sink-connector:latest
+  #    pushSecret: docker-access-secret
+  #  plugins:
+  #    - name: clickhouse-sink-connector
+  #      artifacts:
+  #        - type: tgz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/sink.tgz
+  #        - type: tgz
+  #          url: https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz
+  #        - type: tgz
+  #          url: https://github.com/Altinity/clickhouse-sink-connector/raw/main/deploy/k8s/artefacts/libs.tgz
+  config:
+    group.id: 2
+
+    # -1 means it will use the default replication factor configured in the broker
+    config.storage.topic: config-storage-topic-sink
+    config.storage.replication.factor: 1
+    config.storage.partitions: 1
+
+    offset.storage.topic: offset-storage-topic-sink
+    offset.storage.replication.factor: 1
+    offset.storage.partitions: 1
+
+    status.storage.topic: status-storage-topic-sink
+    status.storage.replication.factor: 1
+    status.storage.partitions: 1
+
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+
+  logging:
+    type: inline
+    loggers:
+      log4j.rootLogger: "DEBUG"

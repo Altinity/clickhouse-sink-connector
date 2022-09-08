@@ -40,7 +40,7 @@ cd deploy/docker
 ### Postgres:
 ```bash
 cd deploy/docker
-docker-compose -f docker-compose-postgresql.yaml up
+docker-compose -f docker-compose.yaml -f docker-compose-postgresql.override.yaml up
 ```
 
 ### Start Docker-compose with a specific docker tag
@@ -49,6 +49,10 @@ cd deploy/docker
 ./start-docker-compose.sh 2022-07-19
 ```
 
+### Load Airline data set
+```bash
+docker-compose -f docker-compose.yaml -f docker-compose-airline-data.override.yaml up
+```
 ### Stop Docker-compose
 ```bash
 cd deploy/docker
@@ -85,7 +89,6 @@ to create the Clickhouse Sink connector using Kafka connect REST API
 ../deploy/sink-connector-setup-schema-registry.sh postgres apicurio
 ```
 
-
 # Deleting connectors
 The source connector can be deleted using the following script
 [debezium-delete.sh](../deploy/debezium-delete.sh)
@@ -96,10 +99,33 @@ The sink connector can be deleted using the following script
 # References
 Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
-[docker-compose.yaml]: ../deploy/docker/docker-compose-apicurio-schema-registry.yaml
+[docker-compose.yaml]: ../deploy/docker/docker-compose-apicurio-schema-registry.override.yaml
 [Dockerfile]: ../docker/Dockerfile-sink-on-debezium-base-image
 
+## Connecting to a different MySQL instance(Host)
 
+Add the following line to the `debezium` service in `docker-compose.yml`,
+so that debezium is able to access host.
+```
+extra_hosts:
+- "host.docker.internal:host-gateway"
+```
+Make sure the mysqld.conf is modified with `bind-address` set to `0.0.0.0`
+
+Modify debezium configuration `debezium-connector-setup-schema-registry.sh` 
+to set the MySQL host.
+```
+            "database.hostname": "host.docker.internal",
+```
+
+Grant access in MySQL server for debezium host
+
+Caution about the security risks about WITH GRANT OPTION, refer manual
+```
+mysql> CREATE USER 'root'@'%' IDENTIFIED BY 'PASSWORD';
+mysql> GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+mysql> FLUSH PRIVILEGES;
+```
 # Topic Partitions.
 By Default the kafka topic is created with number of partitions set to 1.
 For better throughput and High availability, its better to set to the partitions

@@ -47,9 +47,12 @@ if [[ $1 == "postgres" ]]; then
 
   curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @payload.json
   exit
+elif [[ $1 == "mysql_external" ]]; then
+  echo "MySQL external database"
+  HOST="host.docker.internal"
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="initial"
+  SNAPSHOT_MODE="schema_only_recovery"
 fi
 
 
@@ -117,7 +120,7 @@ else
           "connector.class": "${CONNECTOR_CLASS}",
           "tasks.max": "1",
           "snapshot.mode": "${SNAPSHOT_MODE}",
-          "snapshot.locking.mode": "minimal",
+          "snapshot.locking.mode": "none",
           "snapshot.delay.ms": 10000,
           "include.schema.changes":"true",
           "include.schema.comments": "true",

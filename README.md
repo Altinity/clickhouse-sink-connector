@@ -18,18 +18,29 @@ The connector is tested with the following converters
 - Kafka Offset management in ClickHouse
 - Increased Parallelism(Customize thread pool for JDBC connections)
 
-
-
 ### Grafana Dashboard
-![](doc/img/Grafana_dashboard.png) \
+![](doc/img/Grafana_dashboard.png)
+
 # Source Databases
 - MySQL (Debezium)
 - PostgreSQL (Debezium) (Testing in progress)
 
+### Quick Start
+Docker image for Sink connector `altinity/clickhouse-sink-connector:latest`
+
+https://hub.docker.com/r/altinity/clickhouse-sink-connector
+
+### MySQL:
+```bash
+cd deploy/docker
+./start-docker-compose.sh 
+```
+For detailed instructions [Setup](doc/setup.md)
 ## Documentation
 - [Data Types](doc/DataTypes.md)
 - [Architecture](doc/architecture.md)
 - [Local Setup - Docker Compose](doc/setup.md)
+- [Debezium Setup](doc/debezium_setup.md)
 - [Kubernetes Setup](doc/k8s_pipeline_setup.md)
 - [Sink Configuration](doc/sink_configuration.md)
 - [Testing](doc/TESTING.md)

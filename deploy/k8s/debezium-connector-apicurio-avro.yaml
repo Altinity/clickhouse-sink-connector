@@ -1,0 +1,52 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  namespace: debezium
+  name: debezium
+  labels:
+    strimzi.io/cluster: debezium
+spec:
+  class: io.debezium.connector.mysql.MySqlConnector
+  tasksMax: 1
+  config:
+    # List of mysql options:
+    # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
+
+    snapshot.mode: "initial"
+    snapshot.locking.mode: "minimal"
+    snapshot.delay.ms: "10000"
+    include.schema.changes: "true"
+
+    database.hostname: "${MYSQL_HOST}"
+    database.port: "${MYSQL_PORT}"
+    database.user: "${MYSQL_USER}"
+    database.password: "${MYSQL_PASSWORD}"
+    database.server.id: "${DATABASE_SERVER_ID}"
+    database.server.name: "${DATABASE_SERVER_NAME}"
+    database.include.list: "${MYSQL_DBS}"
+    # In order to deal with exception
+    # "message": "Connector configuration is invalid and contains the following 1 error(s):\nUnable to connect: Public Key Retrieval is not allowed\nYou can also find the above list of errors at the endpoint `/{connectorType}/config/validate`"
+    database.allowPublicKeyRetrieval: "true"
+    database.useSSL: "false"
+
+    database.history.kafka.bootstrap.servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+    database.history.kafka.topic: "${KAFKA_TOPIC}"
+
+    # List of topic options:
+    # https://debezium.io/documentation/reference/stable/configuration/topic-auto-create-config.html
+    topic.creation.default.replication.factor: "1"
+    topic.creation.default.partitions: "1"
+    # ?
+    topic.creation.$alias.partitions: "1"
+
+    # Avro serialization description:
+    # https://debezium.io/documentation/reference/stable/configuration/avro.html
+    key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    key.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    key.converter.apicurio.registry.auto-register: "true"
+    key.converter.apicurio.registry.find-latest: "true"
+
+    value.converter: "io.apicurio.registry.utils.converter.AvroConverter"
+    value.converter.apicurio.registry.url: "${REGISTRY_URL}"
+    value.converter.apicurio.registry.auto-register: "true"
+    value.converter.apicurio.registry.find-latest: "true"

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment 
+metadata:
+  labels:
+    app: sink-connector
+  name: sink-connector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sink-connector
+  template:
+    metadata:
+      labels:
+        app: sink-connector
+    spec: 
+      containers:
+      - name: sink-connector
+        image:  altinity/clickhouse-sink-connector:2022-08-28
+        env:
+        - name: BOOTSTRAP_SERVERS
+          value: "redpanda.redpanda:9092"
+        - name: GROUP_ID
+          value: "2"
+        - name: CONFIG_STORAGE_TOPIC
+          value: config-storage-topic-sink-7
+        - name: OFFSET_STORAGE_TOPIC
+          value: offset-storage-topic-sink-7
+        - name: STATUS_STORAGE_TOPIC
+          value: status-storage-topic-sink-7
+        ports:
+          - containerPort: 8083
+            name: web
+          - containerPort: 5005
+            name: jmx
+          - containerPort: 39999
+            name: udp
+
