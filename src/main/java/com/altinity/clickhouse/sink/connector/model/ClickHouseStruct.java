@@ -9,9 +9,7 @@ import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static com.altinity.clickhouse.sink.connector.model.SinkRecordColumns.*;
 
@@ -176,29 +174,34 @@ public class ClickHouseStruct {
         }
         Struct source = (Struct) convertedValue.get(SOURCE);
 
+        List<Field> fields = source.schema().fields();
+        HashSet<String> fieldNames = new HashSet<String>();
+        for(Field f: fields) {
+            fieldNames.add(f.name());
+        }
         try {
-            if (source.get(TS_MS) != null && source.get(TS_MS) instanceof Long) {
+            if (fieldNames.contains(TS_MS) && source.get(TS_MS) != null && source.get(TS_MS) instanceof Long) {
                 this.setTs_ms((Long) source.get(TS_MS));
             }
-            if (source.get(SNAPSHOT) != null && source.get(SNAPSHOT) instanceof String) {
+            if (fieldNames.contains(SNAPSHOT) && source.get(SNAPSHOT) != null && source.get(SNAPSHOT) instanceof String) {
                 this.setSnapshot(Boolean.parseBoolean((String) source.get(SNAPSHOT)));
             }
-            if (source.get(SERVER_ID) != null && source.get(SERVER_ID) instanceof Long) {
+            if (fieldNames.contains(SERVER_ID) && source.get(SERVER_ID) != null && source.get(SERVER_ID) instanceof Long) {
                 this.setServerId((Long) source.get(SERVER_ID));
             }
-            if (source.get(BINLOG_FILE) != null && source.get(BINLOG_FILE) instanceof String) {
+            if (fieldNames.contains(BINLOG_FILE) && source.get(BINLOG_FILE) != null && source.get(BINLOG_FILE) instanceof String) {
                 this.setFile((String) source.get(BINLOG_FILE));
             }
-            if (source.get(BINLOG_POS) != null && source.get(BINLOG_POS) instanceof Long) {
+            if (fieldNames.contains(BINLOG_POS) && source.get(BINLOG_POS) != null && source.get(BINLOG_POS) instanceof Long) {
                 this.setPos((Long) source.get(BINLOG_POS));
             }
-            if (source.get(ROW) != null && source.get(ROW) instanceof Integer) {
+            if (fieldNames.contains(ROW) && source.get(ROW) != null && source.get(ROW) instanceof Integer) {
                 this.setRow((Integer) source.get(ROW));
             }
-            if (source.get(SERVER_THREAD) != null && source.get(SERVER_THREAD) instanceof Integer) {
+            if (fieldNames.contains(SERVER_THREAD) && source.get(SERVER_THREAD) != null && source.get(SERVER_THREAD) instanceof Integer) {
                 this.setThread((Integer) convertedValue.get(SERVER_THREAD));
             }
-            if(source.get(GTID) != null && source.get(GTID) instanceof String) {
+            if(fieldNames.contains(GTID) && source.get(GTID) != null && source.get(GTID) instanceof String) {
                 String[] gtidArray = ((String) source.get(GTID)).split(":");
                 if(gtidArray.length == 2) {
                     this.setGtid(Integer.parseInt(gtidArray[1]));
