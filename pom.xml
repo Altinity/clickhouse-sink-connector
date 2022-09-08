@@ -19,10 +19,6 @@
             <organization>Altinity</organization>
             <organizationUrl>https://altinity.com</organizationUrl>
         </developer>
-        <developer>
-            <name>Vladislav Klimenko</name>
-            <email>sunsingerus@gmail.com</email>
-        </developer>
     </developers>
 
     <licenses>
@@ -154,8 +150,11 @@
                     <excludes>
                         <exclude>**/*IT.java</exclude>
                     </excludes>
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
                 </configuration>
-                <executions>
+                <!-- <executions>
                     <execution>
                         <id>integration-test</id>
                         <goals>
@@ -171,7 +170,7 @@
                             </includes>
                         </configuration>
                     </execution>
-                </executions>
+                </executions> -->
             </plugin>
 
             <plugin>
