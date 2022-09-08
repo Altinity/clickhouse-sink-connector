@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
@@ -8,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -19,9 +21,10 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
-    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
+    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, boolean createReplicatedTables,
+                               ClickHouseConnection connection) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
-        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
+        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap, createReplicatedTables);
         log.info("**** AUTO CREATE TABLE " + createTableQuery);
         this.runQuery(createTableQuery, connection);
     }
@@ -33,7 +36,8 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
      * @param columnToDataTypesMap
      * @return CREATE TABLE query
      */
-    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields, Map<String, String> columnToDataTypesMap) {
+    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields,
+                                              Map<String, String> columnToDataTypesMap, boolean createReplicatedTable) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
@@ -66,7 +70,15 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
-        createTableSyntax.append("ENGINE = ReplacingMergeTree(ver)");
+        if(createReplicatedTable) {
+
+            String uuid = String.valueOf(UUID.randomUUID());
+            createTableSyntax.append("ENGINE = ").append(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()).append("(")
+                    .append("'/clickhouse/").append(uuid).append("/tables/{database}/{table}',").append(uuid).append(",").append("ver)");
+        }   else {
+            createTableSyntax.append("ENGINE = ").append(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()).append("(ver)");
+        }
+
         createTableSyntax.append(" ");
         createTableSyntax.append("PRIMARY KEY(");
 

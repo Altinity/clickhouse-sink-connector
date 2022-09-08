@@ -17,6 +17,7 @@ public class DBMetadata {
     public enum TABLE_ENGINE {
         COLLAPSING_MERGE_TREE("CollapsingMergeTree"),
         REPLACING_MERGE_TREE("ReplacingMergeTree"),
+        REPLICATED_REPLACING_MERGE_TREE("ReplicatedReplacingMergeTree"),
 
         MERGE_TREE("MergeTree"),
 

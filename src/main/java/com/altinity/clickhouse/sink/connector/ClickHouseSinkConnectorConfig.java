@@ -293,6 +293,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED,
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, replicated replacing merge tree is created",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION,
                         Type.BOOLEAN,
                         false,

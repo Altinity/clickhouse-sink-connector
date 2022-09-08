@@ -55,6 +55,9 @@ public class ClickHouseSinkConnectorConfigVariables {
     //Config variable for auto creating tables if they dont exist.
     public static final String AUTO_CREATE_TABLES = "auto.create.tables";
 
+    //Config variable for creating replicated replacingmergetree.
+    public static final String AUTO_CREATE_TABLES_REPLICATED = "auto.create.tables.replicated";
+
     // Config variable when set to true, columns will be added.
     public static final String ENABLE_SCHEMA_EVOLUTION = "schema.evolution";
 
