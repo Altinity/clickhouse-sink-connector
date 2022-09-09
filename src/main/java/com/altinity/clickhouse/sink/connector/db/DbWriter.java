@@ -401,6 +401,7 @@ public class DbWriter extends BaseDbWriter {
             try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
+                boolean beforeInserted = false;
                 for (ClickHouseStruct record : recordsList) {
                     try {
                         bmd.update(record);
@@ -418,7 +419,12 @@ public class DbWriter extends BaseDbWriter {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                         if(this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
-                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                            if (!beforeInserted) {
+                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
+                            } else {
+                                insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
+                            }
+                            beforeInserted = !beforeInserted;
                         }
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(), false);
                     } else {
