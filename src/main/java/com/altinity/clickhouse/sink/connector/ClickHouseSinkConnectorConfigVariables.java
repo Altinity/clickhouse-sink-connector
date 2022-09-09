@@ -16,8 +16,6 @@ public class ClickHouseSinkConnectorConfigVariables {
     public static final String CLICKHOUSE_DATABASE = "clickhouse.server.database";
     public static final String CLICKHOUSE_PORT = "clickhouse.server.port";
 
-    public static final String CLICKHOUSE_TABLE = "clickhouse.table.name";
-
     public static final String PROVIDER_CONFIG = "provider";
     public static final String TASK_ID = "task_id";
 

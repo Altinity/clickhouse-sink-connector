@@ -30,7 +30,6 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
     "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
     "clickhouse.server.port": ${CLICKHOUSE_PORT},
-    "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
     "key.converter": "org.apache.kafka.connect.json.JsonConverter",
     "value.converter": "org.apache.kafka.connect.json.JsonConverter",
     "store.kafka.metadata": true

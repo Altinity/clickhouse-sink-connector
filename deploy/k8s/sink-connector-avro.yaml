@@ -20,7 +20,6 @@ spec:
     clickhouse.server.pass: "${CLICKHOUSE_PASSWORD}"
     clickhouse.server.database: "${CLICKHOUSE_DATABASE}"
     clickhouse.server.port: "${CLICKHOUSE_PORT}"
-    clickhouse.table.name: "${CLICKHOUSE_TABLE}"
 
     store.kafka.metadata: "false"
     topic.creation.default.partitions: "6"
