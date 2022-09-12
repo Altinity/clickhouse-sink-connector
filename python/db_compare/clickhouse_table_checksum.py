@@ -391,10 +391,10 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables:
-                futures.append(executor.submit(calculate_checksum, table[0]))
-                for future in concurrent.futures.as_completed(futures):
-                    if future.exception() is not None:
-                        raise future.exception()
+              futures.append(executor.submit(calculate_checksum, table[0]))
+            for future in concurrent.futures.as_completed(futures):
+              if future.exception() is not None:
+                raise future.exception()
 
     except (KeyboardInterrupt, SystemExit):
         logging.info("Received interrupt")

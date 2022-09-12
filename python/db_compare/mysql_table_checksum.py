@@ -129,14 +129,10 @@ def getTableChecksumQuery(table):
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
                 select += f"case when {column_name} >='2149-06-06' then CAST('2149-06-06' AS {data_type}) else case when {column_name} <= '1970-01-01' then CAST('1970-01-01' AS {data_type}) else {column_name} end end"
             else:
-                if 'time' == data_type:
-                    select += "replace(date_format("+column_name + \
-                        ",'HH24:MI:SS.US'),'1900-01-01 ','')"
+                if data_type == 'varbinary' or 'blob' in data_type:
+                  select += "lower(hex("+column_name+"))"
                 else:
-                    if data_type == 'varbinary' or 'blob' in data_type:
-                        select += "lower(hex("+column_name+"))"
-                    else:
-                        select += column_name + ""
+                  select += column_name + ""
         first_column = False
         data_types[row['column_name']] = data_type
 
@@ -319,7 +315,7 @@ def main():
             for table in tables.fetchall():
                 futures.append(executor.submit(
                     calculate_sql_checksum, table['table_name']))
-                for future in concurrent.futures.as_completed(futures):
+            for future in concurrent.futures.as_completed(futures):
                     if future.exception() is not None:
                         raise future.exception()
 
