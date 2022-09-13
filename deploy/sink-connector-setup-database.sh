@@ -10,19 +10,11 @@ CLICKHOUSE_HOST="clickhouse"
 CLICKHOUSE_PORT=8123
 CLICKHOUSE_USER="root"
 CLICKHOUSE_PASSWORD="root"
-CLICKHOUSE_TABLE="employees"
-CLICKHOUSE_DATABASE="test"
-
+CLICKHOUSE_TABLE="dummy"
+DATABASE=$1
+CLICKHOUSE_DATABASE="${DATABASE}"
+TOPICS_TABLE_MAP=""
 BUFFER_COUNT=10000
-
-#SERVER5432.transaction
-TOPICS="SERVER5432.sbtest.sbtest1"
-TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees, SERVER5432.test.products:products"
-#TOPICS="SERVER5432"
-
-#"topics.regex": "SERVER5432.sbtest.(.*), SERVER5432.test.(.*)",
-
-#"topics": "${TOPICS}",
 
 if [[ $1 == "apicurio" ]]; then
       echo "APICURIO SCHEMA REGISTRY"
@@ -32,13 +24,14 @@ if [[ $1 == "apicurio" ]]; then
       "config": {
         "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
         "tasks.max": "10",
-        "topics": "${TOPICS}",
+        "topics.regex": "SERVER5432.${DATABASE}.(.*)", 
         "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
         "clickhouse.server.url": "${CLICKHOUSE_HOST}",
         "clickhouse.server.user": "${CLICKHOUSE_USER}",
         "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
         "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
         "clickhouse.server.port": ${CLICKHOUSE_PORT},
+#        "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
         "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
         "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
 
@@ -80,13 +73,14 @@ else
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
       "tasks.max": "100",
-      "topics": "${TOPICS}",
+      "topics.regex": "SERVER5432.${DATABASE}.(.*)", 
       "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
       "clickhouse.server.url": "${CLICKHOUSE_HOST}",
       "clickhouse.server.user": "${CLICKHOUSE_USER}",
       "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
       "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
       "clickhouse.server.port": ${CLICKHOUSE_PORT},
+      "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
       "key.converter": "io.confluent.connect.avro.AvroConverter",
       "value.converter": "io.confluent.connect.avro.AvroConverter",
       "key.converter.schema.registry.url": "http://schemaregistry:8081",
