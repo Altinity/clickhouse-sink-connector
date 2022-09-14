@@ -49,7 +49,7 @@ def getConnection():
     return conn
 
 
-def executeSQL(conn, strSql):
+def execute_sql(conn, strSql):
     """
     # -- =======================================================================
     # -- Connect to the SQL server and execute the command
@@ -68,14 +68,14 @@ def executeSQL(conn, strSql):
     return (rowset, rowcount)
 
 
-def executeStatement(strSql):
+def execute_statement(strSql):
     """
     # -- =======================================================================
     # -- Connect to the SQL server and execute the command
     # -- =======================================================================
     """
     conn = getConnection()
-    (rowset, rowcount) = executeSQL(conn, strSql)
+    (rowset, rowcount) = execute_sql(conn, strSql)
     conn.close()
     return (rowset, rowcount)
 
@@ -91,7 +91,7 @@ def compute_checksum(table, statements):
     try:
         for statement in statements:
             sql = statement
-            (result, rowcount) = executeSQL(conn, sql)
+            (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
             if result != None and rowcount > 0:
@@ -133,7 +133,7 @@ def get_primary_key_columns(table_schema, table_name):
     WHERE (database = '{table_schema}') AND (table = '{table_name}') AND (is_in_primary_key = 1)
     ORDER BY position ASC
 """.format(table_schema=table_schema, table_name=table_name)
-    (rowset, count) = executeStatement(sql)
+    (rowset, count) = execute_statement(sql)
     res = []
     for row in rowset:
         if row[0] is not None:
@@ -141,12 +141,12 @@ def get_primary_key_columns(table_schema, table_name):
     return res
 
 
-def getTableChecksumQuery(table):
+def get_table_checksum_query(table):
 
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = "'"+excluded_columns+"'"
-    (rowset, rowcount) = executeStatement("select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" +
-                                          args.clickhouse_database+"' and table = '"+table+"' and name not in ("+excluded_columns+") order by position")
+    (rowset, rowcount) = execute_statement("select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" +
+                                           args.clickhouse_database +"' and table = '" + table +"' and name not in (" + excluded_columns +") order by position")
 
     select = ""
     nullables = []
@@ -230,7 +230,7 @@ def getTableChecksumQuery(table):
     return (query, select, order_by_columns, external_column_types)
 
 
-def selectTableStatements(table, query, select_query, order_by, external_column_types):
+def select_table_statements(table, query, select_query, order_by, external_column_types):
     statements = []
     # todo make sure the fifo is there
     external_table_name = args.clickhouse_database+"."+table
@@ -271,7 +271,7 @@ def get_tables_from_regex(strDSN):
     schema = args.clickhouse_database
     strCommand = "select name from system.tables where database = '{d}' and match(name,'{t}') order by 1".format(
         d=schema, t=args.tables_regex)
-    (rowset, rowcount) = executeStatement(strCommand)
+    (rowset, rowcount) = execute_statement(strCommand)
     x = rowset
     return x
 
@@ -295,7 +295,7 @@ def calculate_checksum(table):
     if args.where:
         sql = sql + " where " + args.where
 
-    (rowset, rowcount) = executeStatement(sql)
+    (rowset, rowcount) = execute_statement(sql)
     if rowcount == 0:
         logging.info("No rows in ClickHouse. Nothing to sync.")
         logging.info("Checksum for table {schema}.{table} = d41d8cd98f00b204e9800998ecf8427e count 0".format(
@@ -304,8 +304,8 @@ def calculate_checksum(table):
 
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
-     external_table_types) = getTableChecksumQuery(table)
-    statements = selectTableStatements(
+     external_table_types) = get_table_checksum_query(table)
+    statements = select_table_statements(
         table, query, select_query, distributed_by, external_table_types)
     compute_checksum(table, statements)
 
@@ -386,7 +386,7 @@ def main():
     try:
         tables = get_tables_from_regex(args.tables_regex)
         # CH does not print decimal with trailing zero, we need a custom function
-        executeStatement(create_function_format_decimal)
+        execute_statement(create_function_format_decimal)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
