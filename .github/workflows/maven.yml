@@ -26,5 +26,5 @@ jobs:
         run: mvn -B package --file pom.xml
       - name: Run Unit tests
         run: mvn test --file pom.xml
-      - name: Run java checkstyle
-        uses: nikitasavinov/checkstyle-action@0.4.0
+#      - name: Run java checkstyle
+#        uses: nikitasavinov/checkstyle-action@0.4.0
