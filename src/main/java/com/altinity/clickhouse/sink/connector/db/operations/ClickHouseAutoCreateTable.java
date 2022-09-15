@@ -17,6 +17,8 @@ import java.util.stream.Collectors;
  */
 public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
+    public static final String VERSION_COLUMN = "_version";
+    public static final String SIGN_COLUMN = "_sign";
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
@@ -61,12 +63,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
-        createTableSyntax.append("`sign` Int8").append(",");
-        createTableSyntax.append("`ver` UInt64");
+        createTableSyntax.append("`").append(SIGN_COLUMN).append("` Int8").append(",");
+        createTableSyntax.append("`").append(VERSION_COLUMN).append("` UInt64");
 
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
-        createTableSyntax.append("ENGINE = ReplacingMergeTree(ver)");
+        createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         createTableSyntax.append(" ");
 
         if(primaryKey != null) {
