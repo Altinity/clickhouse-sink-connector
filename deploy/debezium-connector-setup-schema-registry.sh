@@ -14,7 +14,7 @@ PORT="3306"
 USER="root"
 PASSWORD="root"
 # Comma-separated list of regular expressions that match the databases for which to capture changes
-DBS="test"
+DBS="test,sakila"
 # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
 TABLES="employees"
 
@@ -52,7 +52,7 @@ elif [[ $1 == "mysql_external" ]]; then
   HOST="host.docker.internal"
 else
   echo "MySQL Database"
-  SNAPSHOT_MODE="schema_only_recovery"
+  SNAPSHOT_MODE="initial"
 fi
 
 
@@ -121,7 +121,7 @@ else
           "tasks.max": "1",
           "snapshot.mode": "${SNAPSHOT_MODE}",
           "snapshot.locking.mode": "none",
-          "snapshot.delay.ms": 10000,
+          "snapshot.delay.ms": 0,
           "include.schema.changes":"true",
           "include.schema.comments": "true",
           "database.hostname": "${HOST}",

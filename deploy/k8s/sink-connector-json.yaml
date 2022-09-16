@@ -21,7 +21,7 @@ spec:
     clickhouse.server.pass: "${CLICKHOUSE_PASSWORD}"
     clickhouse.server.database: "${CLICKHOUSE_DATABASE}"
     clickhouse.server.port: "${CLICKHOUSE_PORT}"
-    clickhouse.table.name: "${CLICKHOUSE_TABLE}"
+
     key.converter: "io.apicurio.registry.utils.converter.AvroConverter"
     key.converter.apicurio.registry.url: "http://schemaregistry:8080/apis/registry/v2"
     key.converter.apicurio.registry.auto-register: "true"

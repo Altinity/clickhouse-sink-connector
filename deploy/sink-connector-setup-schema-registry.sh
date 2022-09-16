@@ -45,7 +45,6 @@ if [[ $2 == "apicurio" ]]; then
         "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
         "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
         "clickhouse.server.port": ${CLICKHOUSE_PORT},
-        "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
         "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
         "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
 
@@ -87,14 +86,13 @@ else
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
       "tasks.max": "20",
-      "topics": "${TOPICS}",
+      "topics.regex": "SERVER5432.(.*)",
       "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
       "clickhouse.server.url": "${CLICKHOUSE_HOST}",
       "clickhouse.server.user": "${CLICKHOUSE_USER}",
       "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
       "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
       "clickhouse.server.port": ${CLICKHOUSE_PORT},
-      "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
       "key.converter": "io.confluent.connect.avro.AvroConverter",
       "value.converter": "io.confluent.connect.avro.AvroConverter",
       "key.converter.schema.registry.url": "http://schemaregistry:8081",
