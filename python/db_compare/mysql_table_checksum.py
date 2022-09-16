@@ -22,7 +22,7 @@ import concurrent.futures
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
-def getMySQLConnection():
+def get_mysql_connection():
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
         host=args.mysql_host, user=args.mysql_user, passwd=args.mysql_password, port=int(args.mysql_port), db=args.mysql_database)
     engine = create_engine(url)
@@ -30,7 +30,7 @@ def getMySQLConnection():
     return conn
 
 
-def executeMySQL(conn, strSql):
+def execute_mysql(conn, strSql):
     """
     # -- =======================================================================
     # -- Connect to the SQL server and execute the command
@@ -49,21 +49,21 @@ def executeMySQL(conn, strSql):
     return (rowset, rowcount)
 
 
-def executeMySQLStatement(strSql):
+def execute_mysql_statement(strSql):
     """
     # -- =======================================================================
     # -- Connect to the SQL server and execute the command
     # -- =======================================================================
     """
-    conn = getMySQLConnection()
-    (rowset, rowcount) = executeMySQL(conn, strSql)
+    conn = get_mysql_connection()
+    (rowset, rowcount) = execute_mysql(conn, strSql)
     conn.close()
     return (rowset, rowcount)
 
 
 def compute_checksum(table, statements):
     sql = ""
-    conn = getMySQLConnection()
+    conn = get_mysql_connection()
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.mysql.txt"
@@ -73,7 +73,7 @@ def compute_checksum(table, statements):
         for statement in statements:
             sql = statement
 
-            (result, rowcount) = executeMySQL(conn, sql)
+            (result, rowcount) = execute_mysql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
             if result != None and result.returns_rows == True:
@@ -101,10 +101,10 @@ def compute_checksum(table, statements):
         conn.close()
 
 
-def getTableChecksumQuery(table):
+def get_table_checksum_query(table):
 
-    (rowset, rowcount) = executeMySQLStatement("select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
-                                               args.mysql_database+"' and table_name = lower('"+table+"') order by ordinal_position")
+    (rowset, rowcount) = execute_mysql_statement("select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
+                                                 args.mysql_database +"' and table_name = lower('" + table +"') order by ordinal_position")
 
     select = ""
     nullables = []
@@ -169,7 +169,7 @@ def getTableChecksumQuery(table):
     return (query, select, order_by_columns, external_column_types)
 
 
-def selectTableStatements(table, query, select_query, order_by, external_column_types):
+def select_table_statements(table, query, select_query, order_by, external_column_types):
     statements = ['set names utf8mb4']
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
@@ -214,7 +214,7 @@ def get_tables_from_regex(strDSN):
     schema = args.mysql_database
     strCommand = "select TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{d}' and table_name rlike '{t}' order by 1".format(
         d=schema, t=args.tables_regex)
-    (rowset, rowcount) = executeMySQLStatement(strCommand)
+    (rowset, rowcount) = execute_mysql_statement(strCommand)
     x = rowset
     return x
 
@@ -228,8 +228,8 @@ def calculate_sql_checksum(table):
 
     statements = []
     (query, select_query, distributed_by,
-     external_table_types) = getTableChecksumQuery(table)
-    statements = selectTableStatements(
+     external_table_types) = get_table_checksum_query(table)
+    statements = select_table_statements(
         table, query, select_query, distributed_by, external_table_types)
     compute_checksum(table, statements)
 
