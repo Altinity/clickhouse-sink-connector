@@ -3,6 +3,8 @@ DATABASE=menagerie
 docker exec -it clickhouse clickhouse-client -uroot --password root -mn --query "drop database if exists $DATABASE;create database $DATABASE;"
 wget https://downloads.mysql.com/docs/menagerie-db.zip
 unzip menagerie-db.zip
+rm -fr menagerie-db.zip
+rm -fr menagerie*.zip.*
 docker cp  menagerie-db/cr_pet_tbl.sql mysql-master:/
 docker cp  menagerie-db/pet.txt mysql-master:/
 docker cp  menagerie-db/ins_puff_rec.sql mysql-master:/
