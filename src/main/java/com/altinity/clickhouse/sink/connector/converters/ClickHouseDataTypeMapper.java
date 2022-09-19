@@ -2,9 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.clickhouse.client.ClickHouseDataType;
 import io.debezium.data.Enum;
-import io.debezium.data.EnumSet;
 import io.debezium.data.Json;
-import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
@@ -66,14 +64,6 @@ public class ClickHouseDataTypeMapper {
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Enum.LOGICAL_NAME), ClickHouseDataType.String);
 
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Json.LOGICAL_NAME), ClickHouseDataType.JSON);
-
-        dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Year.SCHEMA_NAME), ClickHouseDataType.Int32);
-
-        // EnumSet -> String
-        dataTypesMap.put(new MutablePair<>(Schema.STRING_SCHEMA.type(), EnumSet.LOGICAL_NAME), ClickHouseDataType.String);
-
-        // Geometry -> Geometry
-        dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
     }
 
     public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {
