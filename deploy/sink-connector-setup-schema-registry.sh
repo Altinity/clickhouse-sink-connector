@@ -87,7 +87,7 @@ else
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
       "tasks.max": "20",
-      "topics": "${TOPICS}",
+      "topics.regex": "SERVER5432.(.*)",
       "clickhouse.topic2table.map": "${TOPICS_TABLE_MAP}",
       "clickhouse.server.url": "${CLICKHOUSE_HOST}",
       "clickhouse.server.user": "${CLICKHOUSE_USER}",
