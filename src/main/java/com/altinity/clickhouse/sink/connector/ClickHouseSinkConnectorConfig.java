@@ -201,6 +201,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE,
+                        Type.STRING,
+                        null,
+                        new ConfigDef.NonEmptyString(),
+                        Importance.HIGH,
+                        "ClickHouse table name",
+                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA,
                         Type.BOOLEAN,
                         "true",

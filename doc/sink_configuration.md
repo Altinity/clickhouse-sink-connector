@@ -28,6 +28,7 @@ This is a sample configuration that's used in creating the connector using the K
     "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
     "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
     "clickhouse.server.port": ${CLICKHOUSE_PORT},
+    "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
     "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
     "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
 
