@@ -16,6 +16,7 @@ import com.clickhouse.client.ClickHouseCredentials;
 import com.clickhouse.client.ClickHouseNode;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.Json;
+import io.debezium.data.geometry.Geometry;
 import io.debezium.time.Date;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -649,6 +650,19 @@ public class DbWriter extends BaseDbWriter {
                     ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
                 }
 
+            } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
+                // Geometry
+                if (value instanceof Struct) {
+                    Struct geometryValue = (Struct) value;
+                    Object wkbValue = geometryValue.get("wkb");
+                    if(wkbValue != null) {
+                        ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) wkbValue).array()));
+                    } else {
+                        ps.setString(index, "");
+                    }
+                } else {
+                    ps.setString(index, "");
+                }
             }
             else {
                 log.error("Data Type not supported: {}", colName);

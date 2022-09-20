@@ -13,7 +13,7 @@ CLICKHOUSE_PASSWORD="root"
 CLICKHOUSE_TABLE="dummy"
 DATABASE=$1
 CLICKHOUSE_DATABASE="${DATABASE}"
-TOPICS_TABLE_MAP=""
+TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees"
 BUFFER_COUNT=10000
 
 if [[ $1 == "apicurio" ]]; then
