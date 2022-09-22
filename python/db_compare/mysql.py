@@ -10,14 +10,14 @@ def is_binary_datatype(datatype):
    else:
      return datatype.lower() in binary_datatypes
 
-def getMySQLConnection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
+def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
         host=mysql_host, user=mysql_user, passwd=mysql_passwd, port=int(mysql_port), db=mysql_database)
     engine = create_engine(url)
     conn = engine.connect()
     return conn
 
-def executeMySQL(conn, strSql):
+def execute_mysql(conn, strSql):
     """
     # -- =======================================================================
     # -- Connect to the SQL server and execute the command

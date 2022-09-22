@@ -31,7 +31,7 @@ def compute_checksum(table, statements, conn):
         for statement in statements:
             sql = statement
 
-            (result, rowcount) = executeMySQL(conn, sql)
+            (result, rowcount) = execute_mysql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
             if result != None and result.returns_rows == True:
@@ -59,9 +59,9 @@ def compute_checksum(table, statements, conn):
         conn.close()
 
  
-def getTableChecksumQuery(table, conn):
+def get_table_checksum_query(table, conn):
 
-    (rowset, rowcount) = executeMySQL(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
                                                args.mysql_database+"' and table_name = lower('"+table+"') order by ordinal_position")
 
     select = ""
@@ -127,7 +127,7 @@ def getTableChecksumQuery(table, conn):
     return (query, select, order_by_columns, external_column_types)
 
 
-def selectTableStatements(table, query, select_query, order_by, external_column_types):
+def select_table_statements(table, query, select_query, order_by, external_column_types):
     statements = ['set names utf8mb4']
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
@@ -169,11 +169,11 @@ def get_tables_from_regex(strDSN):
     if args.no_wc:
         return [[args.tables_regex]]
 
-    conn = getMySQLConnection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
+    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
     schema = args.mysql_database
     strCommand = "select TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{d}' and table_name rlike '{t}' order by 1".format(
         d=schema, t=args.tables_regex)
-    (rowset, rowcount) = executeMySQL(conn, strCommand)
+    (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
     conn.close()
     
@@ -181,7 +181,7 @@ def get_tables_from_regex(strDSN):
 
 
 def calculate_sql_checksum(table):
-    conn = getMySQLConnection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
+    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
     try:
         if args.ignore_tables_regex:
             rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
@@ -192,8 +192,8 @@ def calculate_sql_checksum(table):
         statements = []
         
         (query, select_query, distributed_by,
-        external_table_types) = getTableChecksumQuery(table, conn)
-        statements = selectTableStatements(
+        external_table_types) = get_table_checksum_query(table, conn)
+        statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types)
         compute_checksum(table, statements, conn)
     finally:
