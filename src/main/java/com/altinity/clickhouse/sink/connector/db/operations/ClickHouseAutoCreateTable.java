@@ -26,6 +26,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
         log.info("**** AUTO CREATE TABLE " + createTableQuery);
+        // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
     }
 

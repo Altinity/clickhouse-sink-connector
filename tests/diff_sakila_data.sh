@@ -6,3 +6,6 @@ diff out.customer.mysql.txt out.customer.ch.txt
 diff out.payment.mysql.txt out.payment.ch.txt
 diff out.rental.mysql.txt out.rental.ch.txt
 #diff ../python/
+
+rm -fr *.ch.txt
+rm -fr *.mysql.txt

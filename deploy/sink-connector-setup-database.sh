@@ -56,7 +56,7 @@ if [[ $1 == "apicurio" ]]; then
 
         "enable.kafka.offset": false,
 
-        "replacingmergetree.delete.column": "sign",
+        "replacingmergetree.delete.column": "_sign",
 
         "auto.create.tables": true,
         "schema.evolution": false,
@@ -100,7 +100,7 @@ else
 
       "enable.kafka.offset": false,
 
-      "replacingmergetree.delete.column": "sign",
+      "replacingmergetree.delete.column": "_sign",
 
       "auto.create.tables": true,
       "schema.evolution": false,

@@ -16,6 +16,9 @@ import java.util.Map;
 public class ClickHouseTableOperationsBase {
 
 
+    private static final String ENABLE_SETTINGS = "settings";
+    private static final String ALLOW_EXPERIMENTAL_OBJECT_TYPE = "allow_experimental_object_type=1";
+
     public ClickHouseTableOperationsBase() {
 
     }
@@ -81,9 +84,14 @@ public class ClickHouseTableOperationsBase {
             return;
         }
 
+        //https://github.com/ClickHouse/clickhouse-jdbc/issues/127
+
         Statement stmt = conn.createStatement();
+         //   stmt.execute("SET allow_experimental_object_type = 1");
+
         stmt.executeQuery(query);
         stmt.close();
+
     }
 
 }
