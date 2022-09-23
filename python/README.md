@@ -15,6 +15,8 @@ Limitations :
 
 - only fully tested with mysqlsh dumps (sakila, employees, airportdb, world, menagerie)
 - ClickHouse Date / DateTime range conversion can lead to data loss if outside the supported ranges
+- it does not support partition creation
+- it does not support dump and load from a S3 compatible bucket
 - make sure you run checksums to validate the load
 
 Example : assuming the world database was dumped with mysqlsh using this command ($HOME needs to be replaced with a constant) :
