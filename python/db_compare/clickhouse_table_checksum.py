@@ -232,7 +232,6 @@ def get_table_checksum_query(table):
 
 def select_table_statements(table, query, select_query, order_by, external_column_types):
     statements = []
-    # todo make sure the fifo is there
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
     if args.debug_limit:
@@ -240,6 +239,10 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     where = "1=1"
     if args.where:
         where = args.where
+    
+    # skip deleted rows
+    where+= " and _sign > 0 "
+    
     sql = """ select
       count(*) as "cnt",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
@@ -322,7 +325,7 @@ def record_factory(*args, **kwargs):
 
 logging.setLogRecordFactory(record_factory)
 
-create_function_format_decimal = '''CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))'''
+create_function_format_decimal = '''CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),if(scale=0,'','.'),repeat('0',toUInt8(scale))))'''
 
 
 def main():
