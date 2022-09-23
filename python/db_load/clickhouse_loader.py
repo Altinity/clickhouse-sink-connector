@@ -153,7 +153,11 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     # -- ===========================================================================
     src = re.sub(r'\stime\s', ' String ', src)
     # Date32 may be a better alternative as Date range are close to MySQL
-    src = re.sub(r'\sdate\s', ' Date ', src)
+    src = re.sub(r'\sdate\s', ' Date32 ', src)
+    src = re.sub(r'\sdatetime\s', ' DateTime64(0) ', src)
+    src = re.sub(r'\sdatetime(.*?)\s', ' DateTime64\\1 ', src)
+    src = re.sub(r'\stimestamp\s', ' DateTime64(0) ', src)
+    src = re.sub(r'\stimestamp(.*?)\s', ' DateTime64\\1 ', src)
     src = re.sub(r'\spoint\s', ' Point ', src)
     src = re.sub(r'\sgeometry\s', ' Geometry ', src)
     # dangerous
@@ -258,9 +262,11 @@ def load_schema(args, dry_run=False):
                 timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
                 
-                schema_map[f"{db}.{table}"] = columns
-                if not dry_run and table_source != '':
-                    clickhouse_execute_conn(conn, table_source)
+                if table_source != '':
+                    schema_map[f"{db}.{table}"] = columns
+                    if not dry_run:
+                        clickhouse_execute_conn(conn, table_source)
+                        
     tz = get_unix_timezone_from_mysql_timezone(timezone)
 
     return (tz, schema_map)
@@ -294,9 +300,10 @@ def load_schema_mysqlshell(args, dry_run=False):
                 logging.info(table_source)
                 #timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
-                if not dry_run and table_source != '':
+                if table_source != '':
                     schema_map[f"{db}.{table}"] = columns
-                    clickhouse_execute_conn(conn, table_source)
+                    if not dry_run:
+                        clickhouse_execute_conn(conn, table_source)
     
     tz = get_unix_timezone_from_mysql_timezone(timezone)
 

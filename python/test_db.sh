@@ -1,5 +1,5 @@
 DATABASE=$1
-# requires the db to be dump using mysqlsh :
+# requires the db to be dumped using mysqlsh and the database to be loaded in MySQL:
 #rm -rf $HOME/dbdumps/world_x
 #mysql-shell-8.0.30-linux-glibc2.12-x86-64bit/bin/mysqlsh -uroot -proot -hlocalhost -e "util.dumpSchemas(['world'], '/home/aadant/dbdumps/world');"
 docker exec -it clickhouse clickhouse-client -uroot --password root --query "drop database if exists $DATABASE"
