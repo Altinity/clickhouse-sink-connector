@@ -42,7 +42,7 @@ def clickhouse_execute_conn(conn, sql):
     return result
 
 
-def getConnection():
+def get_connection():
 
     conn = clickhouse_connection(args.clickhouse_host, database=args.clickhouse_database,
                                  user=args.clickhouse_user, password=args.clickhouse_password, port=9000)
@@ -74,7 +74,7 @@ def execute_statement(strSql):
     # -- Connect to the SQL server and execute the command
     # -- =======================================================================
     """
-    conn = getConnection()
+    conn = get_connection()
     (rowset, rowcount) = execute_sql(conn, strSql)
     conn.close()
     return (rowset, rowcount)
@@ -82,7 +82,7 @@ def execute_statement(strSql):
 
 def compute_checksum(table, statements):
 
-    conn = getConnection()
+    conn = get_connection()
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.ch.txt"
@@ -146,7 +146,7 @@ def get_table_checksum_query(table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = "'"+excluded_columns+"'"
     (rowset, rowcount) = execute_statement("select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" +
-                                           args.clickhouse_database +"' and table = '" + table +"' and name not in (" + excluded_columns +") order by position")
+                                          args.clickhouse_database+"' and table = '"+table+"' and name not in ("+excluded_columns+") order by position")
 
     select = ""
     nullables = []
@@ -359,7 +359,7 @@ def main():
                         action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='+', default=['sign', 'ver'])
+                        nargs='+', default=['_sign', '_version'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
 

@@ -12,58 +12,16 @@ import argparse
 import traceback
 import sys
 import datetime
-import warnings
 import re
-from sqlalchemy import create_engine
 import os
 import hashlib
 import concurrent.futures
-
+from mysql import *
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
-def get_mysql_connection():
-    url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
-        host=args.mysql_host, user=args.mysql_user, passwd=args.mysql_password, port=int(args.mysql_port), db=args.mysql_database)
-    engine = create_engine(url)
-    conn = engine.connect()
-    return conn
-
-
-def execute_mysql(conn, strSql):
-    """
-    # -- =======================================================================
-    # -- Connect to the SQL server and execute the command
-    # -- =======================================================================
-    """
-    logging.debug("SQL="+strSql)
-    rowset = None
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
-        rowset = conn.execute(strSql)
-        rowcount = -1
-    if len(w) > 0:
-        logging.warning("SQL warnings : "+str(len(w)))
-        logging.warning("first warning : "+str(w[0].message))
-
-    return (rowset, rowcount)
-
-
-def execute_mysql_statement(strSql):
-    """
-    # -- =======================================================================
-    # -- Connect to the SQL server and execute the command
-    # -- =======================================================================
-    """
-    conn = get_mysql_connection()
-    (rowset, rowcount) = execute_mysql(conn, strSql)
-    conn.close()
-    return (rowset, rowcount)
-
-
-def compute_checksum(table, statements):
+def compute_checksum(table, statements, conn):
     sql = ""
-    conn = get_mysql_connection()
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.mysql.txt"
@@ -100,11 +58,11 @@ def compute_checksum(table, statements):
     finally:
         conn.close()
 
+ 
+def get_table_checksum_query(table, conn):
 
-def get_table_checksum_query(table):
-
-    (rowset, rowcount) = execute_mysql_statement("select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
-                                                 args.mysql_database +"' and table_name = lower('" + table +"') order by ordinal_position")
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
+                                               args.mysql_database+"' and table_name = lower('"+table+"') order by ordinal_position")
 
     select = ""
     nullables = []
@@ -129,7 +87,7 @@ def get_table_checksum_query(table):
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
                 select += f"case when {column_name} >='2149-06-06' then CAST('2149-06-06' AS {data_type}) else case when {column_name} <= '1970-01-01' then CAST('1970-01-01' AS {data_type}) else {column_name} end end"
             else:
-                if data_type == 'varbinary' or 'blob' in data_type:
+                if is_binary_datatype(data_type):
                   select += "lower(hex("+column_name+"))"
                 else:
                   select += column_name + ""
@@ -211,27 +169,35 @@ def get_tables_from_regex(strDSN):
     if args.no_wc:
         return [[args.tables_regex]]
 
+    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
     schema = args.mysql_database
     strCommand = "select TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{d}' and table_name rlike '{t}' order by 1".format(
         d=schema, t=args.tables_regex)
-    (rowset, rowcount) = execute_mysql_statement(strCommand)
+    (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
+    conn.close()
+    
     return x
 
 
 def calculate_sql_checksum(table):
-    if args.ignore_tables_regex:
-        rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
-        if rex_ignore_tables.match(table):
-            logging.info("Ignoring "+table + " due to ignore_regex_tables")
-            return
+    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
+    try:
+        if args.ignore_tables_regex:
+            rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
+            if rex_ignore_tables.match(table):
+                logging.info("Ignoring "+table + " due to ignore_regex_tables")
+                return
 
-    statements = []
-    (query, select_query, distributed_by,
-     external_table_types) = get_table_checksum_query(table)
-    statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types)
-    compute_checksum(table, statements)
+        statements = []
+        
+        (query, select_query, distributed_by,
+        external_table_types) = get_table_checksum_query(table, conn)
+        statements = select_table_statements(
+            table, query, select_query, distributed_by, external_table_types)
+        compute_checksum(table, statements, conn)
+    finally:
+        conn.close()
 
 
 def calculate_checksum(mysql_table):
@@ -286,7 +252,7 @@ def main():
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='+', default=['sign', 'ver'])
+                        nargs='+', default=['_sign', '_version'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
 
