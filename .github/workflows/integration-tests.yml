@@ -13,4 +13,5 @@ jobs:
       - name: Run Docker compose
         working-directory: deploy/docker 
         run: |
-         ./start-docker-compose.sh
+         chmod a+x start-docker-compose.sh
+         start-docker-compose.sh
