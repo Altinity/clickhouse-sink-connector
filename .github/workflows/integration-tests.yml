@@ -11,4 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run Docker compose
-        run: deploy/docker/start-docker-compose.sh
+        working-directory: deploy/docker 
+        run: |
+         ./start-docker-compose.sh
