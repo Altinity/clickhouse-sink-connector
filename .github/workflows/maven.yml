@@ -28,3 +28,5 @@ jobs:
         run: mvn test
       - name: Run java checkstyle
         uses: nikitasavinov/checkstyle-action@0.4.0
+      - name: Run docker compose
+        run: deploy/docker/start-docker-compose.sh
