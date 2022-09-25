@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.data.Json;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -66,7 +67,9 @@ public class ClickHouseAutoCreateTableTest {
                         .parameter("connect.decimal.precision", "30")
                                 .name(Decimal.LOGICAL_NAME).build();
 
-        fields.add(new Field("blob_storage_scale", 6, decimalSchema));
+        fields.add(new Field("blob_storage_scale", 7, decimalSchema));
+
+        fields.add(new Field("json_output", 8, Json.schema()));
 
         Field[] result = new Field[fields.size()];
         fields.toArray(result);
@@ -87,6 +90,11 @@ public class ClickHouseAutoCreateTableTest {
         columnToDataTypesMap.put("employed", ClickHouseDataType.Bool.name());
 
         columnToDataTypesMap.put("blob_storage", ClickHouseDataType.String.name());
+
+        columnToDataTypesMap.put("blob_storage_scale", ClickHouseDataType.Decimal.name());
+
+        columnToDataTypesMap.put("json_output", ClickHouseDataType.JSON.name());
+
 
 
         return columnToDataTypesMap;
@@ -113,7 +121,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` null NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)";
+        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
 
@@ -124,7 +132,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(null, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` null NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -137,7 +145,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` null NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
+        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customer_id,customer_name) ORDER BY(customer_id,customer_name)";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
         System.out.println(query);
     }

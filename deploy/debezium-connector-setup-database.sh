@@ -51,7 +51,6 @@ if [[ $2 == "apicurio" ]]; then
       "database.whitelist": "${MYSQL_DBS}",
       "database.allowPublicKeyRetrieval":"true",
 
-A
       "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
       "database.history.kafka.topic": "${KAFKA_TOPIC}",
 

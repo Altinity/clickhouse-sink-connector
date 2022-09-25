@@ -50,6 +50,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
+            properties.setProperty("custom_settings", "allow_experimental_object_type=1");
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
 
             this.conn = dataSource.getConnection(userName, password);

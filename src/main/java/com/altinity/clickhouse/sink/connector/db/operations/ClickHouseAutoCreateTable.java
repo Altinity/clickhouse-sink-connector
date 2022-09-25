@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
         log.info("**** AUTO CREATE TABLE " + createTableQuery);
+        // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
     }
 
@@ -49,10 +51,16 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
                 isNull = true;
             }
             createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
-            if(isNull) {
-                createTableSyntax.append(" NULL");
+
+            // Ignore setting NULL OR not NULL for JSON.
+            if(dataType != null && dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name())) {
+                // ignore adding nulls;
             } else {
-                createTableSyntax.append(" NOT NULL");
+                if (isNull) {
+                    createTableSyntax.append(" NULL");
+                } else {
+                    createTableSyntax.append(" NOT NULL");
+                }
             }
             createTableSyntax.append(",");
 

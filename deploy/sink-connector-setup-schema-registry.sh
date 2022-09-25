@@ -14,7 +14,7 @@ CLICKHOUSE_TABLE="employees"
 CLICKHOUSE_DATABASE="test"
 
 BUFFER_COUNT=10000
-
+TOPICS_TABLE_MAP="SERVER5432.test.employees_predated:employees"
 #SERVER5432.transaction
 if [[ $1 == "postgres" ]]; then
   TOPICS="SERVER5432.public.Employee"
@@ -70,7 +70,7 @@ if [[ $2 == "apicurio" ]]; then
 
         "enable.kafka.offset": false,
 
-        "replacingmergetree.delete.column": "sign",
+        "replacingmergetree.delete.column": "_sign",
 
         "auto.create.tables": false,
         "schema.evolution": false,
@@ -114,7 +114,7 @@ else
 
       "enable.kafka.offset": false,
 
-      "replacingmergetree.delete.column": "sign",
+      "replacingmergetree.delete.column": "_sign",
 
       "auto.create.tables": true,
       "schema.evolution": false,
