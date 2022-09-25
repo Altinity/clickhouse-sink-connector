@@ -1,0 +1,14 @@
+name: Docker compose tests
+
+on:
+  push:
+    branches: [ main, develop]
+  pull_request:
+    branches: [ main , develop]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Docker compose
+        run: deploy/docker/start-docker-compose.sh
