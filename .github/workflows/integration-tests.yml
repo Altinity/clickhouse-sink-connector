@@ -16,4 +16,4 @@ jobs:
         run: |
          ls
          chmod a+x start-docker-compose.sh
-         start-docker-compose.sh
+         ./start-docker-compose.sh
