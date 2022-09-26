@@ -30,7 +30,7 @@ services:
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+    # - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
       interval: 15s
