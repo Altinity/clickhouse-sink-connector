@@ -6,7 +6,7 @@ rm -fr MySQL.tsv
 rm -fr CH.tsv
 
 if [[ $1 == "bulk_insert" || $1 == "oltp_insert" ]]; then
-  docker exec -it clickhouse clickhouse-client -uroot --password root --query "select id  ,k from sbtest.sbtest1 where _sign !=-1 order by id format TSV" | grep -v "<jemalloc>" >CH.tsv
+  docker exec -it clickhouse clickhouse-client --multiquery -uroot --password root --query "use sbtest; select id ,k from sbtest.sbtest1 where _sign !=-1 order by id format TSV" | grep -v "<jemalloc>" >CH.tsv
 else
   docker exec -it clickhouse clickhouse-client --multiquery -uroot --password root --query "use sbtest; select id  ,k, c, pad  from sbtest.sbtest1 final where _sign !=-1 order by id format TSV" | grep -v "<jemalloc>" >CH.tsv
 fi
