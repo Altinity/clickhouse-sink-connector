@@ -47,8 +47,12 @@ public class QueryFormatter {
             log.error("getInsertQueryUsingInputFunction, fields empty");
             return null;
         }
-        for(Field f: fields) {
-            String sourceColumnName = f.name();
+
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+
+            //for(Field f: fields) {
+            String sourceColumnName = entry.getKey();
+            //String sourceColumnName = f.name();
             // Get Field Name and lookup in the Clickhouse column to datatype map.
             String dataType = columnNameToDataTypeMap.get(sourceColumnName);
 
