@@ -210,6 +210,25 @@ public class DbWriterTest {
     }
 
     @Test
+    public void testGettingColumnDataType() {
+       Map<String, String> columnDataTypeMap = new LinkedHashMap<>();
+
+       columnDataTypeMap.put("ID", "Int32");
+       columnDataTypeMap.put("NEWSSOURCEID", "String");
+       columnDataTypeMap.put("NEWSSOURCE", "String");
+
+       // Find newssource column.
+       if(columnDataTypeMap.containsKey("NEWSSOURCE")) {
+           System.out.println("CONTAINS KEY");
+           String matchingColumn = columnDataTypeMap.get("NEWSSOURCE");
+           System.out.println("MATCHING COLUMN" + matchingColumn);
+       } else {
+           System.out.println("DOES NOT CONTAIN KEY");
+       }
+    }
+
+
+    @Test
     @Tag("IntegrationTest")
     public void testBatchArrays() {
         String hostName = "localhost";

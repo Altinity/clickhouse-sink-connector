@@ -515,7 +515,15 @@ public class DbWriter extends BaseDbWriter {
             if(true == columnNameToIndexMap.containsKey(colName)) {
                 index = columnNameToIndexMap.get(colName);
             } else {
-                log.error("***** Column index missing for column ****" + colName);
+                StringBuffer columnNameToIndexMapContentsBuffer = new StringBuffer();
+                for (Map.Entry entry : columnNameToIndexMap.entrySet())
+                {
+                    columnNameToIndexMapContentsBuffer.append("key: " + entry.getKey() + "; value: " + entry.getValue());
+                }
+                log.error("***** Column index missing for column ****" + colName + " columnNameToIndexMap " +
+                        columnNameToIndexMapContentsBuffer.toString() +
+                        " DATABASE: " + this.conn.getCurrentDatabase() + " TABLE:" + this.tableName);
+
                 continue;
             }
 

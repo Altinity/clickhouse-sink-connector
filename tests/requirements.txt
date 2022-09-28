@@ -1,4 +1,5 @@
 clickhouse-driver==0.2.3
+pytest
 mysql-connector-python
 faker==13.3.5
 testcontainers

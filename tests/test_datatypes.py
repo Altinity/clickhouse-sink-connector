@@ -4,7 +4,7 @@ from datetime import date
 
 from tests.clickhouse_connection import ClickHouseConnection
 from tests.mysql_connection import MySqlConnection
-from fake_data import FakeData
+from .fake_data import FakeData
 
 class MyTestCase(unittest.TestCase):
 
@@ -214,6 +214,20 @@ class MyTestCase(unittest.TestCase):
 
         conn.execute_sql("")
         conn.close()
+
+    def test_create_table_uppercase(self):
+        conn = MySqlConnection()
+        conn.create_connection()
+
+        conn.execute_sql("use test")
+        conn.execute_sql("create table test.table_upper(PRODUCT1 varchar(20), PRODUCT2 varchar(20))")
+
+        conn.execute_sql("insert into test.table_upper values('ONE', 'TWO')")
+        conn.execute_sql("insert into test.table_upper values('TH', 'TWO')")
+
+        conn.close()
+
+
 
 def test_multiple_tables(self):
         #self.generate_employees_records_with_datetime()

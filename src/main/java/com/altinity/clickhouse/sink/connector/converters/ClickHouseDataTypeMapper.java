@@ -49,10 +49,11 @@ public class ClickHouseDataTypeMapper {
         // debezium.time.MicroTime -> String (Time does not exist in CH)
         dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTime.SCHEMA_NAME), ClickHouseDataType.String);
 
-        // Timestamp -> DateTime
-        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), Timestamp.SCHEMA_NAME), ClickHouseDataType.DateTime);
+        // DateTime( milliseconds) DateTime(0), DateTime(1), DateTime(2), DateTime(3) -> CH DateTime(3)
+        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), Timestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
 
-        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTimestamp.SCHEMA_NAME), ClickHouseDataType.String);
+        //DateTime(microseconds) DateTime(4), DateTime(5), DateTime(6) -> CH DateTime(6)
+        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTimestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
 
         // BLOB -> String
         dataTypesMap.put(new MutablePair(Schema.Type.BYTES, null), ClickHouseDataType.String);
