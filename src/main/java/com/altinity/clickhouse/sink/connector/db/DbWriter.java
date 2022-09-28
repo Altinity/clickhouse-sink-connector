@@ -500,9 +500,11 @@ public class DbWriter extends BaseDbWriter {
 
 
         // Use this map's key natural ordering as the source of truth.
-        //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-        for (Field f : fields) {
-            String colName = f.name();
+        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+        //for (Field f : fields) {
+            String colName = entry.getKey();
+            //String colName = f.name();
+
             if(colName == null) {
                 continue;
             }
@@ -510,13 +512,13 @@ public class DbWriter extends BaseDbWriter {
                 log.error("Column Name to Index map error");
             }
 
-            int index = -1;
-            if(true == columnNameToIndexMap.containsKey(colName)) {
-                index = columnNameToIndexMap.get(colName);
-            } else {
-                log.error("***** Column index missing for column ****" + colName);
-                continue;
-            }
+                int index = -1;
+//            if(true == columnNameToIndexMap.containsKey(colName)) {
+//                index = columnNameToIndexMap.get(colName);
+//            } else {
+//                log.error("***** Column index missing for column ****" + colName);
+//                continue;
+//            }
 
             //String colName = entry.getKey();
 
@@ -546,7 +548,7 @@ public class DbWriter extends BaseDbWriter {
             //ToDo: Map the Clickhouse types as a Enum.
 
 
-            // Field f = getFieldByColumnName(fields, colName);
+            Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = struct.get(f);
