@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import static com.altinity.clickhouse.sink.connector.db.operations.ClickHouseDbConstants.*;
+
 /**
  * Class that wraps all functionality
  * related to creating tables
@@ -18,8 +20,7 @@ import java.util.stream.Collectors;
  */
 public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
-    public static final String VERSION_COLUMN = "_version";
-    public static final String SIGN_COLUMN = "_sign";
+
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
@@ -41,7 +42,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append("CREATE TABLE").append(" ").append(tableName).append("(");
+        createTableSyntax.append(CREATE_TABLE).append(" ").append(tableName).append("(");
 
         for(Field f: fields) {
             String colName = f.name();
@@ -57,9 +58,9 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
                 // ignore adding nulls;
             } else {
                 if (isNull) {
-                    createTableSyntax.append(" NULL");
+                    createTableSyntax.append(" ").append(NULL);
                 } else {
-                    createTableSyntax.append(" NOT NULL");
+                    createTableSyntax.append(" ").append(NOT_NULL);
                 }
             }
             createTableSyntax.append(",");
@@ -71,8 +72,8 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
-        createTableSyntax.append("`").append(SIGN_COLUMN).append("` Int8").append(",");
-        createTableSyntax.append("`").append(VERSION_COLUMN).append("` UInt64");
+        createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
+        createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
 
         createTableSyntax.append(")");
         createTableSyntax.append(" ");

@@ -24,13 +24,13 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
 
         StringBuilder alterTableSyntax = new StringBuilder();
 
-        alterTableSyntax.append("ALTER TABLE").append(" ").append(tableName).append(" ");
+        alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE).append(" ").append(tableName).append(" ");
 
         for(Map.Entry<String, String>  entry: colNameToDataTypesMap.entrySet()) {
             if(operation.name().equalsIgnoreCase(ALTER_TABLE_OPERATION.ADD.op)) {
-                alterTableSyntax.append("add column ");
+                alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE_ADD_COLUMN).append(" ");
             } else {
-                alterTableSyntax.append("delete column ");
+                alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE_DELETE_COLUMN).append(" ");
             }
             alterTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
         }
