@@ -109,21 +109,21 @@ public class QueryFormatter {
         }
 
         // Add version column(Set timestamp))
-        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
-                colNamesDelimited.append(versionColumn).append(",");
-                colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
-                colNameToIndexMap.put(versionColumn, index++);
-
-            }
-
-            // Add replacingmergetree sign delete column.
-            if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
-                colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
-                colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
-                colNameToIndexMap.put(replacingMergeTreeDeleteColumn, index++);
-            }
-        }
+//        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+//            if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
+//                colNamesDelimited.append(versionColumn).append(",");
+//                colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
+//                colNameToIndexMap.put(versionColumn, index++);
+//
+//            }
+//
+//            // Add replacingmergetree sign delete column.
+//            if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+//                colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
+//                colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
+//                colNameToIndexMap.put(replacingMergeTreeDeleteColumn, index++);
+//            }
+//        }
 
         //Remove terminating comma
         int colNamesIndex = colNamesDelimited.lastIndexOf(",");
