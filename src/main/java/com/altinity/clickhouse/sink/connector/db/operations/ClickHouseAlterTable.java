@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
+
 import java.util.Map;
 
 /**
