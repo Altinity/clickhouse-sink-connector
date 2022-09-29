@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector.db.operations;
+package com.altinity.clickhouse.sink.connector.db;
 
 public class ClickHouseDbConstants {
 
@@ -16,4 +16,10 @@ public class ClickHouseDbConstants {
 
     public static final String NULL = "NULL";
     public static final String NOT_NULL = "NOT NULL";
+
+    public static final String PRIMARY_KEY = "PRIMARY KEY";
+
+    public static final String ORDER_BY = "ORDER BY";
+
+    public static final String ORDER_BY_TUPLE = "ORDER BY tuple()";
 }
