@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
+import static com.altinity.clickhouse.sink.connector.db.operations.ClickHouseDbConstants.*;
 
 /**
  * Class that wraps all functionality
@@ -81,16 +81,16 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append(" ");
 
         if(primaryKey != null) {
-            createTableSyntax.append(PRIMARY_KEY).append("(");
+            createTableSyntax.append("PRIMARY KEY(");
             createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
             createTableSyntax.append(") ");
 
-            createTableSyntax.append(ORDER_BY).append("(");
+            createTableSyntax.append("ORDER BY(");
             createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
             createTableSyntax.append(")");
         } else {
             // ToDO:
-            createTableSyntax.append(ORDER_BY_TUPLE);
+            createTableSyntax.append("ORDER BY tuple()");
         }
        return createTableSyntax.toString();
     }
