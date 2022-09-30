@@ -6,10 +6,6 @@ import com.clickhouse.client.data.BinaryStreamUtils;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.concurrent.TimeUnit;
-
 import static com.altinity.clickhouse.sink.connector.metadata.DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
 import static com.altinity.clickhouse.sink.connector.metadata.DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
 
@@ -68,10 +64,8 @@ public class DebeziumConverterTest {
 
         Integer date = -144450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
-        SimpleDateFormat dt1 = new SimpleDateFormat("yyyy-MM-dd");
-        String minSupportedDate = dt1.format(new Date(TimeUnit.DAYS.toMillis(CLICKHOUSE_MIN_SUPPORTED_DATE32))).toString();
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(minSupportedDate));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(CLICKHOUSE_MIN_SUPPORTED_DATE32.toString()));
     }
     @Test
     public void testDateConverterMaxRange() {
@@ -79,18 +73,7 @@ public class DebeziumConverterTest {
         Integer date = 450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
-        SimpleDateFormat dt1 = new SimpleDateFormat("yyyy-MM-dd");
-        String maxSupportedDate = dt1.format(new Date(TimeUnit.DAYS.toMillis(CLICKHOUSE_MAX_SUPPORTED_DATE32))).toString();
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(maxSupportedDate));
-    }
-
-    @Test
-    public void testDateConverterWithinRange() {
-
-        // Epoch (days)
-        Integer epochInDays = 8249;
-        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(epochInDays);
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1992-08-01"));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(CLICKHOUSE_MAX_SUPPORTED_DATE32.toString()));
     }
 
     @Test

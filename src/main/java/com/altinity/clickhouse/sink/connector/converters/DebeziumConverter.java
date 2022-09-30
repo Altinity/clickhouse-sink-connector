@@ -96,25 +96,23 @@ public class DebeziumConverter {
          * @return
          */
         public static Date convert(Object value) {
-            Integer epochInDays = checkIfDateExceedsSupportedRange((Integer) value);
-
-            // The value is epoch in Days
-            long msSinceEpoch = TimeUnit.DAYS.toMillis(epochInDays);
+            long msSinceEpoch = TimeUnit.DAYS.toMillis((Integer) value);
             java.util.Date date = new java.util.Date(msSinceEpoch);
 
+            java.util.Date modifiedDate = checkIfDateExceedsSupportedRange(date);
 
-            return new java.sql.Date(date.getTime());
+            return new java.sql.Date(modifiedDate.getTime());
         }
 
-        public static Integer checkIfDateExceedsSupportedRange(Integer epochInDays) {
+        public static java.util.Date checkIfDateExceedsSupportedRange(java.util.Date providedDate) {
 
-            if(epochInDays < DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32) {
+            if(providedDate.before(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32)) {
                 return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
-            } else if (epochInDays > DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32){
+            } else if (providedDate.after(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32)){
                 return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
             }
 
-            return epochInDays;
+            return providedDate;
 
         }
     }
