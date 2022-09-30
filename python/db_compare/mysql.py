@@ -2,10 +2,10 @@ from sqlalchemy import create_engine
 import logging
 import warnings
 
-binary_datatypes = ('blob', 'varbinary', 'point', 'geometry')
+binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary')
 
 def is_binary_datatype(datatype):
-   if "blob" in datatype or "varbinary" in datatype:
+   if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
        return True
    else:
      return datatype.lower() in binary_datatypes

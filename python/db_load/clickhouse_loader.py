@@ -152,6 +152,8 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     src = re.sub(r'\bAUTO_INCREMENT\b', '', src)
     # -- ===========================================================================
     src = re.sub(r'\stime\s', ' String ', src)
+    src = re.sub(r'\stime(.*?)\s', ' String ', src)   
+    src = re.sub(r'\sjson\s', ' String ', src)
     # Date32 may be a better alternative as Date range are close to MySQL
     src = re.sub(r'\sdate\s', ' Date32 ', src)
     src = re.sub(r'\sdatetime\s', ' DateTime64(0) ', src)
@@ -192,8 +194,8 @@ def convert_to_clickhouse_table(user_name, table_name, source):
         # column without nullable info are default nullable in MySQL, while they are not null in ClickHouse
         if ("NULL" not in line and "DEFAULT" not in line):
             altered_line = re.sub(r',$', ' DEFAULT NULL,', altered_line)
-        res += altered_line + '\n'
         
+
         match = re.match(columns_pattern, altered_line)
         if match:
             column_name = match.group(1)
@@ -201,9 +203,20 @@ def convert_to_clickhouse_table(user_name, table_name, source):
             logging.info(f"{column_name} {datatype}")
             columns.append({'column_name':column_name,'datatype':datatype})
             
+             # tables with no PK miss commas
+            if altered_line.strip() != "" and not altered_line.endswith(',') and not altered_line.endswith(';'):
+                 altered_line+=","
+        
+            
+        res += altered_line + '\n'
+        
     # convert binary types to String until CH support GIS binary : https://dev.mysql.com/doc/refman/8.0/en/gis-data-formats.html#gis-wkb-format
     res = re.sub(r'\sPoint\s', ' String ', res)
     res = re.sub(r'\sGeometry\s', ' String ', res)
+    res = re.sub(r'\sbit\s', ' String ', res)
+    res = re.sub(r'\sbit(.*?)\s', ' String ', res)
+    res = re.sub(r'\sbinary\s', ' String ', res)
+    res = re.sub(r'\sbinary(.*?)\s', ' String ', res)
     return (res, columns)
 
 
