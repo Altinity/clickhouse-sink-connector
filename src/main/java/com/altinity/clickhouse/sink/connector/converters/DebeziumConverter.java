@@ -61,7 +61,7 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value, boolean isDateTime64) {
-            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.systemDefault());
+            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.of("UTC"));
 
             LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, isDateTime64);
             //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
@@ -72,18 +72,10 @@ public class DebeziumConverter {
 
         public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {
 
-            LocalDateTime minSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME);
-            LocalDateTime maxSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME);
-
-            if(isDateTime64 == true) {
-                minSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME);
-                maxSupportedDateTime = LocalDateTime.parse(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME);
-            }
-
-            if(providedDateTime.isBefore(minSupportedDateTime)) {
-                return minSupportedDateTime;
-            } else if (providedDateTime.isAfter(maxSupportedDateTime)){
-                return maxSupportedDateTime;
+            if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
+                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
+            } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME)){
+                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME;
             }
 
             return providedDateTime;
@@ -113,13 +105,11 @@ public class DebeziumConverter {
         }
 
         public static java.util.Date checkIfDateExceedsSupportedRange(java.util.Date providedDate) {
-            java.util.Date minSupportedDate = Date.valueOf(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE);
-            java.util.Date maxSupportedDate = Date.valueOf(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE);
 
-            if(providedDate.before(minSupportedDate)) {
-                return minSupportedDate;
-            } else if (providedDate.after(maxSupportedDate)){
-                return maxSupportedDate;
+            if(providedDate.before(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32)) {
+                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
+            } else if (providedDate.after(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32)){
+                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
             }
 
             return providedDate;

@@ -2,8 +2,12 @@ package com.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import com.clickhouse.client.data.BinaryStreamUtils;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
+
+import static com.altinity.clickhouse.sink.connector.metadata.DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
+import static com.altinity.clickhouse.sink.connector.metadata.DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
 
 public class DebeziumConverterTest {
 
@@ -31,7 +35,7 @@ public class DebeziumConverterTest {
         Object timestampEpoch = -2166681362000L;
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1970-01-01 00:00:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1925-01-01 00:00:00"));
     }
 
     @Test
@@ -40,7 +44,10 @@ public class DebeziumConverterTest {
         Object timestampEpoch = 4807440238000L;
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, false);
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2106-02-07 06:28:15"));
+        System.out.println("DateTimeRagnge MIN " + DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME.toString());
+
+        System.out.println("DATETIME 64" + BinaryStreamUtils.DATETIME64_MIN);
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2122-05-05 16:03:58"));
     }
 
     @Test
@@ -58,7 +65,7 @@ public class DebeziumConverterTest {
         Integer date = -144450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(CLICKHOUSE_MIN_SUPPORTED_DATE32.toString()));
     }
     @Test
     public void testDateConverterMaxRange() {
@@ -66,7 +73,7 @@ public class DebeziumConverterTest {
         Integer date = 450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(CLICKHOUSE_MAX_SUPPORTED_DATE32.toString()));
     }
 
     @Test
