@@ -47,9 +47,12 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData,
                 null, null, null, null, engine);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity,_topic) select customerName,occupation,quantity,_topic " +
-                "from input('customerName String,occupation String,quantity UInt32,_topic String')";
+//        String expectedQuery = "insert into products(customerName,occupation,quantity,_topic) select customerName,occupation,quantity,_topic " +
+//                "from input('customerName String,occupation String,quantity UInt32,_topic String')";
+
+        String expectedQuery  = "insert into products(occupation,quantity,_topic,customerName,_topic) select occupation,quantity,_topic,customerName,_topic from input('occupation String,quantity UInt32,_topic String,customerName String,_topic String')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
+
     }
 
     @Test
@@ -65,8 +68,10 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, null, null, null, engine);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
-                "String,quantity UInt32')";
+        String expectedQuery = "insert into products(occupation,quantity,_topic,customerName) select occupation,quantity,_topic,customerName from input('occupation String,quantity UInt32,_topic String,customerName String')";
+//        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
+//                "String,quantity UInt32')";
+//
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 
@@ -84,8 +89,10 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, null, null, null, engine);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
-                "String,quantity UInt32')";
+        String expectedQuery = "insert into products(occupation,quantity,_topic,customerName) select occupation,quantity,_topic,customerName from input('occupation String,quantity UInt32,_topic String,customerName String')";
+
+//        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
+//                "String,quantity UInt32')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -104,7 +111,8 @@ public class QueryFormatterTest {
                 includeKafkaMetaData, includeRawData, "raw_column", null, null,
                 null,  engine);
 
-        String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
+        String expectedQuery = "insert into products(raw_column,occupation,quantity,_topic,customerName,raw_column) select raw_column,occupation,quantity,_topic,customerName,raw_column from input('raw_column String,occupation String,quantity UInt32,_topic String,customerName String,raw_column String')";
+        //String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 }
