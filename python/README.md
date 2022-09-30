@@ -37,6 +37,8 @@ If you loaded the same data in MySQL, you can then run checksums (see test_db.sh
 
 ## Table checksums
 
+Credits : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/
+
 Compute the checksum of one table 
 
 ```

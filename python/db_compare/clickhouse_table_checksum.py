@@ -2,9 +2,9 @@
 # -- ============================================================================
 # -- FileName     : clickhouse_table_checksum
 # -- Date         : 
-# -- Summary      : calculate a checksum for a clickhouse table having a PK that is
-# --                comparable to pt-table-checksum v1.0 same algorithm using md5
-# --                instead for crc32 
+# -- Summary      : calculate a checksum for a clickhouse table 
+# -- Credits      : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/               
+# --                
 """
 import logging
 import argparse
