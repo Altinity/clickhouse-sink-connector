@@ -1,17 +1,26 @@
 package com.altinity.clickhouse.sink.connector.metadata;
 
+import com.clickhouse.client.data.BinaryStreamUtils;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.sql.Date;
+
 public class DataTypeRange
 {
-    // Date
-    public static final String CLICKHOUSE_MIN_SUPPORTED_DATE = "1970-01-01";
-    public static final String CLICKHOUSE_MAX_SUPPORTED_DATE = "2149-06-06";
+
+    // Set clickhouse-jdbc limits
+    public static final Date CLICKHOUSE_MIN_SUPPORTED_DATE32 = new Date(BinaryStreamUtils.DATE32_MIN);
+
+    public static final Date CLICKHOUSE_MAX_SUPPORTED_DATE32 = new Date(BinaryStreamUtils.DATE32_MAX);
 
 
     // DateTime
-    public static final String CLICKHOUSE_MIN_SUPPORTED_DATETIME = "1970-01-01T00:00:00";
-    public static final String CLICKHOUSE_MAX_SUPPORTED_DATETIME = "2106-02-07T06:28:15";
+    public static final LocalDateTime CLICKHOUSE_MIN_SUPPORTED_DATETIME =  Instant.ofEpochMilli
+            (BinaryStreamUtils.DATETIME64_MIN * 1000).atZone(ZoneId.of("UTC")).toLocalDateTime();
+    public static final LocalDateTime CLICKHOUSE_MAX_SUPPORTED_DATETIME = Instant.ofEpochMilli
+            (BinaryStreamUtils.DATETIME64_MAX * 1000).atZone(ZoneId.of("UTC")).toLocalDateTime();
 
-    // DateTime
-    public static final String CLICKHOUSE_MIN_SUPPORTED_DATETIME64 = "1925-01-01T00:00:00";
-    public static final String CLICKHOUSE_MAX_SUPPORTED_DATETIME64 = "2283-11-11T23:59:59";
+
 }
