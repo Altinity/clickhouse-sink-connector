@@ -68,7 +68,7 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, null, null, null, engine);
 
-        String expectedQuery = "insert into products(raw_column,occupation,quantity,_topic,customerName) select raw_column,occupation,quantity,_topic,customerName from input('raw_column String,occupation String,quantity UInt32,_topic String,customerName String')";
+        String expectedQuery = "insert into products(occupation,quantity,_topic,customerName) select occupation,quantity,_topic,customerName from input('occupation String,quantity UInt32,_topic String,customerName String')";
 //        String expectedQuery = "insert into products(customerName,occupation,quantity) select customerName,occupation,quantity from input('customerName String,occupation " +
 //                "String,quantity UInt32')";
 //
