@@ -27,3 +27,5 @@ Example,
 python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to clickhouse replication/sanity/mysql to clickhouse connection ac/*" --test-to-end -o classic
 
 ```
+
+To save service logs to mysql_to_clickhouse_replication/_instances folder use `--collect-service-logs`
