@@ -42,10 +42,7 @@ def delete(self, primary_key, timeout=60):
         mysql_rows_after_delete = mysql.query(f"select count(*) from {table_name}").output.strip()[90:]
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
-                pause()
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                pause()
 
                 clickhouse.query(
                     f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
@@ -55,6 +52,7 @@ def delete(self, primary_key, timeout=60):
 
 @TestScenario
 def no_primary_key(self):
+    xfail("doesn't work in row")
     """Check for `DELETE` with no primary key.
     """
     delete(primary_key="")
