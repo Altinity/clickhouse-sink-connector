@@ -7,7 +7,7 @@ from helpers.common import *
 
 @TestOutline
 def update(self, primary_key, timeout=60):
-    """`UPDATE` outline."""
+    """Check `UPDATE` query replicating from MySQl table to CH with different primary keys."""
 
     with Given("Receive UID"):
         uid = getuid()
@@ -38,7 +38,7 @@ def update(self, primary_key, timeout=60):
             f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
         )
 
-    with And("I check that ClickHouse table has same number of rows as MySQL table"):
+    with And("I check that ClickHouse has updated data as MySQL"):
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
@@ -51,7 +51,7 @@ def update(self, primary_key, timeout=60):
 
 @TestScenario
 def no_primary_key(self):
-    """Check for `DELETE` with no primary key.
+    """Check for `UPDATE` with no primary key.
     """
     xfail("make delete")
     update(primary_key="")
@@ -59,14 +59,14 @@ def no_primary_key(self):
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `DELETE` with simple primary key.)
+    """Check for `UPDATE` with simple primary key.
     """
     update(primary_key=", PRIMARY KEY (id)",)
 
 
 @TestScenario
 def complex_primary_key(self):
-    """Check for `DELETE` with complex primary key.
+    """Check for `UPDATE` with complex primary key.
     """
     update(primary_key=", PRIMARY KEY (id,k)")
 

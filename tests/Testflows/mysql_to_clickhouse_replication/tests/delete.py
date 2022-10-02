@@ -7,7 +7,8 @@ from helpers.common import *
 
 @TestOutline
 def delete(self, primary_key, timeout=60):
-    """`DELETE` outline."""
+    """Check `DELETE` query replicating from MySQl table to CH with different primary keys.
+    """
 
     with Given("Receive UID"):
         uid = getuid()
@@ -52,15 +53,15 @@ def delete(self, primary_key, timeout=60):
 
 @TestScenario
 def no_primary_key(self):
-    xfail("doesn't work in row")
     """Check for `DELETE` with no primary key.
     """
+    xfail("doesn't work in row")
     delete(primary_key="")
 
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `DELETE` with simple primary key.)
+    """Check for `DELETE` with simple primary key.
     """
     delete(primary_key=", PRIMARY KEY (id)",)
 
