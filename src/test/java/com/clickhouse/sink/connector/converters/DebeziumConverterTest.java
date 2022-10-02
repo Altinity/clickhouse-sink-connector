@@ -77,6 +77,15 @@ public class DebeziumConverterTest {
     }
 
     @Test
+    public void testDateConverterWithinRange() {
+
+        // Epoch (days)
+        Long date = 1444571000L;
+        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date);
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(""));
+    }
+
+    @Test
     public void testZonedTimestampConverter() {
 
         String formattedTimestamp = DebeziumConverter.ZonedTimestampConverter.convert("2021-12-31T19:01:00Z");
