@@ -84,7 +84,7 @@ else
           "tasks.max": "1",
           "snapshot.mode": "initial",
           "snapshot.locking.mode": "minimal",
-          "snapshot.delay.ms": 10000,
+          "snapshot.delay.ms": 1,
           "include.schema.changes":"true",
           "include.schema.comments": "true",
           "database.hostname": "${MYSQL_HOST}",
