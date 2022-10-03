@@ -607,7 +607,7 @@ public class DbWriter extends BaseDbWriter {
             } else if (isFieldTypeInt) {
                 if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                     // Date field arrives as INT32 with schema name set to io.debezium.time.Date
-                    ps.setObject(index, DebeziumConverter.DateConverter.convert(value));
+                    ps.setDate(index, DebeziumConverter.DateConverter.convert(value));
 
                 } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                     ps.setTimestamp(index, (java.sql.Timestamp) value);
