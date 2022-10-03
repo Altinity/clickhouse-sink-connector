@@ -88,7 +88,7 @@ def get_table_checksum_query(table, conn):
         else:
             if 'date' == data_type:
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
-                select += f"case when {column_name} >='2299-12-31' then CAST('2299-12-31' AS {data_type}) else case when {column_name} <= '1900-01-01' then CAST('1900-01-01' AS {data_type}) else {column_name} end end"
+                select += f"case when {column_name} >='2283-11-11' then CAST('2283-11-11' AS {data_type}) else case when {column_name} <= '1925-01-01' then CAST('1925-01-01' AS {data_type}) else {column_name} end end"
             else:
                 if is_binary_datatype(data_type):
                   select += "lower(hex("+column_name+"))"
