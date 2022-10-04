@@ -6,7 +6,7 @@ from helpers.common import *
 
 
 @TestOutline
-def delete(self, primary_key, timeout=60):
+def delete(self, primary_key, engine=True):
     """Check `DELETE` query replicating from MySQl table to CH with different primary keys.
     """
 
@@ -27,7 +27,7 @@ def delete(self, primary_key, timeout=60):
             statement=f"CREATE TABLE {table_name} "
                       "(id int(11) NOT NULL,"
                       "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT ''{primary_key})"
+                      f"pad char(60) NOT NULL DEFAULT ''{primary_key}){' ENGINE = InnoDB;' if engine else ''}"
         )
 
     with When(f"I insert data in MySql table"):
@@ -63,7 +63,7 @@ def no_primary_key(self):
 def simple_primary_key(self):
     """Check for `DELETE` with simple primary key.
     """
-    delete(primary_key=", PRIMARY KEY (id)",)
+    delete(primary_key=", PRIMARY KEY (id)", engine=False)
 
 
 @TestScenario
