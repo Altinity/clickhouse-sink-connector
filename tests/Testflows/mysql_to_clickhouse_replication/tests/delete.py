@@ -53,27 +53,50 @@ def delete(self, primary_key, engine=True):
 
 @TestScenario
 def no_primary_key(self):
-    """Check for `DELETE` with no primary key.
+    """Check for `DELETE` with no primary key with InnoDB engine.
     """
     xfail("doesn't work in row")
-    delete(primary_key="")
+    delete(primary_key="", engine=True)
+
+
+@TestScenario
+def no_primary_key_innodb(self):
+    """Check for `DELETE` with no primary key without InnoDB engine.
+    """
+    xfail("doesn't work in row")
+    delete(primary_key="", engine=False)
 
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `DELETE` with simple primary key.
+    """Check for `DELETE` with simple primary key without InnoDB engine.
     """
     delete(primary_key=", PRIMARY KEY (id)", engine=False)
 
 
 @TestScenario
-def complex_primary_key(self):
-    """Check for `DELETE` with complex primary key.
+def simple_primary_key_innodb(self):
+    """Check for `DELETE` with simple primary key with InnoDB engine.
     """
-    delete(primary_key=", PRIMARY KEY (id,k)")
+    delete(primary_key=", PRIMARY KEY (id)", engine=True)
+
+
+@TestScenario
+def complex_primary_key(self):
+    """Check for `DELETE` with complex primary key without engine InnoDB.
+    """
+    delete(primary_key=", PRIMARY KEY (id,k)", engine=False)
+
+
+@TestScenario
+def complex_primary_key_innodb(self):
+    """Check for `DELETE` with complex primary key with engine InnoDB.
+    """
+    delete(primary_key=", PRIMARY KEY (id,k)", engine=True)
 
 
 @TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Deletes("1.0"))
 @Name("delete")
 def feature(self):
     """MySql to ClickHouse replication delete tests to test `DELETE` queries."""
