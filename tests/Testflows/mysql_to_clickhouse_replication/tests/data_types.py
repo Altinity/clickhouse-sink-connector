@@ -325,6 +325,27 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
     )
 
 
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        ("JSON", "String", ["'{\"key1\": \"value1\", \"key2\": \"value2\"}'"], ['{"key1": "value1", "key2": "value2"}'],
+         False),
+        ("JSON", "String", ["NULL"], ["\\N"], True),
+    ],
+)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
+def json(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'ENUM' data types."""
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+    )
+
+
 @TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")

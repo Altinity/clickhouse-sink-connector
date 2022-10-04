@@ -6,7 +6,7 @@ from helpers.common import *
 
 
 @TestOutline
-def update(self, primary_key, timeout=60):
+def update(self, primary_key, engine):
     """Check `UPDATE` query replicating from MySQl table to CH with different primary keys."""
 
     with Given("Receive UID"):
@@ -26,7 +26,7 @@ def update(self, primary_key, timeout=60):
             statement=f"CREATE TABLE {table_name} "
                       "(id int(11) NOT NULL,"
                       "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT ''{primary_key})"
+                      f"pad char(60) NOT NULL DEFAULT ''{primary_key}){' ENGINE = InnoDB;' if engine else ''}"
         )
 
     with When(f"I insert data in MySql table"):
@@ -51,27 +51,50 @@ def update(self, primary_key, timeout=60):
 
 @TestScenario
 def no_primary_key(self):
-    """Check for `UPDATE` with no primary key.
+    """Check for `UPDATE` with no primary key without table engine.
     """
-    xfail("make delete")
-    update(primary_key="")
+    xfail("makes delete")
+    update(primary_key="", engine=False)
+
+
+@TestScenario
+def no_primary_key_innodb(self):
+    """Check for `UPDATE` with no primary key with table engine InnoDB.
+    """
+    xfail("makes delete")
+    update(primary_key="", engine=True)
 
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `UPDATE` with simple primary key.
+    """Check for `UPDATE` with simple primary key without table engine.
     """
-    update(primary_key=", PRIMARY KEY (id)",)
+    update(primary_key=", PRIMARY KEY (id)", engine=False)
+
+
+@TestScenario
+def simple_primary_key_innodb(self):
+    """Check for `UPDATE` with simple primary key with table engine InnoDB.
+    """
+    update(primary_key=", PRIMARY KEY (id)", engine=True)
 
 
 @TestScenario
 def complex_primary_key(self):
-    """Check for `UPDATE` with complex primary key.
+    """Check for `UPDATE` with complex primary key without table engine.
     """
-    update(primary_key=", PRIMARY KEY (id,k)")
+    update(primary_key=", PRIMARY KEY (id,k)", engine=False)
+
+
+@TestScenario
+def complex_primary_key_innodb(self):
+    """Check for `UPDATE` with complex primary key with table engine InnoDB.
+    """
+    update(primary_key=", PRIMARY KEY (id,k)", engine=True)
 
 
 @TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Updates("1.0"))
 @Name("update")
 def feature(self):
     """MySql to ClickHouse replication update tests to test `UPDATE` queries."""
