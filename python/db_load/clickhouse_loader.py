@@ -213,10 +213,17 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     # convert binary types to String until CH support GIS binary : https://dev.mysql.com/doc/refman/8.0/en/gis-data-formats.html#gis-wkb-format
     res = re.sub(r'\sPoint\s', ' String ', res)
     res = re.sub(r'\sGeometry\s', ' String ', res)
+    res = re.sub(r'\sgeomcollection\s', ' String ', res)
+    res = re.sub(r'\slinestring\s', ' String ', res)
+    res = re.sub(r'\smultilinestring\s', ' String ', res)
+    res = re.sub(r'\smultipoint\s', ' String ', res)
+    res = re.sub(r'\smultipolygon\s', ' String ', res)
+    res = re.sub(r'\spolygon\s', ' String ', res)
     res = re.sub(r'\sbit\s', ' String ', res)
     res = re.sub(r'\sbit(.*?)\s', ' String ', res)
     res = re.sub(r'\sbinary\s', ' String ', res)
     res = re.sub(r'\sbinary(.*?)\s', ' String ', res)
+    res = re.sub(r'\sset\([^\)]*?\)', ' String ', res)   
     return (res, columns)
 
 
@@ -398,7 +405,7 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run = False):
             dfile = args.dump_dir + '/'
             # sakila@store@@0.tsv.zst
             data_files = glob.glob(
-                dfile + f"{schema}@{table_name}@*.tsv.zst")
+                dfile + f"{schema}@{table_name}@*.tsv.zst") + glob.glob(dfile + f"{schema}@{table_name}.tsv.zst")
             columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
             transformed_columns = get_column_list(
