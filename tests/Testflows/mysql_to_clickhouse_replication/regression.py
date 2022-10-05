@@ -23,9 +23,9 @@ xfails = {
     "primary keys/*": [
         (Fail, "GitLab CI/CD only fail")
     ],
-    "data consistency/*": [
-        (Fail, "doesn't finished")
-    ]
+#     "data consistency/*": [
+#         (Fail, "doesn't finished")
+#     ]
 }
 xflags = {}
 
@@ -98,7 +98,7 @@ def regression(
         )
     )
     Feature(run=load("mysql_to_clickhouse_replication.tests.insert", "feature"))
-    # Feature(run=load("mysql_to_clickhouse_replication.tests.data_consistency", "feature"))
+    Feature(run=load("mysql_to_clickhouse_replication.tests.data_consistency", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.multiple_tables", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.virtual_columns", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.delete", "feature"))

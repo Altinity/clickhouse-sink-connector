@@ -47,7 +47,7 @@ def unstable_network_connection(self, service):
 
 
 @TestOutline
-def restart(self, services):
+def restart(self, services, query=None):
     """Check for data consistency with concurrently service restart."""
 
     with Given("Receive UID"):
@@ -62,46 +62,80 @@ def restart(self, services):
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySQL table {table_name}"):
-        pause()
         create_mysql_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} (col1 int4, col2 int4 NOT NULL, col3 int4 default 777)"
-            f" ENGINE = InnoDB;",
+            statement=f"CREATE TABLE {table_name} "
+                      "(id int(11) NOT NULL,"
+                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
         )
 
     with When("I insert data in MySql table with concurrently service restart"):
         for node in services:
             self.context.cluster.node(f"{node}").stop()
-        pause("after stop")
-        mysql.query(
-            f"INSERT INTO {table_name} (col1,col2,col3) VALUES (5,6,777);"
-        )
 
-    with And("Enable all services"):
+        with Step(f"I insert data in MySql table"):
+            mysql.query(
+                f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
+            )
+
+        if query == "update":
+            with Then(f"I update data in MySql table"):
+                mysql.query(
+                    f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
+                )
+        elif query == "delete":
+            with Then(f"I delete data in MySql table"):
+                mysql.query(
+                    f"DELETE FROM {table_name} WHERE id=1;"
+                )
+
+    with And(f"Enable all services {services}"):
         for node in services:
             self.context.cluster.node(f"{node}").start()
 
-    pause(print(services))
+    if query == "update":
+        with And("I check that ClickHouse has updated data as MySQL"):
+            for attempt in retries(count=10, timeout=100, delay=5):
+                with attempt:
+                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
-    with Then("I wait unique values from CLickHouse table equal to MySQL table"):
-        retry(
-            clickhouse.query,
-            timeout=60,
-            delay=10,
-        )(f"SELECT col1,col2,col3 FROM test.{table_name} FINAL FORMAT CSV", message=f"5,6,777")
+                    clickhouse.query(
+                        f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                        message='1,7,"a","b"'
+                    )
+    elif query == "delete":
+        with And("I check that ClickHouse table has same number of rows as MySQL table"):
+            mysql_rows_after_delete = mysql.query(f"select count(*) from {table_name}").output.strip()[90:]
+            for attempt in retries(count=10, timeout=100, delay=5):
+                with attempt:
+                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+
+                    clickhouse.query(
+                        f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                        message=mysql_rows_after_delete
+                    )
+    else:
+        for attempt in retries(count=10, timeout=100, delay=5):
+            with attempt:
+                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+
+                clickhouse.query(
+                    f"SELECT id,k,c,pad FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                    message='1,2,"a","b"\n2,3,"a","b"'
+                )
 
 
 @TestScenario
 def kafka_restart(self):
     """Kafka restart"""
-    xfail("doesn't create table")
     restart(services=["kafka"])
 
 
 @TestScenario
 def debezium_restart(self):
     """Debezium restart"""
-    restart(services=["debezium"])
+    restart(services=["debezium"], query="update")
 
 
 @TestScenario
