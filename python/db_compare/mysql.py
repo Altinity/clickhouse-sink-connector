@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 import logging
 import warnings
 
-binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary','linestring','geomcollection','multilinestring','multipolygon','multipoint','polygon')
+binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary', 'linestring', 'geomcollection', 'multilinestring', 'multipolygon', 'multipoint', 'polygon')
 
 def is_binary_datatype(datatype):
    if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
