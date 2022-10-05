@@ -96,14 +96,14 @@ public class DebeziumConverterTest {
 
         String formattedTimestamp = DebeziumConverter.ZonedTimestampConverter.convert("2021-12-31T19:01:00Z");
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00:000000"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00.000000"));
 
         String formattedTimestampWMicroSeconds = DebeziumConverter.ZonedTimestampConverter.convert("2038-01-19T03:14:07.999999Z");
-        Assert.assertTrue(formattedTimestampWMicroSeconds.equalsIgnoreCase("2038-01-19 03:14:07:999999"));
+        Assert.assertTrue(formattedTimestampWMicroSeconds.equalsIgnoreCase("2038-01-19 03:14:07.999999"));
 
         String formattedTimestamp3 = DebeziumConverter.ZonedTimestampConverter.convert("2038-01-19T03:14:07.99Z");
 
-        Assert.assertTrue(formattedTimestamp3.equalsIgnoreCase("2038-01-19 03:14:07:990000"));
+        Assert.assertTrue(formattedTimestamp3.equalsIgnoreCase("2038-01-19 03:14:07.990000"));
     }
 //
 //    @Test
