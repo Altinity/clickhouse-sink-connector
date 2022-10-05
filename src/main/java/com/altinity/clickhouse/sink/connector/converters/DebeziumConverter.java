@@ -1,20 +1,28 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import io.debezium.time.ZonedTimestamp;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Date;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.TimeZone;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.TemporalAccessor;
 import java.util.concurrent.TimeUnit;
 
 public class DebeziumConverter {
 
     private static final int MICROS_IN_SEC = 1000000;
     private static final int MICROS_IN_MILLI = 1000;
+
+    private static final Logger log = LoggerFactory.getLogger(DebeziumConverter.class);
+
 
     public static class MicroTimeConverter {
         /**
@@ -36,53 +44,56 @@ public class DebeziumConverter {
     public static class MicroTimestampConverter {
 
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static String convert(Object value) {
+        public static Long convert(Object value) {
             Long microTimestamp = (Long) value;
 
-            Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
-            java.util.Date date = new java.util.Date(milliTimestamp);
+            //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
+            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(microTimestamp/1000).plusNanos(microTimestamp%1_000), ZoneId.of("UTC"));
 
-            SimpleDateFormat bqDatetimeSecondsFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            bqDatetimeSecondsFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
-            String formattedSecondsTimestamp = bqDatetimeSecondsFormat.format(date);
+            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, true);
 
-            Long microRemainder = microTimestamp % MICROS_IN_SEC;
 
-            return formattedSecondsTimestamp;
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+            String formattedSecondsTimestamp = destFormatter.format(modifiedDate);
+
+            return modifiedDate.toInstant(ZoneOffset.UTC).toEpochMilli();
         }
     }
 
     public static class TimestampConverter {
 
         /**
-         * Function to convert Debezium Timestamp fields to
+         * Function to convert Debezium Timestamp fields to DATETIME(0), DATETIME(1), DATETIME(2)
+         * Timestamp does not have microseconds
          * ISO formatted String.
          * @param value
          * @return
          */
-        public static String convert(Object value, boolean isDateTime64) {
+        public static Long convert(Object value, boolean isDateTime64) {
             LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.of("UTC"));
 
             LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, isDateTime64);
             //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-            return modifiedDate.format(destFormatter);
+            return modifiedDate.toInstant(ZoneOffset.UTC).toEpochMilli();
         }
 
-        public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {
 
-            if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
-                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
-            } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME)){
-                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME;
-            }
-
-            return providedDateTime;
-
-        }
     }
 
+    public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {
+
+        if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
+            return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
+        } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME)){
+            return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME;
+        }
+
+        return providedDateTime;
+
+    }
     public static class DateConverter {
 
 
@@ -128,10 +139,34 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
-            LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            return zd.format(destFormatter);
+
+            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
+            DateTimeFormatter bqZonedTimestampFormat =
+                    new DateTimeFormatterBuilder()
+                            .append(DateTimeFormatter.ISO_LOCAL_DATE)
+                            .appendLiteral(' ')
+                            .append(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
+                            .toFormatter();
+            return bqZonedTimestampFormat.format(parsedTime);
+
+//            String result = "";
+//            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'");
+//            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+//
+//            try {
+//                LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+//                result = zd.format(destFormatter);
+//            } catch(Exception e) {
+//                try {
+//                    formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
+//                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+//                    result = zd.format(destFormatter);
+//                } catch(Exception e2) {
+//                    log.error("Cannot parse timestamp" + value);
+//                }
+//            }
+//
+//            return result;
         }
     }
 }
