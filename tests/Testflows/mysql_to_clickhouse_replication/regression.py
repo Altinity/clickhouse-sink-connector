@@ -14,12 +14,12 @@ from mysql_to_clickhouse_replication.tests.steps import *
 from mysql_to_clickhouse_replication.tests.steps_global import *
 
 xfails = {
-    "data types/date time/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
-    ],
-    "data types ac/date time/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
-    ],
+    # "data types/date time/*": [
+    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
+    # ],
+    # "data types ac/date time/*": [
+    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
+    # ],
     "primary keys/*": [
         (Fail, "GitLab CI/CD only fail")
     ],

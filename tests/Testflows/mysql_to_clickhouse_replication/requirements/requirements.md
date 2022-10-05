@@ -49,6 +49,8 @@
       * 4.6.9.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
     * 4.6.10 [JSON](#json)
       * 4.6.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
+    * 4.6.11 [Year](#year)
+      * 4.6.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
   * 4.7 [Queries](#queries)
     * 4.7.1 [Inserts](#inserts)
       * 4.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationinserts)
@@ -352,9 +354,9 @@ Data types connection table:
 
 | MySQL       |       ClickHouse        |
 |:------------|:-----------------------:|
-| Date        |     Date or String      |
+| Date        |         Date32          |
 | DateTime(6) | DateTime64(6) or String |
-| DATETIME    |        DateTime         |
+| DATETIME    |       DateTime64        |
 | Time        |         String          |
 | Time(6)     |         String          |
 | Timestamp   |        DateTime         |
@@ -460,7 +462,21 @@ Data types connection table:
 
 | MySQL | ClickHouse |
 |:------|:----------:|
-| JSON  |    JSON    |
+| JSON  |   String   |
+
+#### Year
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year
+version: 1.0
+
+[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'Year'
+data types as they supported by [MySQL].
+
+Data types connection table:
+
+| MySQL | ClickHouse |
+|:------|:----------:|
+| Year  |   Int32    |
 
 ### Queries
 
