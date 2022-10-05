@@ -122,20 +122,20 @@ def double(self, mysql_type, ch_type, values, ch_values, nullable):
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
     [
-        ("DATE", "Date", ["'2012-12-12'"], ['"2012-12-12"'], False),
+        ("DATE", "Date32", ["'2012-12-12'"], ['"2012-12-12"'], False),
         (
-                "DATETIME(6)",
-                "String",
-                ["'2018-09-08 17:51:04.777'"],
-                ['"2018-09-08 17:51:04.777000"'],
+                "DATETIME",
+                "DateTime64",
+                ["'2018-09-08 17:51:04'"],
+                ['"2018-09-08 17:51:04.000"'],
                 False,
         ),
         ("TIME", "String", ["'17:51:04.777'"], ['"17:51:05"'], False),
-        ("TIME(6)", "String", ["'17:51:04.777'"], ['"17:51:04.777000"'], False),
-        ("DATE", "Date", ["NULL"], ["\\N"], True),
-        ("DATETIME(6)", "String", ["NULL"], ["\\N"], True),
+        # ("TIME(6)", "String", ["'17:51:04.777'"], ['"17:51:04.777000"'], False),
+        ("DATE", "Date32", ["NULL"], ["\\N"], True),
+        ("DATETIME", "DateTime64", ["NULL"], ["\\N"], True),
         ("TIME", "String", ["NULL"], ["\\N"], True),
-        ("TIME(6)", "String", ["NULL"], ["\\N"], True),
+        # ("TIME(6)", "String", ["NULL"], ["\\N"], True),
     ],
 )
 @Requirements(
@@ -331,6 +331,52 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
         ch_values=ch_values,
         nullable=nullable,
         auto_create_tables=True,
+    )
+
+
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        ("JSON", "String", ["'{\\\"key1\\\": \\\"value1\\\", \\\"key2\\\": \\\"value2\\\"}'"]
+         , ['{""key1"": ""value1"", ""key2"": ""value2""}'],
+         False),
+        ("JSON", "String", ["NULL"], ["\\N"], True),
+    ],
+)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
+def json(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'JSON' data types."""
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        auto_create_tables=True
+    )
+
+
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        ("Year", "Int32", ["1909"]
+         , ['1909'],
+         False),
+        ("Year", "Int32", ["NULL"], ["\\N"], True),
+    ],
+)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year("1.0"))
+def year(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'Year' data types."""
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        auto_create_tables=True
     )
 
 
