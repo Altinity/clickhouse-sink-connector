@@ -1,19 +1,17 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
-import io.debezium.time.ZonedTimestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeFormatterBuilder;
-import java.time.temporal.TemporalAccessor;
 import java.util.concurrent.TimeUnit;
 
 public class DebeziumConverter {
@@ -44,20 +42,15 @@ public class DebeziumConverter {
     public static class MicroTimestampConverter {
 
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static Long convert(Object value) {
+        public static Timestamp convert(Object value) {
             Long microTimestamp = (Long) value;
 
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
-            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(microTimestamp/1000).plusNanos(microTimestamp%1_000), ZoneId.of("UTC"));
-
+            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000), ZoneId.of("UTC"));
             LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, true);
 
 
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-            String formattedSecondsTimestamp = destFormatter.format(modifiedDate);
-
-            return modifiedDate.toInstant(ZoneOffset.UTC).toEpochMilli();
+            return Timestamp.from(modifiedDate.toInstant(ZoneOffset.UTC));
         }
     }
 
@@ -140,33 +133,44 @@ public class DebeziumConverter {
          */
         public static String convert(Object value) {
 
-            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
-            DateTimeFormatter bqZonedTimestampFormat =
-                    new DateTimeFormatterBuilder()
-                            .append(DateTimeFormatter.ISO_LOCAL_DATE)
-                            .appendLiteral(' ')
-                            .append(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
-                            .toFormatter();
-            return bqZonedTimestampFormat.format(parsedTime);
+//            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
+//            DateTimeFormatter bqZonedTimestampFormat =
+//                    new DateTimeFormatterBuilder()
+//                            .append(DateTimeFormatter.ISO_LOCAL_DATE)
+//                            .appendLiteral(' ')
+//                            .append(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
+//                            .toFormatter();
+//            return bqZonedTimestampFormat.format(parsedTime);
 
-//            String result = "";
-//            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'");
-//            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
-//
-//            try {
-//                LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
-//                result = zd.format(destFormatter);
-//            } catch(Exception e) {
-//                try {
-//                    formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
-//                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
-//                    result = zd.format(destFormatter);
-//                } catch(Exception e2) {
-//                    log.error("Cannot parse timestamp" + value);
-//                }
-//            }
-//
-//            return result;
+            String result = "";
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+
+            String[] date_formats = {
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'"};
+
+            boolean parsingSuccesful = false;
+            for (String formatString : date_formats) {
+                try {
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
+                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+                    result = zd.format(destFormatter);
+                    parsingSuccesful = true;
+                    break;
+                } catch(Exception e) {
+                    // Continue
+                }
+            }
+            if(parsingSuccesful == false) {
+                log.error("Error parsing zonedtimestamp " + (String) value);
+            }
+
+            return result;
         }
     }
 }

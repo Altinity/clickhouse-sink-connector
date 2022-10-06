@@ -628,7 +628,7 @@ public class DbWriter extends BaseDbWriter {
                 if (isFieldDateTime) {
                     if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                         // Handle microtimestamp first
-                        ps.setLong(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                        ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value));
                     }
                     else if (value instanceof Long) {
                         boolean isColumnDateTime64 = false;
