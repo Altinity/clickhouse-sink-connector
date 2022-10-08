@@ -499,11 +499,13 @@ public class DbWriter extends BaseDbWriter {
     public void insertPreparedStatement(Map<String, Integer> columnNameToIndexMap, PreparedStatement ps, List<Field> fields,
                                         ClickHouseStruct record, Struct struct, boolean beforeSection) throws Exception {
 
-
+       // int index = 1;
         // Use this map's key natural ordering as the source of truth.
-        //for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
-        for (Field f : fields) {
-            String colName = f.name();
+        for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
+        //for (Field f : fields) {
+            String colName = entry.getKey();
+            //String colName = f.name();
+
             if(colName == null) {
                 continue;
             }
@@ -511,7 +513,8 @@ public class DbWriter extends BaseDbWriter {
                 log.error("Column Name to Index map error");
             }
 
-            int index = -1;
+                int index = -1;
+            //int index = 1;
             if(true == columnNameToIndexMap.containsKey(colName)) {
                 index = columnNameToIndexMap.get(colName);
             } else {
@@ -547,7 +550,7 @@ public class DbWriter extends BaseDbWriter {
             //ToDo: Map the Clickhouse types as a Enum.
 
 
-            // Field f = getFieldByColumnName(fields, colName);
+            Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = struct.get(f);
@@ -625,14 +628,14 @@ public class DbWriter extends BaseDbWriter {
                 if (isFieldDateTime) {
                     if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                         // Handle microtimestamp first
-                        ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                        ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value));
                     }
                     else if (value instanceof Long) {
                         boolean isColumnDateTime64 = false;
                         if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                             isColumnDateTime64 = true;
                         }
-                        ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
+                        ps.setLong(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
                     }
                 } else if (isFieldTime) {
                     ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
