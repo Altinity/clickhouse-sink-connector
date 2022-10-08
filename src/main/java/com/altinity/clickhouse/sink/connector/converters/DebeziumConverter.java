@@ -6,12 +6,12 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 public class DebeziumConverter {
@@ -33,9 +33,16 @@ public class DebeziumConverter {
             Long milliTimestamp = (Long) value / 1000;
             java.util.Date date = new java.util.Date(milliTimestamp);
 
-            SimpleDateFormat bqTimeSecondsFormat = new SimpleDateFormat("HH:mm:ss");
-            String formattedSecondsTimestamp = bqTimeSecondsFormat.format(date);
+            Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
+
+
+            LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
+            String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
+
+
             return formattedSecondsTimestamp;
+
+            //return Timestamp.from(Instant.ofEpochMilli((Long) value));
         }
     }
 
@@ -46,11 +53,12 @@ public class DebeziumConverter {
             Long microTimestamp = (Long) value;
 
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
-            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000), ZoneId.of("UTC"));
-            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, true);
+            //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
+            //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
+            Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS);
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, true);
 
-
-            return Timestamp.from(modifiedDate.toInstant(ZoneOffset.UTC));
+            return Timestamp.from(modifiedDT);
         }
     }
 
@@ -64,19 +72,17 @@ public class DebeziumConverter {
          * @return
          */
         public static Long convert(Object value, boolean isDateTime64) {
-            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli((long) value), ZoneId.of("UTC"));
+            Instant providedDT = Instant.ofEpochMilli((long) value);
 
-            LocalDateTime modifiedDate = checkIfDateTimeExceedsSupportedRange(date, isDateTime64);
-            //DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(providedDT, isDateTime64);
 
-            return modifiedDate.toInstant(ZoneOffset.UTC).toEpochMilli();
+            return modifiedDT.toEpochMilli();
         }
 
 
     }
 
-    public static LocalDateTime checkIfDateTimeExceedsSupportedRange(LocalDateTime providedDateTime, boolean isDateTime64) {
+    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, boolean isDateTime64) {
 
         if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
             return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
@@ -160,6 +166,7 @@ public class DebeziumConverter {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
                     LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
                     result = zd.format(destFormatter);
+                    //result = StringUtils.stripEnd(result, "0");
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {

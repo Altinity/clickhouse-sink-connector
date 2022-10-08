@@ -1,11 +1,19 @@
 package com.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
+import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.clickhouse.client.data.ClickHouseArrayValue;
+import com.clickhouse.jdbc.ClickHouseConnection;
+import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.junit.Assert;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static com.altinity.clickhouse.sink.connector.metadata.DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
@@ -19,7 +27,7 @@ public class DebeziumConverterTest {
         Object timeInMicroSeconds = 3723000000L;
         String formattedTime = DebeziumConverter.MicroTimeConverter.convert(timeInMicroSeconds);
 
-        //Assert.assertTrue(formattedTime.equalsIgnoreCase("20:02:03"));
+        Assert.assertTrue(formattedTime.equalsIgnoreCase("20:02:03"));
     }
 
     @Test
@@ -35,6 +43,11 @@ public class DebeziumConverterTest {
         //Assert.assertTrue(resultWMilliSeconds == 1665076675L);
 
 
+        Timestamp result = DebeziumConverter.MicroTimestampConverter.convert(1664416228000000L);
+        System.out.println("");
+
+        Timestamp result2 = DebeziumConverter.MicroTimestampConverter.convert(253402300799999990L);
+        System.out.println("");
     }
 
     @Test
@@ -120,6 +133,59 @@ public class DebeziumConverterTest {
     @Test
     public void testCheckIfDateTimeExceedsSupportedRange() {
         DebeziumConverter.TimestampConverter.convert(1665076675000L, false);
+    }
+
+
+    @Test
+    @Tag("IntegrationTest")
+    public void testBatchArrays() {
+        String hostName = "localhost";
+        Integer port = 8123;
+
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "test_ch_jdbc_complex_2";
+
+        Properties properties = new Properties();
+        properties.setProperty("client_name", "Test_1");
+
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+        String url = dbWriter.getConnectionString(hostName, port, database);
+
+        String insertQueryTemplate = "insert into test_ch_jdbc_complex_2(col1, col2, col3, col4, col5, col6) values(?, ?, ?, ?, ?, ?)";
+        try {
+            ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
+            ClickHouseConnection conn = dataSource.getConnection(userName, password);
+
+            PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
+
+            boolean[] boolArray = {true, false, true};
+            float[] floatArray = {0.012f, 0.1255f, 1.22323f};
+            ps.setObject(1, "test_string");
+            ps.setBoolean(2, true);
+            ps.setObject(3, ClickHouseArrayValue.of(new Object[] {Arrays.asList("one", "two", "three")}));
+            ps.setObject(4, ClickHouseArrayValue.ofEmpty().update(boolArray));
+            ps.setObject(5, ClickHouseArrayValue.ofEmpty().update(floatArray));
+
+            Map<String, Float> test_map = new HashMap<String, Float>();
+            test_map.put("2", 0.02f);
+            test_map.put("3", 0.02f);
+
+            ps.setObject(6, Collections.unmodifiableMap(test_map));
+
+//            ps.setObject(5, ClickHouseArrayValue.of(new Object[]
+//                    {
+//                            Arrays.asList(new Float(0.2), new Float(0.3))
+//                    }));
+            ps.addBatch();
+            ps.executeBatch();
+
+        } catch(Exception e) {
+            System.out.println("Error connecting" + e);
+        }
+
     }
 
 }

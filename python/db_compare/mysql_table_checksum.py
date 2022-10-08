@@ -81,7 +81,7 @@ def get_table_checksum_query(table, conn):
 
         if 'datetime' in data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >  substr('2299-12-31 23:59:59.99999999', 1, length({column_name})) then CAST(substr('2299-12-31 23:59:59.99999999', 1, length({column_name})) AS {data_type}) else case when {column_name} <= '1900-01-01 00:00:00' then CAST('1900-01-01 00:00:00' AS {data_type}) else {column_name} end end"
+            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.99999999', 1, length({column_name})) then CAST(substr('2283-11-11 23:59:59.99999999', 1, length({column_name})) AS {data_type}) else case when {column_name} <= '1925-01-01 00:00:00' then CAST('1925-01-01 00:00:00' AS {data_type}) else {column_name} end end"
         #elif 'datetime' in data_type:
         #    # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime/
         #    select += f"case when {column_name} >='2283-11-11' then CAST('2283-11-11' AS {data_type}) else case when {column_name} <= '1970-01-01' then CAST('1925-01-01 00:00:00' AS {data_type}) else {column_name} end end"*/
