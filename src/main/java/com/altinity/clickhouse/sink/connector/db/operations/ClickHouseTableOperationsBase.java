@@ -5,6 +5,7 @@ import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
+import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.slf4j.Logger;
@@ -63,8 +64,10 @@ public class ClickHouseTableOperationsBase {
                     // Timestamp (with milliseconds scale) , DATETIME, DATETIME(0 -3) -> DateTime64(3)
                     if(f.schema().type() == Schema.INT64_SCHEMA.type() && f.schema().name().equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                         columnToDataTypesMap.put(colName, "DateTime64(3)");
-                    } else if(f.schema().type() == Schema.INT64_SCHEMA.type() && f.schema().name().equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
+                    } else if((f.schema().type() == Schema.INT64_SCHEMA.type() && f.schema().name().equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) ||
+                            (f.schema().type() == Schema.STRING_SCHEMA.type() && f.schema().name().equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) ) {
                         // MicroTimestamp (with microseconds precision) , DATETIME(3 -6) -> DateTime64(6)
+                        // TIMESTAMP(1, 2, 3, 4, 5, 6) -> ZONEDTIMESTAMP(Debezium) - >DateTime64(6)
                         columnToDataTypesMap.put(colName, "DateTime64(6)");
                     } else {
                         columnToDataTypesMap.put(colName, dataType.name());
