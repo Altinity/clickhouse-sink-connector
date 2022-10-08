@@ -3,8 +3,11 @@ package com.altinity.clickhouse.sink.connector.metadata;
 import com.clickhouse.client.data.BinaryStreamUtils;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
+
+import static com.clickhouse.client.data.BinaryStreamUtils.DATETIME64_MAX;
+import static com.clickhouse.client.data.BinaryStreamUtils.DATETIME64_MIN;
+import static java.time.Instant.*;
 
 public class DataTypeRange
 {
@@ -16,10 +19,10 @@ public class DataTypeRange
 
 
     // DateTime
-    public static final LocalDateTime CLICKHOUSE_MIN_SUPPORTED_DATETIME =  Instant.ofEpochMilli
-            (BinaryStreamUtils.DATETIME64_MIN * 1000).atZone(ZoneId.of("UTC")).toLocalDateTime();
-    public static final LocalDateTime CLICKHOUSE_MAX_SUPPORTED_DATETIME = Instant.ofEpochMilli
-            (BinaryStreamUtils.DATETIME64_MAX * 1000).atZone(ZoneId.of("UTC")).toLocalDateTime();
+    public static final Instant CLICKHOUSE_MIN_SUPPORTED_DATETIME = from(ofEpochMilli
+            (DATETIME64_MIN * 1000).atZone(ZoneId.of("UTC"))).plusNanos(DATETIME64_MIN * 1000 % 1_000);
+    public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME = from(ofEpochMilli
+            (DATETIME64_MAX * 1000).atZone(ZoneId.of("UTC")).withHour(23).withMinute(59).withSecond(59).withNano(999999999));
 
 
 }

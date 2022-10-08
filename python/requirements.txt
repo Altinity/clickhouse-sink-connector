@@ -1,3 +1,0 @@
-clickhouse-driver==0.2.3
-pymysql
-sqlalchemy
