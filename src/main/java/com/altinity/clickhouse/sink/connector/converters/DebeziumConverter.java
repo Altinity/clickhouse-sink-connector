@@ -151,14 +151,18 @@ public class DebeziumConverter {
             String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
+            // The order of this array matters,
+            // for example you might truncate microseconds
+            // to milliseconds(3) if .SSS is above .SSSSSS
             String[] date_formats = {
                     "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
                     "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'"};
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'"
+            };
 
             boolean parsingSuccesful = false;
             for (String formatString : date_formats) {
