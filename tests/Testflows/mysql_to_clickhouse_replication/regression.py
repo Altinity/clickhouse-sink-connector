@@ -87,7 +87,7 @@ def regression(
         create_database(name="test")
 
     Feature(run=load("mysql_to_clickhouse_replication.tests.sanity", "feature"))
-    Feature(run=load("mysql_to_clickhouse_replication.tests.data_types", "feature"))
+    # Feature(run=load("mysql_to_clickhouse_replication.tests.data_types", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.data_types_ac", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.deduplication", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.primary_keys", "feature"))
