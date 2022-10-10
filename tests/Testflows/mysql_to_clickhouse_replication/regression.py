@@ -97,7 +97,7 @@ def regression(
             "mysql_to_clickhouse_replication.tests.table_schema_changes", "feature"
         )
     )
-    Feature(run=load("mysql_to_clickhouse_replication.tests.insert", "feature"))
+    # Feature(run=load("mysql_to_clickhouse_replication.tests.insert", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.data_consistency", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.multiple_tables", "feature"))
     Feature(run=load("mysql_to_clickhouse_replication.tests.virtual_columns", "feature"))

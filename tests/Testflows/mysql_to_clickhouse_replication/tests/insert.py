@@ -19,15 +19,17 @@ def mysql_to_clickhouse_postgres_inserts(self, input, output):
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} (col1 int4, col2 int4 NOT NULL, col3 int4 default 777)"
+            statement=f"CREATE TABLE {table_name} (id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
+                      f" col3 int4 default 777, PRIMARY KEY (id))"
             f" ENGINE = InnoDB;",
         )
-        clickhouse.query("SYSTEM STOP MERGES")
+        # clickhouse.query("SYSTEM STOP MERGES")
 
     with When("I insert data in MySql table"):
         mysql.query(
             f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};"
         )
+        pause()
 
     with Then("I check data inserted correct"):
         mysql_rows_after_delete = mysql.query(f"select col1,col2,col3 from {table_name}").output.strip()[90:]
@@ -70,6 +72,14 @@ def select_insert_2(self, auto_create_tables=True):
     """NULL and DEFAULT `INSERT` check."""
     mysql_to_clickhouse_postgres_inserts(input="((select 2),(select i from (values(3)) as foo (i)),DEFAULT)",
                                          output="2,3,777")
+
+@TestScenario
+def select_insert_3(self, auto_create_tables=True):
+    """NULL and DEFAULT `INSERT` check."""
+    mysql_to_clickhouse_postgres_inserts(input="(2,3,777)",
+                                         output="2,3,777")
+
+
 
 
 @TestFeature
