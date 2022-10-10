@@ -120,12 +120,29 @@ def find_dump_timezone(source):
         return match.group(1)
     return None
 
+
 def find_create_table(source):
     pattern = r'CREATE TABLE'
     regex = re.compile(pattern, re.IGNORECASE)
     for match in regex.finditer(source):
         return True
     return False
+
+
+def find_partitioning_options(source):
+    # initial support for partitioning by range columns
+    pattern = r'PARTITION BY RANGE  COLUMNS\((.*?)\)'
+    regex = re.compile(pattern, re.IGNORECASE)
+    partitioning_keys = None
+    for match in regex.finditer(source):
+        partitioning_keys = match.group(1)
+        logging.info("Partitioning key :"+partitioning_keys)
+        break
+    partitioning_options = ""
+    if partitioning_keys:
+        partitioning_options = f"PARTITION BY {partitioning_keys}"
+    return partitioning_options
+
 
 def convert_to_clickhouse_table(user_name, table_name, source):
     
@@ -142,8 +159,8 @@ def convert_to_clickhouse_table(user_name, table_name, source):
 
     settings = "index_granularity = 8192"
 
-    # TODO partitioning
-    partitioning_options = ""
+    # partitioning
+    partitioning_options = find_partitioning_options(source)
     src = source
     # get rid of SQL comments
     src = re.sub(r'\/\*(.*?)\*\/;', '', src)
@@ -166,7 +183,9 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     src = re.sub(r'\bDEFAULT\b.*,', ',', src)
     src = re.sub(r'\sCOLLATE\s(.*?)([\s,])', ' \\2', src, )
     src = re.sub(r'\sCHARACTER\sSET\s(.*?)([\s,])', ' \\2', src)
-
+    # it is a challenge to convert MySQL expression in generated columns
+    src = re.sub(r'GENERATED ALWAYS AS \(.*\)\s',' ',src)
+    src = re.sub(r'\bVIRTUAL\b',' ', src)
     # ClickHouse does not support constraints, indices, primary and unique keys
     src = re.sub(r'.*\bCONSTRAINT\b.*', '', src)
     src = re.sub(r'.*\bPRIMARY KEY\b.*\(.*', '', src)
@@ -213,10 +232,17 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     # convert binary types to String until CH support GIS binary : https://dev.mysql.com/doc/refman/8.0/en/gis-data-formats.html#gis-wkb-format
     res = re.sub(r'\sPoint\s', ' String ', res)
     res = re.sub(r'\sGeometry\s', ' String ', res)
+    res = re.sub(r'\sgeomcollection\s', ' String ', res)
+    res = re.sub(r'\slinestring\s', ' String ', res)
+    res = re.sub(r'\smultilinestring\s', ' String ', res)
+    res = re.sub(r'\smultipoint\s', ' String ', res)
+    res = re.sub(r'\smultipolygon\s', ' String ', res)
+    res = re.sub(r'\spolygon\s', ' String ', res)
     res = re.sub(r'\sbit\s', ' String ', res)
     res = re.sub(r'\sbit(.*?)\s', ' String ', res)
     res = re.sub(r'\sbinary\s', ' String ', res)
     res = re.sub(r'\sbinary(.*?)\s', ' String ', res)
+    res = re.sub(r'\sset\([^\)]*?\)', ' String ', res)   
     return (res, columns)
 
 
@@ -398,7 +424,7 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run = False):
             dfile = args.dump_dir + '/'
             # sakila@store@@0.tsv.zst
             data_files = glob.glob(
-                dfile + f"{schema}@{table_name}@*.tsv.zst")
+                dfile + f"{schema}@{table_name}@*.tsv.zst") + glob.glob(dfile + f"{schema}@{table_name}.tsv.zst")
             columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
             transformed_columns = get_column_list(
