@@ -11,9 +11,12 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v2
-      - name: Run Docker compose
-        working-directory: deploy/docker 
-        run: |
-         ls
-         chmod a+x start-docker-compose.sh
-         ./start-docker-compose.sh
+      - name: Run testflows tests
+        working-directory: tests/Testflows
+        run: python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to clickhouse replication/*" --test-to-end -o classic
+#      - name: Run Docker compose
+#        working-directory: deploy/docker
+#        run: |
+#         ls
+#         chmod a+x start-docker-compose.sh
+#         ./start-docker-compose.sh
