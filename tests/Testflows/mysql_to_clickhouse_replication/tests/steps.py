@@ -89,7 +89,9 @@ EOF"""
           "topic.creation.default.replication.factor": 1,
           "topic.creation.default.partitions": 6,
 
-          "provide.transaction.metadata": "true"
+          "provide.transaction.metadata": "true",
+          "max.batch.size": 128000,
+          "max.queue.size": 512000
         }
       }
 EOF"""
@@ -187,7 +189,7 @@ EOF"""
     "name": "sink-connector",
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-      "tasks.max": "10","""+
+      "tasks.max": "100","""+
       f'"topics": "{topics}",'+"""
       "clickhouse.topic2table.map": "",
       "clickhouse.server.url": "clickhouse",
@@ -220,7 +222,9 @@ EOF"""
         """
     "schema.evolution": false,
 
-    "deduplication.policy": "off"
+    "deduplication.policy": "off",
+    
+    "metadata.max.age.ms" : 10000
   }
 }
 EOF"""

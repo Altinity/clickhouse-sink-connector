@@ -163,9 +163,9 @@ def combinatoric_restart(self):
     xfail("some timing problems")
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(2, 6):
-        pairs = list(combinations(nodes_list, i))
-        for pair in pairs:
-            restart(services=pair)
+        service_combinations = list(combinations(nodes_list, i))
+        for combination in service_combinations:
+            restart(services=combination)
 
 
 @TestFeature

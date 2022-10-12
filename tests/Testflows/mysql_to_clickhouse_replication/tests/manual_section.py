@@ -58,6 +58,7 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
 def mysql_to_clickhouse_connection2(self, auto_create_tables):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
+
     with Given("Receive UID"):
         uid = getuid()
 
@@ -83,6 +84,16 @@ def mysql_to_clickhouse_connection2(self, auto_create_tables):
         )
         pause()
 
+    with When("Print clickhouse version"):
+        print(self.context.clickhouse_version)
+
+        if check_clickhouse_version("<22.3")(self):
+            print("only supported on ClickHouse version >= 22.9")
+            pause()
+        else:
+            print("upper then 22.3")
+            pause()
+
     with When(f"I insert data in MySql table"):
         mysql.query(
             f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
@@ -100,6 +111,7 @@ def mysql_to_clickhouse_connection2(self, auto_create_tables):
     with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
         pass
 
+
 @TestScenario
 def mysql_to_clickhouse_connection_ac(self, auto_create_tables=True):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
@@ -107,6 +119,7 @@ def mysql_to_clickhouse_connection_ac(self, auto_create_tables=True):
     # with Given("I collect Sink logs"):
     #     with Shell() as bash:
     #         cmd = bash("docker-compose logs sink > sink.log")
+
 
 @TestFeature
 @Name("manual section")

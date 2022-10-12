@@ -65,17 +65,18 @@ def sysbench_tests(self, script, test_name=None, distinct_values_timeout=70, dis
 
     if script == "run_sysbench_bulk_insert.sh":
         with Then(f"I write data from ClickHouse table to file"):
-            pause()
             clickhouse.cmd(
                 'clickhouse client -uroot --password root --query "select id ,k from test.sbtest1 FINAL where _sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
+            time.sleep(30)
     else:
         with Then(f"I write data from ClickHouse table to file"):
             clickhouse.cmd(
                 'clickhouse client -uroot --password root --query "select id ,k ,c ,pad from test.sbtest1 FINAL where _sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
+            time.sleep(60)
 
     with Then(
         "I check MySQL data has equal to CH data hash and if it is not write difference "
@@ -91,8 +92,7 @@ def sysbench_tests(self, script, test_name=None, distinct_values_timeout=70, dis
         )
 
     with And(f"I drop tables"):
-        pass
-        # clickhouse.query(f"DROP TABLE IF EXISTS test.{table_name}")
+        clickhouse.query(f"DROP TABLE IF EXISTS test.{table_name}")
 
 
 @TestScenario
@@ -111,10 +111,10 @@ def insert_bulk(self):
 
 
 @TestScenario
-@Repeat(3)
+@Repeat(1)
 def oltp_delete(self):
     """Run "oltp delete" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_oltp_delete.sh")
 
 
@@ -122,7 +122,7 @@ def oltp_delete(self):
 @Repeat(1)
 def read_write_load_test(self):
     """Run "read write load" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_read_write_load_test.sh")
 
 
@@ -130,7 +130,7 @@ def read_write_load_test(self):
 @Repeat(1)
 def update_index(self):
     """Check MySQl by sysbench "update index" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_update_index.sh")
 
 
@@ -138,7 +138,7 @@ def update_index(self):
 @Repeat(1)
 def update_non_index(self):
     """Run "update non index" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_update_non_index.sh")
 
 
@@ -146,7 +146,7 @@ def update_non_index(self):
 @Repeat(1)
 def oltp_delete2(self):
     """Run "oltp delete" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_delete")
 
 
@@ -154,7 +154,7 @@ def oltp_delete2(self):
 @Repeat(1)
 def oltp_insert(self):
     """Run "oltp update non index" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_insert")
 
 
@@ -162,7 +162,7 @@ def oltp_insert(self):
 @Repeat(1)
 def oltp_update_non_index(self):
     """Run "oltp update non index" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_update_non_index")
 
 
@@ -170,7 +170,7 @@ def oltp_update_non_index(self):
 @Repeat(1)
 def oltp_update_index(self):
     """Run "oltp update index" test."""
-    xfail("expected")
+    # xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_update_index")
 
 
@@ -180,7 +180,7 @@ def feature(self):
     """MySQL to ClickHouse sysbench tests."""
 
     with Given("I send rpk command on kafka"):
-        self.context.cluster.node("kafka").cmd(
+        retry(self.context.cluster.node("kafka").cmd, timeout=100, delay=2)(
             "rpk topic create SERVER5432.sbtest.sbtest1 -p 6 rpk",
             message="SERVER5432.sbtest.sbtest1  OK",
             exitcode=0,
