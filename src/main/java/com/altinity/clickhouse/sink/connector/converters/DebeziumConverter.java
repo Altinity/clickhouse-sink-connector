@@ -37,7 +37,8 @@ public class DebeziumConverter {
             LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
             String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
 
-            return removeTrailingZeros(formattedSecondsTimestamp);
+            return formattedSecondsTimestamp;
+            //return removeTrailingZeros(formattedSecondsTimestamp);
         }
     }
 
@@ -165,7 +166,7 @@ public class DebeziumConverter {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
                     LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
                     result = zd.format(destFormatter);
-                    result = removeTrailingZeros(result);
+                    //result = removeTrailingZeros(result);
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {
