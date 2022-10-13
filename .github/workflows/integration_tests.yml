@@ -1,0 +1,16 @@
+name: Docker compose tests
+
+on:
+  push:
+    branches: [ main, develop]
+  pull_request:
+    branches: [ main , develop]
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run testflows tests
+        working-directory: tests/Testflows
+        run: python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8.6.71-alpine --test-to-end -o classic
