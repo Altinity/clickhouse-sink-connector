@@ -526,6 +526,26 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Deletes = Requirement(
     num='4.7.3.1'
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support all 3 ways to create the tables schema from [MySQL] to [CLickHouse]:\n'
+        '\n'
+        '1. One with the sink\n'
+        '2. One with the clickhouse_loader\n'
+        '3. One with the chump\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.7.4.1'
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoCreateTable = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoCreateTable',
     version='1.0',
@@ -539,7 +559,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoCreateTable = Requirement
     ),
     link=None,
     level=4,
-    num='4.7.4.1'
+    num='4.7.5.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoDropTable = Requirement(
@@ -555,7 +575,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoDropTable = Requirement(
     ),
     link=None,
     level=4,
-    num='4.7.5.1'
+    num='4.7.6.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ModifyColumn = Requirement(
@@ -571,7 +591,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ModifyColumn = Requirement(
     ),
     link=None,
     level=4,
-    num='4.7.6.1'
+    num='4.7.7.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AddColumn = Requirement(
@@ -587,7 +607,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AddColumn = Requirement(
     ),
     link=None,
     level=4,
-    num='4.7.7.1'
+    num='4.7.8.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_RemoveColumn = Requirement(
@@ -603,7 +623,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_RemoveColumn = Requirement(
     ),
     link=None,
     level=4,
-    num='4.7.8.1'
+    num='4.7.9.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_NoPrimaryKey = Requirement(
@@ -919,16 +939,18 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Updates', level=4, num='4.7.2.1'),
         Heading(name='Deletes', level=3, num='4.7.3'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Deletes', level=4, num='4.7.3.1'),
-        Heading(name='Auto Create Table', level=3, num='4.7.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoCreateTable', level=4, num='4.7.4.1'),
-        Heading(name='Auto Drop Table', level=3, num='4.7.5'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoDropTable', level=4, num='4.7.5.1'),
-        Heading(name='Modify Column', level=3, num='4.7.6'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ModifyColumn', level=4, num='4.7.6.1'),
-        Heading(name='Add Column', level=3, num='4.7.7'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AddColumn', level=4, num='4.7.7.1'),
-        Heading(name='Remove Column', level=3, num='4.7.8'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.RemoveColumn', level=4, num='4.7.8.1'),
+        Heading(name='Table Schema Creation', level=3, num='4.7.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation', level=4, num='4.7.4.1'),
+        Heading(name='Auto Create Table', level=3, num='4.7.5'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoCreateTable', level=4, num='4.7.5.1'),
+        Heading(name='Auto Drop Table', level=3, num='4.7.6'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoDropTable', level=4, num='4.7.6.1'),
+        Heading(name='Modify Column', level=3, num='4.7.7'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ModifyColumn', level=4, num='4.7.7.1'),
+        Heading(name='Add Column', level=3, num='4.7.8'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AddColumn', level=4, num='4.7.8.1'),
+        Heading(name='Remove Column', level=3, num='4.7.9'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.RemoveColumn', level=4, num='4.7.9.1'),
         Heading(name='Primary Key', level=2, num='4.8'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.NoPrimaryKey', level=3, num='4.8.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple', level=3, num='4.8.2'),
@@ -982,6 +1004,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Inserts,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Updates,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Deletes,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoCreateTable,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_AutoDropTable,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ModifyColumn,
@@ -1063,16 +1086,18 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
       * 4.7.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationupdates)
     * 4.7.3 [Deletes](#deletes)
       * 4.7.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Deletes](#rqsrs-030clickhousemysqltoclickhousereplicationdeletes)
-    * 4.7.4 [Auto Create Table](#auto-create-table)
-      * 4.7.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoCreateTable](#rqsrs-030clickhousemysqltoclickhousereplicationautocreatetable)
-    * 4.7.5 [Auto Drop Table](#auto-drop-table)
-      * 4.7.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoDropTable](#rqsrs-030clickhousemysqltoclickhousereplicationautodroptable)
-    * 4.7.6 [Modify Column](#modify-column)
-      * 4.7.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ModifyColumn](#rqsrs-030clickhousemysqltoclickhousereplicationmodifycolumn)
-    * 4.7.7 [Add Column](#add-column)
-      * 4.7.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AddColumn](#rqsrs-030clickhousemysqltoclickhousereplicationaddcolumn)
-    * 4.7.8 [Remove Column](#remove-column)
-      * 4.7.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.RemoveColumn](#rqsrs-030clickhousemysqltoclickhousereplicationremovecolumn)
+    * 4.7.4 [Table Schema Creation](#table-schema-creation)
+      * 4.7.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreation)
+    * 4.7.5 [Auto Create Table](#auto-create-table)
+      * 4.7.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoCreateTable](#rqsrs-030clickhousemysqltoclickhousereplicationautocreatetable)
+    * 4.7.6 [Auto Drop Table](#auto-drop-table)
+      * 4.7.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AutoDropTable](#rqsrs-030clickhousemysqltoclickhousereplicationautodroptable)
+    * 4.7.7 [Modify Column](#modify-column)
+      * 4.7.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ModifyColumn](#rqsrs-030clickhousemysqltoclickhousereplicationmodifycolumn)
+    * 4.7.8 [Add Column](#add-column)
+      * 4.7.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.AddColumn](#rqsrs-030clickhousemysqltoclickhousereplicationaddcolumn)
+    * 4.7.9 [Remove Column](#remove-column)
+      * 4.7.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.RemoveColumn](#rqsrs-030clickhousemysqltoclickhousereplicationremovecolumn)
   * 4.8 [Primary Key](#primary-key)
     * 4.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.NoPrimaryKey](#rqsrs-030clickhousemysqltoclickhousereplicationnoprimarykey)
     * 4.8.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeysimple)
@@ -1505,6 +1530,17 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support data deletes replication from [MySQL] to [CLickHouse].
+
+#### Table Schema Creation
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation
+version: 1.0
+
+[Altinity Sink Connector] SHALL support all 3 ways to create the tables schema from [MySQL] to [CLickHouse]:
+
+1. One with the sink
+2. One with the clickhouse_loader
+3. One with the chump
 
 #### Auto Create Table
 

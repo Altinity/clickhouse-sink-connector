@@ -162,10 +162,61 @@ def combinatoric_restart(self):
     """Check all possibilities of unavailable services"""
     xfail("some timing problems")
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
-    for i in range(2, 6):
-        service_combinations = list(combinations(nodes_list, i))
-        for combination in service_combinations:
-            restart(services=combination)
+    with Given("Check for correct data replication with all possibilities of unavailable services"):
+        for i in range(2, 6):
+            service_combinations = list(combinations(nodes_list, i))
+            for combination in service_combinations:
+                restart(services=combination)
+
+
+@TestOutline
+def restart(self, services, loops=100):
+    """Check for data consistency with concurrently service restart 100 times."""
+    xfail("Doesn't finished")
+
+    with Given("Receive UID"):
+        uid = getuid()
+
+    with And("I create unique table name"):
+        table_name = f"test{uid}"
+
+    clickhouse = self.context.cluster.node("clickhouse")
+    mysql = self.context.cluster.node("mysql-master")
+
+    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+
+    with Given(f"I create MySQL table {table_name}"):
+        create_mysql_table(
+            name=table_name,
+            statement=f"CREATE TABLE {table_name} "
+                      "(id int(11) NOT NULL,"
+                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
+        )
+
+    with When("I insert data in MySql table with concurrently service restart"):
+        for node in services:
+            self.context.cluster.node(f"{node}").stop()
+
+        with Step(f"I insert data in MySql table"):
+            mysql.query(
+                f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
+            )
+    for i in range(loops):
+        with Given(f"LOOP STEP {i}"):
+            When(
+                "I insert data in MySql table",
+                test=insert_step,
+                parallel=True,
+            )(
+                table_name=table_name,
+            )
+            When(
+                "I make service concurrently unavailable",
+                test=service_unavailable,
+                parallel=True,
+            )(table_name=table_name_d)
+            join()
 
 
 @TestFeature
