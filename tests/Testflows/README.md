@@ -18,8 +18,7 @@ to run tests local.
 
 You can start all tests by 
 
-`python3 -u mysql_to_clickhouse_replication/regression.py --only 
-"/mysql to clickhouse replication/*" --test-to-end -o classic`
+`python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to clickhouse replication/*" --test-to-end -o classic`
 
 Example,
 
