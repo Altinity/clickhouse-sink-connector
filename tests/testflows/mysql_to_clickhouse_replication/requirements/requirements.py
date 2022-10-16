@@ -37,7 +37,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication = R
     ),
     link=None,
     level=4,
-    num='4.2.2.1'
+    num='4.2.3.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select = Requirement(
@@ -53,7 +53,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select = Requirem
     ),
     link=None,
     level=4,
-    num='4.2.3.1'
+    num='4.2.4.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee = Requirement(
@@ -88,7 +88,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee = Requireme
     ),
     link=None,
     level=4,
-    num='4.2.4.1'
+    num='4.2.5.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Transactions = Requirement(
@@ -894,12 +894,14 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication', level=3, num='4.1.1'),
         Heading(name='Consistency', level=2, num='4.2'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency', level=3, num='4.2.1'),
-        Heading(name='Deduplication', level=3, num='4.2.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication', level=4, num='4.2.2.1'),
-        Heading(name='Selects', level=3, num='4.2.3'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select', level=4, num='4.2.3.1'),
-        Heading(name='Only Once Guarantee', level=3, num='4.2.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee', level=4, num='4.2.4.1'),
+        Heading(name='Multiple MySQL Masters', level=3, num='4.2.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters', level=4, num='4.2.2.1'),
+        Heading(name='Deduplication', level=3, num='4.2.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication', level=4, num='4.2.3.1'),
+        Heading(name='Selects', level=3, num='4.2.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select', level=4, num='4.2.4.1'),
+        Heading(name='Only Once Guarantee', level=3, num='4.2.5'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee', level=4, num='4.2.5.1'),
         Heading(name='Transactions', level=2, num='4.3'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Transactions', level=3, num='4.3.1'),
         Heading(name='Supported Versions', level=2, num='4.4'),
@@ -1041,12 +1043,14 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication](#rqsrs-030clickhousemysqltoclickhousereplication)
   * 4.2 [Consistency](#consistency)
     * 4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency](#rqsrs-030clickhousemysqltoclickhousereplicationconsistency)
-    * 4.2.2 [Deduplication](#deduplication)
-      * 4.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencydeduplication)
-    * 4.2.3 [Selects](#selects)
-      * 4.2.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencyselect)
-    * 4.2.4 [Only Once Guarantee](#only-once-guarantee)
-      * 4.2.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee](#rqsrs-030clickhousemysqltoclickhousereplicationonlyonceguarantee)
+    * 4.2.2 [Multiple MySQL Masters](#multiple-mysql-masters)
+      * 4.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencymultiplemysqlmasters)
+    * 4.2.3 [Deduplication](#deduplication)
+      * 4.2.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencydeduplication)
+    * 4.2.4 [Selects](#selects)
+      * 4.2.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencyselect)
+    * 4.2.5 [Only Once Guarantee](#only-once-guarantee)
+      * 4.2.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee](#rqsrs-030clickhousemysqltoclickhousereplicationonlyonceguarantee)
   * 4.3 [Transactions](#transactions)
     * 4.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Transactions](#rqsrs-030clickhousemysqltoclickhousereplicationtransactions)
   * 4.4 [Supported Versions](#supported-versions)
@@ -1238,6 +1242,13 @@ version: 1.0
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency
 
 [Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [CLickHouse].
+
+#### Multiple MySQL Masters
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters
+
+[Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [CLickHouse] when one or more MySQL
+masters are going down.
 
 #### Deduplication
 

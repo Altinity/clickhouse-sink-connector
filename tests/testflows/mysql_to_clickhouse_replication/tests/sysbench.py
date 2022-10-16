@@ -69,14 +69,14 @@ def sysbench_tests(self, script, test_name=None, distinct_values_timeout=70, dis
                 'clickhouse client -uroot --password root --query "select id ,k from test.sbtest1 FINAL where _sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
-            time.sleep(30)
+            # time.sleep(30)
     else:
         with Then(f"I write data from ClickHouse table to file"):
             clickhouse.cmd(
                 'clickhouse client -uroot --password root --query "select id ,k ,c ,pad from test.sbtest1 FINAL where _sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
-            time.sleep(60)
+            # time.sleep(30)
 
     with Then(
         "I check MySQL data has equal to CH data hash and if it is not write difference "
