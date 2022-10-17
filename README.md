@@ -1,6 +1,6 @@
 # Altinity Sink Connector for ClickHouse
 
-Sink connector sinks data from Kafka into Clickhouse.
+Sink connector is used to transfer data from Kafka to Clickhouse using the Kafka connect framework.
 The connector is tested with the following converters
 - JsonConverter
 - AvroConverter (Using [Apicurio Schema Registry](https://www.apicur.io/registry/) or Confluent Schema Registry)
@@ -18,26 +18,81 @@ The connector is tested with the following converters
 - Kafka Offset management in ClickHouse
 - Increased Parallelism(Customize thread pool for JDBC connections)
 
-### Grafana Dashboard
-![](doc/img/Grafana_dashboard.png)
-
 # Source Databases
 - MySQL (Debezium)
 - PostgreSQL (Debezium) (Testing in progress)
 
-### Quick Start
-Docker image for Sink connector `altinity/clickhouse-sink-connector:latest`
+|  Component    |   Version(Tested) |
+|---------------|-------------------|
+| Redpanda      | 22.1.3            |
+| Kafka-connect | 1.9.5.Final       |
+| Debezium      | 1.9.5.Final       |
+| MySQL         | 8.0               |
+| ClickHouse    | 22.9              |
 
+
+### Quick Start (Docker-compose)
+Docker image for Sink connector `altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
-### MySQL:
+#### MySQL:
 ```bash
 cd deploy/docker
 ./start-docker-compose.sh 
 ```
-For detailed instructions [Setup](doc/setup.md)
+For Detailed setup instructions - [Setup](doc/setup.md)
+
+## Development:
+Requirements
+- Java JDK 11 (https://openjdk.java.net/projects/jdk/11/)
+- Maven (mvn) (https://maven.apache.org/download.cgi)
+- Docker and Docker-compose
+```
+mvn install -DskipTests=true
+```
+
+## DataTypes
+
+| MySQL              | Kafka<br>Connect                                     | ClickHouse                      |
+|--------------------|------------------------------------------------------|---------------------------------|
+| Bigint             | INT64\_SCHEMA                                        | Int64                           |
+| Bigint Unsigned    | INT64\_SCHEMA                                        | UInt64                          |
+| Blob               |                                                      | String + hex                    |
+| Char               | String                                               | String / LowCardinality(String) |
+| Date               | Schema: INT64<br>Name:<br>debezium.Date              | Date(6)                         |
+| DateTime(6)        | Schema: INT64<br>Name: debezium.Timestamp            | DateTime64(6)                   |
+| Decimal(30,12)     | Schema: Bytes<br>Name:<br>kafka.connect.data.Decimal | Decimal(30,12)                  |
+| Double             |                                                      | Float64                         |
+| Int                | INT32                                                | Int32                           |
+| Int Unsigned       | INT64                                                | UInt32                          |
+| Longblob           |                                                      | String + hex                    |
+| Mediumblob         |                                                      | String + hex                    |
+| Mediumint          | INT32                                                | Int32                           |
+| Mediumint Unsigned | INT32                                                | UInt32                          |
+| Smallint           | INT16                                                | Int16                           |
+| Smallint Unsigned  | INT32                                                | UInt16                          |
+| Text               | String                                               | String                          |
+| Time               |                                                      | String                          |
+| Time(6)            |                                                      | String                          |
+| Timestamp          |                                                      | DateTime64                      |
+| Tinyint            | INT16                                                | Int8                            |
+| Tinyint Unsigned   | INT16                                                | UInt8                           |
+| varbinary(\*)      |                                                      | String + hex                    |
+| varchar(\*)        |                                                      | String                          |
+| JSON               |                                                      | String                          |
+| BYTES              | BYTES, io.debezium.bits                              | String                          |
+| YEAR               | INT32                                                | INT32                           |
+| GEOMETRY           | Binary of WKB                                        | String                          |
+
+## ClickHouse Loader(Load Data from MySQL to CH for Initial Load)
+[Clickhouse Loader](python/db_load/README.md) is a program that loads data dumped in MySQL into a CH database compatible the sink connector (ReplacingMergeTree with virtual columns _version and _sign)
+
+
+### Grafana Dashboard
+![](doc/img/Grafana_dashboard.png)
+
+
 ## Documentation
-- [Data Types](doc/DataTypes.md)
 - [Architecture](doc/architecture.md)
 - [Local Setup - Docker Compose](doc/setup.md)
 - [Debezium Setup](doc/debezium_setup.md)
@@ -46,3 +101,4 @@ For detailed instructions [Setup](doc/setup.md)
 - [Testing](doc/TESTING.md)
 - [Performance Benchmarking](doc/Performance.md)
 - [Confluent Schema Registry(REST API)](doc/schema_registry.md)
+
