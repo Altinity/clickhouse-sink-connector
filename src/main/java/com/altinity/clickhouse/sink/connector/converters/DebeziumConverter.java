@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,19 +31,14 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value) {
-            Long milliTimestamp = (Long) value / 1000;
-            java.util.Date date = new java.util.Date(milliTimestamp);
 
             Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
-
 
             LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
             String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
 
-
             return formattedSecondsTimestamp;
-
-            //return Timestamp.from(Instant.ofEpochMilli((Long) value));
+            //return removeTrailingZeros(formattedSecondsTimestamp);
         }
     }
 
@@ -170,7 +166,7 @@ public class DebeziumConverter {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
                     LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
                     result = zd.format(destFormatter);
-                    //result = StringUtils.stripEnd(result, "0");
+                    //result = removeTrailingZeros(result);
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {
@@ -183,5 +179,15 @@ public class DebeziumConverter {
 
             return result;
         }
+    }
+
+    static public String removeTrailingZeros(String data) {
+        String result = "";
+
+        if(data != null) {
+            result = StringUtils.stripEnd(StringUtils.stripEnd(data, "0"), ".");
+        }
+
+        return result;
     }
 }

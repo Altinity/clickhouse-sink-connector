@@ -74,17 +74,26 @@ def get_table_checksum_query(table, conn):
         is_nullable = row['is_nullable']
 
         if not first_column:
-            select += ","
+            select += ","  
 
         if is_nullable == 'YES':
             nullables.append(column_name)
 
-        if 'datetime' in data_type:
+        if 'datetime' == data_type or 'datetime(1)'== data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.99999999', 1, length({column_name})) then CAST(substr('2283-11-11 23:59:59.99999999', 1, length({column_name})) AS {data_type}) else case when {column_name} <= '1925-01-01 00:00:00' then CAST('1925-01-01 00:00:00' AS {data_type}) else {column_name} end end"
+            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.999', 1, length({column_name})) then TRIM(TRAILING '0' FROM CAST('2283-11-11 23:59:59.999' AS datetime(3))) else case when {column_name} <= '1925-01-01 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('1925-01-01 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '0' FROM {column_name}) end end"
+        elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
+            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
+            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.999999', 1, length({column_name})) then TRIM(TRAILING '0' FROM CAST('2283-11-11 23:59:59.999999' AS datetime(6))) else case when {column_name} <= '1925-01-01 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('1925-01-01 00:00:00.000000' AS datetime(6)))) else TRIM(TRAILING '0' FROM {column_name}) end end"
+        elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
+            select += f"cast({column_name} as time(6))"
+        elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
+            select += f"TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char))))"
         #elif 'datetime' in data_type:
         #    # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime/
         #    select += f"case when {column_name} >='2283-11-11' then CAST('2283-11-11' AS {data_type}) else case when {column_name} <= '1970-01-01' then CAST('1925-01-01 00:00:00' AS {data_type}) else {column_name} end end"*/
+        # elif "float" in data_type:
+        #     select += f"CAST({column_name} as DECIMAL(64,8))"
         else:
             if 'date' == data_type:
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date

@@ -27,7 +27,7 @@ public class DebeziumConverterTest {
         Object timeInMicroSeconds = 3723000000L;
         String formattedTime = DebeziumConverter.MicroTimeConverter.convert(timeInMicroSeconds);
 
-        Assert.assertTrue(formattedTime.equalsIgnoreCase("20:02:03"));
+        Assert.assertTrue(formattedTime.equalsIgnoreCase("01:02:03"));
     }
 
     @Test
@@ -56,7 +56,7 @@ public class DebeziumConverterTest {
         Object timestampEpoch = 1640995260000L;
         String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false));
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1640995260000"));
     }
 
     @Test
@@ -65,7 +65,7 @@ public class DebeziumConverterTest {
         Object timestampEpoch = -2166681362000L;
         String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false));
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1925-01-01 00:00:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("-1420070400000"));
     }
 
     @Test
@@ -74,7 +74,7 @@ public class DebeziumConverterTest {
         Object timestampEpoch = 4807440238000L;
         String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false));
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2122-05-05 16:03:58"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("4807440238000"));
     }
 
     @Test
@@ -120,13 +120,13 @@ public class DebeziumConverterTest {
     public void testZonedTimestampConverter() {
 
         String formattedTimestamp = DebeziumConverter.ZonedTimestampConverter.convert("2021-12-31T19:01:00Z");
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00.000000"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2021-12-31 19:01:00"));
 
         String formattedTimestampWMicroSeconds = DebeziumConverter.ZonedTimestampConverter.convert("2038-01-19T03:14:07.999999Z");
         Assert.assertTrue(formattedTimestampWMicroSeconds.equalsIgnoreCase("2038-01-19 03:14:07.999999"));
 
         String formattedTimestamp3 = DebeziumConverter.ZonedTimestampConverter.convert("2038-01-19T03:14:07.99Z");
-        Assert.assertTrue(formattedTimestamp3.equalsIgnoreCase("2038-01-19 03:14:07.990000"));
+        Assert.assertTrue(formattedTimestamp3.equalsIgnoreCase("2038-01-19 03:14:07.99"));
 
     }
 
@@ -186,6 +186,21 @@ public class DebeziumConverterTest {
             System.out.println("Error connecting" + e);
         }
 
+    }
+
+    @Test
+    public void testTrailingZeros() {
+        String result1 = DebeziumConverter.removeTrailingZeros("2022-01-01 11:50:00.0000");
+        Assert.assertTrue(result1.equalsIgnoreCase("2022-01-01 11:50:00"));
+
+        String result2 = DebeziumConverter.removeTrailingZeros("2022-01-01 11:50:00.0010");
+        Assert.assertTrue(result2.equalsIgnoreCase("2022-01-01 11:50:00.001"));
+
+        String result3 = DebeziumConverter.removeTrailingZeros("2022-01-01 11:50:00.0100");
+        Assert.assertTrue(result3.equalsIgnoreCase("2022-01-01 11:50:00.01"));
+
+        String result4 = DebeziumConverter.removeTrailingZeros("2022-01-01 11:50:00.100");
+        Assert.assertTrue(result4.equalsIgnoreCase("2022-01-01 11:50:00.1"));
     }
 
 }

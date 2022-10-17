@@ -7,4 +7,5 @@ docker exec -it mysql-master mysql -uroot -proot -e "DROP DATABASE IF EXISTS $DA
 
 docker exec -it mysql-master mysql -uroot -proot -e "use $DATABASE;source /tmp/data_types.sql;"
 
+sleep 5
 ./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
