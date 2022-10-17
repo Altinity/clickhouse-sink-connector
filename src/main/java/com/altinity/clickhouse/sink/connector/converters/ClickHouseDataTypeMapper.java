@@ -30,7 +30,7 @@ public class ClickHouseDataTypeMapper {
 
         // Float
          dataTypesMap.put(new MutablePair(Schema.FLOAT32_SCHEMA.type(), null), ClickHouseDataType.Float32);
-         dataTypesMap.put(new MutablePair(Schema.FLOAT64_SCHEMA.type(), null), ClickHouseDataType.Float64);
+         dataTypesMap.put(new MutablePair(Schema.FLOAT64_SCHEMA.type(), null), ClickHouseDataType.Float32);
 
          // String
          dataTypesMap.put(new MutablePair(Schema.STRING_SCHEMA.type(), null), ClickHouseDataType.String);
@@ -49,21 +49,33 @@ public class ClickHouseDataTypeMapper {
 
         // Timestamp -> DateTime
         dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), Timestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
-
-        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTimestamp.SCHEMA_NAME), ClickHouseDataType.String);
+        // Datetime with microseconds precision
+        dataTypesMap.put(new MutablePair(Schema.INT64_SCHEMA.type(), MicroTimestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
 
         // BLOB -> String
         dataTypesMap.put(new MutablePair(Schema.Type.BYTES, null), ClickHouseDataType.String);
 
+        // BYTES, BIT
+        dataTypesMap.put(new MutablePair(Schema.Type.BYTES, io.debezium.data.Bits.LOGICAL_NAME), ClickHouseDataType.String);
+
         // Boolean -> Boolean
         dataTypesMap.put(new MutablePair<>(Schema.Type.BOOLEAN, null), ClickHouseDataType.Bool);
 
-        // ZonedTimestamp -> String
-        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTimestamp.SCHEMA_NAME), ClickHouseDataType.String);
+        // Timestamp -> ZonedTimeStamp -> DateTime
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTimestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
 
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Enum.LOGICAL_NAME), ClickHouseDataType.String);
 
-        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Json.LOGICAL_NAME), ClickHouseDataType.JSON);
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Json.LOGICAL_NAME), ClickHouseDataType.String);
+
+        dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Year.SCHEMA_NAME), ClickHouseDataType.Int32);
+
+        // EnumSet -> String
+        dataTypesMap.put(new MutablePair<>(Schema.STRING_SCHEMA.type(), EnumSet.LOGICAL_NAME), ClickHouseDataType.String);
+
+        // Geometry -> Geometry
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
+
     }
 
     public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {

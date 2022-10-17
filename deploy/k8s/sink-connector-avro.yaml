@@ -28,7 +28,7 @@ spec:
     store.raw.data: "false"
     store.raw.data.column: "raw_data"
 
-    replacingmergetree.delete.column: "sign"
+    replacingmergetree.delete.column: "_sign"
 
     auto.create.tables: "true"
     schema.evolution: "false"

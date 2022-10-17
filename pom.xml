@@ -36,10 +36,10 @@
         <url>https://github.com/altinity/clickhouse-kafka-sink-connector</url>
     </scm>
 
-    <!-- Set our Language Level to Java 8 -->
+    <!-- Set our Language Level to Java 9 -->
     <properties>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.source>1.9</maven.compiler.source>
+        <maven.compiler.target>1.9</maven.compiler.target>
     </properties>
 
 
