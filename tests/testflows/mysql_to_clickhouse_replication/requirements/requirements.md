@@ -493,6 +493,51 @@ Data types connection table:
 
 #### Inserts
 
+```mermaid
+graph LR;
+
+  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
+  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
+  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
+  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
+  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
+  
+  subgraph O["MySQL to ClickHouse Replication `INSERT`"]
+    1A-->2D-->2C-->4B;
+  
+    subgraph A["User input MySQL"]
+
+        1A["INSERT"]:::green
+
+    end
+    
+    subgraph D["Engines"]
+        1D["with table Engine"]:::yellow
+        2D["without table Engine"]:::yellow
+    end
+    
+    subgraph C["Different primary keys"]
+        1C["simple primary key"]:::yellow
+        2C["composite primary key"]:::yellow
+        3c["no primary key"]:::yellow
+    end
+    
+    subgraph B["Different cases"]
+        1B[" into one part one partition"]:::yellow
+        2B["into multiple parts one partition"]:::yellow
+        3B["into multiple partitions"]:::yellow
+        4B["very large insert"]:::yellow
+        5B["lots of small inserts"]:::yellow
+        6B["table with large number of partitions"]:::yellow
+        7B["table with large number of parts in partition"]:::yellow
+    end
+    
+
+    
+
+  end
+```
+
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts
 version: 1.0
 
@@ -500,12 +545,98 @@ version: 1.0
 
 #### Updates
 
+```mermaid
+graph LR;
+
+  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
+  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
+  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
+  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
+  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
+  
+  subgraph O["MySQL to ClickHouse Replication `UPDATE`"]
+    1A-->2D-->2C-->3B;
+  
+    subgraph A["User input MySQL"]
+
+        1A["UPDATE"]:::green
+
+    end
+    
+    subgraph D["Engines"]
+        1D["with table Engine"]:::yellow
+        2D["without table Engine"]:::yellow
+    end
+    
+    subgraph C["Different primary keys"]
+        1C["simple primary key"]:::yellow
+        2C["composite primary key"]:::yellow
+        3c["no primary key"]:::yellow
+    end
+    
+    subgraph B["Different cases"]
+        1B["in one part one partition"]:::yellow
+        2B["in multiple parts one partition"]:::yellow
+        3B["in multiple partitions"]:::yellow
+        4B["table with large number of partitions"]:::yellow
+        5B["table with large number of parts in partition"]:::yellow
+    end
+    
+
+    
+
+  end
+```
+
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Updates
 version: 1.0
 
 [Altinity Sink Connector] SHALL support data updates replication from [MySQL] to [CLickHouse].
 
 #### Deletes
+
+```mermaid
+graph LR;
+
+  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
+  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
+  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
+  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
+  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
+  
+  subgraph O["MySQL to ClickHouse Replication `DELETE`"]
+    1A-->2D-->2C-->2B;
+  
+    subgraph A["User input MySQL"]
+
+        1A["DELETE"]:::green
+
+    end
+        
+    subgraph D["Engines"]
+        1D["with table Engine"]:::yellow
+        2D["without table Engine"]:::yellow
+    end
+    
+    
+    
+    subgraph C["Different primary keys"]
+        1C["simple primary key"]:::yellow
+        2C["composite primary key"]:::yellow
+        3c["no primary key"]:::yellow
+    end
+    
+    subgraph B["Different cases"]
+        1B["data from one part one partition"]:::yellow
+        2B["data from multiple parts one partition"]:::yellow
+        3B["data from multiple partitions"]:::yellow
+    end
+    
+
+    
+
+  end
+```
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Deletes
 version: 1.0
@@ -517,11 +648,10 @@ version: 1.0
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation
 version: 1.0
 
-[Altinity Sink Connector] SHALL support all 3 ways to create the tables schema from [MySQL] to [CLickHouse]:
-
-1. One with the sink
-2. One with the clickhouse_loader
-3. One with the chump
+[Altinity Sink Connector]SHALL support the following ways to replicate schema from [MySQL] to [CLickHouse]:
+* auto-create option
+* `clickhouse_loader` script
+* `chump` utility
 
 #### Auto Create Table
 

@@ -520,9 +520,12 @@ def select(self, insert, table_name=None, statement=None, node=None,  with_final
         )(f"SELECT {statement} FROM test.{table_name} FORMAT CSV", message=f"{insert}", )
 
 
-
-
-
+@TestStep(Given)
+def insert(self, insert_number, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+    with Step(f"I insert {insert_number} rows of data in MySql table"):
+        for i in range(0, insert_number + 1):
+            mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
 
 
 
