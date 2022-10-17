@@ -85,7 +85,7 @@ mvn install -DskipTests=true
 | GEOMETRY           | Binary of WKB                                        | String                          |
 
 ## ClickHouse Loader(Load Data from MySQL to CH for Initial Load)
-[Clickhouse Loader](python/db_load/README.md) is a program that loads data dumped in MySQL into a CH database compatible the sink connector (ReplacingMergeTree with virtual columns _version and _sign)
+[Clickhouse Loader](python/README.md) is a program that loads data dumped in MySQL into a CH database compatible the sink connector (ReplacingMergeTree with virtual columns _version and _sign)
 
 
 ### Grafana Dashboard
