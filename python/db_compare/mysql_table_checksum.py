@@ -25,7 +25,7 @@ def compute_checksum(table, statements, conn):
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.mysql.txt"
-        logging.info(f"Debug output to {out_file}")
+        #logging.info(f"Debug output to {out_file}")
         debug_out = open(out_file, 'w')
     try:
         for statement in statements:

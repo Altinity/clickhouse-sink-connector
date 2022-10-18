@@ -11,5 +11,5 @@ do
 done
 #diff ../python/
 
-#rm -fr *.ch.txt
-#rm -fr *.mysql.txt
+rm -fr out*.ch.txt
+rm -fr out*.mysql.txt

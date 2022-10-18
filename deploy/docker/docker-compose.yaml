@@ -266,7 +266,7 @@ services:
 
   prometheus:
     container_name: prometheus
-    image: bitnami/prometheus
+    image: bitnami/prometheus:2.36.0
     restart: "no"
     ports:
       - "9090:9090"
@@ -277,7 +277,7 @@ services:
     build:
       context: ../../docker/grafana
       args:
-        GRAFANA_VERSION: latest
+        GRAFANA_VERSION: 9.1.1
     #container_name: grafana
     #image: grafana/grafana
     restart: "no"
