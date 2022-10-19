@@ -15,6 +15,8 @@ echo "Setting up Sakila database"
 ./configure_sakila.sh
 sleep 15
 
+pip install -r requirements.txt
+
 cd ../tests
 echo "Compare DATATYPES MySQL/CH checksum"
 ./diff_datatypes_data.sh
