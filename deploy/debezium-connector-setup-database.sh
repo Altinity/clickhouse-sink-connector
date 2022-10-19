@@ -26,7 +26,7 @@ KAFKA_TOPIC="schema-changes.${DATABASE}"
 
 # Connector joins the MySQL database cluster as another server (with this unique ID) so it can read the binlog.
 # By default, a random number between 5400 and 6400 is generated, though the recommendation is to explicitly set a value.
-DATABASE_SERVER_ID="5432"
+DATABASE_SERVER_ID="5432-${DATABASE}"
 # Unique across all other connectors, used as a prefix for Kafka topic names for events emitted by this connector.
 # Alphanumeric characters, hyphens, dots and underscores only.
 DATABASE_SERVER_NAME="SERVER5432-${DATABASE}"
