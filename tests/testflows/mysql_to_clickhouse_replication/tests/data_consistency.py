@@ -209,24 +209,27 @@ def unstable_network_connection(self, services):
             f" ENGINE = InnoDB;",
         )
 
-        pause()
-
         with When("I insert data in MySql table with concurrent network fault"):
             with Shell() as bash:
-                bash("docker network disconnect <NETWORK> <CONTAINER>", timeout=100)
+                bash("docker network disconnect mysql_to_clickhouse_replication_env_default kafka", timeout=100)
 
             mysql.query(
-                f"INSERT INTO {table_name} VALUES (1,2,'a','b'), (2,3,'a','b');"
+                f"INSERT INTO {table_name} VALUES (1,2,3)"
             )
-        pause()
 
         with And("Enable network"):
             with Shell() as bash:
-                bash("docker network connect <NETWORK> <CONTAINER>", timeout=100)
+                bash("docker network connect mysql_to_clickhouse_replication_env_default kafka", timeout=100)
 
         with Then("I wait unique values from CLickHouse table equal to MySQL table"):
-            select(insert="5,6,777", table_name=table_name, statement="col1,col2,col3",
-                   with_final=True, timeout=100)
+            for attempt in retries(count=10, timeout=100, delay=5):
+                with attempt:
+                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+
+                    clickhouse.query(
+                        f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                        message='1,2,3'
+                    )
 
 
 @TestScenario

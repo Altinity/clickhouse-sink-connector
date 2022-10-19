@@ -8,9 +8,17 @@ from helpers.common import *
 
 
 @TestOutline
-def mysql_to_clickhouse_connection(self, auto_create_tables):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert."""
-
+def check_datatype_replication(
+        self,
+        mysql_type,
+        ch_type,
+        values,
+        ch_values,
+        nullable=False,
+        hex_type=False,
+        auto_create_tables=True,
+):
+    """Check replication of a given MySQL data type."""
     with Given("Receive UID"):
         uid = getuid()
 
@@ -20,105 +28,63 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}")
 
-    with Given(f"I create MySQL table {table_name}"):
+    with Given(f"I create MySQL table {table_name})"):
         create_mysql_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL AUTO_INCREMENT,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      "pad char(60) NOT NULL DEFAULT '',PRIMARY KEY (id,k))"
-                      " ENGINE= InnoDB"
-                      " PARTITION BY RANGE (k)"
-                      " (PARTITION p1 VALUES LESS THAN (499999),PARTITION p2 VALUES LESS THAN MAXVALUE);"
-
+            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
+                      f"(id INT AUTO_INCREMENT,"
+                      f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
+                      f" PRIMARY KEY (id))"
+                      f" ENGINE = InnoDB;",
         )
         pause()
 
-    with When(f"I insert data in MySql table"):
-        mysql.query(
-            f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
-        )
-        pause()
-
-    if auto_create_tables:
-        with And("I check table creation"):
-            retry(clickhouse.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
+    if not auto_create_tables:
+        with And(f"I create ClickHouse replica test.{table_name}"):
+            create_clickhouse_table(
+                name=table_name,
+                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
+                          f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, sign "
+                          f"Int8, ver UInt64) "
+                          f"ENGINE = ReplacingMergeTree(ver) "
+                          f"PRIMARY KEY id ORDER BY id SETTINGS "
+                          f"index_granularity = 8192;",
             )
-            pause()
+
+    with When(f"I insert data in MySql table {table_name}"):
+        for i, value in enumerate(values, 1):
+            mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
+            with Then(f"I make check that ClickHouse table has same dataset"):
+                retry(clickhouse.query, timeout=50, delay=1)(
+                    f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
+                    message=f"{ch_values[i - 1]}",
+                )
 
 
-    with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
-        pass
-
-
-@TestOutline
-def mysql_to_clickhouse_connection2(self, auto_create_tables):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert."""
-
-
-    with Given("Receive UID"):
-        uid = getuid()
-
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
-
-    clickhouse = self.context.cluster.node("clickhouse")
-    mysql = self.context.cluster.node("mysql-master")
-
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
-
-    with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
-            name=table_name,
-            statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL AUTO_INCREMENT,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      "pad char(60) NOT NULL DEFAULT '',PRIMARY KEY (id))"
-                      " ENGINE= InnoDB;"
-                      # " PARTITION BY RANGE (k)"
-                      # " (PARTITION p1 VALUES LESS THAN (499999),PARTITION p2 VALUES LESS THAN MAXVALUE);"
-
-        )
-        pause()
-
-    with When("Print clickhouse version"):
-        print(self.context.clickhouse_version)
-
-        if check_clickhouse_version("<22.3")(self):
-            print("only supported on ClickHouse version >= 22.9")
-            pause()
-        else:
-            print("upper then 22.3")
-            pause()
-
-    with When(f"I insert data in MySql table"):
-        mysql.query(
-            f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
-        )
-        pause()
-
-    if auto_create_tables:
-        with And("I check table creation"):
-            retry(clickhouse.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            pause()
-
-
-    with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
-        pass
-
-
-@TestScenario
-def mysql_to_clickhouse_connection_ac(self, auto_create_tables=True):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
-    mysql_to_clickhouse_connection2(auto_create_tables=auto_create_tables)
-    # with Given("I collect Sink logs"):
-    #     with Shell() as bash:
-    #         cmd = bash("docker-compose logs sink > sink.log")
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values  nullable",
+    [
+        ("Bytes", "String", ["1"], ['1'], False),
+    ],
+)
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime("1.0")
+)
+def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'DATE' and 'TIME' data type."""
+    pause()
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        auto_create_tables=True,
+    )
+    pause()
 
 
 @TestFeature
