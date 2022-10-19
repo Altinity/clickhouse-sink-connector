@@ -4,6 +4,9 @@
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/debezium-connector-config.sh"
 
+CONNECTOR_NAME="debezium-connector-$1"
+
+echo "*********** ${CONNECTOR_NAME} **************"
 # Debezium parameters. Check
 # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
 # for the full list of available properties
@@ -26,7 +29,7 @@ KAFKA_TOPIC="schema-changes.${DATABASE}"
 DATABASE_SERVER_ID="5432"
 # Unique across all other connectors, used as a prefix for Kafka topic names for events emitted by this connector.
 # Alphanumeric characters, hyphens, dots and underscores only.
-DATABASE_SERVER_NAME="SERVER5432"
+DATABASE_SERVER_NAME="SERVER5432-${DATABASE}"
 
 if [[ $2 == "apicurio" ]]; then
   echo "APICURIO SCHEMA REGISTRY"
