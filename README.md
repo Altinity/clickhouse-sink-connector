@@ -102,3 +102,5 @@ mvn install -DskipTests=true
 - [Performance Benchmarking](doc/Performance.md)
 - [Confluent Schema Registry(REST API)](doc/schema_registry.md)
 
+## Blog articles
+- [ClickHouse as an analytic extension for MySQL](https://altinity.com/blog/using-clickhouse-as-an-analytic-extension-for-mysql?utm_campaign=Brand&utm_content=224583767&utm_medium=social&utm_source=linkedin&hss_channel=lcp-10955938)
