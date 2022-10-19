@@ -1,0 +1,3 @@
+Received exception from server (version 22.7.1):
+Code: 47. DB::Exception: Received from localhost:9000. DB::Exception: Missing columns: 'pad' 'c' while processing query: 'SELECT id, k, c, pad FROM sbtest.sbtest1 FINAL WHERE _sign != -1 ORDER BY id ASC', required columns: 'id' 'k' '_sign' 'c' 'pad', maybe you meant: ['id','k','_sign','k']. (UNKNOWN_IDENTIFIER)
+(query: select id  ,k, c, pad  from sbtest.sbtest1 final where _sign !=-1 order by id format TSV)

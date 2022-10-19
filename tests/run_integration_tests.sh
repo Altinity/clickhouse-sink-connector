@@ -3,7 +3,7 @@
 today_date=$(date +%F)
 
 cd ../deploy/docker
-./start-docker-compose.sh 2022-10-17  &
+./start-docker-compose.sh 2022-10-17 > /dev/null  &
 
 sleep 30
 
