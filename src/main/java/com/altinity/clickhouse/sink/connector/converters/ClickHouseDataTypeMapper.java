@@ -2,8 +2,8 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.clickhouse.client.ClickHouseDataType;
 import io.debezium.data.Enum;
-import io.debezium.data.EnumSet;
 import io.debezium.data.Json;
+import io.debezium.data.EnumSet;
 import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -32,7 +32,7 @@ public class ClickHouseDataTypeMapper {
 
         // Float
          dataTypesMap.put(new MutablePair(Schema.FLOAT32_SCHEMA.type(), null), ClickHouseDataType.Float32);
-         dataTypesMap.put(new MutablePair(Schema.FLOAT64_SCHEMA.type(), null), ClickHouseDataType.Float64);
+         dataTypesMap.put(new MutablePair(Schema.FLOAT64_SCHEMA.type(), null), ClickHouseDataType.Float32);
 
          // String
          dataTypesMap.put(new MutablePair(Schema.STRING_SCHEMA.type(), null), ClickHouseDataType.String);
@@ -57,6 +57,9 @@ public class ClickHouseDataTypeMapper {
         // BLOB -> String
         dataTypesMap.put(new MutablePair(Schema.Type.BYTES, null), ClickHouseDataType.String);
 
+        // BYTES, BIT
+        dataTypesMap.put(new MutablePair(Schema.Type.BYTES, io.debezium.data.Bits.LOGICAL_NAME), ClickHouseDataType.String);
+
         // Boolean -> Boolean
         dataTypesMap.put(new MutablePair<>(Schema.Type.BOOLEAN, null), ClickHouseDataType.Bool);
 
@@ -74,6 +77,7 @@ public class ClickHouseDataTypeMapper {
 
         // Geometry -> Geometry
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
+
     }
 
     public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {

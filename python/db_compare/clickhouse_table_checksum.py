@@ -185,6 +185,8 @@ def get_table_checksum_query(table):
                 # requires this function : CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))
                 select += "format_decimal("+column_name + \
                     ","+str(numeric_scale)+")"
+            elif "DateTime" in data_type:
+                select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
             else:
                 if 'time without time zone' == data_type:
                     select += "replace(to_char("+column_name + \
