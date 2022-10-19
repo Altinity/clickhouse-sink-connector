@@ -67,7 +67,7 @@ def check_datatype_replication(
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
     [
-        ("Bytes", "String", ["1"], ['1'], False),
+        ("BIT(64)", "String", ["b'101'"], ['"0500000000000000"'], False),
     ],
 )
 @Requirements(
@@ -75,7 +75,6 @@ def check_datatype_replication(
 )
 def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DATE' and 'TIME' data type."""
-    pause()
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,
@@ -84,7 +83,6 @@ def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
         nullable=nullable,
         auto_create_tables=True,
     )
-    pause()
 
 
 @TestFeature

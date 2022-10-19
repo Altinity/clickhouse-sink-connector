@@ -380,6 +380,28 @@ def year(self, mysql_type, ch_type, values, ch_values, nullable):
     )
 
 
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values  nullable",
+    [
+        ("BIT(64)", "String", ["b'101'"], ['"0500000000000000"'], False),
+    ],
+)
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes("1.0")
+)
+def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'BIT(m)' data type where m: 2 - 64."""
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        auto_create_tables=True,
+    )
+
+
 @TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")

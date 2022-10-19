@@ -88,42 +88,11 @@ def unavailable(self, services, query=None):
                 )
 
 
-@TestScenario
-def kafka_unavailable(self):
-    """Kafka unavailable"""
-    unavailable(services=["kafka"])
-
-
-@TestScenario
-def debezium_unavailable(self):
-    """Debezium unavailable"""
-    unavailable(services=["debezium"], query="update")
-
-
-@TestScenario
-def clickhouse_unavailable(self):
-    """ClickHouse unavailable"""
-    unavailable(services=["clickhouse"])
-
-
-@TestScenario
-def schemaregistry_unavailable(self):
-    """Schemaregistry unavailable"""
-    xfail("doesn't create table")
-    unavailable(services=["schemaregistry"])
-
-
-@TestScenario
-def sink_unavailable(self):
-    """Sink connector unavailable"""
-    unavailable(services=["sink"])
-
-
 @TestSuite
 def combinatoric_unavailable(self):
     """Check all possibilities of unavailable services"""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
-    for i in range(2, 6):
+    for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
             # Scenario(f"{combination}", test=unavailable, flags=TE)(services=combination)
@@ -160,7 +129,7 @@ def restart(self, services, loops=10):
             test=insert,
             parallel=True,
         )(
-            insert_number=10000, table_name=table_name,
+            insert_number=5000, table_name=table_name,
         )
 
         for i in range(loops):
@@ -180,10 +149,14 @@ def restart(self, services, loops=10):
                 )
 
 
-@TestScenario
-def kafka_restart(self):
-    """Kafka restart"""
-    restart(services=["kafka"])
+@TestSuite
+def combinatoric_restart(self):
+    """Check all possibilities of restart services"""
+    nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
+    for i in range(1, 6):
+        service_combinations = list(combinations(nodes_list, i))
+        for combination in service_combinations:
+            Scenario(f"{combination}", test=restart, flags=TE)(services=combination)
 
 
 @TestOutline
@@ -206,36 +179,45 @@ def unstable_network_connection(self, services):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} (col1 int4, col2 int4 NOT NULL, col3 int4 default 777)"
-            f" ENGINE = InnoDB;",
+                      f" ENGINE = InnoDB;",
         )
 
-        with When("I insert data in MySql table with concurrent network fault"):
+    with When("I add network fault"):
+        for node in services:
             with Shell() as bash:
-                bash("docker network disconnect mysql_to_clickhouse_replication_env_default kafka", timeout=100)
+                bash(f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
 
-            mysql.query(
-                f"INSERT INTO {table_name} VALUES (1,2,3)"
-            )
+    with Then("I insert data in MySql table"):
+        mysql.query(
+            f"INSERT INTO {table_name} VALUES (1,2,3)"
+        )
 
-        with And("Enable network"):
+    with And("Enable network"):
+        for node in services:
             with Shell() as bash:
-                bash("docker network connect mysql_to_clickhouse_replication_env_default kafka", timeout=100)
+                bash(f"docker network connect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
 
-        with Then("I wait unique values from CLickHouse table equal to MySQL table"):
-            for attempt in retries(count=10, timeout=100, delay=5):
-                with attempt:
-                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+    with Then("I wait unique values from CLickHouse table equal to MySQL table"):
+        for attempt in retries(count=20, timeout=1000, delay=5):
+            with attempt:
+                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
-                    clickhouse.query(
-                        f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                        message='1,2,3'
-                    )
+                clickhouse.query(
+                    f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                    message='1,2,3'
+                )
 
 
 @TestScenario
 def kafka_unstable_network_connection(self):
     """Kafka unstable network connection"""
     unstable_network_connection(services=["kafka"])
+
+
+@TestScenario
+def sink_unstable_network_connection(self):
+    """Sink unstable network connection"""
+    unstable_network_connection(services=["sink"])
 
 
 @TestFeature

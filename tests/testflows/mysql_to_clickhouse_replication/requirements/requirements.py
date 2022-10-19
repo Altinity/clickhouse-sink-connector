@@ -478,6 +478,30 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
     num='4.6.11.1'
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'BIT(m)'\n"
+        'data types where m: 2 - 64 as they supported by [MySQL].\n'
+        '\n'
+        'Data types connection table:\n'
+        '\n'
+        '| MySQL  | ClickHouse |\n'
+        '|:-------|:----------:|\n'
+        '| BIT(m) |   String   |\n'
+        '\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.6.12.1'
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Inserts = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts',
     version='1.0',
@@ -534,11 +558,10 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation = Require
     type=None,
     uid=None,
     description=(
-        '[Altinity Sink Connector] SHALL support all 3 ways to create the tables schema from [MySQL] to [CLickHouse]:\n'
-        '\n'
-        '1. One with the sink\n'
-        '2. One with the clickhouse_loader\n'
-        '3. One with the chump\n'
+        '[Altinity Sink Connector]SHALL support the following ways to replicate schema from [MySQL] to [CLickHouse]:\n'
+        '* auto-create option\n'
+        '* `clickhouse_loader` script\n'
+        '* `chump` utility\n'
         '\n'
     ),
     link=None,
@@ -934,6 +957,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON', level=4, num='4.6.10.1'),
         Heading(name='Year', level=3, num='4.6.11'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year', level=4, num='4.6.11.1'),
+        Heading(name='Bytes', level=3, num='4.6.12'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes', level=4, num='4.6.12.1'),
         Heading(name='Queries', level=2, num='4.7'),
         Heading(name='Inserts', level=3, num='4.7.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts', level=4, num='4.7.1.1'),
@@ -1003,6 +1028,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Inserts,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Updates,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Deletes,
@@ -1083,6 +1109,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
       * 4.6.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
     * 4.6.11 [Year](#year)
       * 4.6.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 4.6.12 [Bytes](#bytes)
+      * 4.6.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
   * 4.7 [Queries](#queries)
     * 4.7.1 [Inserts](#inserts)
       * 4.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationinserts)
@@ -1519,7 +1547,69 @@ Data types connection table:
 |:------|:----------:|
 | Year  |   Int32    |
 
+#### Bytes
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes
+version: 1.0
+
+[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'BIT(m)'
+data types where m: 2 - 64 as they supported by [MySQL].
+
+Data types connection table:
+
+| MySQL  | ClickHouse |
+|:-------|:----------:|
+| BIT(m) |   String   |
+
+
 ### Queries
+
+```mermaid
+graph LR;
+
+  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
+  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
+  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
+  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
+  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
+  
+  subgraph O["Queries Test Feature Diagram"]
+    2A-->2D-->2C-->4B;
+  
+    subgraph A["User input MySQL"]
+
+        1A["INSERT"]:::green
+                2A["DELETE"]:::green
+                        3A["UPDATE"]:::green
+
+    end
+    
+    subgraph D["Engines"]
+        1D["with table Engine"]:::yellow
+        2D["without table Engine"]:::yellow
+    end
+    
+    subgraph C["Different primary keys"]
+        1C["simple primary key"]:::yellow
+        2C["composite primary key"]:::yellow
+        3c["no primary key"]:::yellow
+    end
+    
+    subgraph B["Different cases"]
+        1B[" into one part one partition"]:::yellow
+        2B["into multiple parts one partition"]:::yellow
+        3B["into multiple partitions"]:::yellow
+        4B["very large insert"]:::yellow
+        5B["lots of small inserts"]:::yellow
+        6B["table with large number of partitions"]:::yellow
+        7B["table with large number of parts in partition"]:::yellow
+    end
+    
+
+    
+
+  end
+```
 
 #### Inserts
 
@@ -1547,11 +1637,10 @@ version: 1.0
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation
 version: 1.0
 
-[Altinity Sink Connector] SHALL support all 3 ways to create the tables schema from [MySQL] to [CLickHouse]:
-
-1. One with the sink
-2. One with the clickhouse_loader
-3. One with the chump
+[Altinity Sink Connector]SHALL support the following ways to replicate schema from [MySQL] to [CLickHouse]:
+* auto-create option
+* `clickhouse_loader` script
+* `chump` utility
 
 #### Auto Create Table
 

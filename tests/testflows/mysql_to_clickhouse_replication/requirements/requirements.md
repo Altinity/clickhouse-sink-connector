@@ -53,6 +53,8 @@
       * 4.6.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
     * 4.6.11 [Year](#year)
       * 4.6.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 4.6.12 [Bytes](#bytes)
+      * 4.6.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
   * 4.7 [Queries](#queries)
     * 4.7.1 [Inserts](#inserts)
       * 4.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationinserts)
@@ -488,6 +490,21 @@ Data types connection table:
 | MySQL | ClickHouse |
 |:------|:----------:|
 | Year  |   Int32    |
+
+#### Bytes
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes
+version: 1.0
+
+[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'BIT(m)'
+data types where m: 2 - 64 as they supported by [MySQL].
+
+Data types connection table:
+
+| MySQL  | ClickHouse |
+|:-------|:----------:|
+| BIT(m) |   String   |
+
 
 ### Queries
 
