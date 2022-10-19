@@ -1,4 +1,4 @@
-name: Docker compose tests
+name: Integration tests
 
 on:
   push:
