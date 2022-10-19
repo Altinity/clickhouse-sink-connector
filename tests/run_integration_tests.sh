@@ -3,13 +3,13 @@
 today_date=$(date +%F)
 
 cd ../deploy/docker
-./start-docker-compose.sh 2022-10-17 > /dev/null  &
+./start-docker-compose.sh 2022-10-17  &
 
 sleep 30
 
 cd ..
 echo "Setting up DATATYPES database"
-./configure_datatypes.sh > /dev/null
+./configure_datatypes.sh
 sleep 15
 echo "Setting up Sakila database"
 ./configure_sakila.sh
