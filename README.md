@@ -8,7 +8,7 @@ The connector is tested with the following converters
 ![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
 - Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree - [Updates/Deletes](doc/mutable_data.md)
-- Deduplication logic to dedupe records from Kafka topic.(Based on Primary Key)
+- Auto create tables in ClickHouse
 - Exactly once semantics 
 - Bulk insert to Clickhouse. 
 - Store Kafka metadata [Kafka Metadata](doc/Kafka_metadata.md)
