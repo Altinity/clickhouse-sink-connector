@@ -14,10 +14,10 @@ sleep 15
 echo "Setting up Sakila database"
 ./configure_sakila.sh
 sleep 15
-cd ../tests
+cd ../python
 pip install -r requirements.txt
 
-
+cd ../tests
 echo "Compare DATATYPES MySQL/CH checksum"
 ./diff_datatypes_data.sh
 sleep 10
