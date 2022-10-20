@@ -84,7 +84,7 @@ def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
         auto_create_tables=True,
     )
 
-
+"ci1"
 @TestFeature
 @Name("manual section")
 def feature(self):
