@@ -14,6 +14,6 @@ jobs:
       - name: Run testflows tests
         working-directory: tests/testflows
         run: python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8.6.71-alpine --test-to-end
-      - name: Cleaning
-        working-directory: tests/testflows/mysql_to_clickhouse_replication
-        run: sudo rm -rf _instances
+#      - name: Cleaning
+#        working-directory: tests/testflows/mysql_to_clickhouse_replication
+#        run: sudo rm -rf _instances
