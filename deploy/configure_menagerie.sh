@@ -1,5 +1,5 @@
 DATABASE=menagerie
-./debezium-delete.sh &&  ./debezium-connector-setup-database.sh $DATABASE
+./debezium-delete.sh $DATABASE &&  ./debezium-connector-setup-database.sh $DATABASE
 docker exec -it clickhouse clickhouse-client -uroot --password root -mn --query "drop database if exists $DATABASE;create database $DATABASE;"
 wget https://downloads.mysql.com/docs/menagerie-db.zip
 unzip menagerie-db.zip
@@ -17,4 +17,4 @@ docker exec -it mysql-master mysqlimport -uroot -proot --local menagerie event.t
 rm -fr menagerie-db
 
 sleep 5
-./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
+./sink-delete.sh $DATABASE && ./sink-connector-setup-database.sh $DATABASE

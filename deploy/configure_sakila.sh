@@ -1,5 +1,5 @@
 DATABASE=sakila
-./debezium-delete.sh &&  ./debezium-connector-setup-database.sh $DATABASE
+./debezium-delete.sh $DATABASE &&  ./debezium-connector-setup-database.sh $DATABASE
 docker exec -it clickhouse clickhouse-client -uroot --password root -mn --query "drop database if exists $DATABASE;create database $DATABASE;"
 
 wget https://downloads.mysql.com/docs/sakila-db.zip
@@ -11,4 +11,4 @@ rm -f sakila-db.zip
 rm -fr sakila-db/
 
 sleep 5
-./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
+./sink-delete.sh $DATABASE && ./sink-connector-setup-database.sh $DATABASE
