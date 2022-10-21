@@ -509,7 +509,7 @@ Data types connection table:
 ### Queries
 
 ```mermaid
-graph LR;
+flowchart TB;
 
   classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
   classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
@@ -518,7 +518,12 @@ graph LR;
   classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
   
   subgraph O["Queries Test Feature Diagram"]
+  A-->D-->C-->B
 
+  1A---2A---3A
+  1D---2D
+  1C---2C---3C
+  1B---2B---3B---4B---5B---6B---7B
   
     subgraph A["User input MySQL"]
 
@@ -536,7 +541,7 @@ graph LR;
     subgraph C["Different primary keys"]
         1C["simple primary key"]:::yellow
         2C["composite primary key"]:::yellow
-        3c["no primary key"]:::yellow
+        3C["no primary key"]:::yellow
     end
     
     subgraph B["Different cases"]
@@ -548,8 +553,6 @@ graph LR;
         6B["table with large number of partitions"]:::yellow
         7B["table with large number of parts in partition"]:::yellow
     end
-    
-    A --> D
     
 
     
