@@ -51,7 +51,7 @@ Requirements
 mvn install -DskipTests=true
 ```
 
-## DataTypes
+## Data Types
 
 | MySQL              | Kafka<br>Connect                                     | ClickHouse                      |
 |--------------------|------------------------------------------------------|---------------------------------|
