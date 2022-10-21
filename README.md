@@ -8,7 +8,7 @@ The connector is tested with the following converters
 ![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
 - Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree - [Updates/Deletes](doc/mutable_data.md)
-- Deduplication logic to dedupe records from Kafka topic.(Based on Primary Key)
+- Auto create tables in ClickHouse
 - Exactly once semantics 
 - Bulk insert to Clickhouse. 
 - Store Kafka metadata [Kafka Metadata](doc/Kafka_metadata.md)
@@ -51,7 +51,7 @@ Requirements
 mvn install -DskipTests=true
 ```
 
-## DataTypes
+## Data Types
 
 | MySQL              | Kafka<br>Connect                                     | ClickHouse                      |
 |--------------------|------------------------------------------------------|---------------------------------|
@@ -102,3 +102,6 @@ mvn install -DskipTests=true
 - [Performance Benchmarking](doc/Performance.md)
 - [Confluent Schema Registry(REST API)](doc/schema_registry.md)
 
+## Blog articles
+- [ClickHouse as an analytic extension for MySQL](https://altinity.com/blog/using-clickhouse-as-an-analytic-extension-for-mysql?utm_campaign=Brand&utm_content=224583767&utm_medium=social&utm_source=linkedin&hss_channel=lcp-10955938)
+- [Altinity Sink connector for ClickHouse](https://altinity.com/blog/fast-mysql-to-clickhouse-replication-announcing-the-altinity-sink-connector-for-clickhouse)
