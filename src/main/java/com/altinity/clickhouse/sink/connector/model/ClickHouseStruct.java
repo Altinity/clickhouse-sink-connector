@@ -41,6 +41,7 @@ public class ClickHouseStruct {
     @Setter
     private ArrayList<String> primaryKey;
 
+    // Database processed timestamp
     @Getter
     @Setter
     private long ts_ms;
@@ -181,6 +182,7 @@ public class ClickHouseStruct {
         }
         try {
             if (fieldNames.contains(TS_MS) && source.get(TS_MS) != null && source.get(TS_MS) instanceof Long) {
+                //  indicates the time that the change was made in the database.
                 this.setTs_ms((Long) source.get(TS_MS));
             }
             if (fieldNames.contains(SNAPSHOT) && source.get(SNAPSHOT) != null && source.get(SNAPSHOT) instanceof String) {
