@@ -5,6 +5,7 @@ import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -69,6 +70,16 @@ public class BlockMetaData {
     @Setter
     String topicName = null;
 
+    // The time when the block is persisted to clickhouse
+    // Useful to calculate lag between source DB(binlog)
+    // debezium connector timestamp vs sink connector timestamp.
+    @Getter
+    @Setter
+    Map<String, Long> topicToBlockTimestamp = new HashMap();
+
+    // Timestamp recorded when the block was written;
+    long blockInsertionTimestamp = System.currentTimeMillis();
+
     public void update(ClickHouseStruct record) {
 
         int gtId = record.getGtid();
@@ -85,11 +96,21 @@ public class BlockMetaData {
             this.partition = record.getKafkaPartition();
         }
 
-        long offset = record.getKafkaOffset();
-
         if(record.getTopic() != null) {
             this.topicName = record.getTopic();
         }
+
+        long lag = blockInsertionTimestamp - record.getTs_ms();
+        if(topicToBlockTimestamp.containsKey(this.topicName)) {
+            long storedLag = topicToBlockTimestamp.get(this.topicName);
+            if(lag > storedLag) {
+                topicToBlockTimestamp.put(this.topicName, lag);
+            }
+        } else {
+            topicToBlockTimestamp.put(this.topicName, lag);
+        }
+
+        long offset = record.getKafkaOffset();
 
         if (partitionToOffsetMap.containsKey(this.topicName)) {
             MutablePair<Integer, Long> mp = partitionToOffsetMap.get(this.topicName);

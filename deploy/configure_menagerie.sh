@@ -16,4 +16,5 @@ docker exec -it mysql-master mysqlimport -uroot -proot --local menagerie pet.txt
 docker exec -it mysql-master mysqlimport -uroot -proot --local menagerie event.txt
 rm -fr menagerie-db
 
+sleep 5
 ./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE

@@ -10,4 +10,5 @@ docker exec -it mysql-master mysql -uroot -proot -e "source /tmp/sakila-schema.s
 rm -f sakila-db.zip
 rm -fr sakila-db/
 
+sleep 5
 ./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE

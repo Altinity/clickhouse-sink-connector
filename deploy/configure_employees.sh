@@ -1,6 +1,6 @@
 DATABASE=employees
-./debezium-delete.sh &&  ./debezium-connector-setup-database.sh $DATABASE && ./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
-./debezium-delete.sh &&  ./debezium-connector-setup-database.sh $DATABASE && ./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
+./debezium-delete.sh &&  ./debezium-connector-setup-database.sh $DATABASE
+
 docker exec -it clickhouse clickhouse-client -uroot --password root -mn --query "drop database if exists $DATABASE;create database $DATABASE;"
 mkdir test_db
 cd test_db
@@ -27,3 +27,6 @@ docker cp  load_salaries3.dump mysql-master:/
 docker cp  load_titles.dump mysql-master:/
 
 docker exec -it mysql-master mysql -uroot -proot -e "source /employees.sql"
+
+sleep 5
+./sink-delete.sh && ./sink-connector-setup-database.sh $DATABASE
