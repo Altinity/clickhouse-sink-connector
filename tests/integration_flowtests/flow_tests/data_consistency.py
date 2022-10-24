@@ -213,8 +213,5 @@ def feature(self):
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
-
     for suite in loads(current_module(), Suite):
-        suite()
+        Suite(run=suite)

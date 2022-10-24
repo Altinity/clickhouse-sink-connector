@@ -1,6 +1,0 @@
-[mysqld]
-max_connections=100000
-
-
-gtid-mode = on
-enforce-gtid-consistency = true
