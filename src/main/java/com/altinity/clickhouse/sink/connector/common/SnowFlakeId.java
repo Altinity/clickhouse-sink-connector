@@ -16,6 +16,6 @@ public class SnowFlakeId {
         long timestampMask = ((1L << 41) - 1L);
         long timestampMasked =  timestamp & timestampMask ;
         long timestampShifted = timestampMasked << GTID_BITS;
-        return timestamp << 22 | (gtId & gtIdMask);
+        return timestampShifted | (gtId & gtIdMask);
     }
 }
