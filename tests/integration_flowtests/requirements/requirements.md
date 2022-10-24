@@ -539,19 +539,19 @@ flowchart TB;
     end
     
     subgraph C["Different primary keys"]
-        1C["simple primary key"]:::yellow
-        2C["composite primary key"]:::yellow
-        3C["no primary key"]:::yellow
+        1C["simple primary key"]:::blue
+        2C["composite primary key"]:::blue
+        3C["no primary key"]:::blue
     end
     
     subgraph B["Different cases"]
-        1B["one part one partition"]:::yellow
-        2B["multiple parts one partition"]:::yellow
-        3B["multiple partitions"]:::yellow
-        4B["very large data set"]:::yellow
-        5B["lots of small data sets"]:::yellow
-        6B["table with large number of partitions"]:::yellow
-        7B["table with large number of parts in partition"]:::yellow
+        1B["one part one partition"]:::green
+        2B["multiple parts one partition"]:::green
+        3B["multiple partitions"]:::green
+        4B["very large data set"]:::green
+        5B["lots of small data sets"]:::green
+        6B["table with large number of partitions"]:::green
+        7B["table with large number of parts in partition"]:::green
     end
     
 
