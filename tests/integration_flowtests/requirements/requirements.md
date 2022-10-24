@@ -545,11 +545,11 @@ flowchart TB;
     end
     
     subgraph B["Different cases"]
-        1B[" into one part one partition"]:::yellow
-        2B["into multiple parts one partition"]:::yellow
-        3B["into multiple partitions"]:::yellow
-        4B["very large insert"]:::yellow
-        5B["lots of small inserts"]:::yellow
+        1B["one part one partition"]:::yellow
+        2B["multiple parts one partition"]:::yellow
+        3B["multiple partitions"]:::yellow
+        4B["very large data set"]:::yellow
+        5B["lots of small data sets"]:::yellow
         6B["table with large number of partitions"]:::yellow
         7B["table with large number of parts in partition"]:::yellow
     end

@@ -93,7 +93,7 @@ def combinatoric_unavailable(self):
 
 
 @TestOutline
-def restart(self, services, loops=10):
+def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
     """Check for data consistency with concurrently service restart 10 times."""
     uid = getuid()
 
@@ -120,7 +120,14 @@ def restart(self, services, loops=10):
             test=insert,
             parallel=True,
         )(
-            insert_number=5000, table_name=table_name,
+            insert_number=insert_number, table_name=table_name,
+        )
+        Step(
+            "I insert data in MySql table",
+            test=delete,
+            parallel=True,
+        )(
+            delete_number=delete_number, table_name=table_name,
         )
 
         for i in range(loops):
@@ -129,15 +136,19 @@ def restart(self, services, loops=10):
                     self.context.cluster.node(f"{node}").restart()
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
-        mysql_rows = mysql.query(f"select count(*) from {table_name}").output.strip()[90:]
-        for attempt in retries(count=10, timeout=100, delay=5):
-            with attempt:
-                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+        select_step(statement="count(*)", table_name=table_name)
 
-                clickhouse.query(
-                    f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message=mysql_rows
-                )
+
+@TestSuite
+def combinatoric_restart_test(self):
+    """Check all possibilities of restart services"""
+    nodes_list = ["debezium"]
+    service_combinations = list(combinations(nodes_list, 1))
+    for combination in service_combinations:
+        Scenario(f"{combination} restart", test=restart, flags=TE)(services=combination,
+                                                                   loops=5,
+                                                                   insert_number=1000,
+                                                                   delete_number=1000)
 
 
 @TestSuite
@@ -203,7 +214,8 @@ def combinatoric_unstable_network_connection(self):
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} unstable network connection", test=unstable_network_connection, flags=TE)(services=combination)
+            Scenario(f"{combination} unstable network connection", test=unstable_network_connection, flags=TE)(
+                services=combination)
 
 
 @TestFeature

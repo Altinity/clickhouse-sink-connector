@@ -527,4 +527,39 @@ def insert(self, insert_number, table_name):
             mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
 
 
+@TestStep(Given)
+def delete(self, delete_number, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Step(f"I insert {delete_number} rows of data in MySql table"):
+        for i in range(1, delete_number):
+            mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
+
+
+@TestStep(Given)
+def update(self, update_number, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Step(f"I insert {update_number} rows of data in MySql table"):
+        for i in range(1, update_number):
+            mysql.query(
+                f"UPDATE {table_name} SET k=k+5 WHERE id={i};"
+            )
+
+
+@TestStep(Given)
+def select_step(self, statement, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+    clickhouse = self.context.cluster.node("clickhouse")
+    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[90:]
+    for attempt in retries(count=10, timeout=100, delay=5):
+        with attempt:
+            clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
+
+            clickhouse.query(
+                f"SELECT {statement} FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                message=mysql_output
+            )
+
+
 

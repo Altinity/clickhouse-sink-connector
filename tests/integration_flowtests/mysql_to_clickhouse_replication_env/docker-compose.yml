@@ -17,7 +17,7 @@ services:
     volumes:
      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
      - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-     - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+#     - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
       interval: 15s
@@ -79,7 +79,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:2022-10-18
+    image:  altinity/clickhouse-sink-connector:2022-10-23
     restart: "no"
     expose:
       - "8083"
@@ -130,6 +130,6 @@ services:
       - infinity
     volumes:
       - ../tests/manual_scripts:/manual_scripts
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+#      - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
 
 
