@@ -43,7 +43,6 @@ def restart(self, services, loops=10, delete_number=1500):
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
-        pause()
 
 
 @TestSuite
