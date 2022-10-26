@@ -57,7 +57,6 @@
       * 4.6.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
   * 4.7 [Queries](#queries)
     * 4.7.1 [Test Feature Diagram](#test-feature-diagram)
-      * 4.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram](#rqsrs-030clickhousemysqltoclickhousereplicationqueriestestfeaturediagram)
     * 4.7.2 [Inserts](#inserts)
       * 4.7.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
     * 4.7.3 [Updates](#updates)
@@ -515,9 +514,6 @@ Data types connection table:
 ### Queries
 
 #### Test Feature Diagram
-
-##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram
-version: 1.0
 
 ```mermaid
 flowchart TB;

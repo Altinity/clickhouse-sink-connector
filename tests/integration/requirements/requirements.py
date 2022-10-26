@@ -502,72 +502,6 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement
     num='4.6.12.1'
 )
 
-RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_TestFeatureDiagram = Requirement(
-    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        '```mermaid\n'
-        'flowchart TB;\n'
-        '\n'
-        '  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;\n'
-        '  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;\n'
-        '  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;\n'
-        '  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;\n'
-        '  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;\n'
-        '  \n'
-        '  subgraph O["Queries Test Feature Diagram"]\n'
-        '  A-->D-->C-->B\n'
-        '\n'
-        '  1A---2A---3A\n'
-        '  1D---2D\n'
-        '  1C---2C---3C\n'
-        '  1B---2B---3B---4B---5B---6B---7B\n'
-        '  \n'
-        '    subgraph A["User input MySQL"]\n'
-        '\n'
-        '        1A["INSERT"]:::green\n'
-        '                2A["DELETE"]:::green\n'
-        '                        3A["UPDATE"]:::green\n'
-        '\n'
-        '    end\n'
-        '    \n'
-        '    subgraph D["Engines"]\n'
-        '        1D["with table Engine"]:::yellow\n'
-        '        2D["without table Engine"]:::yellow\n'
-        '    end\n'
-        '    \n'
-        '    subgraph C["Different primary keys"]\n'
-        '        1C["simple primary key"]:::blue\n'
-        '        2C["composite primary key"]:::blue\n'
-        '        3C["no primary key"]:::blue\n'
-        '    end\n'
-        '    \n'
-        '    subgraph B["Different cases"]\n'
-        '        1B["one part one partition"]:::green\n'
-        '        2B["multiple parts one partition"]:::green\n'
-        '        3B["multiple partitions"]:::green\n'
-        '        4B["very large data set"]:::green\n'
-        '        5B["lots of small data sets"]:::green\n'
-        '        6B["table with large number of partitions"]:::green\n'
-        '        7B["table with large number of parts in partition"]:::green\n'
-        '    end\n'
-        '    \n'
-        '\n'
-        '    \n'
-        '\n'
-        '  end\n'
-        '```\n'
-        '\n'
-    ),
-    link=None,
-    level=4,
-    num='4.7.1.1'
-)
-
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts',
     version='1.0',
@@ -1026,7 +960,6 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes', level=4, num='4.6.12.1'),
         Heading(name='Queries', level=2, num='4.7'),
         Heading(name='Test Feature Diagram', level=3, num='4.7.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram', level=4, num='4.7.1.1'),
         Heading(name='Inserts', level=3, num='4.7.2'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts', level=4, num='4.7.2.1'),
         Heading(name='Updates', level=3, num='4.7.3'),
@@ -1100,7 +1033,6 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes,
-        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_TestFeatureDiagram,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes,
@@ -1185,7 +1117,6 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
       * 4.6.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
   * 4.7 [Queries](#queries)
     * 4.7.1 [Test Feature Diagram](#test-feature-diagram)
-      * 4.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram](#rqsrs-030clickhousemysqltoclickhousereplicationqueriestestfeaturediagram)
     * 4.7.2 [Inserts](#inserts)
       * 4.7.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
     * 4.7.3 [Updates](#updates)
@@ -1643,9 +1574,6 @@ Data types connection table:
 ### Queries
 
 #### Test Feature Diagram
-
-##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.TestFeatureDiagram
-version: 1.0
 
 ```mermaid
 flowchart TB;
