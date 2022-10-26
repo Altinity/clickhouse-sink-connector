@@ -1,6 +1,5 @@
-
 from requirements import *
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 @TestOutline
@@ -94,7 +93,7 @@ def complex_primary_key_innodb(self):
 
 
 @TestFeature
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Deletes("1.0"))
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes("1.0"))
 @Name("delete")
 def feature(self):
     """MySql to ClickHouse replication delete tests to test `DELETE` queries."""

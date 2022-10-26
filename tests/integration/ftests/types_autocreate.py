@@ -1,6 +1,6 @@
 
 from requirements import *
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 
@@ -404,7 +404,7 @@ def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")
 )
-@Name("data types ac")
+@Name("types autocreate")
 def feature(self):
     """Verify correct replication of all supported MySQL data types with CLickHouse table auto creation."""
 

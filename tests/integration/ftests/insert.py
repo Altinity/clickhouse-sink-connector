@@ -1,4 +1,5 @@
-from flow_tests.steps import *
+from requirements import *
+from ftests.steps import *
 
 
 @TestOutline
@@ -79,6 +80,7 @@ def select_insert_3(self, auto_create_tables=True):
 
 
 @TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts("1.0"))
 @Name("insert")
 def feature(self):
     """Different `INSERT` tests section."""

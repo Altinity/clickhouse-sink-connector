@@ -477,17 +477,44 @@ def sb_debizium_script_connector(self):
 
 
 @TestStep(Given)
-def select(self, insert, table_name=None, statement=None, node=None,  with_final=False, with_optimize=False,
-                   timeout=100):
+def insert(self, first_insert_id, last_insert_id, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+    with Step(f"I insert {first_insert_id-last_insert_id} rows of data in MySql table"):
+        for i in range(first_insert_id, last_insert_id + 1):
+            mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
+
+
+@TestStep(Given)
+def delete(self, first_delete_id, last_delete_id, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Step(f"I insert {last_delete_id-first_delete_id} rows of data in MySql table"):
+        for i in range(first_delete_id, last_delete_id):
+            mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
+
+
+@TestStep(Given)
+def update(self, first_update_id, last_update_id, table_name):
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Step(f"I insert {last_update_id-first_update_id} rows of data in MySql table"):
+        for i in range(first_update_id, last_update_id):
+            mysql.query(
+                f"UPDATE {table_name} SET k=k+5 WHERE id={i};"
+            )
+
+
+@TestStep(Given)
+def select(self, insert=None, table_name=None, statement=None, node=None,  with_final=False, with_optimize=False,
+           timeout=100):
     """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
-    :param insert: expected insert data
+    :param insert: expected insert data if None compare with MySQL table
     :param table_name: table name for select  default "users"
     :param statement: statement for select default "*"
     :param node: node name
     :param with_final: 'SELECT ... FINAL'
     :param with_optimize: loop 'OPTIMIZE TABLE' + 'SELECT'
     :param timeout: retry timeout
-
     """
     if node is None:
         node = self.context.cluster.node("clickhouse")
@@ -495,6 +522,12 @@ def select(self, insert, table_name=None, statement=None, node=None,  with_final
         table_name = "users"
     if statement is None:
         statement = "*"
+
+    mysql = self.context.cluster.node("mysql-master")
+    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[90:]
+
+    if insert is None:
+        insert = mysql_output
 
     if with_final:
         retry(
@@ -508,7 +541,8 @@ def select(self, insert, table_name=None, statement=None, node=None,  with_final
                 node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 node.query(
-                    f"SELECT {statement} FROM test.{table_name} FORMAT CSV", message=f"{insert}"
+                    f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
+                    message=f"{insert}"
                 )
 
     else:
@@ -519,47 +553,49 @@ def select(self, insert, table_name=None, statement=None, node=None,  with_final
         )(f"SELECT {statement} FROM test.{table_name} FORMAT CSV", message=f"{insert}", )
 
 
-@TestStep(Given)
-def insert(self, insert_number, table_name):
-    mysql = self.context.cluster.node("mysql-master")
-    with Step(f"I insert {insert_number} rows of data in MySql table"):
-        for i in range(0, insert_number + 1):
-            mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
-
 
 @TestStep(Given)
-def delete(self, delete_number, table_name):
-    mysql = self.context.cluster.node("mysql-master")
+def concurrent_queries(self, table_name, first_insert_number, last_insert_number,
+                       first_insert_id, last_insert_id,
+                       first_delete_id, last_delete_id,
+                       first_update_id, last_update_id):
+    '''
+    Insert, update, delete for concurrent queries.
+    :param self:
+    :param table_name: table name
+    :param first_insert_number: first id of precondition insert
+    :param last_insert_number:  last id of precondition insert
+    :param first_insert_id: first id of concurrent insert
+    :param last_insert_id: last id of concurrent insert
+    :param first_delete_id: first id of concurrent delete
+    :param last_delete_id: last id of concurrent delete
+    :param first_update_id: first id of concurrent update
+    :param last_update_id: last id of concurrent update
+    :return:
+    '''
 
-    with Step(f"I insert {delete_number} rows of data in MySql table"):
-        for i in range(1, delete_number):
-            mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
+    with Given("I insert block of precondition rows"):
+        insert(table_name=table_name, first_insert_id=first_insert_number, last_insert_id=last_insert_number)
 
-
-@TestStep(Given)
-def update(self, update_number, table_name):
-    mysql = self.context.cluster.node("mysql-master")
-
-    with Step(f"I insert {update_number} rows of data in MySql table"):
-        for i in range(1, update_number):
-            mysql.query(
-                f"UPDATE {table_name} SET k=k+5 WHERE id={i};"
-            )
-
-
-@TestStep(Given)
-def select_step(self, statement, table_name):
-    mysql = self.context.cluster.node("mysql-master")
-    clickhouse = self.context.cluster.node("clickhouse")
-    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[90:]
-    for attempt in retries(count=10, timeout=100, delay=5):
-        with attempt:
-            clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-            clickhouse.query(
-                f"SELECT {statement} FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                message=mysql_output
-            )
-
-
-
+    with When("I start concurrently insert, update and delete queries in MySql table"):
+        Step(
+            "I insert data in MySql table",
+            test=insert,
+            parallel=True,
+        )(
+            first_insert_id=first_insert_id, last_insert_id=last_insert_id, table_name=table_name,
+        )
+        Step(
+            "I delete data in MySql table",
+            test=delete,
+            parallel=True,
+        )(
+            first_delete_id=first_delete_id, last_delete_id=last_delete_id, table_name=table_name,
+        )
+        Step(
+            "I update data in MySql table",
+            test=update,
+            parallel=True,
+        )(
+            first_update_id=first_update_id, last_update_id=last_update_id, table_name=table_name,
+        )

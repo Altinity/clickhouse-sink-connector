@@ -12,7 +12,7 @@ from helpers.argparser import argparser
 from helpers.common import check_clickhouse_version
 from helpers.common import create_cluster
 from requirements import *
-from flow_tests.steps_global import *
+from ftests.steps_global import *
 
 
 xfails = {
@@ -88,25 +88,25 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-    Feature(run=load("flow_tests.sanity", "feature"))
-    # Feature(run=load("flow_tests.data_types", "feature"))
-    Feature(run=load("flow_tests.data_types_ac", "feature"))
-    Feature(run=load("flow_tests.deduplication", "feature"))
-    Feature(run=load("flow_tests.primary_keys", "feature"))
-    Feature(run=load("flow_tests.autocreate", "feature"))
+    Feature(run=load("ftests.sanity", "feature"))
+    # Feature(run=load("ftests.types", "feature"))
+    Feature(run=load("ftests.types_autocreate", "feature"))
+    Feature(run=load("ftests.deduplication", "feature"))
+    Feature(run=load("ftests.primary_keys", "feature"))
+    Feature(run=load("ftests.autocreate", "feature"))
     Feature(
         run=load(
-            "flow_tests.table_schema_changes", "feature"
+            "ftests.schema_changes", "feature"
         )
     )
-    # Feature(run=load("flow_tests.insert", "feature"))
-    Feature(run=load("flow_tests.data_consistency", "feature"))
-    Feature(run=load("flow_tests.multiple_tables", "feature"))
-    Feature(run=load("flow_tests.virtual_columns", "feature"))
-    Feature(run=load("flow_tests.delete", "feature"))
-    Feature(run=load("flow_tests.update", "feature"))
-    Feature(run=load("flow_tests.sysbench", "feature"))
-    # Feature(run=load("flow_tests.manual_section", "feature"))
+    # Feature(run=load("ftests.insert", "feature"))
+    Feature(run=load("ftests.consistency", "feature"))
+    Feature(run=load("ftests.multiple_tables", "feature"))
+    Feature(run=load("ftests.virtual_columns", "feature"))
+    Feature(run=load("ftests.delete", "feature"))
+    Feature(run=load("ftests.update", "feature"))
+    Feature(run=load("ftests.sysbench", "feature"))
+    Feature(run=load("ftests.manual_section", "feature"))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 from requirements import *
-from flow_tests.steps import *
-
+from ftests.steps import *
 
 
 @TestOutline
@@ -29,6 +28,7 @@ def check_datatype_replication(
             f" PRIMARY KEY (id))"
             f" ENGINE = InnoDB;",
         )
+        pause()
 
     if not auto_create_tables:
         with And(f"I create ClickHouse replica test.{table_name}"):
@@ -84,7 +84,7 @@ def table_recreation_with_different_datatypes(
 
 
 @TestFeature
-@Name("table schema changes")
+@Name("schema changes")
 def feature(self):
     """Test some table schema changes."""
 

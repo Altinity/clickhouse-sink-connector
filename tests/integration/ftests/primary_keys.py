@@ -1,6 +1,6 @@
 
 from requirements import *
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 @TestOutline
@@ -76,7 +76,7 @@ def composite_primary_key(self):
 
 @TestScenario
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_NoPrimaryKey("1.0")
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No("1.0")
 )
 def no_primary_key(self):
     """Check replicating MySQl table without any primary key."""

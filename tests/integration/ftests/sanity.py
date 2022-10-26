@@ -1,4 +1,4 @@
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 @TestOutline
@@ -54,7 +54,7 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
 
 
 @TestScenario
-def mysql_to_clickhouse_connection_ac(self, auto_create_tables=True):
+def mysql_to_clickhouse_auto(self, auto_create_tables=True):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
     # with Given("I collect Sink logs"):
@@ -63,7 +63,7 @@ def mysql_to_clickhouse_connection_ac(self, auto_create_tables=True):
 
 
 @TestScenario
-def mysql_to_clickhouse_connection_mc(self, auto_create_tables=False):
+def mysql_to_clickhouse_manual(self, auto_create_tables=False):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
 

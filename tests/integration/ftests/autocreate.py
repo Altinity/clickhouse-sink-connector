@@ -1,4 +1,4 @@
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 @TestScenario

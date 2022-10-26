@@ -1,12 +1,13 @@
 from itertools import combinations
 from testflows.connect import Shell
 
-from flow_tests.steps import *
+from ftests.steps import *
 
 
 @TestOutline
 def unavailable(self, services, query=None):
-    """Check for data consistency with concurrently service unavailable."""
+    """Check for data consistency with concurrently service unavailable.
+    """
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -36,12 +37,12 @@ def unavailable(self, services, query=None):
             )
 
         if query == "update":
-            with Then(f"I update data in MySql table"):
+            with Then("I update data in MySql table"):
                 mysql.query(
                     f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
                 )
         elif query == "delete":
-            with Then(f"I delete data in MySql table"):
+            with Then("I delete data in MySql table"):
                 mysql.query(
                     f"DELETE FROM {table_name} WHERE id=1;"
                 )
@@ -84,7 +85,8 @@ def unavailable(self, services, query=None):
 
 @TestSuite
 def combinatoric_unavailable(self):
-    """Check all possibilities of unavailable services"""
+    """Check all possibilities of unavailable services.
+    """
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
@@ -94,7 +96,8 @@ def combinatoric_unavailable(self):
 
 @TestOutline
 def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
-    """Check for data consistency with concurrently service restart 10 times."""
+    """Check for data consistency with concurrently service restart 10 times.
+    """
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -141,7 +144,8 @@ def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
 
 @TestSuite
 def combinatoric_restart_test(self):
-    """Check all possibilities of restart services"""
+    """Check all possibilities of restart services.
+    """
     nodes_list = ["debezium"]
     service_combinations = list(combinations(nodes_list, 1))
     for combination in service_combinations:
@@ -153,7 +157,7 @@ def combinatoric_restart_test(self):
 
 @TestSuite
 def combinatoric_restart(self):
-    """Check all possibilities of restart services"""
+    """Check all possibilities of restart services."""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
@@ -163,7 +167,8 @@ def combinatoric_restart(self):
 
 @TestOutline
 def unstable_network_connection(self, services):
-    """Check for data consistency with unstable network connection to some service."""
+    """Check for data consistency with unstable network connection to some services.
+    """
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -209,7 +214,7 @@ def unstable_network_connection(self, services):
 
 @TestSuite
 def combinatoric_unstable_network_connection(self):
-    """Check all possibilities of unstable network connection services"""
+    """Check all possibilities of unstable network connection services."""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
@@ -219,7 +224,7 @@ def combinatoric_unstable_network_connection(self):
 
 
 @TestFeature
-@Name("data consistency")
+@Name("consistency")
 def feature(self):
     """Сheck data consistency when network or service faults are introduced."""
     with Given("I enable debezium and sink connectors after kafka starts up"):
