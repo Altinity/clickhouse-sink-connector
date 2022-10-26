@@ -9,21 +9,15 @@ public class SnowFlakeIdTest {
     @Test
     public void testGenerate() throws InterruptedException {
        // 1666300948617
-        long currentTimestamp = 1666297437042L;
-        long gtId = 600851475143L;
+        long currentTimestamp = 1666717042727L;
+        long gtId = 1666735042727620291L;
         long snowFlakeId = SnowFlakeId.generate(currentTimestamp, gtId);
-        System.out.println("Snowflake ID" + snowFlakeId);
+        Assert.assertTrue(snowFlakeId == 1584952269638053571L);
 
-        long ts1 = System.currentTimeMillis();
+        long ts1= 1666735042727L;
         long snowFlakeId1 = SnowFlakeId.generate(ts1, gtId);
+        Assert.assertTrue(snowFlakeId1 == 1585027767110053571L);
 
-        Thread.sleep(4000);
-
-        long ts2 = System.currentTimeMillis();
-        long snowFlakeId2 = SnowFlakeId.generate(ts2, gtId);
-
-
-        Assert.assertTrue(snowFlakeId2 > snowFlakeId1);
     }
 
 }
