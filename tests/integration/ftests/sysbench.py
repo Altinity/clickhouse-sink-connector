@@ -110,7 +110,7 @@ def insert_bulk(self):
 
 
 @TestScenario
-@Repeat(1)
+@Repeat(3)
 def oltp_delete(self):
     """Run "oltp delete" test."""
     # xfail("expected")

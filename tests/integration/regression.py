@@ -69,7 +69,7 @@ def regression(
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
 
-    env = "mysql_to_clickhouse_replication_env"
+    env = "env"
 
     with Given("docker-compose cluster"):
         cluster = create_cluster(
@@ -105,8 +105,8 @@ def regression(
     Feature(run=load("ftests.virtual_columns", "feature"))
     Feature(run=load("ftests.delete", "feature"))
     Feature(run=load("ftests.update", "feature"))
-    Feature(run=load("ftests.sysbench", "feature"))
-    Feature(run=load("ftests.manual_section", "feature"))
+    # Feature(run=load("ftests.sysbench", "feature"))
+    # Feature(run=load("ftests.manual_section", "feature"))
 
 
 if __name__ == "__main__":

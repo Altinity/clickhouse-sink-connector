@@ -117,42 +117,23 @@ def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
                       f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
         )
 
-    with When("I insert data in MySql table with concurrently service restart"):
-        Step(
-            "I insert data in MySql table",
-            test=insert,
+    with When("I insert, update, delete data in MySql table concurrently with services restart"):
+        Given(
+            "I insert, update, delete data in MySql table",
+            test=concurrent_queries,
             parallel=True,
-        )(
-            insert_number=insert_number, table_name=table_name,
-        )
-        Step(
-            "I insert data in MySql table",
-            test=delete,
-            parallel=True,
-        )(
-            delete_number=delete_number, table_name=table_name,
-        )
+        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
+          first_insert_id=3001, last_insert_id=6000,
+          first_delete_id=1, last_delete_id=1500,
+          first_update_id=1501, last_update_id=3000)
 
         for i in range(loops):
             with Step(f"LOOP STEP {i}"):
                 for node in services:
                     self.context.cluster.node(f"{node}").restart()
 
-    with And("I check that ClickHouse table has same number of rows as MySQL table"):
-        select_step(statement="count(*)", table_name=table_name)
-
-
-@TestSuite
-def combinatoric_restart_test(self):
-    """Check all possibilities of restart services.
-    """
-    nodes_list = ["debezium"]
-    service_combinations = list(combinations(nodes_list, 1))
-    for combination in service_combinations:
-        Scenario(f"{combination} restart", test=restart, flags=TE)(services=combination,
-                                                                   loops=5,
-                                                                   insert_number=1000,
-                                                                   delete_number=1000)
+    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        select(statement="count(*)", table_name=table_name, with_optimize=True)
 
 
 @TestSuite

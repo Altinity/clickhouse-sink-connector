@@ -122,7 +122,7 @@ EOF"""
 @TestStep(Given)
 def init_sink_connector(self, node=None, auto_create_tables=False, topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users"):
     """
-    Initialize debezium and sink connectors.
+    Initialize sink connector.
     """
     if node is None:
         node = self.context.cluster.node("bash-tools")
@@ -248,6 +248,14 @@ EOF"""
 
 @TestStep(Given)
 def create_mysql_table(self, name=None, statement=None, node=None):
+    """
+    Creation of default MySQL table for tests
+    :param self:
+    :param name:
+    :param statement:
+    :param node:
+    :return:
+    """
     if node is None:
         node = self.context.cluster.node("mysql-master")
     if name is None:
@@ -272,6 +280,14 @@ def create_mysql_table(self, name=None, statement=None, node=None):
 
 @TestStep(Given)
 def create_clickhouse_table(self, name=None, statement=None, node=None):
+    """
+    Creation of default ClickHouse table for tests
+    :param self:
+    :param name:
+    :param statement:
+    :param node:
+    :return:
+    """
     if node is None:
         node = self.context.cluster.node("clickhouse")
     if name is None:
@@ -296,7 +312,8 @@ def create_clickhouse_table(self, name=None, statement=None, node=None):
 def create_all_data_types_table(
     self, table_name=None, node=None, manual_ch_table_create=False
 ):
-    """Step to create table with all data types."""
+    """Step to create table with all data types.
+    """
     if node is None:
         node = self.context.cluster.node("clickhouse")
     if table_name is None:
@@ -449,6 +466,11 @@ def create_all_data_types_table_nullable(
 
 @TestStep(Given)
 def sb_debizium_script_connector(self):
+    """
+    Sysbench debezium script start up
+    :param self:
+    :return:
+    """
     try:
         time.sleep(10)
         with Given(
@@ -478,26 +500,50 @@ def sb_debizium_script_connector(self):
 
 @TestStep(Given)
 def insert(self, first_insert_id, last_insert_id, table_name):
+    """
+    Insert query step
+    :param self:
+    :param first_insert_id:
+    :param last_insert_id:
+    :param table_name:
+    :return:
+    """
     mysql = self.context.cluster.node("mysql-master")
-    with Step(f"I insert {first_insert_id-last_insert_id} rows of data in MySql table"):
+    with Given(f"I insert {first_insert_id-last_insert_id} rows of data in MySql table"):
         for i in range(first_insert_id, last_insert_id + 1):
             mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
 
 
 @TestStep(Given)
 def delete(self, first_delete_id, last_delete_id, table_name):
+    """
+    Delete query step
+    :param self:
+    :param first_delete_id:
+    :param last_delete_id:
+    :param table_name:
+    :return:
+    """
     mysql = self.context.cluster.node("mysql-master")
 
-    with Step(f"I insert {last_delete_id-first_delete_id} rows of data in MySql table"):
+    with Given(f"I delete {last_delete_id-first_delete_id} rows of data in MySql table"):
         for i in range(first_delete_id, last_delete_id):
             mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
 
 
 @TestStep(Given)
 def update(self, first_update_id, last_update_id, table_name):
+    """
+    Update query step
+    :param self:
+    :param first_update_id:
+    :param last_update_id:
+    :param table_name:
+    :return:
+    """
     mysql = self.context.cluster.node("mysql-master")
 
-    with Step(f"I insert {last_update_id-first_update_id} rows of data in MySql table"):
+    with Given(f"I update {last_update_id-first_update_id} rows of data in MySql table"):
         for i in range(first_update_id, last_update_id):
             mysql.query(
                 f"UPDATE {table_name} SET k=k+5 WHERE id={i};"
@@ -553,13 +599,12 @@ def select(self, insert=None, table_name=None, statement=None, node=None,  with_
         )(f"SELECT {statement} FROM test.{table_name} FORMAT CSV", message=f"{insert}", )
 
 
-
 @TestStep(Given)
 def concurrent_queries(self, table_name, first_insert_number, last_insert_number,
                        first_insert_id, last_insert_id,
                        first_delete_id, last_delete_id,
                        first_update_id, last_update_id):
-    '''
+    """
     Insert, update, delete for concurrent queries.
     :param self:
     :param table_name: table name
@@ -572,27 +617,27 @@ def concurrent_queries(self, table_name, first_insert_number, last_insert_number
     :param first_update_id: first id of concurrent update
     :param last_update_id: last id of concurrent update
     :return:
-    '''
+    """
 
     with Given("I insert block of precondition rows"):
         insert(table_name=table_name, first_insert_id=first_insert_number, last_insert_id=last_insert_number)
 
     with When("I start concurrently insert, update and delete queries in MySql table"):
-        Step(
+        By(
             "I insert data in MySql table",
             test=insert,
             parallel=True,
         )(
             first_insert_id=first_insert_id, last_insert_id=last_insert_id, table_name=table_name,
         )
-        Step(
+        By(
             "I delete data in MySql table",
             test=delete,
             parallel=True,
         )(
             first_delete_id=first_delete_id, last_delete_id=last_delete_id, table_name=table_name,
         )
-        Step(
+        By(
             "I update data in MySql table",
             test=update,
             parallel=True,
