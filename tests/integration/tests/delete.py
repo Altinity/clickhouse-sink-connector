@@ -1,10 +1,11 @@
 from requirements import *
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestOutline
-def update(self, primary_key, engine):
-    """Check `UPDATE` query replicating from MySQl table to CH with different primary keys."""
+def delete(self, primary_key, engine=True):
+    """Check `DELETE` query replicating from MySQl table to CH with different primary keys.
+    """
 
     with Given("Receive UID"):
         uid = getuid()
@@ -30,71 +31,72 @@ def update(self, primary_key, engine):
         mysql.query(
             f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
         )
-    with Then(f"I update data in MySql table"):
+    with Then(f"I delete data in MySql table"):
         mysql.query(
-            f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
+            f"DELETE FROM {table_name} WHERE id=1;"
         )
 
-    with And("I check that ClickHouse has updated data as MySQL"):
+    with And("I check that ClickHouse table has same number of rows as MySQL table"):
+        mysql_rows_after_delete = mysql.query(f"select count(*) from {table_name}").output.strip()[90:]
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 clickhouse.query(
-                    f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message='1,7,"a","b"'
+                    f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                    message=mysql_rows_after_delete
                 )
 
 
 @TestScenario
 def no_primary_key(self):
-    """Check for `UPDATE` with no primary key without table engine.
+    """Check for `DELETE` with no primary key with InnoDB engine.
     """
-    xfail("makes delete")
-    update(primary_key="", engine=False)
+    xfail("doesn't work in row")
+    delete(primary_key="", engine=True)
 
 
 @TestScenario
 def no_primary_key_innodb(self):
-    """Check for `UPDATE` with no primary key with table engine InnoDB.
+    """Check for `DELETE` with no primary key without InnoDB engine.
     """
-    xfail("makes delete")
-    update(primary_key="", engine=True)
+    xfail("doesn't work in row")
+    delete(primary_key="", engine=False)
 
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `UPDATE` with simple primary key without table engine.
+    """Check for `DELETE` with simple primary key without InnoDB engine.
     """
-    update(primary_key=", PRIMARY KEY (id)", engine=False)
+    delete(primary_key=", PRIMARY KEY (id)", engine=False)
 
 
 @TestScenario
 def simple_primary_key_innodb(self):
-    """Check for `UPDATE` with simple primary key with table engine InnoDB.
+    """Check for `DELETE` with simple primary key with InnoDB engine.
     """
-    update(primary_key=", PRIMARY KEY (id)", engine=True)
+    delete(primary_key=", PRIMARY KEY (id)", engine=True)
 
 
 @TestScenario
 def complex_primary_key(self):
-    """Check for `UPDATE` with complex primary key without table engine.
+    """Check for `DELETE` with complex primary key without engine InnoDB.
     """
-    update(primary_key=", PRIMARY KEY (id,k)", engine=False)
+    delete(primary_key=", PRIMARY KEY (id,k)", engine=False)
 
 
 @TestScenario
 def complex_primary_key_innodb(self):
-    """Check for `UPDATE` with complex primary key with table engine InnoDB.
+    """Check for `DELETE` with complex primary key with engine InnoDB.
     """
-    update(primary_key=", PRIMARY KEY (id,k)", engine=True)
+    delete(primary_key=", PRIMARY KEY (id,k)", engine=True)
 
 
 @TestFeature
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates("1.0"))
-@Name("update")
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes("1.0"))
+@Name("delete")
 def feature(self):
-    """MySql to ClickHouse replication update tests to test `UPDATE` queries."""
+    """MySql to ClickHouse replication delete tests to test `DELETE` queries."""
 
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()

@@ -1,7 +1,7 @@
 from itertools import combinations
 from testflows.connect import Shell
 
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestOutline

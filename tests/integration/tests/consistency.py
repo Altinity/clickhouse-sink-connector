@@ -1,7 +1,7 @@
 from itertools import combinations
 from testflows.connect import Shell
 
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestOutline
@@ -27,60 +27,25 @@ def unavailable(self, services, query=None):
                       f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
         )
 
-    with When("I insert data in MySql table with concurrently service restart"):
+    with When("I insert, update, delete  data in MySql table with concurrently unavailable service"):
         for node in services:
             self.context.cluster.node(f"{node}").stop()
 
-        with Step(f"I insert data in MySql table"):
-            mysql.query(
-                f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
-            )
-
-        if query == "update":
-            with Then("I update data in MySql table"):
-                mysql.query(
-                    f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
-                )
-        elif query == "delete":
-            with Then("I delete data in MySql table"):
-                mysql.query(
-                    f"DELETE FROM {table_name} WHERE id=1;"
-                )
+        Given(
+            "I insert, update, delete data in MySql table",
+            test=concurrent_queries,
+            parallel=True,
+        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
+          first_insert_id=3001, last_insert_id=6000,
+          first_delete_id=1, last_delete_id=1500,
+          first_update_id=1501, last_update_id=3000)
 
     with And(f"Enable all services {services}"):
         for node in services:
             self.context.cluster.node(f"{node}").start()
 
-    if query == "update":
-        with And("I check that ClickHouse has updated data as MySQL"):
-            for attempt in retries(count=10, timeout=100, delay=5):
-                with attempt:
-                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                    clickhouse.query(
-                        f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                        message='1,7,"a","b"'
-                    )
-    elif query == "delete":
-        with And("I check that ClickHouse table has same number of rows as MySQL table"):
-            mysql_rows_after_delete = mysql.query(f"select count(*) from {table_name}").output.strip()[90:]
-            for attempt in retries(count=10, timeout=100, delay=5):
-                with attempt:
-                    clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                    clickhouse.query(
-                        f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                        message=mysql_rows_after_delete
-                    )
-    else:
-        for attempt in retries(count=10, timeout=100, delay=5):
-            with attempt:
-                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                clickhouse.query(
-                    f"SELECT id,k,c,pad FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message='1,2,"a","b"\n2,3,"a","b"'
-                )
+    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        select(statement="count(*)", table_name=table_name, with_optimize=True)
 
 
 @TestSuite
@@ -172,25 +137,22 @@ def unstable_network_connection(self, services):
             with Shell() as bash:
                 bash(f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
 
-    with Then("I insert data in MySql table"):
-        mysql.query(
-            f"INSERT INTO {table_name} VALUES (1,2,3)"
-        )
+        Given(
+            "I insert, update, delete data in MySql table",
+            test=concurrent_queries,
+            parallel=True,
+        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
+          first_insert_id=3001, last_insert_id=6000,
+          first_delete_id=1, last_delete_id=1500,
+          first_update_id=1501, last_update_id=3000)
 
     with And("Enable network"):
         for node in services:
             with Shell() as bash:
                 bash(f"docker network connect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
 
-    with Then("I wait unique values from CLickHouse table equal to MySQL table"):
-        for attempt in retries(count=20, timeout=1000, delay=5):
-            with attempt:
-                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                clickhouse.query(
-                    f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message='1,2,3'
-                )
+    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        select(statement="count(*)", table_name=table_name, with_optimize=True)
 
 
 @TestSuite

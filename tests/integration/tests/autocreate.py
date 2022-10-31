@@ -1,4 +1,4 @@
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestScenario

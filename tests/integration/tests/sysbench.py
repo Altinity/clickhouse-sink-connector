@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from requirements import *
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestScenario

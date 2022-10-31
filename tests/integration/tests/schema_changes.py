@@ -1,5 +1,5 @@
 from requirements import *
-from ftests.steps import *
+from tests.steps import *
 
 
 @TestOutline

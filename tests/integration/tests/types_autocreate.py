@@ -1,6 +1,6 @@
 
 from requirements import *
-from ftests.steps import *
+from steps import *
 
 
 

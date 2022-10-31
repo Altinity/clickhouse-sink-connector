@@ -12,7 +12,7 @@ from helpers.argparser import argparser
 from helpers.common import check_clickhouse_version
 from helpers.common import create_cluster
 from requirements import *
-from ftests.steps_global import *
+from tests.steps_global import *
 
 
 xfails = {
@@ -88,7 +88,7 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-    Feature(run=load("ftests.sanity", "feature"))
+    Feature(run=load("tests.sanity", "feature"))
     # Feature(run=load("ftests.types", "feature"))
     Feature(run=load("ftests.types_autocreate", "feature"))
     Feature(run=load("ftests.deduplication", "feature"))
