@@ -1,10 +1,12 @@
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestScenario
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames("1.0")
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames(
+        "1.0"
+    )
 )
 def virtual_column_names(
     self,
@@ -22,7 +24,9 @@ def virtual_column_names(
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_table(
@@ -39,7 +43,8 @@ def virtual_column_names(
 
     with Then(f"I make check that ClickHouse table virtual column names are correct"):
         retry(clickhouse.query, timeout=50, delay=1)(
-            f"SHOW CREATE TABLE test.{table_name}", message="`_sign` Int8,\\n    `_version` UInt64\\n"
+            f"SHOW CREATE TABLE test.{table_name}",
+            message="`_sign` Int8,\\n    `_version` UInt64\\n",
         )
 
 

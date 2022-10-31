@@ -1,6 +1,5 @@
-
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
@@ -45,11 +44,19 @@ def deduplication(self, inserts=False, big_insert=False, insert_number=1000):
             metric(name="map insert time", value=current_time(), units="sec")
     elif big_insert:
         with When(f"I make one insert on {insert_number} rows data in MySql table"):
-            mysql.query(f"insert into {table_name} "
-                        f"values {','.join([f'({i},777)' for i in range(1, insert_number + 1)])}")
+            mysql.query(
+                f"insert into {table_name} "
+                f"values {','.join([f'({i},777)' for i in range(1, insert_number + 1)])}"
+            )
 
     with Then(f"I wait unique values from CLickHouse table equal to MySQL table"):
-        select(insert=insert_number, table_name=table_name, statement="count()", with_final=True, timeout=50)
+        select(
+            insert=insert_number,
+            table_name=table_name,
+            statement="count()",
+            with_final=True,
+            timeout=50,
+        )
 
 
 @TestScenario
@@ -65,7 +72,9 @@ def deduplication_on_many_inserts(self):
 
 
 @TestFeature
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication("1.0")
+)
 @Name("deduplication")
 def feature(self):
     """MySql to ClickHouse replication tests to check

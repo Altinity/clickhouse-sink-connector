@@ -1,5 +1,5 @@
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
@@ -21,19 +21,15 @@ def update(self, primary_key, engine):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT ''{primary_key}){' ENGINE = InnoDB;' if engine else ''}"
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT ''{primary_key}){' ENGINE = InnoDB;' if engine else ''}",
         )
 
     with When(f"I insert data in MySql table"):
-        mysql.query(
-            f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');"
-        )
+        mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
     with Then(f"I update data in MySql table"):
-        mysql.query(
-            f"UPDATE {table_name} SET k=k+5 WHERE id=1;"
-        )
+        mysql.query(f"UPDATE {table_name} SET k=k+5 WHERE id=1;")
 
     with And("I check that ClickHouse has updated data as MySQL"):
         for attempt in retries(count=10, timeout=100, delay=5):
@@ -42,51 +38,45 @@ def update(self, primary_key, engine):
 
                 clickhouse.query(
                     f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message='1,7,"a","b"'
+                    message='1,7,"a","b"',
                 )
 
 
 @TestScenario
 def no_primary_key(self):
-    """Check for `UPDATE` with no primary key without table engine.
-    """
+    """Check for `UPDATE` with no primary key without table engine."""
     xfail("makes delete")
     update(primary_key="", engine=False)
 
 
 @TestScenario
 def no_primary_key_innodb(self):
-    """Check for `UPDATE` with no primary key with table engine InnoDB.
-    """
+    """Check for `UPDATE` with no primary key with table engine InnoDB."""
     xfail("makes delete")
     update(primary_key="", engine=True)
 
 
 @TestScenario
 def simple_primary_key(self):
-    """Check for `UPDATE` with simple primary key without table engine.
-    """
+    """Check for `UPDATE` with simple primary key without table engine."""
     update(primary_key=", PRIMARY KEY (id)", engine=False)
 
 
 @TestScenario
 def simple_primary_key_innodb(self):
-    """Check for `UPDATE` with simple primary key with table engine InnoDB.
-    """
+    """Check for `UPDATE` with simple primary key with table engine InnoDB."""
     update(primary_key=", PRIMARY KEY (id)", engine=True)
 
 
 @TestScenario
 def complex_primary_key(self):
-    """Check for `UPDATE` with complex primary key without table engine.
-    """
+    """Check for `UPDATE` with complex primary key without table engine."""
     update(primary_key=", PRIMARY KEY (id,k)", engine=False)
 
 
 @TestScenario
 def complex_primary_key_innodb(self):
-    """Check for `UPDATE` with complex primary key with table engine InnoDB.
-    """
+    """Check for `UPDATE` with complex primary key with table engine InnoDB."""
     update(primary_key=", PRIMARY KEY (id,k)", engine=True)
 
 

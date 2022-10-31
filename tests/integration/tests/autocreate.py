@@ -1,4 +1,4 @@
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestScenario
@@ -55,7 +55,9 @@ def create_all_data_types_null_table(self):
     with Given(
         f"I create MySQL table {table_name} with all data types and ClickHouse replica to it)"
     ):
-        create_all_data_types_table_nullable(table_name=table_name, manual_ch_table_create=False)
+        create_all_data_types_table_nullable(
+            table_name=table_name, manual_ch_table_create=False
+        )
 
     with When(f"I check MySql table {table_name} was created"):
         mysql.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")

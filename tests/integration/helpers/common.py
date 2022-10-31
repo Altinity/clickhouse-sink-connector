@@ -76,11 +76,11 @@ def getuid(with_test_name=False):
 
 @TestStep(Given)
 def instrument_clickhouse_server_log(
-        self,
-        node=None,
-        test=None,
-        clickhouse_server_log="/var/log/clickhouse-server/clickhouse-server.log",
-        always_dump=False,
+    self,
+    node=None,
+    test=None,
+    clickhouse_server_log="/var/log/clickhouse-server/clickhouse-server.log",
+    always_dump=False,
 ):
     """Instrument clickhouse-server.log for the current test (default)
     by adding start and end messages that include test name to log
@@ -98,8 +98,8 @@ def instrument_clickhouse_server_log(
     with By("getting current log size"):
         cmd = node.command(f"stat --format=%s {clickhouse_server_log}")
         if (
-                cmd.output
-                == f"stat: cannot stat '{clickhouse_server_log}': No such file or directory"
+            cmd.output
+            == f"stat: cannot stat '{clickhouse_server_log}': No such file or directory"
         ):
             start_logsize = 0
         else:
@@ -117,7 +117,7 @@ def instrument_clickhouse_server_log(
             return
 
         with Finally(
-                "adding test name end message to the clickhouse-server.log", flags=TE
+            "adding test name end message to the clickhouse-server.log", flags=TE
         ):
             node.command(
                 f'echo -e "\\n-- end: {test.name} --\\n" >> {clickhouse_server_log}'
@@ -184,7 +184,7 @@ class KeyWithAttributes:
 
 
 def create_xml_config_content(
-        entries, config_file, config_d_dir="/etc/clickhouse-server/config.d"
+    entries, config_file, config_d_dir="/etc/clickhouse-server/config.d"
 ):
     """Create XML configuration file from a dictionary.
 
@@ -234,7 +234,7 @@ def create_xml_config_content(
 
 
 def add_invalid_config(
-        config, message, recover_config=None, tail=30, timeout=300, restart=True, user=None
+    config, message, recover_config=None, tail=30, timeout=300, restart=True, user=None
 ):
     """Check that ClickHouse errors when trying to load invalid configuration file."""
     cluster = current().context.cluster
@@ -252,8 +252,8 @@ def add_invalid_config(
             node.command(command, steps=False, exitcode=0)
 
         with Then(
-                f"{config.preprocessed_name} should be updated",
-                description=f"timeout {timeout}",
+            f"{config.preprocessed_name} should be updated",
+            description=f"timeout {timeout}",
         ):
             started = time.time()
             command = f"cat /var/lib/clickhouse/preprocessed_configs/{config.preprocessed_name} | grep {config.uid}{' > /dev/null' if not settings.debug else ''}"
@@ -325,14 +325,14 @@ def add_invalid_config(
 
 
 def add_config(
-        config,
-        timeout=300,
-        restart=False,
-        modify=False,
-        node=None,
-        user=None,
-        wait_healthy=True,
-        check_preprocessed=True,
+    config,
+    timeout=300,
+    restart=False,
+    modify=False,
+    node=None,
+    user=None,
+    wait_healthy=True,
+    check_preprocessed=True,
 ):
     """Add dynamic configuration file to ClickHouse.
 
@@ -440,8 +440,8 @@ def add_config(
 
                 if check_preprocessed:
                     with Then(
-                            f"{config.preprocessed_name} should be updated",
-                            description=f"timeout {timeout}",
+                        f"{config.preprocessed_name} should be updated",
+                        description=f"timeout {timeout}",
                     ):
                         check_preprocessed_config_is_updated()
 
@@ -465,8 +465,8 @@ def add_config(
                         node.command(f"rm -rf {config.path}", exitcode=0)
 
                     with Then(
-                            f"{config.preprocessed_name} should be updated",
-                            description=f"timeout {timeout}",
+                        f"{config.preprocessed_name} should be updated",
+                        description=f"timeout {timeout}",
                     ):
                         check_preprocessed_config_is_updated(after_removal=True)
 
@@ -476,14 +476,14 @@ def add_config(
 
 @TestStep(Given)
 def copy(
-        self,
-        dest_node,
-        src_path,
-        dest_path,
-        bash=None,
-        binary=False,
-        eof="EOF",
-        src_node=None,
+    self,
+    dest_node,
+    src_path,
+    dest_path,
+    bash=None,
+    binary=False,
+    eof="EOF",
+    src_node=None,
 ):
     """Copy file from source to destination node."""
     if binary:
@@ -505,7 +505,7 @@ def copy(
 
 @TestStep(Given)
 def add_user_to_group_on_node(
-        self, node=None, group="clickhouse", username="clickhouse"
+    self, node=None, group="clickhouse", username="clickhouse"
 ):
     """Add user {username} into group {group}."""
     if node is None:
@@ -595,37 +595,37 @@ from helpers.cluster import Cluster
 
 @TestStep(Given)
 def create_cluster(
-        self,
-        local=False,
-        clickhouse_binary_path=None,
-        clickhouse_odbc_bridge_binary_path=None,
-        configs_dir=None,
-        nodes=None,
-        docker_compose="docker-compose",
-        docker_compose_project_dir=None,
-        docker_compose_file="docker-compose.yml",
-        environ=None,
-        thread_fuzzer=False,
-        collect_service_logs=None,
-        stress=None,
-        caller_dir=None,
-        frame=None,
+    self,
+    local=False,
+    clickhouse_binary_path=None,
+    clickhouse_odbc_bridge_binary_path=None,
+    configs_dir=None,
+    nodes=None,
+    docker_compose="docker-compose",
+    docker_compose_project_dir=None,
+    docker_compose_file="docker-compose.yml",
+    environ=None,
+    thread_fuzzer=False,
+    collect_service_logs=None,
+    stress=None,
+    caller_dir=None,
+    frame=None,
 ):
     """Create docker-compose test environment cluster."""
     with Cluster(
-            local=local,
-            clickhouse_binary_path=clickhouse_binary_path,
-            clickhouse_odbc_bridge_binary_path=clickhouse_odbc_bridge_binary_path,
-            configs_dir=configs_dir,
-            nodes=nodes,
-            docker_compose=docker_compose,
-            docker_compose_project_dir=docker_compose_project_dir,
-            docker_compose_file=docker_compose_file,
-            environ=environ,
-            thread_fuzzer=thread_fuzzer,
-            collect_service_logs=collect_service_logs,
-            stress=stress,
-            frame=frame,
-            caller_dir=caller_dir,
+        local=local,
+        clickhouse_binary_path=clickhouse_binary_path,
+        clickhouse_odbc_bridge_binary_path=clickhouse_odbc_bridge_binary_path,
+        configs_dir=configs_dir,
+        nodes=nodes,
+        docker_compose=docker_compose,
+        docker_compose_project_dir=docker_compose_project_dir,
+        docker_compose_file=docker_compose_file,
+        environ=environ,
+        thread_fuzzer=thread_fuzzer,
+        collect_service_logs=collect_service_logs,
+        stress=stress,
+        frame=frame,
+        caller_dir=caller_dir,
     ) as cluster:
         yield cluster

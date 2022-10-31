@@ -1,6 +1,5 @@
-
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
@@ -22,14 +21,12 @@ def multiple_table_creation(self, number_of_tables):
             create_mysql_table(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-                          f"(id INT AUTO_INCREMENT,age INT, PRIMARY KEY (id))"
-                          f" ENGINE = InnoDB;",
+                f"(id INT AUTO_INCREMENT,age INT, PRIMARY KEY (id))"
+                f" ENGINE = InnoDB;",
             )
 
         with When(f"I insert data in MySql table"):
-            mysql.query(
-                f"insert into {table_name} values (1,777)"
-            )
+            mysql.query(f"insert into {table_name} values (1,777)")
 
         with Then("I count created tables"):
             retry(clickhouse.query, timeout=50, delay=1)(

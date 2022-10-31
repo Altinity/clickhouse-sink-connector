@@ -1,17 +1,18 @@
-import inspect
 import os
-import tempfile
-import threading
 import time
 import uuid
+import inspect
+import tempfile
+import threading
 
 import testflows.settings as settings
+
 from testflows.asserts import error
 from testflows.connect import Shell as ShellBase
 from testflows.core import *
 from testflows.uexpect import ExpectTimeoutError
 
-from helpers.common import check_clickhouse_version, current_cpu
+from integration.helpers.common import check_clickhouse_version, current_cpu
 
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
@@ -120,17 +121,17 @@ class Node(object):
         return self.cluster.command(self.name, *args, **kwargs)
 
     def cmd(
-            self,
-            cmd,
-            message=None,
-            exitcode=None,
-            steps=True,
-            shell_command="bash --noediting",
-            no_checks=False,
-            raise_on_exception=False,
-            step=By,
-            *args,
-            **kwargs,
+        self,
+        cmd,
+        message=None,
+        exitcode=None,
+        steps=True,
+        shell_command="bash --noediting",
+        no_checks=False,
+        raise_on_exception=False,
+        step=By,
+        *args,
+        **kwargs,
     ):
         """Execute and check command.
         :param cmd: command
@@ -140,7 +141,7 @@ class Node(object):
 
         command = f"{cmd}"
         with step(
-                "executing command", description=command, format_description=False
+            "executing command", description=command, format_description=False
         ) if steps else NullStep():
             try:
                 r = self.cluster.bash(self.name, command=shell_command)(
@@ -159,7 +160,7 @@ class Node(object):
 
         if message is not None:
             with Then(
-                    f"output should contain message", description=message
+                f"output should contain message", description=message
             ) if steps else NullStep():
                 assert message in r.output, error(r.output)
 
@@ -170,21 +171,21 @@ class Cluster(object):
     """Simple object around docker-compose cluster."""
 
     def __init__(
-            self,
-            local=False,
-            clickhouse_binary_path=None,
-            clickhouse_odbc_bridge_binary_path=None,
-            configs_dir=None,
-            nodes=None,
-            docker_compose="docker-compose",
-            docker_compose_project_dir=None,
-            docker_compose_file="docker-compose.yml",
-            environ=None,
-            thread_fuzzer=False,
-            collect_service_logs=False,
-            frame=None,
-            caller_dir=None,
-            stress=None
+        self,
+        local=False,
+        clickhouse_binary_path=None,
+        clickhouse_odbc_bridge_binary_path=None,
+        configs_dir=None,
+        nodes=None,
+        docker_compose="docker-compose",
+        docker_compose_project_dir=None,
+        docker_compose_file="docker-compose.yml",
+        environ=None,
+        thread_fuzzer=False,
+        collect_service_logs=False,
+        frame=None,
+        caller_dir=None,
+        stress=None,
     ):
 
         self._bash = {}
@@ -249,8 +250,8 @@ class Cluster(object):
                             break
                     if parsed_version:
                         if not (
-                                parsed_version.startswith(".")
-                                or parsed_version.endswith(".")
+                            parsed_version.startswith(".")
+                            or parsed_version.endswith(".")
                         ):
                             current().context.clickhouse_version = parsed_version
 
@@ -265,12 +266,12 @@ class Cluster(object):
         self.lock = threading.Lock()
 
     def get_clickhouse_binary_from_docker_container(
-            self,
-            docker_image,
-            container_clickhouse_binary_path="/usr/bin/clickhouse",
-            container_clickhouse_odbc_bridge_binary_path="/usr/bin/clickhouse-odbc-bridge",
-            host_clickhouse_binary_path=None,
-            host_clickhouse_odbc_bridge_binary_path=None,
+        self,
+        docker_image,
+        container_clickhouse_binary_path="/usr/bin/clickhouse",
+        container_clickhouse_odbc_bridge_binary_path="/usr/bin/clickhouse-odbc-bridge",
+        host_clickhouse_binary_path=None,
+        host_clickhouse_odbc_bridge_binary_path=None,
     ):
         """Get clickhouse-server and clickhouse-odbc-bridge binaries
         from some Docker container.
@@ -286,12 +287,12 @@ class Cluster(object):
 
         if host_clickhouse_odbc_bridge_binary_path is None:
             host_clickhouse_odbc_bridge_binary_path = (
-                    host_clickhouse_binary_path + "_odbc_bridge"
+                host_clickhouse_binary_path + "_odbc_bridge"
             )
 
         with Given(
-                "I get ClickHouse server binary from docker container",
-                description=f"{docker_image}",
+            "I get ClickHouse server binary from docker container",
+            description=f"{docker_image}",
         ):
             with Shell() as bash:
                 bash.timeout = 300
@@ -494,8 +495,11 @@ class Cluster(object):
                                 for service_node in self.nodes[service_list]:
                                     with By(f"getting log for {service_node}"):
                                         log_path = f"../_instances"
-                                        snode = bash(f"docker-compose logs {service_node} "
-                                                     f"> {log_path}/{service_node}.log", timeout=1000)
+                                        snode = bash(
+                                            f"docker-compose logs {service_node} "
+                                            f"> {log_path}/{service_node}.log",
+                                            timeout=1000,
+                                        )
                                         if snode.exitcode != 0:
                                             break
                 self.down()
@@ -641,16 +645,16 @@ class Cluster(object):
                             continue
 
                     if (
-                            cmd.exitcode == 0
-                            and "is unhealthy" not in cmd.output
-                            and "Exit" not in ps_cmd.output
+                        cmd.exitcode == 0
+                        and "is unhealthy" not in cmd.output
+                        and "Exit" not in ps_cmd.output
                     ):
                         break
 
             if (
-                    cmd.exitcode != 0
-                    or "is unhealthy" in cmd.output
-                    or "Exit" in ps_cmd.output
+                cmd.exitcode != 0
+                or "is unhealthy" in cmd.output
+                or "Exit" in ps_cmd.output
             ):
                 fail("could not bring up docker-compose cluster")
 
@@ -663,17 +667,17 @@ class Cluster(object):
         self.running = True
 
     def command(
-            self,
-            node,
-            command,
-            message=None,
-            exitcode=None,
-            steps=True,
-            bash=None,
-            no_checks=False,
-            use_error=True,
-            *args,
-            **kwargs,
+        self,
+        node,
+        command,
+        message=None,
+        exitcode=None,
+        steps=True,
+        bash=None,
+        no_checks=False,
+        use_error=True,
+        *args,
+        **kwargs,
     ):
         """Execute and check command.
         :param node: name of the service
@@ -683,7 +687,7 @@ class Cluster(object):
         :param steps: don't break command into steps, default: True
         """
         with By(
-                "executing command", description=command, format_description=False
+            "executing command", description=command, format_description=False
         ) if steps else NullStep():
             if bash is None:
                 bash = self.bash(node)
@@ -698,15 +702,15 @@ class Cluster(object):
 
         if exitcode is not None:
             with Then(
-                    f"exitcode should be {exitcode}", format_name=False
+                f"exitcode should be {exitcode}", format_name=False
             ) if steps else NullStep():
                 assert r.exitcode == exitcode, error(r.output)
 
         if message is not None:
             with Then(
-                    f"output should contain message",
-                    description=message,
-                    format_description=False,
+                f"output should contain message",
+                description=message,
+                format_description=False,
             ) if steps else NullStep():
                 assert message in r.output, error(r.output)
 
@@ -717,23 +721,23 @@ class DatabaseNode(Node):
     """Common tools for Database nodes."""
 
     def query(
-            self,
-            sql,
-            client_command,
-            message=None,
-            exitcode=None,
-            steps=True,
-            no_checks=False,
-            raise_on_exception=False,
-            step=By,
-            settings=None,
-            retry_count=5,
-            messages_to_retry=None,
-            retry_delay=5,
-            secure=False,
-            max_query_output_in_bytes="-0",
-            *args,
-            **kwargs,
+        self,
+        sql,
+        client_command,
+        message=None,
+        exitcode=None,
+        steps=True,
+        no_checks=False,
+        raise_on_exception=False,
+        step=By,
+        settings=None,
+        retry_count=5,
+        messages_to_retry=None,
+        retry_delay=5,
+        secure=False,
+        max_query_output_in_bytes="-0",
+        *args,
+        **kwargs,
     ):
         """Execute and check query.
         :param sql: sql query
@@ -784,9 +788,9 @@ class DatabaseNode(Node):
                     {command}
                 """
                 with step(
-                        "executing command",
-                        description=description,
-                        format_description=False,
+                    "executing command",
+                    description=description,
+                    format_description=False,
                 ) if steps else NullStep():
                     try:
                         r = self.cluster.bash(None)(command, *args, **kwargs)
@@ -805,7 +809,7 @@ class DatabaseNode(Node):
                 command = f'echo -e "{sql}" | {client_command}{client_options} 2>&1'
 
             with step(
-                    "executing command", description=command, format_description=False
+                "executing command", description=command, format_description=False
             ) if steps else NullStep():
                 try:
                     r = self.cluster.bash(self.name)(command, *args, **kwargs)
@@ -840,7 +844,7 @@ class DatabaseNode(Node):
 
         if message is not None:
             with Then(
-                    f"output should contain message", description=message
+                f"output should contain message", description=message
             ) if steps else NullStep():
                 assert message in r.output, error(r.output)
 
@@ -858,22 +862,23 @@ class MySQLNode(DatabaseNode):
     """MySQL server node."""
 
     def query(
-            self,
-            sql,
-            message=None,
-            exitcode=None,
-            steps=True,
-            no_checks=False,
-            raise_on_exception=False,
-            step=By,
-            settings=None,
-            retry_count=5,
-            messages_to_retry=None,
-            retry_delay=5,
-            max_query_output_in_bytes="-0",
-            client_command=None,
-            *args,
-            **kwargs, ):
+        self,
+        sql,
+        message=None,
+        exitcode=None,
+        steps=True,
+        no_checks=False,
+        raise_on_exception=False,
+        step=By,
+        settings=None,
+        retry_count=5,
+        messages_to_retry=None,
+        retry_delay=5,
+        max_query_output_in_bytes="-0",
+        client_command=None,
+        *args,
+        **kwargs,
+    ):
         """Execute and check query.
         :param sql: sql query
         :param message: expected message that should be in the output, default: None
@@ -890,14 +895,24 @@ class MySQLNode(DatabaseNode):
         :param client_command: database client command, default: None (use default)
         """
         if client_command is None:
-            client_command = "mysql -h mysql-master -u root --password=root --database=test"
+            client_command = (
+                "mysql -h mysql-master -u root --password=root --database=test"
+            )
 
-        return super(MySQLNode, self).query(sql=sql, client_command=client_command, message=message, exitcode=exitcode,
-                                            steps=steps,
-                                            no_checks=no_checks, step=step, settings=settings, retry_count=retry_count,
-                                            messages_to_retry=messages_to_retry,
-                                            retry_delay=retry_delay,
-                                            max_query_output_in_bytes=max_query_output_in_bytes)
+        return super(MySQLNode, self).query(
+            sql=sql,
+            client_command=client_command,
+            message=message,
+            exitcode=exitcode,
+            steps=steps,
+            no_checks=no_checks,
+            step=step,
+            settings=settings,
+            retry_count=retry_count,
+            messages_to_retry=messages_to_retry,
+            retry_delay=retry_delay,
+            max_query_output_in_bytes=max_query_output_in_bytes,
+        )
 
 
 class ClickHouseNode(DatabaseNode):
@@ -952,10 +967,10 @@ class ClickHouseNode(DatabaseNode):
             for attempt in retries(timeout=timeout, delay=1):
                 with attempt:
                     if (
-                            self.query(
-                                "SELECT version()", no_checks=1, steps=False
-                            ).exitcode
-                            != 0
+                        self.query(
+                            "SELECT version()", no_checks=1, steps=False
+                        ).exitcode
+                        != 0
                     ):
                         fail("ClickHouse server is not healthy")
             node_version = self.query(
@@ -995,8 +1010,8 @@ class ClickHouseNode(DatabaseNode):
                     if i > 0 and i % 20 == 0:
                         self.command(f"kill -KILL {pid}", steps=False)
                     if (
-                            self.command(f"ps {pid}", steps=False, no_checks=True).exitcode
-                            != 1
+                        self.command(f"ps {pid}", steps=False, no_checks=True).exitcode
+                        != 1
                     ):
                         fail("pid still alive")
 
@@ -1004,12 +1019,12 @@ class ClickHouseNode(DatabaseNode):
             self.command("rm -rf /tmp/clickhouse-server.pid", exitcode=0, steps=False)
 
     def start_clickhouse(
-            self,
-            timeout=300,
-            wait_healthy=True,
-            retry_count=5,
-            user=None,
-            thread_fuzzer=False,
+        self,
+        timeout=300,
+        wait_healthy=True,
+        retry_count=5,
+        user=None,
+        thread_fuzzer=False,
     ):
         """Start ClickHouse server."""
         pid = self.clickhouse_pid()
@@ -1045,10 +1060,10 @@ class ClickHouseNode(DatabaseNode):
             for attempt in retries(timeout=timeout, delay=1):
                 with attempt:
                     if (
-                            self.command(
-                                "ls /tmp/clickhouse-server.pid", steps=False, no_checks=True
-                            ).exitcode
-                            != 0
+                        self.command(
+                            "ls /tmp/clickhouse-server.pid", steps=False, no_checks=True
+                        ).exitcode
+                        != 0
                     ):
                         fail("no pid file yet")
 
@@ -1056,7 +1071,7 @@ class ClickHouseNode(DatabaseNode):
             self.wait_clickhouse_healthy(timeout=timeout)
 
     def restart_clickhouse(
-            self, timeout=300, safe=True, wait_healthy=True, retry_count=5, user=None
+        self, timeout=300, safe=True, wait_healthy=True, retry_count=5, user=None
     ):
         """Restart ClickHouse server."""
         if self.clickhouse_pid():
@@ -1074,12 +1089,12 @@ class ClickHouseNode(DatabaseNode):
         )
 
     def start(
-            self,
-            timeout=300,
-            start_clickhouse=True,
-            wait_healthy=True,
-            retry_count=5,
-            user=None,
+        self,
+        timeout=300,
+        start_clickhouse=True,
+        wait_healthy=True,
+        retry_count=5,
+        user=None,
     ):
         """Start node."""
         super(ClickHouseNode, self).start(timeout=timeout, retry_count=retry_count)
@@ -1092,13 +1107,13 @@ class ClickHouseNode(DatabaseNode):
             )
 
     def restart(
-            self,
-            timeout=300,
-            safe=True,
-            start_clickhouse=True,
-            wait_healthy=True,
-            retry_count=5,
-            user=None,
+        self,
+        timeout=300,
+        safe=True,
+        start_clickhouse=True,
+        wait_healthy=True,
+        retry_count=5,
+        user=None,
     ):
         """Restart node."""
         if self.clickhouse_pid():
@@ -1110,15 +1125,15 @@ class ClickHouseNode(DatabaseNode):
             self.start_clickhouse(timeout=timeout, wait_healthy=wait_healthy, user=user)
 
     def hash_query(
-            self,
-            sql,
-            hash_utility="sha1sum",
-            steps=True,
-            step=By,
-            settings=None,
-            secure=False,
-            *args,
-            **kwargs,
+        self,
+        sql,
+        hash_utility="sha1sum",
+        steps=True,
+        step=By,
+        settings=None,
+        secure=False,
+        *args,
+        **kwargs,
     ):
         """Execute sql query inside the container and return the hash of the output.
 
@@ -1148,9 +1163,9 @@ class ClickHouseNode(DatabaseNode):
                             {command}
                         """
                 with step(
-                        "executing command",
-                        description=description,
-                        format_description=False,
+                    "executing command",
+                    description=description,
+                    format_description=False,
                 ) if steps else NullStep():
                     try:
                         r = self.cluster.bash(None)(command, *args, **kwargs)
@@ -1162,7 +1177,7 @@ class ClickHouseNode(DatabaseNode):
                 name, value = setting
                 command += f' --{name} "{value}"'
             with step(
-                    "executing command", description=command, format_description=False
+                "executing command", description=command, format_description=False
             ) if steps else NullStep():
                 try:
                     r = self.cluster.bash(self.name)(command, *args, **kwargs)
@@ -1175,15 +1190,15 @@ class ClickHouseNode(DatabaseNode):
         return r.output
 
     def diff_query(
-            self,
-            sql,
-            expected_output,
-            steps=True,
-            step=By,
-            settings=None,
-            secure=False,
-            *args,
-            **kwargs,
+        self,
+        sql,
+        expected_output,
+        steps=True,
+        step=By,
+        settings=None,
+        secure=False,
+        *args,
+        **kwargs,
     ):
         """Execute inside the container but from the host and compare its output
         to file that is located on the host.
@@ -1217,9 +1232,9 @@ class ClickHouseNode(DatabaseNode):
                     {command}
                 """
                 with step(
-                        "executing command",
-                        description=description,
-                        format_description=False,
+                    "executing command",
+                    description=description,
+                    format_description=False,
                 ) if steps else NullStep():
                     try:
                         r = self.cluster.bash(None)(command, *args, **kwargs)
@@ -1231,7 +1246,7 @@ class ClickHouseNode(DatabaseNode):
                 name, value = setting
                 command += f' --{name} "{value}"'
             with step(
-                    "executing command", description=command, format_description=False
+                "executing command", description=command, format_description=False
             ) if steps else NullStep():
                 try:
                     r = self.cluster.bash(None)(command, *args, **kwargs)
@@ -1242,23 +1257,24 @@ class ClickHouseNode(DatabaseNode):
             assert r.exitcode == 0, error(r.output)
 
     def query(
-            self,
-            sql,
-            message=None,
-            exitcode=None,
-            steps=True,
-            no_checks=False,
-            raise_on_exception=False,
-            step=By,
-            settings=None,
-            retry_count=5,
-            messages_to_retry=None,
-            retry_delay=5,
-            max_query_output_in_bytes="-0",
-            client_command=None,
-            secure=False,
-            *args,
-            **kwargs, ):
+        self,
+        sql,
+        message=None,
+        exitcode=None,
+        steps=True,
+        no_checks=False,
+        raise_on_exception=False,
+        step=By,
+        settings=None,
+        retry_count=5,
+        messages_to_retry=None,
+        retry_delay=5,
+        max_query_output_in_bytes="-0",
+        client_command=None,
+        secure=False,
+        *args,
+        **kwargs,
+    ):
         """Execute and check query.
         :param sql: sql query
         :param message: expected message that should be in the output, default: None
@@ -1280,9 +1296,18 @@ class ClickHouseNode(DatabaseNode):
             if secure:
                 client_command += " -s"
 
-        return super(ClickHouseNode, self).query(sql=sql, client_command=client_command, message=message,
-                                                 exitcode=exitcode, steps=steps,
-                                                 no_checks=no_checks, step=step, settings=settings,
-                                                 retry_count=retry_count, messages_to_retry=messages_to_retry,
-                                                 retry_delay=retry_delay, secure=secure,
-                                                 max_query_output_in_bytes=max_query_output_in_bytes)
+        return super(ClickHouseNode, self).query(
+            sql=sql,
+            client_command=client_command,
+            message=message,
+            exitcode=exitcode,
+            steps=steps,
+            no_checks=no_checks,
+            step=step,
+            settings=settings,
+            retry_count=retry_count,
+            messages_to_retry=messages_to_retry,
+            retry_delay=retry_delay,
+            secure=secure,
+            max_query_output_in_bytes=max_query_output_in_bytes,
+        )

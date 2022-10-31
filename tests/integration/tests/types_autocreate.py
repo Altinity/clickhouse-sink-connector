@@ -1,19 +1,17 @@
-
 from requirements import *
 from steps import *
 
 
-
 @TestOutline
 def check_datatype_replication(
-        self,
-        mysql_type,
-        ch_type,
-        values,
-        ch_values,
-        nullable=False,
-        hex_type=False,
-        auto_create_tables=True,
+    self,
+    mysql_type,
+    ch_type,
+    values,
+    ch_values,
+    nullable=False,
+    hex_type=False,
+    auto_create_tables=True,
 ):
     """Check replication of a given MySQL data type."""
     with Given("Receive UID"):
@@ -25,16 +23,18 @@ def check_datatype_replication(
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-                      f"(id INT AUTO_INCREMENT,"
-                      f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
-                      f" PRIMARY KEY (id))"
-                      f" ENGINE = InnoDB;",
+            f"(id INT AUTO_INCREMENT,"
+            f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
+            f" PRIMARY KEY (id))"
+            f" ENGINE = InnoDB;",
         )
 
     if not auto_create_tables:
@@ -42,11 +42,11 @@ def check_datatype_replication(
             create_clickhouse_table(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                          f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, sign "
-                          f"Int8, ver UInt64) "
-                          f"ENGINE = ReplacingMergeTree(ver) "
-                          f"PRIMARY KEY id ORDER BY id SETTINGS "
-                          f"index_granularity = 8192;",
+                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, sign "
+                f"Int8, ver UInt64) "
+                f"ENGINE = ReplacingMergeTree(ver) "
+                f"PRIMARY KEY id ORDER BY id SETTINGS "
+                f"index_granularity = 8192;",
             )
 
     with When(f"I insert data in MySql table {table_name}"):
@@ -122,11 +122,11 @@ def double(self, mysql_type, ch_type, values, ch_values, nullable):
     [
         ("DATE", "Date32", ["'2012-12-12'"], ['"2012-12-12"'], False),
         (
-                "DATETIME",
-                "DateTime64",
-                ["'2018-09-08 17:51:04'"],
-                ['"2018-09-08 17:51:04.000"'],
-                False,
+            "DATETIME",
+            "DateTime64",
+            ["'2018-09-08 17:51:04'"],
+            ['"2018-09-08 17:51:04.000"'],
+            False,
         ),
         ("TIME", "String", ["'17:51:04.777'"], ['"17:51:05.000000"'], False),
         ("TIME(6)", "String", ["'17:51:04.777'"], ['"17:51:04.777000"'], False),
@@ -158,19 +158,19 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
     "mysql_type ch_type values ch_values nullable",
     [
         (
-                "INT",
-                "Int32",
-                ["-2147483648", "0", "2147483647"],
-                ["-2147483648", "0", "2147483647"],
-                False,
+            "INT",
+            "Int32",
+            ["-2147483648", "0", "2147483647"],
+            ["-2147483648", "0", "2147483647"],
+            False,
         ),
         ("INT UNSIGNED", "UInt32", ["0", "4294967295"], ["0", "4294967295"], False),
         (
-                "BIGINT",
-                "Int64",
-                ["-9223372036854775808", "0", "9223372036854775807"],
-                ["-9223372036854775808", "0", "9223372036854775807"],
-                False,
+            "BIGINT",
+            "Int64",
+            ["-9223372036854775808", "0", "9223372036854775807"],
+            ["-9223372036854775808", "0", "9223372036854775807"],
+            False,
         ),
         (
             "BIGINT UNSIGNED",
@@ -182,19 +182,19 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
         ("TINYINT", "Int8", ["-128", "127"], ["-128", "127"], False),
         ("TINYINT UNSIGNED", "UInt8", ["0", "255"], ["0", "255"], False),
         (
-                "SMALLINT",
-                "Int16",
-                ["-32768", "0", "32767"],
-                ["-32768", "0", "32767"],
-                False,
+            "SMALLINT",
+            "Int16",
+            ["-32768", "0", "32767"],
+            ["-32768", "0", "32767"],
+            False,
         ),
         ("SMALLINT UNSIGNED", "UInt16", ["0", "65535"], ["0", "65535"], False),
         (
-                "MEDIUMINT",
-                "Int32",
-                ["-8388608", "0", "8388607"],
-                ["-8388608", "0", "8388607"],
-                False,
+            "MEDIUMINT",
+            "Int32",
+            ["-8388608", "0", "8388607"],
+            ["-8388608", "0", "8388607"],
+            False,
         ),
         ("MEDIUMINT UNSIGNED", "UInt32", ["0", "16777215"], ["0", "16777215"], False),
         ("INT", "Int32", ["NULL"], ["\\N"], True),
@@ -258,11 +258,11 @@ def string(self, mysql_type, ch_type, values, ch_values, nullable):
         ("BLOB", "String", ["'some_blob'"], ['"some_blob"'], False),
         ("MEDIUMBLOB", "String", ["'x_Mediumblob'"], ['"x_Mediumblob"'], False),
         (
-                "LONGBLOB",
-                "String",
-                ["'some_Longblobblobblob'"],
-                ['"some_Longblobblobblob"'],
-                False,
+            "LONGBLOB",
+            "String",
+            ["'some_Longblobblobblob'"],
+            ['"some_Longblobblobblob"'],
+            False,
         ),
         ("BLOB", "String", ["NULL"], ["\\N"], True),
         ("MEDIUMBLOB", "String", ["NULL"], ["\\N"], True),
@@ -319,7 +319,9 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
         ("ENUM('hello','world')", "String", ["NULL"], ["\\N"], True),
     ],
 )
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString("1.0")
+)
 def enum(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'ENUM' data types."""
     check_datatype_replication(
@@ -336,9 +338,13 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
-        ("JSON", "String", ["'{\\\"key1\\\": \\\"value1\\\", \\\"key2\\\": \\\"value2\\\"}'"]
-         , ['{""key1"": ""value1"", ""key2"": ""value2""}'],
-         False),
+        (
+            "JSON",
+            "String",
+            ['\'{\\"key1\\": \\"value1\\", \\"key2\\": \\"value2\\"}\''],
+            ['{""key1"": ""value1"", ""key2"": ""value2""}'],
+            False,
+        ),
         ("JSON", "String", ["NULL"], ["\\N"], True),
     ],
 )
@@ -351,7 +357,7 @@ def json(self, mysql_type, ch_type, values, ch_values, nullable):
         values=values,
         ch_values=ch_values,
         nullable=nullable,
-        auto_create_tables=True
+        auto_create_tables=True,
     )
 
 
@@ -359,9 +365,7 @@ def json(self, mysql_type, ch_type, values, ch_values, nullable):
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
-        ("Year", "Int32", ["1909"]
-         , ['1909'],
-         False),
+        ("Year", "Int32", ["1909"], ["1909"], False),
         ("Year", "Int32", ["NULL"], ["\\N"], True),
     ],
 )
@@ -374,7 +378,7 @@ def year(self, mysql_type, ch_type, values, ch_values, nullable):
         values=values,
         ch_values=ch_values,
         nullable=nullable,
-        auto_create_tables=True
+        auto_create_tables=True,
     )
 
 
@@ -385,9 +389,7 @@ def year(self, mysql_type, ch_type, values, ch_values, nullable):
         ("BIT(64)", "String", ["b'101'"], ['"0500000000000000"'], False),
     ],
 )
-@Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes("1.0")
-)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes("1.0"))
 def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'BIT(m)' data type where m: 2 - 64."""
     check_datatype_replication(

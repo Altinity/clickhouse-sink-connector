@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestScenario
@@ -18,7 +18,9 @@ def sysbench_sanity(self):
 
 
 @TestOutline
-def sysbench_tests(self, script, test_name=None, distinct_values_timeout=70, distinct_values_delay=10):
+def sysbench_tests(
+    self, script, test_name=None, distinct_values_timeout=70, distinct_values_delay=10
+):
     """Run specified sysbench tests."""
 
     table_name = "sbtest1"
@@ -33,7 +35,8 @@ def sysbench_tests(self, script, test_name=None, distinct_values_timeout=70, dis
     with And(f"I start sysbench test script"):
         if script == "run_sysbench_tests.sh":
             self.context.cluster.node("bash-tools").cmd(
-                f"/manual_scripts/sysbench/{script} -t " f"{test_name}", message="Threads started!"
+                f"/manual_scripts/sysbench/{script} -t " f"{test_name}",
+                message="Threads started!",
             )
         #     <test_name>, test_name should be one of the following
         #               bulk_insert, oltp_insert, oltp_delete, oltp_update_index, oltp_update_non_index"

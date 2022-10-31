@@ -1,7 +1,6 @@
 import time
 
-from helpers.common import *
-
+from integration.helpers.common import *
 
 
 @TestStep(Given)
@@ -120,7 +119,12 @@ EOF"""
 
 
 @TestStep(Given)
-def init_sink_connector(self, node=None, auto_create_tables=False, topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users"):
+def init_sink_connector(
+    self,
+    node=None,
+    auto_create_tables=False,
+    topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users",
+):
     """
     Initialize sink connector.
     """
@@ -188,8 +192,9 @@ EOF"""
     "name": "sink-connector",
     "config": {
       "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-      "tasks.max": "100","""+
-      f'"topics": "{topics}",'+"""
+      "tasks.max": "100","""
+        + f'"topics": "{topics}",'
+        + """
       "clickhouse.topic2table.map": "",
       "clickhouse.server.url": "clickhouse",
       "clickhouse.server.user": "root",
@@ -312,8 +317,7 @@ def create_clickhouse_table(self, name=None, statement=None, node=None):
 def create_all_data_types_table(
     self, table_name=None, node=None, manual_ch_table_create=False
 ):
-    """Step to create table with all data types.
-    """
+    """Step to create table with all data types."""
     if node is None:
         node = self.context.cluster.node("clickhouse")
     if table_name is None:
@@ -509,7 +513,9 @@ def insert(self, first_insert_id, last_insert_id, table_name):
     :return:
     """
     mysql = self.context.cluster.node("mysql-master")
-    with Given(f"I insert {first_insert_id-last_insert_id} rows of data in MySql table"):
+    with Given(
+        f"I insert {first_insert_id-last_insert_id} rows of data in MySql table"
+    ):
         for i in range(first_insert_id, last_insert_id + 1):
             mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
 
@@ -526,7 +532,9 @@ def delete(self, first_delete_id, last_delete_id, table_name):
     """
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I delete {last_delete_id-first_delete_id} rows of data in MySql table"):
+    with Given(
+        f"I delete {last_delete_id-first_delete_id} rows of data in MySql table"
+    ):
         for i in range(first_delete_id, last_delete_id):
             mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
 
@@ -543,16 +551,24 @@ def update(self, first_update_id, last_update_id, table_name):
     """
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I update {last_update_id-first_update_id} rows of data in MySql table"):
+    with Given(
+        f"I update {last_update_id-first_update_id} rows of data in MySql table"
+    ):
         for i in range(first_update_id, last_update_id):
-            mysql.query(
-                f"UPDATE {table_name} SET k=k+5 WHERE id={i};"
-            )
+            mysql.query(f"UPDATE {table_name} SET k=k+5 WHERE id={i};")
 
 
 @TestStep(Given)
-def select(self, insert=None, table_name=None, statement=None, node=None,  with_final=False, with_optimize=False,
-           timeout=100):
+def select(
+    self,
+    insert=None,
+    table_name=None,
+    statement=None,
+    node=None,
+    with_final=False,
+    with_optimize=False,
+    timeout=100,
+):
     """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
     :param insert: expected insert data if None compare with MySQL table
     :param table_name: table name for select  default "users"
@@ -570,17 +586,18 @@ def select(self, insert=None, table_name=None, statement=None, node=None,  with_
         statement = "*"
 
     mysql = self.context.cluster.node("mysql-master")
-    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[90:]
+    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[
+        90:
+    ]
 
     if insert is None:
         insert = mysql_output
 
     if with_final:
-        retry(
-            node.query,
-            timeout=timeout,
-            delay=10,
-        )(f"SELECT {statement} FROM test.{table_name} FINAL FORMAT CSV", message=f"{insert}", )
+        retry(node.query, timeout=timeout, delay=10,)(
+            f"SELECT {statement} FROM test.{table_name} FINAL FORMAT CSV",
+            message=f"{insert}",
+        )
     elif with_optimize:
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
@@ -588,22 +605,29 @@ def select(self, insert=None, table_name=None, statement=None, node=None,  with_
 
                 node.query(
                     f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
-                    message=f"{insert}"
+                    message=f"{insert}",
                 )
 
     else:
-        retry(
-            node.query,
-            timeout=timeout,
-            delay=10,
-        )(f"SELECT {statement} FROM test.{table_name} FORMAT CSV", message=f"{insert}", )
+        retry(node.query, timeout=timeout, delay=10,)(
+            f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
+            message=f"{insert}",
+        )
 
 
 @TestStep(Given)
-def concurrent_queries(self, table_name, first_insert_number, last_insert_number,
-                       first_insert_id, last_insert_id,
-                       first_delete_id, last_delete_id,
-                       first_update_id, last_update_id):
+def concurrent_queries(
+    self,
+    table_name,
+    first_insert_number,
+    last_insert_number,
+    first_insert_id,
+    last_insert_id,
+    first_delete_id,
+    last_delete_id,
+    first_update_id,
+    last_update_id,
+):
     """
     Insert, update, delete for concurrent queries.
     :param self:
@@ -620,27 +644,25 @@ def concurrent_queries(self, table_name, first_insert_number, last_insert_number
     """
 
     with Given("I insert block of precondition rows"):
-        insert(table_name=table_name, first_insert_id=first_insert_number, last_insert_id=last_insert_number)
+        insert(
+            table_name=table_name,
+            first_insert_id=first_insert_number,
+            last_insert_id=last_insert_number,
+        )
 
     with When("I start concurrently insert, update and delete queries in MySql table"):
-        By(
-            "inserting data in MySql table",
-            test=insert,
-            parallel=True,
-        )(
-            first_insert_id=first_insert_id, last_insert_id=last_insert_id, table_name=table_name,
+        By("inserting data in MySql table", test=insert, parallel=True,)(
+            first_insert_id=first_insert_id,
+            last_insert_id=last_insert_id,
+            table_name=table_name,
         )
-        By(
-            "deleting data in MySql table",
-            test=delete,
-            parallel=True,
-        )(
-            first_delete_id=first_delete_id, last_delete_id=last_delete_id, table_name=table_name,
+        By("deleting data in MySql table", test=delete, parallel=True,)(
+            first_delete_id=first_delete_id,
+            last_delete_id=last_delete_id,
+            table_name=table_name,
         )
-        By(
-            "updating data in MySql table",
-            test=update,
-            parallel=True,
-        )(
-            first_update_id=first_update_id, last_update_id=last_update_id, table_name=table_name,
+        By("updating data in MySql table", test=update, parallel=True,)(
+            first_update_id=first_update_id,
+            last_update_id=last_update_id,
+            table_name=table_name,
         )

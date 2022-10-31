@@ -1,13 +1,12 @@
 from itertools import combinations
 from testflows.connect import Shell
 
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
 def unavailable(self, services, query=None):
-    """Check for data consistency with concurrently service unavailable.
-    """
+    """Check for data consistency with concurrently service unavailable."""
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -22,12 +21,14 @@ def unavailable(self, services, query=None):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
-    with When("I insert, update, delete  data in MySql table with concurrently unavailable service"):
+    with When(
+        "I insert, update, delete  data in MySql table with concurrently unavailable service"
+    ):
         for node in services:
             self.context.cluster.node(f"{node}").stop()
 
@@ -35,10 +36,17 @@ def unavailable(self, services, query=None):
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
             parallel=True,
-        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
-          first_insert_id=3001, last_insert_id=6000,
-          first_delete_id=1, last_delete_id=1500,
-          first_update_id=1501, last_update_id=3000)
+        )(
+            table_name=table_name,
+            first_insert_number=1,
+            last_insert_number=3000,
+            first_insert_id=3001,
+            last_insert_id=6000,
+            first_delete_id=1,
+            last_delete_id=1500,
+            first_update_id=1501,
+            last_update_id=3000,
+        )
 
     with And(f"Enable all services {services}"):
         for node in services:
@@ -50,19 +58,19 @@ def unavailable(self, services, query=None):
 
 @TestSuite
 def combinatoric_unavailable(self):
-    """Check all possibilities of unavailable services.
-    """
+    """Check all possibilities of unavailable services."""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} unavailable", test=unavailable, flags=TE)(services=combination)
+            Scenario(f"{combination} unavailable", test=unavailable, flags=TE)(
+                services=combination
+            )
 
 
 @TestOutline
 def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
-    """Check for data consistency with concurrently service restart 10 times.
-    """
+    """Check for data consistency with concurrently service restart 10 times."""
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -77,20 +85,29 @@ def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
-    with When("I insert, update, delete data in MySql table concurrently with services restart"):
+    with When(
+        "I insert, update, delete data in MySql table concurrently with services restart"
+    ):
         Given(
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
             parallel=True,
-        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
-          first_insert_id=3001, last_insert_id=6000,
-          first_delete_id=1, last_delete_id=1500,
-          first_update_id=1501, last_update_id=3000)
+        )(
+            table_name=table_name,
+            first_insert_number=1,
+            last_insert_number=3000,
+            first_insert_id=3001,
+            last_insert_id=6000,
+            first_delete_id=1,
+            last_delete_id=1500,
+            first_update_id=1501,
+            last_update_id=3000,
+        )
 
         for i in range(loops):
             with Step(f"LOOP STEP {i}"):
@@ -108,13 +125,14 @@ def combinatoric_restart(self):
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} restart", test=restart, flags=TE)(services=combination)
+            Scenario(f"{combination} restart", test=restart, flags=TE)(
+                services=combination
+            )
 
 
 @TestOutline
 def unstable_network_connection(self, services):
-    """Check for data consistency with unstable network connection to some services.
-    """
+    """Check for data consistency with unstable network connection to some services."""
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -129,27 +147,40 @@ def unstable_network_connection(self, services):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} (col1 int4, col2 int4 NOT NULL, col3 int4 default 777)"
-                      f" ENGINE = InnoDB;",
+            f" ENGINE = InnoDB;",
         )
 
     with When("I add network fault"):
         for node in services:
             with Shell() as bash:
-                bash(f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
+                bash(
+                    f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}",
+                    timeout=100,
+                )
 
         Given(
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
             parallel=True,
-        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
-          first_insert_id=3001, last_insert_id=6000,
-          first_delete_id=1, last_delete_id=1500,
-          first_update_id=1501, last_update_id=3000)
+        )(
+            table_name=table_name,
+            first_insert_number=1,
+            last_insert_number=3000,
+            first_insert_id=3001,
+            last_insert_id=6000,
+            first_delete_id=1,
+            last_delete_id=1500,
+            first_update_id=1501,
+            last_update_id=3000,
+        )
 
     with And("Enable network"):
         for node in services:
             with Shell() as bash:
-                bash(f"docker network connect mysql_to_clickhouse_replication_env_default {node}", timeout=100)
+                bash(
+                    f"docker network connect mysql_to_clickhouse_replication_env_default {node}",
+                    timeout=100,
+                )
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
@@ -162,8 +193,11 @@ def combinatoric_unstable_network_connection(self):
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} unstable network connection", test=unstable_network_connection, flags=TE)(
-                services=combination)
+            Scenario(
+                f"{combination} unstable network connection",
+                test=unstable_network_connection,
+                flags=TE,
+            )(services=combination)
 
 
 @TestFeature

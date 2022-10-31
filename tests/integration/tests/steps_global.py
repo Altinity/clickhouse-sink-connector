@@ -1,4 +1,5 @@
-from helpers.common import *
+from integration.helpers.common import *
+
 
 @TestStep(Given)
 def create_database(self, name="test", node=None):

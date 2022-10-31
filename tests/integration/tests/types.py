@@ -1,6 +1,5 @@
-
 from requirements import *
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
@@ -24,7 +23,9 @@ def check_datatype_replication(
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_table(
@@ -310,7 +311,9 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
         ("ENUM('hello','world')", "String", ["NULL"], ["\\N"], True),
     ],
 )
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString("1.0")
+)
 def enum(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'ENUM' data types."""
     check_datatype_replication(

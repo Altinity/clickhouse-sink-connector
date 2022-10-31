@@ -6,13 +6,13 @@ import sys
 
 from testflows.core import *
 
-append_path(sys.path, "")
+append_path(sys.path, "..")
 
-from helpers.argparser import argparser
-from helpers.common import check_clickhouse_version
-from helpers.common import create_cluster
-from requirements import *
-from tests.steps_global import *
+from integration.helpers.argparser import argparser
+from integration.helpers.common import check_clickhouse_version
+from integration.helpers.common import create_cluster
+from integration.requirements import *
+from integration.tests.steps_global import *
 
 
 xfails = {
@@ -22,9 +22,7 @@ xfails = {
     # "data types ac/date time/*": [
     #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
     # ],
-    "primary keys/*": [
-        (Fail, "GitLab CI/CD only fail")
-    ],
+    "primary keys/*": [(Fail, "GitLab CI/CD only fail")],
     #     "data consistency/*": [
     #         (Fail, "doesn't finished")
     #     ]
@@ -40,13 +38,13 @@ xflags = {}
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"))
 @Specifications()
 def regression(
-        self,
-        local,
-        clickhouse_binary_path,
-        clickhouse_version,
-        stress=None,
-        thread_fuzzer=None,
-        collect_service_logs=None
+    self,
+    local,
+    clickhouse_binary_path,
+    clickhouse_version,
+    stress=None,
+    thread_fuzzer=None,
+    collect_service_logs=None,
 ):
     """ClickHouse regression for MySql to ClickHouse replication."""
     nodes = {
@@ -94,11 +92,7 @@ def regression(
     Feature(run=load("ftests.deduplication", "feature"))
     Feature(run=load("ftests.primary_keys", "feature"))
     Feature(run=load("ftests.autocreate", "feature"))
-    Feature(
-        run=load(
-            "ftests.schema_changes", "feature"
-        )
-    )
+    Feature(run=load("ftests.schema_changes", "feature"))
     # Feature(run=load("ftests.insert", "feature"))
     Feature(run=load("ftests.consistency", "feature"))
     Feature(run=load("ftests.multiple_tables", "feature"))

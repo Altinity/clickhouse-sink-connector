@@ -1,7 +1,7 @@
 from itertools import combinations
 from testflows.connect import Shell
 
-from tests.steps import *
+from integration.tests.steps import *
 
 
 @TestOutline
@@ -21,20 +21,29 @@ def restart(self, services, loops=10, delete_number=1500):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;"
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
-    with When("I insert, update, delete data in MySql table concurrently with services restart"):
+    with When(
+        "I insert, update, delete data in MySql table concurrently with services restart"
+    ):
         Step(
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
             parallel=True,
-        )(table_name=table_name, first_insert_number=1, last_insert_number=3000,
-          first_insert_id=3001, last_insert_id=6000,
-          first_delete_id=1, last_delete_id=1500,
-          first_update_id=1501, last_update_id=3000)
+        )(
+            table_name=table_name,
+            first_insert_number=1,
+            last_insert_number=3000,
+            first_insert_id=3001,
+            last_insert_id=6000,
+            first_delete_id=1,
+            last_delete_id=1500,
+            first_update_id=1501,
+            last_update_id=3000,
+        )
 
         for i in range(loops):
             with Step(f"LOOP STEP {i}"):
@@ -51,8 +60,9 @@ def combinatoric_restart_test(self):
     nodes_list = ["debezium"]
     service_combinations = list(combinations(nodes_list, 1))
     for combination in service_combinations:
-        Scenario(f"{combination} restart", test=restart, flags=TE)(services=combination,
-                                                                   loops=5)
+        Scenario(f"{combination} restart", test=restart, flags=TE)(
+            services=combination, loops=5
+        )
 
 
 @TestFeature
