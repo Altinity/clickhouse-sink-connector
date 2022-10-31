@@ -624,21 +624,21 @@ def concurrent_queries(self, table_name, first_insert_number, last_insert_number
 
     with When("I start concurrently insert, update and delete queries in MySql table"):
         By(
-            "I insert data in MySql table",
+            "inserting data in MySql table",
             test=insert,
             parallel=True,
         )(
             first_insert_id=first_insert_id, last_insert_id=last_insert_id, table_name=table_name,
         )
         By(
-            "I delete data in MySql table",
+            "deleting data in MySql table",
             test=delete,
             parallel=True,
         )(
             first_delete_id=first_delete_id, last_delete_id=last_delete_id, table_name=table_name,
         )
         By(
-            "I update data in MySql table",
+            "updating data in MySql table",
             test=update,
             parallel=True,
         )(
