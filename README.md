@@ -35,6 +35,17 @@ The connector is tested with the following converters
 Docker image for Sink connector `altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
+
+### Kubernetes
+Recommended to atleast set 5Gi as memory limits to run on kubernetes using strimzi.
+
+```   resources:
+      limits:
+        memory: 6Gi
+      requests:
+        memory: 6Gi
+
+```
 #### MySQL:
 ```bash
 cd deploy/docker
