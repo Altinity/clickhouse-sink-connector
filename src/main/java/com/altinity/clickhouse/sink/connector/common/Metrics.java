@@ -7,6 +7,10 @@ import com.codahale.metrics.Timer;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.prometheus.client.CollectorRegistry;
@@ -54,7 +58,11 @@ public class Metrics {
 
     private static Gauge partitionOffsetCounter;
 
-    private static Gauge topicLagCounter;
+    // Lag between source database and ClickHouse Insertion time.
+    private static Gauge sourceToCHLagCounter;
+
+    // Lag between Debezium and ClickHouse Insertion time.
+    private static Gauge debeziumToCHLagCounter;
 
     private static Gauge gtidCounter;
 
@@ -65,8 +73,8 @@ public class Metrics {
     private static int port = 8084;
 
     public static void initialize(String enableFlag, String metricsPort) {
-        registry = new MetricRegistry();
-        // registry.register("memory", new MemoryUsageGaugeSet());
+
+
 
         // Register reporters here.
 //        reporter = ConsoleReporter.forRegistry(registry)
@@ -78,10 +86,19 @@ public class Metrics {
         parseConfiguration(enableFlag, metricsPort);
 
         if(enableMetrics) {
+//            registry = new MetricRegistry();
+//            registry.register("memory", new MemoryUsageGaugeSet());
+//            registry.register("jvm.thread-states",new ThreadStatesGaugeSet());
+//            registry.register("jvm.garbage-collector",new GarbageCollectorMetricSet());
+
             collectorRegistry = new CollectorRegistry();
             meterRegistry =
                     new PrometheusMeterRegistry(PrometheusConfig.DEFAULT, collectorRegistry, Clock.SYSTEM);
 
+            new JvmMemoryMetrics().bindTo(meterRegistry);
+            new JvmGcMetrics().bindTo(meterRegistry);
+            new ProcessorMetrics().bindTo(meterRegistry);
+            new JvmThreadMetrics().bindTo(meterRegistry);
 
             exposePrometheusPort(meterRegistry);
             registerMetrics(collectorRegistry);
@@ -124,10 +141,11 @@ public class Metrics {
         labelNames("Topic", "Partition").
                 name("clickhouse_sink_partition_offset").help("Kafka partition Offset").register(collectorRegistry);
 
-        topicLagCounter = Gauge.build().
+        sourceToCHLagCounter = Gauge.build().
                 labelNames("Topic").
-                name("clickhouse_sink_lag").help("Lag between Debezium processing and Bulk Insert to CH").register(collectorRegistry);
+                name("clickhouse_db_sink_lag").help("Lag between Source Database and Bulk Insert to CH").register(collectorRegistry);
 
+        debeziumToCHLagCounter = Gauge.build().labelNames("Topic").name("clickhouse_debezium_sink_lag").help("Lag between Debezium(Source) and Bulk Inser to CH").register(collectorRegistry);
 
         topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
 
@@ -184,11 +202,20 @@ public class Metrics {
                         .set(mp.right);
             }
         }
-        if(!bmd.getTopicToBlockTimestamp().isEmpty()) {
-            for(Map.Entry<String, Long> entry: bmd.getTopicToBlockTimestamp().entrySet()) {
-                topicLagCounter.labels(entry.getKey()).set(entry.getValue());
+        // Db Source to CH lag
+        if(!bmd.getSourceToCHLag().isEmpty()) {
+            for(Map.Entry<String, Long> entry: bmd.getSourceToCHLag().entrySet()) {
+                sourceToCHLagCounter.labels(entry.getKey()).set(entry.getValue());
             }
         }
+
+        // Debezium to CH Lag.
+        if(!bmd.getDebeziumToCHLag().isEmpty()) {
+            for(Map.Entry<String, Long> entry: bmd.getDebeziumToCHLag().entrySet()) {
+                debeziumToCHLagCounter.labels(entry.getKey()).set(entry.getValue());
+            }
+        }
+
     }
 
     public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,

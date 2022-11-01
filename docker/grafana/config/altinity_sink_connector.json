@@ -24,6 +24,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
+  "id": 1,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -34,7 +35,7 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -43,7 +44,7 @@
         "content": "<div>\n  <img width=\"100\" height=\"100\" src=\"https://logosandtypes.com/wp-content/uploads/2020/12/altinity.svg\"/>\n<p>Altinity Sink Connector for ClickHouse</p>\n<p>For more information, visit <href https://github.com/Altinity/clickhouse-sink-connector\n</div>",
         "mode": "html"
       },
-      "pluginVersion": "9.0.4",
+      "pluginVersion": "9.1.1",
       "targets": [
         {
           "datasource": {
@@ -83,7 +84,7 @@
       "gridPos": {
         "h": 5,
         "w": 5,
-        "x": 6,
+        "x": 4,
         "y": 0
       },
       "id": 4,
@@ -102,7 +103,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "9.0.4",
+      "pluginVersion": "9.1.1",
       "targets": [
         {
           "datasource": {
@@ -146,8 +147,8 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 5,
-        "x": 11,
+        "w": 3,
+        "x": 9,
         "y": 0
       },
       "id": 6,
@@ -166,7 +167,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "9.0.4",
+      "pluginVersion": "9.1.1",
       "targets": [
         {
           "datasource": {
@@ -185,7 +186,10 @@
       "type": "stat"
     },
     {
-      "datasource": {},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -252,10 +256,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 5,
         "w": 12,
-        "x": 0,
-        "y": 5
+        "x": 12,
+        "y": 0
       },
       "id": 8,
       "options": {
@@ -270,7 +274,7 @@
         "showHeader": true,
         "sortBy": []
       },
-      "pluginVersion": "9.0.4",
+      "pluginVersion": "9.1.1",
       "targets": [
         {
           "datasource": {
@@ -278,7 +282,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "clickhouse_topics_num_records_total{}",
+          "expr": "clickhouse_topics_num_records_total",
           "format": "table",
           "instant": true,
           "interval": "",
@@ -291,6 +295,96 @@
     },
     {
       "datasource": {},
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "clickhouse_sink_partition_offset{}",
+          "interval": "",
+          "legendFormat": "",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Kafka Offset",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {},
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -298,6 +392,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -379,13 +475,18 @@
       "type": "timeseries"
     },
     {
-      "datasource": {},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -436,7 +537,7 @@
         "x": 0,
         "y": 13
       },
-      "id": 12,
+      "id": 16,
       "options": {
         "legend": {
           "calcs": [],
@@ -452,22 +553,21 @@
       "targets": [
         {
           "datasource": {
-            "uid": "prometheus"
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
           },
-          "editorMode": "code",
-          "exemplar": true,
-          "expr": "clickhouse_sink_partition_offset{}",
-          "interval": "",
-          "legendFormat": "",
-          "range": true,
+          "expr": "clickhouse_debezium_sink_lag",
           "refId": "A"
         }
       ],
-      "title": "Kafka Offset",
+      "title": "Debezium -> CH Lag (msecs)",
       "type": "timeseries"
     },
     {
-      "datasource": {},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
       "description": "Lag calculated from time records are inserted to CH and the timestamp recorded by debezium connector",
       "fieldConfig": {
         "defaults": {
@@ -475,6 +575,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -545,18 +647,214 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "clickhouse_sink_lag",
+          "expr": "clickhouse_db_sink_lag",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Sink Connector Lag",
+      "title": "Source DB -> CH Lag (msecs)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 22,
+      "panels": [],
+      "title": "JVM Stats",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "jvm_buffer_memory_used_bytes/1000000",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Used(MB)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "jvm_memory_max_bytes/1000000",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Max (MB)",
       "type": "timeseries"
     }
   ],
   "refresh": false,
-  "schemaVersion": 36,
+  "schemaVersion": 37,
   "style": "dark",
   "tags": [],
   "templating": {
