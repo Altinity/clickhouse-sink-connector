@@ -1,4 +1,4 @@
-import time
+from integration.requirements import *
 
 from integration.helpers.common import *
 

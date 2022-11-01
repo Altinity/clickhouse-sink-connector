@@ -1,4 +1,4 @@
-from steps import *
+from integration.tests.steps import *
 
 
 @TestOutline

@@ -1,4 +1,3 @@
-from requirements import *
 from integration.tests.steps import *
 
 

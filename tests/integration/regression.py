@@ -15,6 +15,7 @@ from integration.requirements import *
 from integration.tests.steps_global import *
 
 
+
 xfails = {
     # "data types/date time/*": [
     #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
@@ -87,20 +88,20 @@ def regression(
         create_database(name="test")
 
     Feature(run=load("tests.sanity", "feature"))
-    # Feature(run=load("ftests.types", "feature"))
-    Feature(run=load("ftests.types_autocreate", "feature"))
-    Feature(run=load("ftests.deduplication", "feature"))
-    Feature(run=load("ftests.primary_keys", "feature"))
-    Feature(run=load("ftests.autocreate", "feature"))
-    Feature(run=load("ftests.schema_changes", "feature"))
-    # Feature(run=load("ftests.insert", "feature"))
-    Feature(run=load("ftests.consistency", "feature"))
-    Feature(run=load("ftests.multiple_tables", "feature"))
-    Feature(run=load("ftests.virtual_columns", "feature"))
-    Feature(run=load("ftests.delete", "feature"))
-    Feature(run=load("ftests.update", "feature"))
-    # Feature(run=load("ftests.sysbench", "feature"))
-    # Feature(run=load("ftests.manual_section", "feature"))
+    # Feature(run=load("tests.types", "feature"))
+    Feature(run=load("tests.types_autocreate", "feature"))
+    Feature(run=load("tests.deduplication", "feature"))
+    Feature(run=load("tests.primary_keys", "feature"))
+    Feature(run=load("tests.autocreate", "feature"))
+    Feature(run=load("tests.schema_changes", "feature"))
+    # Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.consistency", "feature"))
+    Feature(run=load("tests.multiple_tables", "feature"))
+    Feature(run=load("tests.virtual_columns", "feature"))
+    Feature(run=load("tests.delete", "feature"))
+    Feature(run=load("tests.update", "feature"))
+    # Feature(run=load("tests.sysbench", "feature"))
+    # Feature(run=load("tests.manual_section", "feature"))
 
 
 if __name__ == "__main__":
