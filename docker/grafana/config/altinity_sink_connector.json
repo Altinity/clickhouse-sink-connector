@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": "-- Grafana --",
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -20,17 +23,18 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "gnetId": null,
   "graphTooltip": 0,
-  "id": 2,
   "links": [],
   "liveNow": false,
   "panels": [
     {
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "gridPos": {
         "h": 5,
-        "w": 12,
+        "w": 6,
         "x": 0,
         "y": 0
       },
@@ -39,12 +43,21 @@
         "content": "<div>\n  <img width=\"100\" height=\"100\" src=\"https://logosandtypes.com/wp-content/uploads/2020/12/altinity.svg\"/>\n<p>Altinity Sink Connector for ClickHouse</p>\n<p>For more information, visit <href https://github.com/Altinity/clickhouse-sink-connector\n</div>",
         "mode": "html"
       },
-      "pluginVersion": "8.2.6",
+      "pluginVersion": "9.0.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "refId": "A"
+        }
+      ],
       "title": "Altinity Sink Connector for ClickHouse",
       "type": "text"
     },
     {
-      "datasource": "prometheus",
+      "datasource": {},
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -70,7 +83,7 @@
       "gridPos": {
         "h": 5,
         "w": 5,
-        "x": 12,
+        "x": 6,
         "y": 0
       },
       "id": 4,
@@ -89,13 +102,18 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.2.6",
+      "pluginVersion": "9.0.4",
       "targets": [
         {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": true,
           "expr": "clickhouse_sink_binlog_pos{}",
           "interval": "",
           "legendFormat": "",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -103,7 +121,7 @@
       "type": "stat"
     },
     {
-      "datasource": "prometheus",
+      "datasource": {},
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -129,7 +147,7 @@
       "gridPos": {
         "h": 5,
         "w": 5,
-        "x": 17,
+        "x": 11,
         "y": 0
       },
       "id": 6,
@@ -148,13 +166,18 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.2.6",
+      "pluginVersion": "9.0.4",
       "targets": [
         {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": true,
           "expr": "clickhouse_sink_gtid{}",
           "interval": "",
           "legendFormat": "",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -162,7 +185,7 @@
       "type": "stat"
     },
     {
-      "datasource": "prometheus",
+      "datasource": {},
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -171,7 +194,8 @@
           "custom": {
             "align": "auto",
             "displayMode": "auto",
-            "filterable": false
+            "filterable": false,
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -229,19 +253,30 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 10,
+        "w": 12,
         "x": 0,
         "y": 5
       },
       "id": 8,
       "options": {
+        "footer": {
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "frameIndex": 0,
         "showHeader": true,
         "sortBy": []
       },
-      "pluginVersion": "8.2.6",
+      "pluginVersion": "9.0.4",
       "targets": [
         {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": true,
           "expr": "clickhouse_topics_num_records_total{}",
           "format": "table",
@@ -255,7 +290,7 @@
       "type": "table"
     },
     {
-      "datasource": "prometheus",
+      "datasource": {},
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -310,7 +345,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 10,
+        "x": 12,
         "y": 5
       },
       "id": 10,
@@ -318,18 +353,25 @@
         "legend": {
           "calcs": [],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         }
       },
       "targets": [
         {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": true,
           "expr": "clickhouse_topics_num_records_total{}",
           "interval": "",
           "legendFormat": "",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -337,7 +379,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": "prometheus",
+      "datasource": {},
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -399,27 +441,122 @@
         "legend": {
           "calcs": [],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         }
       },
       "targets": [
         {
+          "datasource": {
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
           "exemplar": true,
           "expr": "clickhouse_sink_partition_offset{}",
           "interval": "",
           "legendFormat": "",
+          "range": true,
           "refId": "A"
         }
       ],
       "title": "Kafka Offset",
       "type": "timeseries"
+    },
+    {
+      "datasource": {},
+      "description": "Lag calculated from time records are inserted to CH and the timestamp recorded by debezium connector",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "clickhouse_sink_lag",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Sink Connector Lag",
+      "type": "timeseries"
     }
   ],
   "refresh": false,
-  "schemaVersion": 32,
+  "schemaVersion": 36,
   "style": "dark",
   "tags": [],
   "templating": {
@@ -431,7 +568,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "altinity_sink_connector_clickhouse",
+  "title": "Altinity Sink Connector for ClickHouse",
   "uid": "c4cKtgk4k",
-  "version": 1
+  "version": 1,
+  "weekStart": ""
 }

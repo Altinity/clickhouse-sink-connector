@@ -1,6 +1,5 @@
 cd ../python
-
-DATABASE=datatypes
+DATABASE=menagerie
 
 python3 db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user root --mysql_password root  --mysql_database $DATABASE --tables_regex "^*" --debug_output
 python3 db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --clickhouse_user root --clickhouse_password root  --clickhouse_database $DATABASE --tables_regex "^*" --debug_output
@@ -8,7 +7,7 @@ python3 db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --cl
 mysql_information_schema_query="select TABLE_NAME from information_schema.tables where TABLE_SCHEMA='$DATABASE'"
 echo $mysql_information_schema_query
 
-table_names=$(docker exec -it mysql-master mysql -sN -uroot -proot -e "select TABLE_NAME from information_schema.tables where TABLE_SCHEMA='datatypes'")
+table_names=$(docker exec -it mysql-master mysql -sN -uroot -proot -e "select TABLE_NAME from information_schema.tables where TABLE_SCHEMA='menagerie'")
 
 ## Remove the mysql warning
 #table_names_formatted=$(echo ${table_names//mysql: [Warning]/})
@@ -37,6 +36,3 @@ do
   fi
 
 done
-#rm -fr out*.ch.txt
-#rm -fr out*.mysql.txt
-

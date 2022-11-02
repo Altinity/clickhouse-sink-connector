@@ -54,6 +54,8 @@ public class Metrics {
 
     private static Gauge partitionOffsetCounter;
 
+    private static Gauge topicLagCounter;
+
     private static Gauge gtidCounter;
 
     private static HttpServer server;
@@ -122,6 +124,11 @@ public class Metrics {
         labelNames("Topic", "Partition").
                 name("clickhouse_sink_partition_offset").help("Kafka partition Offset").register(collectorRegistry);
 
+        topicLagCounter = Gauge.build().
+                labelNames("Topic").
+                name("clickhouse_sink_lag").help("Lag between Debezium processing and Bulk Insert to CH").register(collectorRegistry);
+
+
         topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
 
     }
@@ -176,7 +183,11 @@ public class Metrics {
                 partitionOffsetCounter.labels(entry.getKey(), Integer.toString(mp.left))
                         .set(mp.right);
             }
-
+        }
+        if(!bmd.getTopicToBlockTimestamp().isEmpty()) {
+            for(Map.Entry<String, Long> entry: bmd.getTopicToBlockTimestamp().entrySet()) {
+                topicLagCounter.labels(entry.getKey()).set(entry.getValue());
+            }
         }
     }
 

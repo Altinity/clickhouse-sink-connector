@@ -4,6 +4,9 @@
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/sink-connector-config.sh"
 
+CONNECTOR_NAME="sink-connector-$1"
+
+echo "******** ${CONNECTOR_NAME} *******"
 # clickhouse-sink-connector params
 
 CLICKHOUSE_HOST="clickhouse"
