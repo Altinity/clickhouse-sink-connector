@@ -6,12 +6,13 @@ import sys
 
 from testflows.core import *
 
+
 append_path(sys.path, "..")
 
 from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
-from integration.requirements import *
+from integration.requirements.requirements import *
 from integration.tests.steps_global import *
 
 
@@ -101,7 +102,7 @@ def regression(
     Feature(run=load("tests.delete", "feature"))
     Feature(run=load("tests.update", "feature"))
     # Feature(run=load("tests.sysbench", "feature"))
-    # Feature(run=load("tests.manual_section", "feature"))
+    Feature(run=load("tests.manual_section", "feature"))
 
 
 if __name__ == "__main__":

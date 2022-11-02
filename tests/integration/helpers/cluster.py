@@ -105,6 +105,18 @@ class Node(object):
             steps=False,
         )
 
+    def kill(self, timeout=300, retry_count=5, safe=True):
+        """Kill node."""
+        self.close_bashes()
+
+        retry(self.cluster.command, retry_count)(
+            None,
+            f"{self.cluster.docker_compose} kill {self.name}",
+            timeout=timeout,
+            exitcode=0,
+            steps=False,
+        )
+
     def stop(self, timeout=300, retry_count=5, safe=True):
         """Stop node."""
         self.close_bashes()

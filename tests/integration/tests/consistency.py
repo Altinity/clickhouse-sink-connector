@@ -1,3 +1,4 @@
+import time
 from itertools import combinations
 from testflows.connect import Shell
 
@@ -5,7 +6,7 @@ from integration.tests.steps import *
 
 
 @TestOutline
-def unavailable(self, services, query=None):
+def unavailable(self, services, loops=10):
     """Check for data consistency with concurrently service unavailable."""
     uid = getuid()
 
@@ -29,9 +30,6 @@ def unavailable(self, services, query=None):
     with When(
         "I insert, update, delete  data in MySql table with concurrently unavailable service"
     ):
-        for node in services:
-            self.context.cluster.node(f"{node}").stop()
-
         Given(
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
@@ -48,9 +46,13 @@ def unavailable(self, services, query=None):
             last_update_id=3000,
         )
 
-    with And(f"Enable all services {services}"):
-        for node in services:
-            self.context.cluster.node(f"{node}").start()
+        for i in range(loops):
+            with Step(f"LOOP STEP {i}"):
+                for node in services:
+                    with Shell() as bash:
+                        self.context.cluster.node(f"{node}").stop()
+                        time.sleep(5)
+                        self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
@@ -69,7 +71,7 @@ def combinatoric_unavailable(self):
 
 
 @TestOutline
-def restart(self, services, loops=10, insert_number=5000, delete_number=5000):
+def restart(self, services, loops=10):
     """Check for data consistency with concurrently service restart 10 times."""
     uid = getuid()
 
@@ -131,7 +133,7 @@ def combinatoric_restart(self):
 
 
 @TestOutline
-def unstable_network_connection(self, services):
+def unstable_network_connection(self, services, loops=10):
     """Check for data consistency with unstable network connection to some services."""
     uid = getuid()
 
@@ -146,18 +148,13 @@ def unstable_network_connection(self, services):
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} (col1 int4, col2 int4 NOT NULL, col3 int4 default 777)"
-            f" ENGINE = InnoDB;",
+            statement=f"CREATE TABLE {table_name} "
+                      "(id int(11) NOT NULL,"
+                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
     with When("I add network fault"):
-        for node in services:
-            with Shell() as bash:
-                bash(
-                    f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}",
-                    timeout=100,
-                )
-
         Given(
             "I insert, update, delete data in MySql table",
             test=concurrent_queries,
@@ -174,13 +171,19 @@ def unstable_network_connection(self, services):
             last_update_id=3000,
         )
 
-    with And("Enable network"):
-        for node in services:
-            with Shell() as bash:
-                bash(
-                    f"docker network connect mysql_to_clickhouse_replication_env_default {node}",
-                    timeout=100,
-                )
+        for i in range(loops):
+            with Step(f"LOOP STEP {i}"):
+                for node in services:
+                    with Shell() as bash:
+                        bash(
+                            f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}",
+                            timeout=100,
+                        )
+                        time.sleep(5)
+                        bash(
+                            f"docker network connect mysql_to_clickhouse_replication_env_default {node}",
+                            timeout=100,
+                        )
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
@@ -198,6 +201,84 @@ def combinatoric_unstable_network_connection(self):
                 test=unstable_network_connection,
                 flags=TE,
             )(services=combination)
+
+
+@TestOutline
+def hard_restart(self, services, loops=10):
+    """Check for data consistency with concurrently service hard "kill -9" restart 10 times."""
+    uid = getuid()
+
+    clickhouse = self.context.cluster.node("clickhouse")
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Given("I create unique table name"):
+        table_name = f"test{uid}"
+
+    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+
+    with Given(f"I create MySQL table {table_name}"):
+        create_mysql_table(
+            name=table_name,
+            statement=f"CREATE TABLE {table_name} "
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
+        )
+
+    with When(
+        "I insert, update, delete data in MySql table concurrently with services restart"
+    ):
+        Given(
+            "I insert, update, delete data in MySql table",
+            test=concurrent_queries,
+            parallel=True,
+        )(
+            table_name=table_name,
+            first_insert_number=1,
+            last_insert_number=3000,
+            first_insert_id=3001,
+            last_insert_id=6000,
+            first_delete_id=1,
+            last_delete_id=1500,
+            first_update_id=1501,
+            last_update_id=3000,
+        )
+
+        for i in range(loops):
+            with Step(f"LOOP STEP {i}"):
+                for node in services:
+                    with Shell() as bash:
+                        self.context.cluster.node(f"{node}").kill()
+                        time.sleep(5)
+                        self.context.cluster.node(f"{node}").start()
+
+    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        select(statement="count(*)", table_name=table_name, with_optimize=True)
+
+
+@TestSuite
+def combinatoric_hard_restart_test(self):
+    """Check all possibilities of restart services."""
+    nodes_list = ["sink"]
+    service_combinations = list(combinations(nodes_list, 1))
+    for combination in service_combinations:
+        Scenario(
+            f"{combination} unstable network connection",
+            test=hard_restart,
+            flags=TE,
+        )(services=combination)
+
+
+@TestSuite
+def combinatoric_hard_restart(self):
+    """Check all possibilities of restart services."""
+    nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
+    for i in range(1, 6):
+        service_combinations = list(combinations(nodes_list, i))
+        for combination in service_combinations:
+            Scenario(f"{combination} restart", test=hard_restart, flags=TE)(
+                services=combination
+            )
 
 
 @TestFeature

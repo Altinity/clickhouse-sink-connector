@@ -79,7 +79,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:2022-11-01
+    image:  altinity/clickhouse-sink-connector:2022-10-24
     restart: "no"
     expose:
       - "8083"
@@ -129,7 +129,7 @@ services:
     command:
       - infinity
     volumes:
-      - ../ftests/manual_scripts:/manual_scripts
+      - ../tests/manual_scripts:/manual_scripts
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
 
 

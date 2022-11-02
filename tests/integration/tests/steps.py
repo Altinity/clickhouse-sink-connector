@@ -1,4 +1,4 @@
-from integration.requirements import *
+from integration.requirements.requirements import *
 
 from integration.helpers.common import *
 
