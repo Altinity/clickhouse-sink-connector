@@ -226,7 +226,7 @@ def hard_restart(self, services, loops=10):
         )
 
     with When(
-        "I insert, update, delete data in MySql table concurrently with services restart"
+        "I insert, update, delete data in MySql table concurrently with services SIGKILL"
     ):
         Given(
             "I insert, update, delete data in MySql table",
@@ -254,19 +254,6 @@ def hard_restart(self, services, loops=10):
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
-
-
-@TestSuite
-def combinatoric_hard_restart_test(self):
-    """Check all possibilities of restart services."""
-    nodes_list = ["sink"]
-    service_combinations = list(combinations(nodes_list, 1))
-    for combination in service_combinations:
-        Scenario(
-            f"{combination} unstable network connection",
-            test=hard_restart,
-            flags=TE,
-        )(services=combination)
 
 
 @TestSuite
