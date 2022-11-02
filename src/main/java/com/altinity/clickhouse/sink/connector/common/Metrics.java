@@ -117,7 +117,7 @@ public class Metrics {
 
         clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
 
-        maxBinLogPositionCounter = Gauge.build().name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
+        maxBinLogPositionCounter = Gauge.build().labelNames("file").name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
         gtidCounter = Gauge.build().name("clickhouse_sink_gtid").help("GTID Transaction Id").register(collectorRegistry);
 
         partitionOffsetCounter = Gauge.build().
