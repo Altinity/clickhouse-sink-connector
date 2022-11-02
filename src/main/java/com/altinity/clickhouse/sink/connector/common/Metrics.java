@@ -37,6 +37,8 @@ public class Metrics {
     private static Counter.Builder topicsNumRecordsCounter;
     private static Counter.Builder topicsErrorRecordsCounter;
     private static Gauge maxBinLogPositionCounter;
+
+    private static Gauge upTimeCounter;
     private static Gauge partitionOffsetCounter;
 
     // Lag between source database and ClickHouse Insertion time.
@@ -48,6 +50,8 @@ public class Metrics {
     private static HttpServer server;
     private static boolean enableMetrics = false;
 
+    private static long connectorStartTimeMs = -1;
+
     private static int port = 8084;
 
     /**
@@ -57,7 +61,7 @@ public class Metrics {
      */
     public static void initialize(String enableFlag, String metricsPort) {
 
-
+        connectorStartTimeMs = System.currentTimeMillis();
 
         // Register reporters here.
 //        reporter = ConsoleReporter.forRegistry(registry)
@@ -115,24 +119,45 @@ public class Metrics {
 
     private static void registerMetrics(CollectorRegistry collectorRegistry) {
 
-        clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
+        Map<String, String> metricsToHelp = MetricsConstants.getMetricsToHelpMap();
 
-        maxBinLogPositionCounter = Gauge.build().labelNames("file").name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
-        gtidCounter = Gauge.build().name("clickhouse_sink_gtid").help("GTID Transaction Id").register(collectorRegistry);
+        clickHouseSinkRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_SINK_RECORDS)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_RECORDS));
+
+        maxBinLogPositionCounter = Gauge.build().labelNames("file").name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_POS)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_POS))
+                .register(collectorRegistry);
+
+        upTimeCounter = Gauge.build().name(MetricsConstants.CLICKHOUSE_SINK_CONNECTOR_UPTIME)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_CONNECTOR_UPTIME))
+                .register(collectorRegistry);
+
+        gtidCounter = Gauge.build().name(MetricsConstants.CLICKHOUSE_SINK_GTID)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_GTID))
+                .register(collectorRegistry);
 
         partitionOffsetCounter = Gauge.build().
-        labelNames("Topic", "Partition").
-                name("clickhouse_sink_partition_offset").help("Kafka partition Offset").register(collectorRegistry);
+        labelNames(MetricsConstants.TOPIC, MetricsConstants.PARTITION)
+                .name(MetricsConstants.CLICKHOUSE_SINK_PARTITION_OFFSET)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_PARTITION_OFFSET))
+                .register(collectorRegistry);
 
         sourceToCHLagCounter = Gauge.build().
-                labelNames("Topic").
-                name("clickhouse_db_sink_lag").help("Lag between Source Database and Bulk Insert to CH").register(collectorRegistry);
+                labelNames(MetricsConstants.TOPIC).
+                name(MetricsConstants.CLICKHOUSE_DB_SINK_LAG)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_DB_SINK_LAG))
+                .register(collectorRegistry);
 
-        debeziumToCHLagCounter = Gauge.build().labelNames("Topic").name("clickhouse_debezium_sink_lag").help("Lag between Debezium(Source) and Bulk Insert to CH").register(collectorRegistry);
+        debeziumToCHLagCounter = Gauge.build().labelNames(MetricsConstants.TOPIC)
+                .name(MetricsConstants.CLICKHOUSE_DEBEZIUM_SINK_LAG)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_DEBEZIUM_SINK_LAG))
+                .register(collectorRegistry);
 
-        topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
+        topicsNumRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC));
 
-        topicsErrorRecordsCounter = Counter.builder("clickhouse.topics.error.records");
+        topicsErrorRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC));
 
     }
 
@@ -160,6 +185,7 @@ public class Metrics {
         if(server != null) {
             server.stop(0);
         }
+        connectorStartTimeMs = -1;
     }
     public static MetricRegistry registry() {
         return registry;
@@ -199,6 +225,7 @@ public class Metrics {
             }
         }
 
+        upTimeCounter.set(System.currentTimeMillis() - connectorStartTimeMs);
     }
 
 
