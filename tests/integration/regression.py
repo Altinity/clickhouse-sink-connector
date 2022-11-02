@@ -96,13 +96,13 @@ def regression(
     Feature(run=load("tests.autocreate", "feature"))
     Feature(run=load("tests.schema_changes", "feature"))
     # Feature(run=load("tests.insert", "feature"))
-    Feature(run=load("tests.consistency", "feature"))
+    # Feature(run=load("tests.consistency", "feature"))
     Feature(run=load("tests.multiple_tables", "feature"))
     Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.delete", "feature"))
     Feature(run=load("tests.update", "feature"))
     # Feature(run=load("tests.sysbench", "feature"))
-    Feature(run=load("tests.manual_section", "feature"))
+    # Feature(run=load("tests.manual_section", "feature"))
 
 
 if __name__ == "__main__":

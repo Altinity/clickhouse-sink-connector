@@ -51,7 +51,9 @@ def unavailable(self, services, loops=10):
                 for node in services:
                     with Shell() as bash:
                         self.context.cluster.node(f"{node}").stop()
-                        time.sleep(5)
+                time.sleep(5)
+                for node in services:
+                    with Shell() as bash:
                         self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
@@ -179,7 +181,9 @@ def unstable_network_connection(self, services, loops=10):
                             f"docker network disconnect mysql_to_clickhouse_replication_env_default {node}",
                             timeout=100,
                         )
-                        time.sleep(5)
+                time.sleep(5)
+                for node in services:
+                    with Shell() as bash:
                         bash(
                             f"docker network connect mysql_to_clickhouse_replication_env_default {node}",
                             timeout=100,
@@ -249,7 +253,9 @@ def hard_restart(self, services, loops=10):
                 for node in services:
                     with Shell() as bash:
                         self.context.cluster.node(f"{node}").kill()
-                        time.sleep(5)
+                time.sleep(5)
+                for node in services:
+                    with Shell() as bash:
                         self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
