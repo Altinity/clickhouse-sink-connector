@@ -54,7 +54,11 @@ public class BlockMetaData {
 
     @Getter
     @Setter
-    long binLogPosition = -1;
+    long binLogPosition = 0;
+
+    @Getter
+    @Setter
+    String binLogFile = "";
 
 
     @Getter
@@ -92,8 +96,13 @@ public class BlockMetaData {
                 this.transactionId = gtId;
             }
         }
+
         if (record.getPos() != null && record.getPos() > binLogPosition) {
             this.binLogPosition = record.getPos();
+        }
+
+        if (record.getFile() != null) {
+            this.binLogFile = record.getFile();
         }
 
         if(record.getKafkaPartition() != null) {
