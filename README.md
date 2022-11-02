@@ -32,9 +32,32 @@ The connector is tested with the following converters
 
 
 ### Quick Start (Docker-compose)
-Docker image for Sink connector `altinity/clickhouse-sink-connector:latest`
+Docker image for Sink connector 
+`altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
+Recommended Memory limits.
+```
+JAVA_OPTS="-Xms1G -Xmx5G"
+```
+
+### Kubernetes
+Docker Image for Sink connector(with Strimzi)
+https://hub.docker.com/repository/docker/subkanthi/clickhouse-kafka-sink-connector-strimzi
+
+Docker Image for Debezium MySQL connector(with Strimzi)
+https://hub.docker.com/repository/docker/subkanthi/debezium-mysql-source-connector
+
+
+Recommended to atleast set 5Gi as memory limits to run on kubernetes using strimzi.
+
+```   resources:
+      limits:
+        memory: 6Gi
+      requests:
+        memory: 6Gi
+
+```
 #### MySQL:
 ```bash
 cd deploy/docker

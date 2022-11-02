@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
@@ -717,7 +718,11 @@ public class DbWriter extends BaseDbWriter {
                     //ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
                     if(columnNameToIndexMap.containsKey(versionColumn)) {
                         if (record.getGtid() != -1) {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)) {
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
+                            } else {
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                            }
                         } else {
                             ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
                         }
