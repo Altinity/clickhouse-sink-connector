@@ -451,6 +451,7 @@ public class DbWriter extends BaseDbWriter {
                 //  It might delete the records that are inserted by the ingestion process.
 
             } catch (Exception e) {
+                Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error("******* ERROR inserting Batch *****************", e);
                 success = false;
             }

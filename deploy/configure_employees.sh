@@ -29,5 +29,6 @@ docker cp  load_titles.dump mysql-master:/
 
 docker exec -it mysql-master mysql -uroot -proot -e "source /employees.sql"
 
+cd ..
 sleep 5
 ./sink-delete.sh $DATABASE && ./sink-connector-setup-database.sh $DATABASE

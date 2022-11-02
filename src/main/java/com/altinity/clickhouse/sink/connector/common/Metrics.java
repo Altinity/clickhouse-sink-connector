@@ -15,12 +15,15 @@
 package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
-import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.prometheus.client.CollectorRegistry;
@@ -42,45 +45,37 @@ public class Metrics {
 
     private static final Logger log = org.slf4j.LoggerFactory.getLogger(Metrics.class);
     private static MetricRegistry registry = null;
-
-    private static ConsoleReporter reporter = null;
-
     private static CollectorRegistry collectorRegistry;
-
     private static PrometheusMeterRegistry meterRegistry;
-
-    private static Gauge clickHouseSinkRecordsGauge;
-
     private static Counter.Builder clickHouseSinkRecordsCounter;
-
-    private static Counter.Builder minSourceLagCounter;
-
-    private static Counter.Builder maxSourceLagCounter;
-
-    private static Counter.Builder minConsumerLagCounter;
-
-    private static Counter.Builder maxConsumerLagCounter;
-
-
     private static Counter.Builder topicsNumRecordsCounter;
-
+    private static Counter.Builder topicsErrorRecordsCounter;
     private static Gauge maxBinLogPositionCounter;
 
+    private static Gauge upTimeCounter;
     private static Gauge partitionOffsetCounter;
 
-    private static Gauge topicLagCounter;
+    // Lag between source database and ClickHouse Insertion time.
+    private static Gauge sourceToCHLagCounter;
 
+    // Lag between Debezium and ClickHouse Insertion time.
+    private static Gauge debeziumToCHLagCounter;
     private static Gauge gtidCounter;
-
     private static HttpServer server;
-
     private static boolean enableMetrics = false;
+
+    private static long connectorStartTimeMs = -1;
 
     private static int port = 8084;
 
+    /**
+     * Initialize metrics based on configuration parameter.
+     * @param enableFlag
+     * @param metricsPort
+     */
     public static void initialize(String enableFlag, String metricsPort) {
-        registry = new MetricRegistry();
-        // registry.register("memory", new MemoryUsageGaugeSet());
+
+        connectorStartTimeMs = System.currentTimeMillis();
 
         // Register reporters here.
 //        reporter = ConsoleReporter.forRegistry(registry)
@@ -89,19 +84,34 @@ public class Metrics {
 //                .build();
 //        reporter.start(1, TimeUnit.MINUTES);
 
+        //            registry = new MetricRegistry();
+//            registry.register("memory", new MemoryUsageGaugeSet());
+//            registry.register("jvm.thread-states",new ThreadStatesGaugeSet());
+//            registry.register("jvm.garbage-collector",new GarbageCollectorMetricSet());
         parseConfiguration(enableFlag, metricsPort);
 
         if(enableMetrics) {
+
+
             collectorRegistry = new CollectorRegistry();
             meterRegistry =
                     new PrometheusMeterRegistry(PrometheusConfig.DEFAULT, collectorRegistry, Clock.SYSTEM);
 
+            new JvmMemoryMetrics().bindTo(meterRegistry);
+            new JvmGcMetrics().bindTo(meterRegistry);
+            new ProcessorMetrics().bindTo(meterRegistry);
+            new JvmThreadMetrics().bindTo(meterRegistry);
 
             exposePrometheusPort(meterRegistry);
             registerMetrics(collectorRegistry);
         }
     }
 
+    /**
+     * Function to parse sink connector configuration.
+     * @param enableFlag
+     * @param metricsPort
+     */
     private static void parseConfiguration(String enableFlag, String metricsPort) {
         if(enableFlag != null) {
             try {
@@ -123,29 +133,48 @@ public class Metrics {
 
     private static void registerMetrics(CollectorRegistry collectorRegistry) {
 
-        clickHouseSinkRecordsCounter = Counter.builder("clickhouse.sink.records");
+        Map<String, String> metricsToHelp = MetricsConstants.getMetricsToHelpMap();
 
-        minSourceLagCounter = Counter.builder("clickhouse.source.lag.min");
-        maxSourceLagCounter = Counter.builder("clickhouse.source.lag.max");
+        clickHouseSinkRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_SINK_RECORDS)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_RECORDS));
 
-        minConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.min");
-        maxConsumerLagCounter = Counter.builder("clickhouse.consumer.lag.max");
+        maxBinLogPositionCounter = Gauge.build().labelNames("file").name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_POS)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_POS))
+                .register(collectorRegistry);
 
-        maxBinLogPositionCounter = Gauge.build().name("clickhouse_sink_binlog_pos").help("Bin Log Position").register(collectorRegistry);
-        gtidCounter = Gauge.build().name("clickhouse_sink_gtid").help("GTID Transaction Id").register(collectorRegistry);
+        upTimeCounter = Gauge.build().name(MetricsConstants.CLICKHOUSE_SINK_CONNECTOR_UPTIME)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_CONNECTOR_UPTIME))
+                .register(collectorRegistry);
+
+        gtidCounter = Gauge.build().name(MetricsConstants.CLICKHOUSE_SINK_GTID)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_GTID))
+                .register(collectorRegistry);
 
         partitionOffsetCounter = Gauge.build().
-        labelNames("Topic", "Partition").
-                name("clickhouse_sink_partition_offset").help("Kafka partition Offset").register(collectorRegistry);
+        labelNames(MetricsConstants.TOPIC, MetricsConstants.PARTITION)
+                .name(MetricsConstants.CLICKHOUSE_SINK_PARTITION_OFFSET)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_PARTITION_OFFSET))
+                .register(collectorRegistry);
 
-        topicLagCounter = Gauge.build().
-                labelNames("Topic").
-                name("clickhouse_sink_lag").help("Lag between Debezium processing and Bulk Insert to CH").register(collectorRegistry);
+        sourceToCHLagCounter = Gauge.build().
+                labelNames(MetricsConstants.TOPIC).
+                name(MetricsConstants.CLICKHOUSE_DB_SINK_LAG)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_DB_SINK_LAG))
+                .register(collectorRegistry);
 
+        debeziumToCHLagCounter = Gauge.build().labelNames(MetricsConstants.TOPIC)
+                .name(MetricsConstants.CLICKHOUSE_DEBEZIUM_SINK_LAG)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_DEBEZIUM_SINK_LAG))
+                .register(collectorRegistry);
 
-        topicsNumRecordsCounter = Counter.builder("clickhouse.topics.num.records");
+        topicsNumRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC));
+
+        topicsErrorRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC));
 
     }
+
     private static void exposePrometheusPort(PrometheusMeterRegistry prometheusMeterRegistry) {
 
 
@@ -170,19 +199,17 @@ public class Metrics {
         if(server != null) {
             server.stop(0);
         }
+        connectorStartTimeMs = -1;
     }
     public static MetricRegistry registry() {
         return registry;
     }
 
-    public static Counter.Builder getClickHouseSinkRecordsCounter() { return clickHouseSinkRecordsCounter;}
-
-
     public static void updateMetrics(BlockMetaData bmd) {
         if(!enableMetrics) {
             return;
         }
-        maxBinLogPositionCounter.set(bmd.getBinLogPosition());
+        maxBinLogPositionCounter.labels(bmd.getBinLogFile()).set(bmd.getBinLogPosition());
                 //tag("partition", Integer.toString(bmd.getPartition())).
 
         gtidCounter.set(bmd.getTransactionId());
@@ -198,49 +225,23 @@ public class Metrics {
                         .set(mp.right);
             }
         }
-        if(!bmd.getTopicToBlockTimestamp().isEmpty()) {
-            for(Map.Entry<String, Long> entry: bmd.getTopicToBlockTimestamp().entrySet()) {
-                topicLagCounter.labels(entry.getKey()).set(entry.getValue());
+        // Db Source to CH lag
+        if(!bmd.getSourceToCHLag().isEmpty()) {
+            for(Map.Entry<String, Long> entry: bmd.getSourceToCHLag().entrySet()) {
+                sourceToCHLagCounter.labels(entry.getKey()).set(entry.getValue());
             }
         }
-    }
 
-    public static void updateSinkRecordsCounter(String blockUUid, Long taskId, String topicName, String tableName,
-                                                HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap,
-                                                int numRecords, long minSourceLag, long maxSourceLag,
-                                                long minConsumerLag, long maxConsumerLag) {
-        if(enableMetrics) {
-            for(Map.Entry<Integer, MutablePair<Long, Long>> entry: partitionToOffsetMap.entrySet()) {
-
-                MutablePair<Long, Long> offsetTuple = entry.getValue();
-                long minOffset = offsetTuple.left;
-                long maxOffset = offsetTuple.right;
-                long totalRecords = maxOffset - minOffset;
-
-                Metrics.getClickHouseSinkRecordsCounter()
-                        .tag("taskId", taskId.toString())
-                        .tag("UUID", blockUUid)
-                        .tag("topic", topicName)
-                        .tag("table", tableName)
-                        .tag("minOffset", Long.toString(minOffset))
-                        .tag("maxOffset", Long.toString(maxOffset))
-                        .tag("partition", Integer.toString(entry.getKey()))
-                        .tag("totalRecords", Long.toString(totalRecords))
-
-                        .register(Metrics.meterRegistry()).increment(totalRecords);
-
-
-                minSourceLagCounter.register(Metrics.meterRegistry()).increment(minSourceLag);
-                maxSourceLagCounter.register(Metrics.meterRegistry()).increment(maxSourceLag);
-
-                minConsumerLagCounter.register(Metrics.meterRegistry()).increment(minConsumerLag);
-                maxConsumerLagCounter.register(Metrics.meterRegistry()).increment(maxConsumerLag);
-
+        // Debezium to CH Lag.
+        if(!bmd.getDebeziumToCHLag().isEmpty()) {
+            for(Map.Entry<String, Long> entry: bmd.getDebeziumToCHLag().entrySet()) {
+                debeziumToCHLagCounter.labels(entry.getKey()).set(entry.getValue());
             }
         }
+
+        upTimeCounter.set(System.currentTimeMillis() - connectorStartTimeMs);
     }
 
-    public static Gauge getClickHouseSinkRecordsGauge(){return clickHouseSinkRecordsGauge;}
 
     public static PrometheusMeterRegistry meterRegistry(){ return meterRegistry;}
 
@@ -249,9 +250,21 @@ public class Metrics {
         return registry.timer(MetricRegistry.name(first, keys));
     }
 
+    /**
+     * Update the num of record counter
+     * @param topicName
+     * @param numRecords
+     */
     public static void updateCounters(String topicName, int numRecords) {
         if(enableMetrics) {
             topicsNumRecordsCounter
+                    .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+        }
+    }
+
+    public static void updateErrorCounters(String topicName, int numRecords) {
+        if(enableMetrics) {
+            topicsErrorRecordsCounter
                     .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
         }
     }
