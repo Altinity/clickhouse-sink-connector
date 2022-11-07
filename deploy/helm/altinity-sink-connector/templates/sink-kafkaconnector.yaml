@@ -1,0 +1,43 @@
+{{- range .Values.bigqueryConnector }}
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  namespace: {{ .namespace }}
+  name: {{ .name }}
+  labels:
+    strimzi.io/cluster: sink-kafkaconnect
+spec:
+  class: com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    topics: {{ .topics }}
+    clickhouse.server.url: {{ .Values.clickhouseSinkConnector.clickhouse.server.url }}
+    clickhouse.server.user: {{ .Values.clickhouseSinkConnector.clickhouse.server.user }}
+    clickhouse.server.pass: {{ .Values.clickhouseSinkConnector.clickhouse.server.pass }}
+    clickhouse.server.database: {{ .Values.clickhouseSinkConnector.clickhouse.server.url }}
+    clickhouse.server.port: {{ .Values.clickhouseSinkConnector.clickhouse.server.port }}
+    clickhouse.topic2table.map:
+    store.kafka.metadata: "false"
+    topic.creation.default.partitions: "6"
+
+    store.raw.data: "false"
+    store.raw.data.column: "raw_data"
+
+    replacingmergetree.delete.column: "sign"
+
+    auto.create.tables: "true"
+    schema.evolution: "false"
+
+    deduplication.policy: "off"
+
+    metrics.enable: "true"
+    metrics.port: "8084"
+
+    key.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+
+    key.converter.schema.registry.url : {{ .Values.kafka.schemaRegistry.url }}
+    value.converter.schema.registry.url: {{ .Values.kafka.schemaRegistry.url }}
+---
+{{- end }}

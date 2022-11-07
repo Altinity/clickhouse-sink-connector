@@ -1,10 +1,10 @@
-{{- range $sinkConnector := .Values.clickhouseSinkConnectors }}
+{{- range $clusterName := .Values.cluster }}
 
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
-  namespace: {{ $.Values.clickhouseSinkConnector.namespace }}
-  name: {{ .name }}
+  namespace: {{ $clusterName.namespace }}
+  name: {{ $clusterName.name }}
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:

@@ -1,3 +1,22 @@
+### Install Strimzi CRD 
+
+```
+helm repo add strimzi https://strimzi.io/charts/
+helm install strimzi/strimzi-kafka-operator
+
+```
+
+
+#### Update dependencies
+
+```
+helm dependency update
+```
+
+### Dry run charts
+```
+helm install sink altinity-sink-connector --dry-run
+```
 ### Install Kafka
 
 helm repo add bitnami https://charts.bitnami.com/bitnami \
