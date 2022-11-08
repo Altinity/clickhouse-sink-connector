@@ -96,7 +96,7 @@ def regression(
     Feature(run=load("tests.autocreate", "feature"))
     Feature(run=load("tests.schema_changes", "feature"))
     # Feature(run=load("tests.insert", "feature"))
-    # Feature(run=load("tests.consistency", "feature"))
+    Feature(run=load("tests.consistency", "feature"))
     Feature(run=load("tests.multiple_tables", "feature"))
     Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.delete", "feature"))

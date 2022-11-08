@@ -6,8 +6,8 @@ from integration.tests.steps import *
 
 
 @TestOutline
-def unavailable(self, services, loops=10):
-    """Check for data consistency with concurrently service unavailable."""
+def stop_start(self, services, loops=10):
+    """Check for data consistency with concurrently service is stopping and starting after 5 sec."""
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -61,13 +61,13 @@ def unavailable(self, services, loops=10):
 
 
 @TestSuite
-def combinatoric_unavailable(self):
+def combinatoric_stop_start(self):
     """Check all possibilities of unavailable services."""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} unavailable", test=unavailable, flags=TE)(
+            Scenario(f"{combination} unavailable", test=stop_start, flags=TE)(
                 services=combination
             )
 
@@ -208,8 +208,8 @@ def combinatoric_unstable_network_connection(self):
 
 
 @TestOutline
-def hard_restart(self, services, loops=10):
-    """Check for data consistency with concurrently service hard "kill -9" restart 10 times."""
+def kill_start(self, services, loops=2):
+    """Check for data consistency with concurrently service "kill -9" and start."""
     uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -239,13 +239,13 @@ def hard_restart(self, services, loops=10):
         )(
             table_name=table_name,
             first_insert_number=1,
-            last_insert_number=3000,
-            first_insert_id=3001,
-            last_insert_id=6000,
+            last_insert_number=300,
+            first_insert_id=301,
+            last_insert_id=600,
             first_delete_id=1,
-            last_delete_id=1500,
-            first_update_id=1501,
-            last_update_id=3000,
+            last_delete_id=150,
+            first_update_id=151,
+            last_update_id=300,
         )
 
         for i in range(loops):
@@ -259,17 +259,29 @@ def hard_restart(self, services, loops=10):
                         self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        pause()
         select(statement="count(*)", table_name=table_name, with_optimize=True)
 
 
 @TestSuite
-def combinatoric_hard_restart(self):
+def combinatoric_kill_start_test(self):
+    """Check all possibilities of restart services."""
+    nodes_list = ["sink", "debezium"]
+    service_combinations = list(combinations(nodes_list, 1))
+    for combination in service_combinations:
+        Scenario(f"{combination} restart", test=kill_start, flags=TE)(
+            services=combination
+        )
+
+
+@TestSuite
+def combinatoric_kill_start(self):
     """Check all possibilities of restart services."""
     nodes_list = ["sink", "debezium", "schemaregistry", "kafka", "clickhouse"]
     for i in range(1, 6):
         service_combinations = list(combinations(nodes_list, i))
         for combination in service_combinations:
-            Scenario(f"{combination} restart", test=hard_restart, flags=TE)(
+            Scenario(f"{combination} restart", test=kill_start, flags=TE)(
                 services=combination
             )
 
