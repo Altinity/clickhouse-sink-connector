@@ -16,6 +16,10 @@ from pathlib import Path
 import time
 import datetime
 import zoneinfo
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(SCRIPT_DIR))
+
 from db_compare.mysql import is_binary_datatype
 from subprocess import Popen, PIPE
 
@@ -319,14 +323,21 @@ def load_schema_mysqlshell(args, dry_run=False):
 
         source = f"create database {args.clickhouse_database}"
         if not dry_run:
+            try:
                 clickhouse_execute_conn(conn, source)
-
+            except Exception as e:
+                logging.error(f"Database create error: {e}")
     # create tables
     timezone = '+00:00'
     with get_connection(args, args.clickhouse_database) as conn:
 
-        schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
-        for file in glob.glob(schema_files):
+        schema_file_wildcard = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
+        schema_files = glob.glob(schema_file_wildcard)
+        if len(schema_files) == 0:
+            logging.error("Cannot find schema files")
+            return
+
+        for file in schema_files:
             if not re.search(r'@[^.]+\.sql', file):
                 continue
                 
