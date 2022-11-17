@@ -110,7 +110,13 @@ else
           "topic.creation.default.replication.factor": 1,
           "topic.creation.default.partitions": 6,
 
-          "provide.transaction.metadata": "true"
+          "provide.transaction.metadata": "true",
+
+          "topic.prefix" : "SERVER5432",
+          "database.server.id": "${DATABASE_SERVER_ID}",
+
+          "schema.history.internal.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+          "schema.history.internal.kafka.topic": "schemahistory.${DATABASE}"
         }
       }
 EOF
