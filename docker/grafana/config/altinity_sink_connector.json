@@ -438,7 +438,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "clickhouse_sink_topics_num_records_total",
+          "expr": "rate(clickhouse_sink_topics_num_records_total[$__rate_interval])",
           "format": "table",
           "instant": true,
           "interval": "",
@@ -618,14 +618,14 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "clickhouse_sink_topics_num_records_total{}",
+          "expr": "rate(clickhouse_sink_topics_num_records_total[$__rate_interval])",
           "interval": "",
           "legendFormat": "",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Total Records",
+      "title": "Rate(Total Records)",
       "type": "barchart"
     },
     {
@@ -825,7 +825,17 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
+          "mappings": [
+            {
+              "options": {
+                "connector": {
+                  "index": 0,
+                  "text": "connector"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -965,6 +975,71 @@
           "color": {
             "mode": "thresholds"
           },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 3,
+        "x": 7,
+        "y": 23
+      },
+      "id": 62,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "kafka_connect_connect_worker_metrics_task_count",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Tasks count",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
             {
               "options": {
@@ -994,8 +1069,8 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
-        "x": 7,
+        "w": 4,
+        "x": 10,
         "y": 23
       },
       "id": 58,
@@ -1888,7 +1963,7 @@
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-12h",
     "to": "now"
   },
   "timepicker": {},
