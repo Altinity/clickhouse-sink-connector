@@ -172,7 +172,8 @@ else
           "database.server.id": "${DATABASE_SERVER_ID}",
 
           "schema.history.internal.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
-          "schema.history.internal.kafka.topic": "schemahistory.${DATABASE}"
+          "schema.history.internal.kafka.topic": "schemahistory.${DATABASE}",
+          "skipped.operations": "none"
         }
       }
 EOF
