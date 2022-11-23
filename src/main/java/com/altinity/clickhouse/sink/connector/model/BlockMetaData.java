@@ -54,7 +54,11 @@ public class BlockMetaData {
 
     @Getter
     @Setter
-    long binLogPosition = -1;
+    long binLogPosition = 0;
+
+    @Getter
+    @Setter
+    String binLogFile = "";
 
 
     @Getter
@@ -71,11 +75,15 @@ public class BlockMetaData {
     String topicName = null;
 
     // The time when the block is persisted to clickhouse
-    // Useful to calculate lag between source DB(binlog)
-    // debezium connector timestamp vs sink connector timestamp.
+    // and binlog timestamp
     @Getter
     @Setter
-    Map<String, Long> topicToBlockTimestamp = new HashMap();
+    Map<String, Long> sourceToCHLag = new HashMap();
+
+    @Getter
+    @Setter
+    Map<String, Long> debeziumToCHLag = new HashMap();
+
 
     // Timestamp recorded when the block was written;
     long blockInsertionTimestamp = System.currentTimeMillis();
@@ -88,8 +96,13 @@ public class BlockMetaData {
                 this.transactionId = gtId;
             }
         }
+
         if (record.getPos() != null && record.getPos() > binLogPosition) {
             this.binLogPosition = record.getPos();
+        }
+
+        if (record.getFile() != null) {
+            this.binLogFile = record.getFile();
         }
 
         if(record.getKafkaPartition() != null) {
@@ -100,14 +113,24 @@ public class BlockMetaData {
             this.topicName = record.getTopic();
         }
 
-        long lag = blockInsertionTimestamp - record.getTs_ms();
-        if(topicToBlockTimestamp.containsKey(this.topicName)) {
-            long storedLag = topicToBlockTimestamp.get(this.topicName);
-            if(lag > storedLag) {
-                topicToBlockTimestamp.put(this.topicName, lag);
+        long sourceDbLag = blockInsertionTimestamp - record.getTs_ms();
+        if(sourceToCHLag.containsKey(this.topicName)) {
+            long storedSourceLag = sourceToCHLag.get(this.topicName);
+            if(sourceDbLag > storedSourceLag) {
+                sourceToCHLag.put(this.topicName, sourceDbLag);
             }
         } else {
-            topicToBlockTimestamp.put(this.topicName, lag);
+            sourceToCHLag.put(this.topicName, sourceDbLag);
+        }
+
+        long debeziumLag = blockInsertionTimestamp - record.getDebezium_ts_ms();
+        if(debeziumToCHLag.containsKey(this.topicName)) {
+            long storedDebeziumLag = debeziumToCHLag.get(this.topicName);
+            if(debeziumLag > storedDebeziumLag) {
+                debeziumToCHLag.put(this.topicName, debeziumLag);
+            }
+        } else {
+            debeziumToCHLag.put(this.topicName, debeziumLag);
         }
 
         long offset = record.getKafkaOffset();

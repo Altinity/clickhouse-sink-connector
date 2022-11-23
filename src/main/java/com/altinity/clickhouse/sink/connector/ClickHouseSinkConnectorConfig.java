@@ -303,6 +303,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID,
+                        Type.BOOLEAN,
+                        true,
+                        Importance.HIGH,
+                        "If enabled, snowflake id will be used for version columns",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE,
                         Type.STRING,
                         "topic_offset_metadata",

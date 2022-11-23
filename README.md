@@ -115,6 +115,10 @@ mvn install -DskipTests=true
 ![](doc/img/Grafana_dashboard.png)
 
 
+![](doc/img/Grafana_dashboard_2.png)
+
+
+
 ## Documentation
 - [Architecture](doc/architecture.md)
 - [Local Setup - Docker Compose](doc/setup.md)

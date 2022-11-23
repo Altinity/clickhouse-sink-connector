@@ -48,6 +48,10 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
+    private long debezium_ts_ms;
+
+    @Getter
+    @Setter
     private boolean snapshot;
 
     @Getter
@@ -184,6 +188,9 @@ public class ClickHouseStruct {
             if (fieldNames.contains(TS_MS) && source.get(TS_MS) != null && source.get(TS_MS) instanceof Long) {
                 //  indicates the time that the change was made in the database.
                 this.setTs_ms((Long) source.get(TS_MS));
+            }
+            if(convertedValue.get(TS_MS) != null) {
+                this.setDebezium_ts_ms((Long) convertedValue.get(TS_MS));
             }
             if (fieldNames.contains(SNAPSHOT) && source.get(SNAPSHOT) != null && source.get(SNAPSHOT) instanceof String) {
                 this.setSnapshot(Boolean.parseBoolean((String) source.get(SNAPSHOT)));

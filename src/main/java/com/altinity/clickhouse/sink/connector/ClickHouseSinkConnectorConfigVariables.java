@@ -58,5 +58,7 @@ public class ClickHouseSinkConnectorConfigVariables {
     // Config variable when set to true, columns will be added.
     public static final String ENABLE_SCHEMA_EVOLUTION = "schema.evolution";
 
+    public static final String SNOWFLAKE_ID = "snowflake.id";
+
 
 }

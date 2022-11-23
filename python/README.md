@@ -21,6 +21,7 @@ Limitations :
 
 Example : assuming the world database was dumped with mysqlsh using this command ($HOME needs to be replaced with a constant) :
 
+MySQL Shell(JS version works better with Python)
 ```
 mysqlsh -uroot -proot -hlocalhost -e "util.dumpSchemas(['world'], '$HOME/dbdumps/world');"
 ```
