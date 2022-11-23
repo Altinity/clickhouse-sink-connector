@@ -284,7 +284,7 @@ def create_mysql_table(self, name=None, statement=None, node=None):
 
 
 @TestStep(Given)
-def create_clickhouse_table(self, name=None, statement=None, node=None):
+def create_clickhouse_table(self, name=None, statement=None, node=None, force_select_final = False):
     """
     Creation of default ClickHouse table for tests
     :param self:
@@ -301,7 +301,7 @@ def create_clickhouse_table(self, name=None, statement=None, node=None):
         statement = f"CREATE TABLE IF NOT EXISTS test.{name} "
         f"(id Int32, age Int32) "
         f"ENGINE = MergeTree "
-        f"PRIMARY KEY id ORDER BY id SETTINGS "
+        f"PRIMARY KEY id ORDER BY id SETTINGS {' ignore_force_select_final=1' if force_select_final else ''}"
         f"index_granularity = 8192;"
 
     try:
