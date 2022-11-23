@@ -161,7 +161,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param topicName
      * @param records
      */
-    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<ClickHouseStruct> records) {
+    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<ClickHouseStruct> records) throws SQLException {
 
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
@@ -217,7 +217,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return
      */
     private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) throws SQLException {
 
         boolean result = false;
 
