@@ -214,7 +214,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA,
                         Type.BOOLEAN,
-                        "true",
+                        "false",
                         Importance.LOW,
                         "True, if the kafka metadata needs to be stored in Clickhouse tables, false otherwise",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -254,7 +254,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN,
                         Type.STRING,
-                        "false",
+                        "",
                         Importance.LOW,
                         "Column name to store the raw data(JSON form), only applicable if STORE_RAW_DATA is set to True",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
