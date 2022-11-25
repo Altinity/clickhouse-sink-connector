@@ -11,6 +11,9 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v2
+      - name: Install testflows
+        working-directory: tests/integration
+        run: pip3 install testflows
       - name: Run testflows tests
         working-directory: tests/integration
 #        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
