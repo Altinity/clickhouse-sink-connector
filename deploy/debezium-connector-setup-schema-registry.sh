@@ -73,7 +73,7 @@ if [[ $2 == "apicurio" ]]; then
           "name": "${CONNECTOR_NAME}",
           "config": {
             "connector.class": "${CONNECTOR_CLASS}",
-            "tasks.max": "1",
+            "tasks.max": "6",
             "snapshot.mode": "${SNAPSHOT_MODE}",
             "snapshot.locking.mode": "minimal",
             "snapshot.delay.ms": 10000,

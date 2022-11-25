@@ -37,10 +37,16 @@ cd deploy/docker
 ./start-docker-compose.sh 
 ```
 
-### Postgres:
+### Postgres using Confluent Schema Registry:
 ```bash
 cd deploy/docker
 docker-compose -f docker-compose.yaml -f docker-compose-postgresql.override.yaml up
+```
+
+### Postgres using Apicurio Schema Registry:
+```bash
+cd deploy/docker
+docker-compose -f docker-compose.yaml -f docker-compose-postgresql-apicurio-schema-registry.override.yaml up
 ```
 
 ### Start Docker-compose with a specific docker tag
