@@ -5,6 +5,7 @@ CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/debezium-connector-config.sh"
 
 CONNECTOR_NAME="debezium-connector-$1"
+CONNECTOR_CLASS="io.debezium.connector.mysql.MySqlConnector"
 
 echo "*********** ${CONNECTOR_NAME} **************"
 # Debezium parameters. Check
@@ -31,9 +32,64 @@ DATABASE_SERVER_ID="5432"
 # Alphanumeric characters, hyphens, dots and underscores only.
 DATABASE_SERVER_NAME="SERVER5432-${DATABASE}"
 
+if [[ $3 == "postgres" ]]; then
+  echo "postgres database"
+  HOST="postgres"
+  PORT="5432"
+  USER="postgres_user"
+  PASSWORD="postgres"
+  # Comma-separated list of regular expressions that match the databases for which to capture changes
+  DBS="test"
+  # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
+  TABLES="Employee"
+  CONNECTOR_CLASS="io.debezium.connector.postgresql.PostgresConnector"
+  SNAPSHOT_MODE="initial_only"
+
+  if [[ $2 == "apicurio" ]]; then
+    curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @payload.json
+  else
+    cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+    {
+            "name": "${CONNECTOR_NAME}",
+            "config": {
+              "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+              "tasks.max": 1,
+              "topic.prefix": "SERVER5432",
+              "database.hostname": "postgres",
+              "database.port": 5432,
+              "database.user": "postgres_user",
+              "database.password": "postgres",
+              "database.server.id": 5432,
+              "database.server.name": "SERVER5432",
+              "database.dbname": "test",
+              "table.include.list": "public.Employee",
+              "plugin.name": "pgoutput",
+
+              "snapshot.mode": "initial_only",
+              "snapshot.locking.mode": "minimal",
+              "snapshot.delay.ms": 10000,
+              "include.schema.changes":"true",
+              "key.converter": "io.confluent.connect.avro.AvroConverter",
+              "value.converter": "io.confluent.connect.avro.AvroConverter",
+
+              "key.converter.schema.registry.url": "http://schemaregistry:8081",
+              "value.converter.schema.registry.url":"http://schemaregistry:8081",
+
+              "topic.creation.$alias.partitions": 6,
+              "topic.creation.default.replication.factor": 1,
+              "topic.creation.default.partitions": 6,
+
+              "provide.transaction.metadata": "true"
+            }
+    }
+EOF
+  fi
+  exit
+fi
+
 if [[ $2 == "apicurio" ]]; then
   echo "APICURIO SCHEMA REGISTRY"
-  A
+
   ######       Connector  registration ######
   cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
   {
