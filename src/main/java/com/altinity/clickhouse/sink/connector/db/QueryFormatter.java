@@ -159,10 +159,22 @@ public class QueryFormatter {
             colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
         }
 
-        //Remove terminating comma
-        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
-        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
+        if(colNamesDelimited.length() != 0) {
+            //Remove terminating comma
+            int indexOfComma = colNamesDelimited.lastIndexOf(",");
+            if (indexOfComma != -1) {
+                colNamesDelimited.deleteCharAt(indexOfComma);
 
+            }
+        }
+
+        if(colNamesToDataTypes.length() != 0) {
+            int indexOfComma = colNamesToDataTypes.lastIndexOf(",");
+
+            if(indexOfComma != -1) {
+                colNamesToDataTypes.deleteCharAt(indexOfComma);
+            }
+        }
         return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
     }
 }
