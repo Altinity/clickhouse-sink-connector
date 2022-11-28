@@ -17,23 +17,36 @@ import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.ClickHouseContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.PreparedStatement;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+@Testcontainers
 public class DbWriterTest {
 
     static DbWriter writer;
+
+    // will be started before and stopped after each test method
+    @Container
+    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+            .withInitScript("./init_clickhouse.sql");
+            //.withDatabaseName("test")
+//            .withUsername("test")
+//            .withPassword("test")
+//            .withExposedPorts(8123);
 
     @BeforeAll
     public static void init() {
 
         String hostName = "remoteClickHouse";
-        Integer port = 8000;
-        String database = "employees";
-        String userName = "test";
-        String password = "test";
+        Integer port = 8123;
+        String database = "default";
+        String userName = "default";
+        String password = "";
         String tableName = "employees";
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
@@ -81,34 +94,35 @@ public class DbWriterTest {
     @Tag("IntegrationTest")
     public void testGetColumnsDataTypesForTable() {
 
-        String dbHostName = "localhost";
-        Integer port = 8123;
-        String database = "test";
-        String userName = "root";
-        String password = "root";
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
-        writer.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
 
+        Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
     }
 
     @Test
     @Tag("IntegrationTest")
     public void testGetEngineType() {
-        String dbHostName = "localhost";
-        Integer port = 8123;
-        String database = "test";
-        String userName = "root";
-        String password = "root";
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
         MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
-        Assert.assertTrue(result.getRight().equalsIgnoreCase("ver"));
+        Assert.assertTrue(result.getRight().equalsIgnoreCase("_version"));
 
         MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "products");
         Assert.assertTrue(resultProducts.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
@@ -118,31 +132,27 @@ public class DbWriterTest {
     @Test
     @Tag("IntegrationTest")
     public void testGetEngineTypeUsingSystemTables() {
-        String dbHostName = "localhost";
-        Integer port = 8123;
-        String database = "test";
-        String userName = "root";
-        String password = "root";
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
         MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                "test", "employees");
+                database, "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 
         MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                "test", "products");
+                database, "products");
         Assert.assertTrue(result_products.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.
         MutablePair<DBMetadata.TABLE_ENGINE, String> result_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                "test", "registration");
+                database, "registration");
         Assert.assertNull(result_registration.getLeft());
-
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_t1 = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                "test", "t1");
-        Assert.assertTrue(result_t1.getLeft() == DBMetadata.TABLE_ENGINE.MERGE_TREE);
 
     }
 

@@ -33,9 +33,22 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
 
         super(hostName, port, database, userName, password, config);
 
+        createOffsetTable();
         this.columnNamesToDataTypesMap = this.getColumnsDataTypesForTable(tableName);
         this.query = new QueryFormatter().getInsertQueryUsingInputFunction(tableName, columnNamesToDataTypesMap);
 
+    }
+
+    /**
+     * Function to create kafka offset table.
+     */
+    public void createOffsetTable() {
+        try {
+            PreparedStatement ps = this.getConnection().prepareStatement(ClickHouseDbConstants.OFFSET_TABLE_CREATE_SQL);
+            ps.execute();
+        } catch(SQLException se) {
+            log.error("Error creating Kafka offset table");
+        }
     }
 
 
