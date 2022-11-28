@@ -96,7 +96,7 @@ public class ClickHouseTableOperationsBase {
 
         if(conn == null) {
             log.error("ClickHouse connection not created");
-            return;
+            throw new SQLException("Connection empty");
         }
 
         //https://github.com/ClickHouse/clickhouse-jdbc/issues/127
