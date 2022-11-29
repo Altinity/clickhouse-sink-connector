@@ -18,10 +18,6 @@ import java.util.Map;
 
 public class ClickHouseTableOperationsBase {
 
-
-    private static final String ENABLE_SETTINGS = "settings";
-    private static final String ALLOW_EXPERIMENTAL_OBJECT_TYPE = "allow_experimental_object_type=1";
-
     public static final String SCALE = "scale";
     public static final String PRECISION = "connect.decimal.precision";
 
