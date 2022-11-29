@@ -76,7 +76,9 @@ public class DBMetadata {
             rs.close();
         } catch(SQLException se) {
             log.error("checkIfDatabaseExists exception", se);
-            throw se;
+            // ToDO: For some reason, this query throws SQLException when DB is not available.
+
+            //throw se;
         }
 
         return result;

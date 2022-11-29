@@ -62,10 +62,8 @@ if [[ $3 == "postgres" ]]; then
               "database.server.id": 5432,
               "database.server.name": "SERVER5432",
               "database.dbname": "test",
-              "table.include.list": "public.Employee",
               "plugin.name": "pgoutput",
 
-              "snapshot.mode": "initial_only",
               "snapshot.locking.mode": "minimal",
               "snapshot.delay.ms": 10000,
               "include.schema.changes":"true",
