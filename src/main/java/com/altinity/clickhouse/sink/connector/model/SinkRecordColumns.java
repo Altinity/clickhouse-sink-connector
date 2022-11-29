@@ -23,5 +23,7 @@ public class SinkRecordColumns {
 
     public static final String GTID = "gtid";
 
+    public static final String LSN = "lsn";
+
 }
 
