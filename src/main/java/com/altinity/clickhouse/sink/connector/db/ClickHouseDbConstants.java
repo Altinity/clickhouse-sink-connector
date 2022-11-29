@@ -22,4 +22,8 @@ public class ClickHouseDbConstants {
     public static final String ORDER_BY = "ORDER BY";
 
     public static final String ORDER_BY_TUPLE = "ORDER BY tuple()";
+
+    public static final String OFFSET_TABLE_CREATE_SQL = "CREATE TABLE topic_offset_metadata(`_topic` String, `_partition` UInt64,`_offset` SimpleAggregateFunction(max, UInt64))ENGINE = AggregatingMergeTree ORDER BY (_topic, _partition)";
+
+    public static final String CHECK_DB_EXISTS_SQL = "SELECT name from system.databases where name='%s'";
 }

@@ -7,7 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 public class DBMetadata {
 
@@ -50,6 +53,37 @@ public class DBMetadata {
 
         return result;
     }
+
+    /**
+     * Function to check if database exists by querying the information schema tables.
+     * @param conn
+     * @param databaseName
+     * @return
+     */
+    public boolean checkIfDatabaseExists(ClickHouseConnection conn, String databaseName) throws SQLException {
+
+        boolean result = false;
+        try (Statement stmt = conn.createStatement()) {
+            String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
+            ResultSet rs = stmt.executeQuery(showSchemaQuery);
+            if (rs.next()) {
+                String response = rs.getString(1);
+                if(response.equalsIgnoreCase(databaseName)) {
+                    result = true;
+                }
+            }
+
+            rs.close();
+        } catch(SQLException se) {
+            log.error("checkIfDatabaseExists exception", se);
+            // ToDO: For some reason, this query throws SQLException when DB is not available.
+
+            //throw se;
+        }
+
+        return result;
+    }
+
     /**
      * Function to return Engine type for table.
      * This function calls the "create table" SQL
