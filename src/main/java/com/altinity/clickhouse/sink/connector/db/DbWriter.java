@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -224,7 +225,8 @@ public class DbWriter extends BaseDbWriter {
      * @return
      */
     public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
-                                                                        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+                                                                        Map<MutablePair<String, Map<String, Integer>>,
+                                                                                List<ClickHouseStruct>> queryToRecordsMap) {
 
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
@@ -284,12 +286,24 @@ public class DbWriter extends BaseDbWriter {
 
     public boolean updateQueryToRecordsMap(ClickHouseStruct record, List<Field> modifiedFields,
                                         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+        if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
+            MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
+            mp.setLeft(String.format("TRUNCATE TABLE %s", this.tableName));
+            mp.setRight(new HashMap<String, Integer>());
+            ArrayList<ClickHouseStruct> records = new ArrayList<>();
+            records.add(record);
+            queryToRecordsMap.put(mp, records);
+            return true;
+        }
+
         MutablePair<String, Map<String, Integer>>  response= new QueryFormatter().getInsertQueryUsingInputFunction
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
                         this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
+
+
 
         String insertQueryTemplate = response.getKey();
         if(response.getKey() == null || response.getValue() == null) {
@@ -389,7 +403,7 @@ public class DbWriter extends BaseDbWriter {
      * @param queryToRecordsMap
      */
     public BlockMetaData addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) {
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) throws SQLException {
 
         boolean success = false;
 
@@ -397,9 +411,11 @@ public class DbWriter extends BaseDbWriter {
         while(iter.hasNext()) {
             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
             String insertQuery = entry.getKey().getKey();
-            log.info("*** INSERT QUERY***" + insertQuery);
+            log.info("*** QUERY***" + insertQuery);
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
+
+            ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
             try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
 
                 List<ClickHouseStruct> recordsList = entry.getValue();
@@ -409,10 +425,20 @@ public class DbWriter extends BaseDbWriter {
                     } catch(Exception e) {
                         log.error("**** ERROR: updating Prometheus", e);
                     }
+
+                    if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
+                        truncatedRecords.add(record);
+                        continue;
+                    }
                     //List<Field> fields = record.getStruct().schema().fields();
 
+//                    if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
+//                        ps.addBatch(String.format("TRUNCATE TABLE %s", this.tableName));
+//                        continue;
+//                    }
                     //ToDO:
                     //insertPreparedStatement(ps, fields, record);
+
 
                     if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
@@ -454,6 +480,14 @@ public class DbWriter extends BaseDbWriter {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error("******* ERROR inserting Batch *****************", e);
                 success = false;
+            }
+
+            if(!truncatedRecords.isEmpty()) {
+
+                PreparedStatement ps = this.conn.prepareStatement("TRUNCATE TABLE " + this.tableName);
+                ps.execute();
+
+                //this.conn.commit();
             }
 
             Metrics.updateCounters(topicName, entry.getValue().size());
