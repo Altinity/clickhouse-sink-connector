@@ -1,16 +1,16 @@
-name: Integration tests
-
-on:
-  push:
-    branches: [ main, develop]
-  pull_request:
-    branches: [ main , develop]
-
-jobs:
-  build:
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v2
-      - name: Run Integration tests
-        working-directory: tests
-        run: ./run_integration_tests.sh
+#name: Integration tests
+#
+#on:
+#  push:
+#    branches: [ main, develop]
+#  pull_request:
+#    branches: [ main , develop]
+#
+#jobs:
+#  build:
+#    runs-on: [self-hosted, linux, x64]
+#    steps:
+#      - uses: actions/checkout@v2
+#      - name: Run Integration tests
+#        working-directory: tests
+#        run: ./run_integration_tests.sh
