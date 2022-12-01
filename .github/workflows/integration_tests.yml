@@ -14,16 +14,16 @@ jobs:
       - name: Install testflows
         working-directory: tests/integration
         run: pip3 install testflows
-      - name: docker-compose up
-        working-directory: tests/integration/env
-        run: docker-compose up
+#      - name: docker-compose up
+#        working-directory: tests/integration/env
+#        run: docker-compose up
 #      - name: Install docker-compose
 #        working-directory: tests/integration
 #        run: apt install docker-compose
-#      - name: Run testflows tests
-#        working-directory: tests/integration
-##        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8.6.71-alpine --test-to-end
+      - name: Run testflows tests
+        working-directory: tests/integration
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8.6.71-alpine --test-to-end
 #      - name: Download a single artifact
 #        uses: actions/download-artifact@v3
 #        with:
@@ -37,4 +37,4 @@ jobs:
 #          overwrite: true
 #          tag: ${{ github.ref }}
 #          file_glob: true
-#6
+#7
