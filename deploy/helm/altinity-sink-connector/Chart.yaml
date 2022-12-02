@@ -31,9 +31,13 @@ dependencies:
   - name: kafka
     version: "16.2.9"
     repository: "https://raw.githubusercontent.com/bitnami/charts/archive-full-index/bitnami"
-  - name: mysql
-    version: '^8'
-    repository: "https://charts.bitnami.com/bitnami"
+  - name: schema-registry
+    version: '^7' 
+    repository: "https://raw.githubusercontent.com/bitnami/charts/archive-full-index/bitnami"
+    kafka.bootstrapServers: "altinity-sink-connector-kafka:9092"
+#  - name: mysql
+#    version: '^8'
+#    repository: "https://charts.bitnami.com/bitnami"
 #  - name: console
 #    version: '^0'
 #    repository: "https://packages.vectorized.io/public/console/helm/charts/"

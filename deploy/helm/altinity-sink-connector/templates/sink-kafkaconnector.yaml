@@ -1,23 +1,23 @@
-{{- range .Values.bigqueryConnector }}
+{{- range $sinkConnector := .Values.clickhouseSinkConnectors }}
 
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnector
 metadata:
-  namespace: {{ .namespace }}
-  name: {{ .name }}
+  namespace: {{ $sinkConnector.namespace }}
+  name: {{ $sinkConnector.name }}
   labels:
-    strimzi.io/cluster: sink-kafkaconnect
+    strimzi.io/cluster:  {{ $sinkConnector.clusterName }}
 spec:
   class: com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
   tasksMax: 1
   config:
-    topics: {{ .topics }}
-    clickhouse.server.url: {{ .Values.clickhouseSinkConnector.clickhouse.server.url }}
-    clickhouse.server.user: {{ .Values.clickhouseSinkConnector.clickhouse.server.user }}
-    clickhouse.server.pass: {{ .Values.clickhouseSinkConnector.clickhouse.server.pass }}
-    clickhouse.server.database: {{ .Values.clickhouseSinkConnector.clickhouse.server.url }}
-    clickhouse.server.port: {{ .Values.clickhouseSinkConnector.clickhouse.server.port }}
-    clickhouse.topic2table.map:
+    topics: {{ $sinkConnector.topics }}
+    clickhouse.server.url: {{ $.Values.clickhouseSinkConnector.clickhouse.server.url }}
+    clickhouse.server.user: {{ $.Values.clickhouseSinkConnector.clickhouse.server.user }}
+    clickhouse.server.pass: {{ $.Values.clickhouseSinkConnector.clickhouse.server.pass }}
+    clickhouse.server.database: {{ $.Values.clickhouseSinkConnector.clickhouse.server.url }}
+    clickhouse.server.port: {{ $.Values.clickhouseSinkConnector.clickhouse.server.port }}
+    clickhouse.topic2table.map: "employees:employee"
     store.kafka.metadata: "false"
     topic.creation.default.partitions: "6"
 
@@ -37,7 +37,7 @@ spec:
     key.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter: "io.confluent.connect.avro.AvroConverter"
 
-    key.converter.schema.registry.url : {{ .Values.kafka.schemaRegistry.url }}
-    value.converter.schema.registry.url: {{ .Values.kafka.schemaRegistry.url }}
+    key.converter.schema.registry.url : {{ $.Values.kafka.schemaRegistry.url }}
+    value.converter.schema.registry.url: {{ $.Values.kafka.schemaRegistry.url }}
 ---
 {{- end }}

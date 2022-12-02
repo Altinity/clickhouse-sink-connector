@@ -7,7 +7,7 @@ helm repo add strimzi https://strimzi.io/charts/
 helm install strimzi/strimzi-kafka-operator --version 0.31.0
 
 ```
-
+Note: strimzi operator and the KafkaConnect pods need to be on the same namespace.
 
 #### Update dependencies
 

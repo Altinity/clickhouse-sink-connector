@@ -2,8 +2,8 @@ dependencies:
 - name: kafka
   repository: https://raw.githubusercontent.com/bitnami/charts/archive-full-index/bitnami
   version: 16.2.9
-- name: mysql
-  repository: https://charts.bitnami.com/bitnami
-  version: 8.9.6
-digest: sha256:ae8a4d458ce588e727aa83e1eb9bfc490c08129166bef73ec029ffce242796b5
-generated: "2022-11-06T19:15:00.443485341-05:00"
+- name: schema-registry
+  repository: https://raw.githubusercontent.com/bitnami/charts/archive-full-index/bitnami
+  version: 7.0.1
+digest: sha256:fcb96c0a2b71aae92c0b69941374da30f4b7afc8d79ac2afab13b2fb63e577e8
+generated: "2022-12-02T14:26:13.335754362-05:00"

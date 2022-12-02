@@ -89,16 +89,16 @@ console:
   config:
     kafka:
       brokers:
-        - my-release-kafka-0.my-release-kafka-headless.default.svc.cluster.local:9092
+        - altinity-sink-connector-kafka:9092
 
     server:
       listenPort: 8081
 ####################### SINK CONNECTOR CONFIGURATION #######################3
 kafka:
-  bootstrapServers: my-release-kafka-0.my-release-kafka-headless.default.svc.cluster.local:9092
+  bootstrapServers: altinity-sink-connector-kafka:9092
 
   schemaRegistry:
-    url: "http://schema-registry.registry:8081"
+    url: "http://altinity-sink-connector-schema-registry:8081"
 
 clickhouseSinkConnector:
   image: subkanthi/clickhouse-kafka-sink-connector-strimzi:latest
@@ -116,29 +116,29 @@ clickhouseSinkConnector:
 
   clickhouse:
     server:
-      url:
-      user:
-      pass:
-      database:
-      port:
+      url: clickhouse
+      user: root
+      pass: root
+      database: default
+      port: 8123
 
 ## List of clusters -> kafkaconnect
 cluster:
   - name: mysql-cluster-1
-    namespace: sink
+    namespace: default
   - name: mysql-cluster-2
-    namespace: sink
+    namespace: default
 
 ### List of kafkaconnectors.
 clickhouseSinkConnectors:
   - name: sink-connector-employees
     clusterName: mysql-cluster-1
     topics: "SERVER.dashboard.employees"
-    namespace: sink
+    namespace: default
     topic2tablemap: ""
   - name: sink-connector-products
     clusterName: mysql-cluster-2
     topics: "SERVER.dashboard.products"
-    namespace: sink
+    namespace: default
     topic2tablemap: ""
 
