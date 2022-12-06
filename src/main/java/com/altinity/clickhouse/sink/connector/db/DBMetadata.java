@@ -18,6 +18,8 @@ public class DBMetadata {
         COLLAPSING_MERGE_TREE("CollapsingMergeTree"),
         REPLACING_MERGE_TREE("ReplacingMergeTree"),
 
+        REPLICATED_REPLACING_MERGE_TREE("ReplicatedReplacingMergeTree"),
+
         MERGE_TREE("MergeTree"),
 
         DEFAULT("default");
@@ -96,6 +98,8 @@ public class DBMetadata {
     public static final String COLLAPSING_MERGE_TREE_SIGN_PREFIX = "CollapsingMergeTree(";
     public static final String REPLACING_MERGE_TREE_VER_PREFIX = "ReplacingMergeTree(";
 
+    public static final String REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX = "ReplicatedReplacingMergeTree(";
+
     /**
      * Function to extract the sign column for CollapsingMergeTree
      * @param createDML
@@ -121,15 +125,24 @@ public class DBMetadata {
      */
     public String getVersionColumnForReplacingMergeTree(String createDML) {
 
-        String signColumn = "sign";
+        String versionColumn = "ver";
 
-        if(createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            signColumn = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")");
+        if(createDML.contains(TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())) {
+            String parameters = StringUtils.substringBetween(createDML, REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
+            if(parameters != null) {
+                String[] parameterArray = parameters.split(",");
+                if(parameterArray != null && parameterArray.length >= 3) {
+                    versionColumn = parameterArray[2].trim();
+                }
+            }
+        }
+        else if(createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            versionColumn = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")").trim();
         } else {
             log.error("Error: Trying to retrieve ver from table that is not ReplacingMergeTree");
         }
 
-        return signColumn;
+        return versionColumn;
     }
     /**
      * Function to get table engine using system tables.
@@ -153,17 +166,7 @@ public class DBMetadata {
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.next()) {
                     String response =  rs.getString(1);
-                    if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
-                        result.right = getSignColumnForCollapsingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
-                        result.right = getVersionColumnForReplacingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.MERGE_TREE;
-                    } else {
-                        result.left = TABLE_ENGINE.DEFAULT;
-                    }
+                    result = getEngineFromResponse(response);
                 }
                 rs.close();
                 stmt.close();
@@ -171,6 +174,24 @@ public class DBMetadata {
             }
         } catch(Exception e) {
             log.error("getTableEngineUsingSystemTables exception", e);
+        }
+
+        return result;
+    }
+
+    public MutablePair<TABLE_ENGINE, String> getEngineFromResponse(String response) {
+        MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
+
+        if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
+            result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+            result.right = getSignColumnForCollapsingMergeTree(response);
+        } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+            result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
+            result.right = getVersionColumnForReplacingMergeTree(response);
+        } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
+            result.left = TABLE_ENGINE.MERGE_TREE;
+        } else {
+            result.left = TABLE_ENGINE.DEFAULT;
         }
 
         return result;
