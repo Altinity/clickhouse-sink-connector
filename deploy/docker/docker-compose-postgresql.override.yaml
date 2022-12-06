@@ -9,7 +9,7 @@ version: "2.3"
 services:
 
   postgres:
-    image: debezium/postgres
+    image: debezium/postgres:15-alpine
     restart: always
     ports:
       - "5432:5432"
