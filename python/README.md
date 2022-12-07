@@ -55,6 +55,12 @@ python db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user ro
 python3 clickhouse_table_checksum.py --sign_column=sign --secure=True --clickhouse_port 9440 --clickhouse_host secure-host  --clickhouse_user user  --clickhouse_password password  --clickhouse_database das --tables_regex '^products' --exclude_columns=[sign,ver]
 ```
 
+## Exclude columns
+```
+python3 clickhouse_table_checksum.py --sign_column=sign --secure=True --clickhouse_port 9440 --clickhouse_host secure-host --clickhouse_user user --clickhouse_password password --clickhouse_database das --tables_regex '^products' --exclude_columns=sign,ver --debug_output --debug
+
+
+```
 Compare all tables in database and diff the checksums
 
 ```
