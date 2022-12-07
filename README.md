@@ -30,7 +30,6 @@ The connector is tested with the following converters
 | MySQL         | 8.0               |
 | ClickHouse    | 22.9              |
 | PostgreSQL    | 15                |
-|
 
 
 ### Quick Start (Docker-compose)
@@ -65,6 +64,13 @@ Recommended to atleast set 5Gi as memory limits to run on kubernetes using strim
 cd deploy/docker
 ./start-docker-compose.sh 
 ```
+#### PostgreSQL:
+```
+export SINK_VERSION=latest
+cd deploy/docker
+docker-compose -f docker-compose.yaml -f docker-compose-postgresql.override.yaml up
+```
+
 For Detailed setup instructions - [Setup](doc/setup.md)
 
 ## Development:
