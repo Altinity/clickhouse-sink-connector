@@ -1,9 +1,16 @@
 #!/bin/bash
-
 today_date=$(date +%F)
 
+if [ -z $1 ]; then
+  TAG=$today_date
+else
+  TAG=$1
+fi
+
+
+
 cd ../deploy/docker
-./start-docker-compose.sh 2022-10-17 &
+./start-docker-compose.sh $TAG &
 
 sleep 30
 
