@@ -18,7 +18,6 @@ import os
 import hashlib
 from clickhouse_driver import connect
 import concurrent.futures
-import time
 
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
@@ -95,7 +94,7 @@ def compute_checksum(table, statements):
         #logging.info(f"Debug output to {out_file}")
         debug_out = open(out_file, 'w')
     else:
-        print("Skipping writing to file")
+        logging.info("Skipping writing to file")
     try:
         for statement in statements:
             sql = statement
@@ -153,7 +152,7 @@ def get_table_checksum_query(table):
 
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = "'"+excluded_columns+"'"
-    print(f"Excluded columns, ${excluded_columns}")
+    logging.info(f"Excluded columns, ${excluded_columns}")
     (rowset, rowcount) = execute_statement("select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" +
                                           args.clickhouse_database+"' and table = '"+table+"' and name not in ("+excluded_columns+") order by position")
 
@@ -285,7 +284,7 @@ def get_tables_from_regex(strDSN):
     schema = args.clickhouse_database
     strCommand = "select name from system.tables where database = '{d}' and match(name,'{t}') order by 1".format(
         d=schema, t=args.tables_regex)
-    print(f"REGEX QUERY: {strCommand}")
+    logging.info(f"REGEX QUERY: {strCommand}")
     (rowset, rowcount) = execute_statement(strCommand)
     x = rowset
     return x
