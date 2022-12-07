@@ -23,7 +23,6 @@ def mysql_to_clickhouse_postgres_inserts(self, input, output):
 
     with When("I insert data in MySql table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
-        pause()
 
     with Then("I check data inserted correct"):
         mysql_rows_after_delete = mysql.query(

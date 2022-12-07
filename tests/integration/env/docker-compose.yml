@@ -43,7 +43,11 @@ services:
   debezium:
     container_name: debezium
     hostname: debezium
-    image: debezium/connect:1.9.5.Final
+#    image: debezium/connect:1.9.5.Final
+    build:
+      context: ../../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 2.1.0.Alpha1
     restart: "no"
     expose:
       - "8083"
@@ -79,7 +83,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:2022-11-21
+    image:  altinity/clickhouse-sink-connector:2022-12-05
 #    2022-10-24
     restart: "no"
     expose:

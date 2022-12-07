@@ -84,6 +84,7 @@ def regression(
         )
 
     self.context.cluster = cluster
+    self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
         create_database(name="test")
@@ -101,6 +102,7 @@ def regression(
     Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.delete", "feature"))
     Feature(run=load("tests.update", "feature"))
+    Feature(run=load("tests.truncate", "feature"))
     # Feature(run=load("tests.sysbench", "feature"))
     # Feature(run=load("tests.manual_section", "feature"))
 

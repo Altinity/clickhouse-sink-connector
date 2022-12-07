@@ -30,9 +30,10 @@ def init_debezium_connector(self, node=None):
     "database.server.name": "SERVER5432",
     "database.whitelist": "test",
     "database.allowPublicKeyRetrieval":"true",
-
     "database.history.kafka.bootstrap.servers": "kafka:9092",
-    "database.history.kafka.topic": "schema-changes.test",
+    "database.history.kafka.topic": "schema-changes.test_db",
+
+
 
     "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
     "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
@@ -49,7 +50,7 @@ def init_debezium_connector(self, node=None):
     "topic.creation.default.replication.factor": 1,
     "topic.creation.default.partitions": 6,
 
-    "provide.transaction.metadata": "true"
+    "provide.transaction.metadata": "true",
   }
 }
 EOF"""
@@ -62,7 +63,7 @@ EOF"""
           "tasks.max": "1",
           "snapshot.mode": "initial",
           "snapshot.locking.mode": "minimal",
-          "snapshot.delay.ms": 10000,
+          "snapshot.delay.ms": 1,
           "include.schema.changes":"true",
           "include.schema.comments": "true",
           "database.hostname": "mysql-master",
@@ -88,8 +89,12 @@ EOF"""
           "topic.creation.default.partitions": 6,
 
           "provide.transaction.metadata": "true",
-          "max.batch.size": 128000,
-          "max.queue.size": 512000
+          "topic.prefix" : "SERVER5432",
+          "database.server.id": "5432",
+          
+          "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+          "schema.history.internal.kafka.topic": "schemahistory.test",
+          "skipped.operations": "none"   
         }
       }
 EOF"""
@@ -143,7 +148,7 @@ def init_sink_connector(
   "config": {
     "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
     "tasks.max": "10",
-    "topics": "SERVER5432.test.users, SERVER5432.sbtest.sbtest1",
+    "topics.regex": "SERVER5432.test.users, SERVER5432.sbtest.sbtest1",
     "clickhouse.topic2table.map": "SERVER5432.test.users:users",
     "clickhouse.server.url": "clickhouse",
     "clickhouse.server.user": "root",
