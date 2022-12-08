@@ -1,0 +1,144 @@
+# Default values for altinity-sink-connector.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+### DEPENDENCY CHARTS ###
+### Kafka Console #####
+console:
+  # Config.yaml is required for Console
+  # See reference config: https://github.com/redpanda-data/console/blob/master/docs/config/console.yaml)
+  config:
+    kafka:
+      brokers:
+        - altinity-sink-connector-kafka:9092
+
+    server:
+      listenPort: 8081
+####################### SINK CONNECTOR CONFIGURATION #######################3
+kafka:
+  bootstrapServers: altinity-sink-connector-kafka:9092
+
+  schemaRegistry:
+    url: "http://altinity-sink-connector-schema-registry:8081"
+
+clickhouseSinkConnector:
+  image: subkanthi/clickhouse-kafka-sink-connector-strimzi:latest
+  namespace: sink
+  config:
+    storage:
+      topic: config-storage-topic-sink
+  offset:
+    storage:
+      topic: offset-storage-topic-sink
+
+  status:
+    storage:
+      topic: status-storage-topic-sink
+
+  clickhouse:
+    server:
+      url: clickhouse
+      user: root
+      pass: root
+      database: default
+      port: 8123
+
+## List of clusters -> kafkaconnect
+cluster:
+  - name: mysql-cluster-1
+    namespace: default
+  - name: mysql-cluster-2
+    namespace: default
+
+### List of kafkaconnectors.
+clickhouseSinkConnectors:
+  - name: sink-connector-employees
+    clusterName: mysql-cluster-1
+    topics: "SERVER.dashboard.employees"
+    namespace: default
+    topic2tablemap: ""
+  - name: sink-connector-products
+    clusterName: mysql-cluster-2
+    topics: "SERVER.dashboard.products"
+    namespace: default
+    topic2tablemap: ""
+

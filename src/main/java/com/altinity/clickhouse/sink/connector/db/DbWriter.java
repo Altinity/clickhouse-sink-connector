@@ -274,8 +274,12 @@ public class DbWriter extends BaseDbWriter {
 
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
-                result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
-                result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                if(record.getBeforeModifiedFields() != null) {
+                    result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
+                }
+                if(record.getAfterModifiedFields() != null) {
+                    result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
+                }
             } else {
                 log.error("INVALID CDC RECORD STATE");
             }
