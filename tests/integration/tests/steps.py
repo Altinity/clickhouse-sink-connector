@@ -488,9 +488,9 @@ def sb_debizium_script_connector(self):
                     and wait message that they applied correct""",
         ):
             retry(self.context.cluster.node("bash-tools").cmd, timeout=100, delay=3)(
-                f"./../manual_scripts/debezium-connector-setup-sysbench.sh",
+                f"./../manual_scripts/debezium-connector-setup-database.sh",
                 message='{"error_code":409,"message":"Connector '
-                'test-connector already exists"}',
+                'debezium-connector-sbtest already exists"}',
             )
         yield
     finally:
@@ -498,7 +498,8 @@ def sb_debizium_script_connector(self):
         with Finally("I delete debezium sysbench connections"):
             with By("deleting debezium connector", flags=TE):
                 self.context.cluster.node("bash-tools").cmd(
-                    'curl -X DELETE -H "Accept:application/json" "http://debezium:8083/connectors/test-connector" '
+                    'curl -X DELETE -H "Accept:application/json" "http://debezium:8083/connectors/'
+                    'debezium-connector-sbtest" '
                     "2>/dev/null | jq ."
                 )
             with And("Drop CH table"):

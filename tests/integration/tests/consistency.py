@@ -259,7 +259,6 @@ def kill_start(self, services, loops=2):
                         self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
-        pause()
         select(statement="count(*)", table_name=table_name, with_optimize=True)
 
 

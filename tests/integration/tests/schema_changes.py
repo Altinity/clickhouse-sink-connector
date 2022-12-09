@@ -27,7 +27,6 @@ def check_datatype_replication(
             f" PRIMARY KEY (id))"
             f" ENGINE = InnoDB;",
         )
-        pause()
 
     if not auto_create_tables:
         with And(f"I create ClickHouse replica test.{table_name}"):

@@ -13,9 +13,10 @@ def restart(self, services, loops=10, delete_number=1500):
     mysql = self.context.cluster.node("mysql-master")
 
     with Given("I create unique table name"):
-        table_name = f"test{uid}"
+        table_name = f"test"
 
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    pause()
 
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
@@ -52,7 +53,6 @@ def restart(self, services, loops=10, delete_number=1500):
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
         select(statement="count(*)", table_name=table_name, with_optimize=True)
-        pause()
 
 
 @TestSuite
