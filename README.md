@@ -20,7 +20,7 @@ The connector is tested with the following converters
 
 # Source Databases
 - MySQL (Debezium)
-- PostgreSQL (Debezium) (Testing in progress)
+- PostgreSQL (Debezium)
 
 |  Component    |   Version(Tested) |
 |---------------|-------------------|
