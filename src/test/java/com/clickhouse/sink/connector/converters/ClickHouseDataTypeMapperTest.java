@@ -29,4 +29,12 @@ public class ClickHouseDataTypeMapperTest {
 
 
     }
+
+    @Test
+    public void convert() {
+        //Integer tests.
+       // ClickHouseDataTypeMapper.convert(Schema.INT16_SCHEMA.type(), null, 244223232, 1, ps);
+
+
+    }
 }

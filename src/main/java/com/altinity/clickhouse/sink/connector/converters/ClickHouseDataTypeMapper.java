@@ -1,15 +1,21 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.clickhouse.client.ClickHouseDataType;
+import com.google.common.io.BaseEncoding;
 import io.debezium.data.Enum;
-import io.debezium.data.Json;
 import io.debezium.data.EnumSet;
+import io.debezium.data.Json;
 import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.Struct;
 
+import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -78,6 +84,144 @@ public class ClickHouseDataTypeMapper {
         // Geometry -> Geometry
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
 
+    }
+
+    /**
+     * Core function that is used for converting data
+     * based on the Kafka connect schema.
+     * This function has the mapping logic of Kafka connect schema name/type -> ClickHouse data type.
+     * @param type
+     * @param schemaName
+     * @param value
+     * @param index
+     * @param ps
+     * @return true, if handled, false if the data type is not current handled.
+     * @throws SQLException
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                               Object value,
+                                               int index,
+                                               PreparedStatement ps) throws SQLException {
+
+        boolean result = true;
+
+        //TinyINT -> INT16 -> TinyInt
+        boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
+
+        boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type()) ||
+                (type == Schema.INT32_SCHEMA.type());
+
+        boolean isFieldTypeFloat = (type == Schema.FLOAT32_SCHEMA.type()) ||
+                (type == Schema.FLOAT64_SCHEMA.type());
+
+
+        // MySQL BigInt -> INT64
+        boolean isFieldTypeBigInt = false;
+        boolean isFieldTime = false;
+        boolean isFieldDateTime = false;
+
+        boolean isFieldTypeDecimal = false;
+
+        // Decimal -> BigDecimal(JDBC)
+        if (type == Schema.BYTES_SCHEMA.type() && (schemaName != null &&
+                schemaName.equalsIgnoreCase(Decimal.LOGICAL_NAME))) {
+            isFieldTypeDecimal = true;
+        }
+
+        if (type == Schema.INT64_SCHEMA.type()) {
+            // Time -> INT64 + io.debezium.time.MicroTime
+            if (schemaName != null && schemaName.equalsIgnoreCase(MicroTime.SCHEMA_NAME)) {
+                isFieldTime = true;
+            } else if ((schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) ||
+                    (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME))) {
+                //DateTime -> INT64 + Timestamp(Debezium)
+                // MicroTimestamp ("yyyy-MM-dd HH:mm:ss")
+                isFieldDateTime = true;
+            } else {
+                isFieldTypeBigInt = true;
+            }
+        }
+
+        // Text columns
+        if (type == Schema.Type.STRING) {
+            if (schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
+                // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
+                ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
+
+            } else if(schemaName != null && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
+                // if the column is JSON, it should be written, String otherwise
+                ps.setObject(index, value);
+            }else {
+                ps.setString(index, (String) value);
+            }
+        } else if (isFieldTypeInt) {
+            if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
+                // Date field arrives as INT32 with schema name set to io.debezium.time.Date
+                ps.setDate(index, DebeziumConverter.DateConverter.convert(value));
+
+            } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
+                ps.setTimestamp(index, (java.sql.Timestamp) value);
+            } else {
+                ps.setInt(index, (Integer) value);
+            }
+        } else if (isFieldTypeFloat) {
+            if (value instanceof Float) {
+                ps.setFloat(index, (Float) value);
+            } else if (value instanceof Double) {
+                ps.setDouble(index, (Double) value);
+            }
+        } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
+            ps.setBoolean(index, (Boolean) value);
+        } else if (isFieldTypeBigInt || isFieldTinyInt) {
+            ps.setObject(index, value);
+        } else if (isFieldDateTime || isFieldTime) {
+            if (isFieldDateTime) {
+                if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
+                    // Handle microtimestamp first
+                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                }
+                else if (value instanceof Long) {
+                    boolean isColumnDateTime64 = false;
+                    if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
+                        isColumnDateTime64 = true;
+                    }
+                    ps.setLong(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
+                }
+            } else if (isFieldTime) {
+                ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
+            }
+            // Convert this to string.
+            // ps.setString(index, String.valueOf(value));
+        } else if (isFieldTypeDecimal) {
+            ps.setBigDecimal(index, (BigDecimal) value);
+        } else if (type == Schema.Type.BYTES) {
+            // Blob storage.
+            if (value instanceof byte[]) {
+                String hexValue = new String((byte[]) value);
+                ps.setString(index, hexValue);
+            } else if (value instanceof java.nio.ByteBuffer) {
+                ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
+            }
+
+        } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
+            // Geometry
+            if (value instanceof Struct) {
+                Struct geometryValue = (Struct) value;
+                Object wkbValue = geometryValue.get("wkb");
+                if(wkbValue != null) {
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) wkbValue).array()));
+                } else {
+                    ps.setString(index, "");
+                }
+            } else {
+                ps.setString(index, "");
+            }
+        }
+        else {
+            result = false;
+        }
+
+        return result;
     }
 
     public static ClickHouseDataType getClickHouseDataType(Schema.Type kafkaConnectType, String schemaName) {
