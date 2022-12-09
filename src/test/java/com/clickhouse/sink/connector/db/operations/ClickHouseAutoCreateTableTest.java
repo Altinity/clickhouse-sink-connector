@@ -80,6 +80,8 @@ public class ClickHouseAutoCreateTableTest {
 
         fields.add(new Field("json_output", 8, Json.schema()));
 
+        fields.add(new Field("max_amount", 9, Schema.FLOAT64_SCHEMA));
+
         Field[] result = new Field[fields.size()];
         fields.toArray(result);
         return result;
@@ -104,6 +106,7 @@ public class ClickHouseAutoCreateTableTest {
 
         columnToDataTypesMap.put("json_output", ClickHouseDataType.JSON.name());
 
+        columnToDataTypesMap.put("max_amount", ClickHouseDataType.Float64.name());
 
 
         return columnToDataTypesMap;
@@ -141,7 +144,7 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(null, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
-        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` double NOT NULL, `_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
     @Test

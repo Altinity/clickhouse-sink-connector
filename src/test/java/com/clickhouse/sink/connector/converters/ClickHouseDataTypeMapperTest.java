@@ -13,7 +13,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 
 @Testcontainers
 public class ClickHouseDataTypeMapperTest {
@@ -47,7 +49,9 @@ public class ClickHouseDataTypeMapperTest {
         //Integer tests.
        // ClickHouseDataTypeMapper.convert(Schema.INT16_SCHEMA.type(), null, 244223232, 1, ps);
 
-        double maxDoubleTest = 1000000000000000000000000000000000000000000000000000000000000d;
+        //double maxDoubleTest = 1000000000000000000000000000000000000000000000000000000000000d;
+
+        double maxDoubleTest = 999.00009d;
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
@@ -73,6 +77,10 @@ public class ClickHouseDataTypeMapperTest {
         ps.addBatch();
         ps.executeBatch();
 
+        Statement stmt = dbWriter.getConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("select Maximum_Value from datatypes.numeric_types_DOUBLE");
+        Assert.assertTrue(rs.next());
+        Assert.assertEquals(rs.getObject(1), maxDoubleTest);
         System.out.println("Query persisted");
 //
 //             PreparedStatement stmt = conn.prepareStatement("select 1")) {
