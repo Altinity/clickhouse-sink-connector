@@ -16,7 +16,7 @@ jobs:
 #        run: pip3 install testflows
       - name: docker-compose version
         working-directory: tests/integration
-        run: docker-compose --version
+        run: docker --version
 #      - name: Run testflows tests
 #        working-directory: tests/integration
 #        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
