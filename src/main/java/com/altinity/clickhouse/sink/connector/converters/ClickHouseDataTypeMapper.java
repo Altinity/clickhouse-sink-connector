@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.client.data.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.Enum;
 import io.debezium.data.EnumSet;
@@ -168,7 +169,7 @@ public class ClickHouseDataTypeMapper {
             if (value instanceof Float) {
                 ps.setFloat(index, (Float) value);
             } else if (value instanceof Double) {
-                ps.setDouble(index, (Double) value);
+                ps.setObject(index, ClickHouseDoubleValue.of((Double) value).asBigDecimal());
             }
         } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
             ps.setBoolean(index, (Boolean) value);
