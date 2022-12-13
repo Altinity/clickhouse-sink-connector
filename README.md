@@ -33,7 +33,7 @@ The connector is tested with the following converters
 
 
 ### Quick Start (Docker-compose)
-Docker image for Sink connector 
+Docker image for Sink connector (Updated December 12, 2022)
 `altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
