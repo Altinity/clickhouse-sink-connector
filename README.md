@@ -83,6 +83,7 @@ mvn install -DskipTests=true
 ```
 
 ## Data Types
+#### Warning: Using float data types are highly discouraged, because of the behaviour in ClickHouse with handing precision.(Decimal is a better choice)
 
 | MySQL              | Kafka<br>Connect                                     | ClickHouse                      |
 |--------------------|------------------------------------------------------|---------------------------------|
