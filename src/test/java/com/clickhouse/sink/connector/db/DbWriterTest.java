@@ -203,7 +203,7 @@ public class DbWriterTest {
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
-        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(100000,getSampleRecords()
+        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords()
                 , queryToRecordsMap);
 
         Assert.assertTrue(result.isEmpty() == false);

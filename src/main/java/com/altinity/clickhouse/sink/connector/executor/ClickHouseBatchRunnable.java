@@ -182,7 +182,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             queryToRecordsMap = new HashMap<>();
             topicToRecordsMap.put(topicName, queryToRecordsMap);
         }
-        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS),records, queryToRecordsMap);
+        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
         BlockMetaData bmd = new BlockMetaData();
 
         if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd)) {

@@ -218,8 +218,7 @@ public class DbWriter extends BaseDbWriter {
      * @param records
      * @return
      */
-    public Map<TopicPartition, Long> groupQueryWithRecords( long buffer_max_records,
-                                                ConcurrentLinkedQueue<ClickHouseStruct> records,
+    public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
                                                                         Map<MutablePair<String, Map<String, Integer>>,
                                                                                 List<ClickHouseStruct>> queryToRecordsMap) {
 
@@ -236,13 +235,9 @@ public class DbWriter extends BaseDbWriter {
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
         // so that all records belonging to the same  query
         // can be inserted as a batch.
-        long count = 0;
+
         Iterator iterator = records.iterator();
         while (iterator.hasNext()) {
-            if (count >= buffer_max_records){
-                break;
-            }
-            count++;
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
             updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
@@ -382,27 +377,27 @@ public class DbWriter extends BaseDbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-//     public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records,
-//                                             Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
+    public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records,
+                                            Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
-//         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
+        Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
 
-// //        BlockMetaData bmd = new BlockMetaData();
-// //        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
+//        BlockMetaData bmd = new BlockMetaData();
+//        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
 
-//         if (records.isEmpty()) {
-//             log.debug("No Records to process");
-// //            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
-//             return partitionToOffsetMap;
-//         }
+        if (records.isEmpty()) {
+            log.debug("No Records to process");
+//            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
+            return partitionToOffsetMap;
+        }
 
-//         // We are getting a subset of the records(Batch) to process.
-//         synchronized (records) {
-//             partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
-//         }
-//         //addToPreparedStatementBatch(queryToRecordsMap);
-//         return partitionToOffsetMap;
-//     }
+        // We are getting a subset of the records(Batch) to process.
+        synchronized (records) {
+            partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
+        }
+        //addToPreparedStatementBatch(queryToRecordsMap);
+        return partitionToOffsetMap;
+    }
 
     /**
      * Function to iterate through records and add it to JDBC prepared statement

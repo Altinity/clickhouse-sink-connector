@@ -12,15 +12,17 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
+import org.apache.kafka.connect.errors.ConnectException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
+// import java.util.concurrent.TimeUnit;
 
 /**
  * <p>Creates sink service instance, takes records loaded from those
@@ -39,13 +41,15 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchExecutor executor;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    // private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
     private ClickHouseSinkConnectorConfig config;
 
     private long totalRecords;
+
+    private Map<String, String> topic2TableMap = null;
 
     @Override
     public void start(Map<String, String> config) {
@@ -57,19 +61,18 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.config = new ClickHouseSinkConnectorConfig(config);
 
-        Map<String, String> topic2TableMap = null;
         try {
-             topic2TableMap = Utils.parseTopicToTableMap(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP));
+             this.topic2TableMap = Utils.parseTopicToTableMap(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP));
         } catch (Exception e) {
             log.error("Error parsing topic to table map" + e);
         }
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
 
-        this.records = new ConcurrentHashMap<>();
-        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
-        this.executor = new ClickHouseBatchExecutor(this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE));
-        this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.MILLISECONDS);
+        this.executor = new ClickHouseBatchExecutor(this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE), new LinkedBlockingQueue<>());
+
+        // ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
+        // this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.MILLISECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
     }
@@ -95,36 +98,40 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
+        log.info("******** recieved recods " + records.size());
         totalRecords += records.size();
 
         long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
         log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
+        ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map = new ConcurrentHashMap<>();
         for (SinkRecord record : records) {
             if (this.deduplicator.isNew(record.topic(), record)) {
-                //if (true) {
                 ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
-                    this.appendToRecords(c.getTopic(), c);
+                    this.appendToRecords(records_map, c.getTopic(), c);
                 }
             } else {
                 log.info("skip already seen record: " + record);
             }
         }
+
+        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
+        this.executor.execute(runnable);
     }
 
-    private void appendToRecords(String topicName, ClickHouseStruct chs) {
+    private void appendToRecords(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map, String topicName, ClickHouseStruct chs) {
         ConcurrentLinkedQueue<ClickHouseStruct> structs;
 
-        if(this.records.containsKey(topicName)) {
-            structs = this.records.get(topicName);
+        if(records_map.containsKey(topicName)) {
+            structs = records_map.get(topicName);
         } else {
             structs = new ConcurrentLinkedQueue<>();
         }
         structs.add(chs);
-        synchronized (this.records) {
-            this.records.put(topicName, structs);
+        synchronized (records_map) {
+            records_map.put(topicName, structs);
         }
     }
 
@@ -164,6 +171,12 @@ public class ClickHouseSinkTask extends SinkTask {
     
     @Override
     public void flush(Map<TopicPartition, OffsetAndMetadata> currentOffsets) {
+        try {
+            this.executor.awaitCurrentTasks();
+        } 
+        catch (InterruptedException err) {
+            throw new ConnectException("Interrupted while waiting for write tasks to complete.", err);
+        }
         // this.executor.
         // No-op. The connector is managing the offsets.
         // if(!this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
