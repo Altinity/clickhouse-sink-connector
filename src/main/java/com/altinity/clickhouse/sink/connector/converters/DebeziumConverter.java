@@ -147,10 +147,20 @@ public class DebeziumConverter {
             String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
+            LocalDateTime startDate = LocalDateTime.parse("1900-01-01 00:00:00.000000", destFormatter);
+            LocalDateTime endDate = LocalDateTime.parse("2299-12-31 23:59:59.999000", destFormatter);
             // The order of this array matters,
             // for example you might truncate microseconds
             // to milliseconds(3) if .SSS is above .SSSSSS
             String[] date_formats = {
+                    "uuuu-MM-dd'T'HH:mm:ss'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.SSSSS'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.SSSS'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.SSS'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.SS'Z'",
+                    "uuuu-MM-dd'T'HH:mm:ss.S'Z'",
+
                     "yyyy-MM-dd'T'HH:mm:ss'Z'",
                     "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
                     "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
@@ -165,6 +175,11 @@ public class DebeziumConverter {
                 try {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
                     LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+                    // https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
+                    if (zd.isBefore(startDate) || zd.isAfter(endDate)){
+                        zd = LocalDateTime.now();
+                    }
+                    
                     result = zd.format(destFormatter);
                     //result = removeTrailingZeros(result);
                     parsingSuccesful = true;

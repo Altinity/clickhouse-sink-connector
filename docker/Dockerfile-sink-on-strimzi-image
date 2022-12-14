@@ -11,23 +11,28 @@ COPY target/*.jar  /opt/kafka/plugins/clickhouse-sink-connector/280d4c6e/
 COPY deploy/libs/* /opt/kafka/plugins/clickhouse-sink-connector/2824cdcf/
 
 # Copy apicurio
-RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
-      && 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
-      && 'tar' 'xvfz' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' '-C' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
-      && 'rm' '-vf' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz'
+# RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
+#       && 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.3.1.Final/apicurio-registry-distro-connect-converter-2.3.1.Final.tar.gz' \
+#       && 'tar' 'xvfz' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz' '-C' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
+#       && 'rm' '-vf' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d.tgz'
 
+# COPY ./.extra_plugins/apicurio-registry-distro-connect-converter-2.1.0.Final/* /opt/kafka/plugins/clickhouse-sink-connector/3542976d/
+# COPY .extra_plugins/apicurio-registry-distro-connect-converter-2.0.0-20210301.113415-2-converter/* /opt/kafka/plugins/clickhouse-sink-connector/3542976d/
+COPY ./.extra_plugins/apicurio-registry-distro-connect-converter-2.3.1.Final/* /opt/kafka/plugins/clickhouse-sink-connector/3542976d/
 # Copy confluent
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
 
 
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
+# RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
 
 #RUN 'curl' '-L' '--output' '/libs/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
+# COPY ./.extra_plugins/confluentinc-kafka-connect-avro-converter-7.2.2/lib/* /opt/kafka/plugins/clickhouse-sink-connector/3542976d/
+# COPY ./.extra_plugins/confluentinc-kafka-connect-json-schema-converter-7.3.0/lib/* /opt/kafka/plugins/clickhouse-sink-connector/3542976d/
 
 USER 1001

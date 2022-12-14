@@ -71,7 +71,7 @@ public class BaseDbWriter {
                 log.error("Error with DB connection");
                 return result;
             }
-
+            // TODO : add check for DB name 
             ResultSet columns = this.conn.getMetaData().getColumns(null, null,
                     tableName, null);
             while (columns.next()) {

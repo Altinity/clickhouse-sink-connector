@@ -51,11 +51,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             if(f.schema().isOptional() == true) {
                 isNull = true;
             }
-            createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
+            createTableSyntax.append("`").append(colName).append("` ").append(dataType);
 
             // Ignore setting NULL OR not NULL for JSON.
             if(dataType != null && dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name())) {
                 // ignore adding nulls;
+                createTableSyntax.append(" ").append(NULL);
             } else {
                 if (isNull) {
                     createTableSyntax.append(" ").append(NULL);
@@ -72,7 +73,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
-        createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
+        createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(" ").append(NULL).append(",");
         createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
 
         createTableSyntax.append(")");

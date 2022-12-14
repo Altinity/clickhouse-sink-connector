@@ -95,7 +95,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         try {
             int numRecords = records.size();
             if (numRecords <= 0) {
-                log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
+                log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getName(), taskId));
                 return;
             }
 
@@ -182,8 +182,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             queryToRecordsMap = new HashMap<>();
             topicToRecordsMap.put(topicName, queryToRecordsMap);
         }
-
-        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
+        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS),records, queryToRecordsMap);
         BlockMetaData bmd = new BlockMetaData();
 
         if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd)) {

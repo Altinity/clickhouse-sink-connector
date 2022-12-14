@@ -149,6 +149,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         Map<TopicPartition, OffsetAndMetadata> committedOffsets = new HashMap<>();
         try {
+            this.flush(currentOffsets);
             currentOffsets.forEach(
                     (topicPartition, offsetAndMetadata) -> {
                         committedOffsets.put(topicPartition, new OffsetAndMetadata(offsetAndMetadata.offset()));
@@ -160,14 +161,15 @@ public class ClickHouseSinkTask extends SinkTask {
 
         return committedOffsets;
     }
-/**
+    
     @Override
     public void flush(Map<TopicPartition, OffsetAndMetadata> currentOffsets) {
+        // this.executor.
         // No-op. The connector is managing the offsets.
-        if(!this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
-            return currentOffsets;
-        }
-    }**/
+        // if(!this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
+        //     return currentOffsets;
+        // }
+    }
 
     @Override
     public String version() {
