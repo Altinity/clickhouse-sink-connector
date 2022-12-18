@@ -1,13 +1,15 @@
 ## ReplacingMergeTree
 Sink Connector will attempt to read the `engine_full` column from system.tables for the corresponding table and will 
-identify the `engine` and the `sign` column.
-
-`CollapsingMergeTree(sign) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192`
+identify the `engine` and the `ver` column.
 
 ### Updates:
-For inserts, record will be inserted with `sign` set to `1`
-For updates, `before` value will be inserted with `sign` set to `-1`
-and `after` value will be inserted with `sign` set to `1`
+For **inserts**, record will be inserted with `sign` set to `1`
+For **updates**, a new row will be inserted with a higher **version** value and on merge, clickhouse will drop the row with the older **version** value.
+For **deletes**, a new record will be inserted with `sign` set to `-1` and a higher **version** value. Clickhouse will drop the row with the older **version** value. 
+A Row policy can be created to hide all the rows with `sign` set to -1.
+```
+create row policy table on db.table using sign != -1 to all;
+```
 
 ![](img/replacingmergetree_update_delete.jpg) \
 
