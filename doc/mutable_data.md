@@ -1,4 +1,4 @@
-## CollapsingMergeTree
+## ReplacingMergeTree
 Sink Connector will attempt to read the `engine_full` column from system.tables for the corresponding table and will 
 identify the `engine` and the `sign` column.
 
