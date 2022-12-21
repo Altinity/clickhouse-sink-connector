@@ -41,9 +41,9 @@ def check_datatype_replication(
             create_clickhouse_table(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, sign "
-                f"Int8, ver UInt64) "
-                f"ENGINE = ReplacingMergeTree(ver) "
+                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
+                f"Int8, _version UInt64) "
+                f"ENGINE = ReplacingMergeTree(_version) "
                 f"PRIMARY KEY id ORDER BY id SETTINGS "
                 f"index_granularity = 8192;",
             )
@@ -94,8 +94,10 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
-        ("DOUBLE", "Float64", ["999.00009"], ["999.00009"], False),
-        ("DOUBLE", "Float64", ["NULL"], ["\\N"], True),
+        # ("DOUBLE", "Float64", ["999.00009"], ["999.00009"], False),
+        # ("DOUBLE", "Float64", ["NULL"], ["\\N"], True),
+        ("DOUBLE", "Decimal128(20)", ["999.00009"], ["999.00009"], False),
+        ("DOUBLE", "Decimal128(20)", ["1.7091"], ["1.7091"], False),
     ],
 )
 @Requirements(

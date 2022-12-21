@@ -52,7 +52,7 @@ def check_datatype_replication(
         for i, value in enumerate(values, 1):
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
             with Then(f"I make check that ClickHouse table has same dataset"):
-                retry(clickhouse.query, timeout=50, delay=1)(
+                retry(clickhouse.query, timeout=15, delay=1)(
                     f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
                     message=f"{ch_values[i - 1]}",
                 )
@@ -96,6 +96,16 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
     "mysql_type ch_type values ch_values nullable",
     [
         ("DOUBLE", "Float64", ["999.00009"], ["999.00009"], False),
+        ("DOUBLE", "Float64", ["1.3333"], ["1.3333"], False),
+        ("DOUBLE", "Float64", ["1.33333"], ["1.33333"], False),
+        ("DOUBLE", "Float64", ["11111.7091"], ["11111.7091"], False),
+        ("DOUBLE", "Float64", ["1.12"], ["1.12"], False),
+        ("DOUBLE", "Float64", ["5.7091"], ["5.7091"], False),
+        ("DOUBLE", "Float64", ["312123.23321"], ["312123.23321"], False),
+        ("DOUBLE", "Float64", ["1.7091"], ["1.7091"], False),
+        ("DOUBLE", "Float64", ["11234125"], ["11234125"], False),
+        ("DOUBLE", "Float64", ["0.7091"], ["0.7091"], False),
+        ("DOUBLE", "Float64", ["0.0000"], ["0.0000"], False),
         ("DOUBLE", "Float64", ["NULL"], ["\\N"], True),
     ],
 )
