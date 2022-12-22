@@ -231,32 +231,34 @@ public class DbWriter extends BaseDbWriter {
             return partitionToOffsetMap;
         }
 
-        long clickHouseInsertionTime = System.currentTimeMillis();
+        // long clickHouseInsertionTime = System.currentTimeMillis();
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query -> list of records
         // so that all records belonging to the same  query
         // can be inserted as a batch.
+
+        boolean enable_kafka_offset = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET);
+        boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
 
         Iterator iterator = records.iterator();
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
-            updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
+            if (enable_kafka_offset) {
+                updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
+            }
 
             // Identify the min and max offsets of the bulk
             // that's inserted.
-            int recordPartition = record.getKafkaPartition();
-
-            boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
+            // int recordPartition = record.getKafkaPartition();
 
             boolean result = false;
-
-            if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+            CdcRecordState cdcRecordState = getCdcSectionBasedOnOperation(record.getCdcOperation());
+            if(CdcRecordState.CDC_RECORD_STATE_BEFORE == cdcRecordState) {
                 result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
-            } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+            } else if(CdcRecordState.CDC_RECORD_STATE_AFTER == cdcRecordState) {
                 if(enableSchemaEvolution) {
                     try {
                         alterTable(record.getAfterStruct().schema().fields());
-                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
 
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
@@ -264,7 +266,7 @@ public class DbWriter extends BaseDbWriter {
                 }
 
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap);
-            } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
+            } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == cdcRecordState)  {
                 if(record.getBeforeModifiedFields() != null) {
                     result = updateQueryToRecordsMap(record, record.getBeforeModifiedFields(), queryToRecordsMap);
                 }
@@ -303,32 +305,22 @@ public class DbWriter extends BaseDbWriter {
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
 
-
-        if (response == null){
-            log.error("get Insert Query Response is null");
-            return false;
-        }
-        String insertQueryTemplate = response.getKey();
-        if(response.getKey() == null || response.getValue() == null) {
+        if(response == null || response.getKey() == null || response.getValue() == null) {
             log.error("********* QUERY or COLUMN TO INDEX MAP EMPTY");
             return false;
           //  this.columnNametoIndexMap = response.right;
         }
 
-        MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
-        mp.setLeft(insertQueryTemplate);
-        mp.setRight(response.getValue());
-
-        if (!queryToRecordsMap.containsKey(mp)) {
+        if (!queryToRecordsMap.containsKey(response)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
             newList.add(record);
 
-            queryToRecordsMap.put(mp, newList);
+            queryToRecordsMap.put(response, newList);
         } else {
-            List<ClickHouseStruct> recordsList = queryToRecordsMap.get(mp);
+            List<ClickHouseStruct> recordsList = queryToRecordsMap.get(response);
             recordsList.add(record);
 
-            queryToRecordsMap.put(mp, recordsList);
+            queryToRecordsMap.put(response, recordsList);
         }
 
         return true;
@@ -363,6 +355,7 @@ public class DbWriter extends BaseDbWriter {
 
                 try {
                     cat.runQuery(alterTableQuery, this.getConnection());
+                    this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
                 } catch(Exception e) {
                     log.error(" **** ALTER TABLE EXCEPTION ", e);
                 }

@@ -27,6 +27,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * records to Clickhouse.
  */
 public class ClickHouseBatchRunnable implements Runnable {
+    private static final String RECORDS_VAR_IN_EXECUTION = "$RecordsVarInExecution";
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
 
@@ -93,7 +94,8 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
         try {
-            int numRecords = records.size();
+            int numRecords = this.records.size();
+            // one record for checker 
             if (numRecords <= 0) {
                 log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getName(), taskId));
                 return;
@@ -101,10 +103,16 @@ public class ClickHouseBatchRunnable implements Runnable {
 
             // Topic Name -> List of records
             for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
+                // indicator to check that records are in execution
+                if (entry.getKey() == RECORDS_VAR_IN_EXECUTION){
+                    continue;
+                }
                 if (entry.getValue().size() > 0) {
                     processRecordsByTopic(entry.getKey(), entry.getValue());
                 }
             }
+            
+            this.records.put(RECORDS_VAR_IN_EXECUTION, new ConcurrentLinkedQueue<>());
         } catch(Exception e) {
             log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
         }
@@ -182,7 +190,11 @@ public class ClickHouseBatchRunnable implements Runnable {
             queryToRecordsMap = new HashMap<>();
             topicToRecordsMap.put(topicName, queryToRecordsMap);
         }
+        long groupQueryStartTime = System.currentTimeMillis();
         Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
+        long groupQueryEndTime = System.currentTimeMillis();
+        log.info("groupQueryWithRecords time taken in millis: " + (groupQueryEndTime - groupQueryStartTime));
+
         BlockMetaData bmd = new BlockMetaData();
 
         if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd)) {

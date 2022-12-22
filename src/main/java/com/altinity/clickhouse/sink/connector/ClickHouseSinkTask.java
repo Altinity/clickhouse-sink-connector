@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Iterator;
 // import java.util.concurrent.TimeUnit;
 
 /**
@@ -31,6 +32,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseSinkTask extends SinkTask {
 
+    private static final String RECORDS_VAR_IN_EXECUTION = "$RecordsVarInExecution";
+    
     private String id = "-1";
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
 
@@ -42,6 +45,13 @@ public class ClickHouseSinkTask extends SinkTask {
 
     // Records grouped by Topic Name
     // private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+
+    // thread wise records map, records will be grouped by topic name 
+    // will have extra key as "$RecordsVarInExecution" if value have length 0 then its unset else its set 
+    private ConcurrentLinkedQueue<ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>> records_map_queue;
+
+    // to set "$RecordsVarInExecution" 
+    private ConcurrentLinkedQueue<ClickHouseStruct> dummyLinkedQueue;
 
     private DeDuplicator deduplicator;
 
@@ -71,6 +81,17 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.executor = new ClickHouseBatchExecutor(this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE), new LinkedBlockingQueue<>());
 
+        ClickHouseStruct dummyClickhouseStruct = new ClickHouseStruct(0, "dummy", null, 0,0L, null,null, null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        this.dummyLinkedQueue = new ConcurrentLinkedQueue<>();
+        this.dummyLinkedQueue.add(dummyClickhouseStruct);
+        
+        this.records_map_queue = new ConcurrentLinkedQueue<>();
+        for (int i = 0; i < this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE); i++){
+            ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> k = new ConcurrentHashMap<>();
+            k.put(RECORDS_VAR_IN_EXECUTION, new ConcurrentLinkedQueue<>());
+            this.records_map_queue.add(k);
+        }
+
         // ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         // this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.MILLISECONDS);
 
@@ -98,14 +119,14 @@ public class ClickHouseSinkTask extends SinkTask {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        log.info("******** recieved recods " + records.size());
+        log.debug("******** recieved recods " + records.size());
         totalRecords += records.size();
 
         long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
         log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
-        ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map = new ConcurrentHashMap<>();
+        ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map = this.checkAndGetRecordsMapToPushRecords();
         for (SinkRecord record : records) {
             if (this.deduplicator.isNew(record.topic(), record)) {
                 ClickHouseStruct c = converter.convert(record);
@@ -117,8 +138,10 @@ public class ClickHouseSinkTask extends SinkTask {
             }
         }
 
-        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
-        this.executor.execute(runnable);
+        this.checkAndExecuteRecordsMap(records_map);
+
+        // ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
+        // this.executor.execute(runnable);
     }
 
     private void appendToRecords(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map, String topicName, ClickHouseStruct chs) {
@@ -132,6 +155,60 @@ public class ClickHouseSinkTask extends SinkTask {
         structs.add(chs);
         synchronized (records_map) {
             records_map.put(topicName, structs);
+        }
+    }
+
+    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> checkAndGetRecordsMapToPushRecords(){
+        Iterator iterator = this.records_map_queue.iterator();
+        while (iterator.hasNext()) {
+            ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map = (ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>) iterator.next();
+            if (!this.isRecordsMapInExecution(records_map)){
+                return records_map;
+            }
+        }
+        log.info("###########- returning new record map -###########");
+        return new ConcurrentHashMap<>();
+    }
+
+    private boolean isRecordsMapInExecution(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map){
+        ConcurrentLinkedQueue<ClickHouseStruct> structs = records_map.get(RECORDS_VAR_IN_EXECUTION);
+        if (structs.size() > 0){
+            return true;
+        }
+        return false;
+    }
+
+    private void checkAndExecuteRecordsMap(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map){
+        if (!records_map.containsKey(RECORDS_VAR_IN_EXECUTION)) {
+            log.info("#############- in direct execution -#############");
+            ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
+            this.executor.execute(runnable);
+        }else if (getRecordsMapSize(records_map) >= this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS)){
+            log.info("#############- in buffer execution for size "+ getRecordsMapSize(records_map) + " -#############");
+            records_map.put(RECORDS_VAR_IN_EXECUTION, this.dummyLinkedQueue);
+            ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
+            this.executor.execute(runnable);
+        }
+    }
+
+    private long getRecordsMapSize(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map){
+        long size = 0;
+        for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : records_map.entrySet()) {
+            size = size + (long)entry.getValue().size();
+        }
+        return size;
+    }
+
+    private void executeAllRecordsMap(){
+        Iterator iterator = this.records_map_queue.iterator();
+        while (iterator.hasNext()) {
+            ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records_map = (ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>) iterator.next();
+            if (!isRecordsMapInExecution(records_map) && getRecordsMapSize(records_map) > 0){
+                log.info("############- in all execution for size " + getRecordsMapSize(records_map) + " -#############");
+                records_map.put(RECORDS_VAR_IN_EXECUTION, this.dummyLinkedQueue);
+                ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(records_map, this.config, this.topic2TableMap);
+                this.executor.execute(runnable);
+            }
         }
     }
 
@@ -172,6 +249,7 @@ public class ClickHouseSinkTask extends SinkTask {
     @Override
     public void flush(Map<TopicPartition, OffsetAndMetadata> currentOffsets) {
         try {
+            executeAllRecordsMap();
             this.executor.awaitCurrentTasks();
         } 
         catch (InterruptedException err) {
