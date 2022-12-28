@@ -20,6 +20,8 @@ The connector is tested with the following converters
 
 # Source Databases
 - MySQL (Debezium)
+  ** Note ** GTID Enabled - Highly encouraged for Updates/Deletes - 
+  Refer enabling Gtid in Replica for non-GTID sources - https://www.percona.com/blog/useful-gtid-feature-for-migrating-to-mysql-gtid-replication-assign_gtids_to_anonymous_transactions/
 - PostgreSQL (Debezium)
 
 |  Component    |   Version(Tested) |
