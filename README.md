@@ -7,7 +7,7 @@ The connector is tested with the following converters
 
 ![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
-- Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree - [Updates/Deletes](doc/mutable_data.md)
+- Inserts, Updates and Deletes using ReplacingMergeTree - [Updates/Deletes](doc/mutable_data.md)
 - Auto create tables in ClickHouse
 - Exactly once semantics 
 - Bulk insert to Clickhouse. 
@@ -26,11 +26,11 @@ The connector is tested with the following converters
 
 |  Component    |   Version(Tested) |
 |---------------|-------------------|
-| Redpanda      | 22.1.3            |
+| Redpanda      | 22.1.3, 22.3.9    |
 | Kafka-connect | 1.9.5.Final       |
 | Debezium      | 2.1.0.Alpha1      |
 | MySQL         | 8.0               |
-| ClickHouse    | 22.9              |
+| ClickHouse    | 22.9, 22.10       |
 | PostgreSQL    | 15                |
 
 
