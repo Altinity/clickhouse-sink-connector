@@ -39,10 +39,16 @@ Docker image for Sink connector (Updated December 12, 2022)
 `altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
-Recommended Memory limits.
+### Recommended Memory limits.
+**Production Usage**
+In `docker-compose.yml` file, its recommended to set Xmx to atleast 5G `-Xmx5G` when using in Production and 
+if you encounter a `Out of memory/Heap exception` error. 
+for both **Debezium** and **Sink**
+
 ```
-JAVA_OPTS="-Xms1G -Xmx5G"
+- KAFKA_HEAP_OPTS=-Xms2G -Xmx5G
 ```
+
 
 ### Kubernetes
 Docker Image for Sink connector(with Strimzi)
