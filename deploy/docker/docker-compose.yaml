@@ -72,13 +72,14 @@ services:
       - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
       - JMXHOST=localhost
       - JMXPORT=1976
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
 
   kafka:
     container_name: kafka
-    image: vectorized/redpanda
+    image: vectorized/redpanda:v22.1.3
     restart: "no"
     ports:
       # Expose LOCALHOST_NETWORK listener on localhost
@@ -113,6 +114,7 @@ services:
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -137,11 +139,11 @@ services:
       - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ./clickhouse/users.xml:/etc/clickhouse-server/users.xml
 
-  ##### MONITORING #####
-  #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
-  # Bitnami bitnami/jmx-exporter vs sscaling images
+  #### MONITORING #####
+#  https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
+#   Bitnami bitnami/jmx-exporter vs sscaling images
 
-  ### KAFKA UI #####
+  ## KAFKA UI #####
   console:
     image: docker.redpanda.com/vectorized/console:master-217260f
     restart: on-failure
@@ -172,6 +174,8 @@ services:
       SERVICE_PORT: 9072
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
+    depends_on:
+      - sink
 
   prometheus:
     container_name: prometheus
@@ -199,4 +203,4 @@ services:
       - GF_USERS_DEFAULT_THEME=light
     depends_on:
       - prometheus
-  #### END OF MONITORING ###
+  ### END OF MONITORING ###
