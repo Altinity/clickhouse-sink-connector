@@ -36,7 +36,7 @@ def update(self, primary_key, engine):
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 clickhouse.query(
-                    f"SELECT * FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
+                    f"SELECT * FROM test.{table_name} FINAL where sign !=-1 FORMAT CSV",
                     message='1,7,"a","b"',
                 )
 

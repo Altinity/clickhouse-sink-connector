@@ -90,7 +90,8 @@ def regression(
         create_database(name="test")
 
     features = ["sanity", "types_autocreate", "deduplication", "primary_keys", "autocreate", "schema_changes",
-                "multiple_tables", "multiple_tables", "virtual_columns", "delete", "update", "truncate"]
+                "multiple_tables", "multiple_tables", "virtual_columns", "delete", "update", "truncate",
+                "partition_limits"]
     for feature in features:
         Feature(run=load(f"tests.{feature}", "feature"))
 
@@ -99,7 +100,6 @@ def regression(
     # Feature(run=load("tests.consistency", "feature"))
     # Feature(run=load("tests.sysbench", "feature"))
     # Feature(run=load("tests.manual_section", "feature"))
-
 
 if __name__ == "__main__":
     regression()

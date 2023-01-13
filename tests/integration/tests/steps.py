@@ -526,6 +526,41 @@ def insert(self, first_insert_id, last_insert_id, table_name):
             mysql.query(f"insert into {table_name} values ({i},2,'a','b')")
 
 
+@TestStep(When)
+def complex_insert(
+    self,
+    table_name,
+    values,
+    range_value,
+    distributed=False,
+    node=None,
+    partitions=1001,
+    parts_per_partition=2,
+    block_size=2,
+):
+    """Insert data having specified number of partitions and parts."""
+    if node is None:
+        node = current().context.node
+
+    insert_values_1 = ",".join(
+        f"{values[0]}".format(x=x, y=y)
+        for x in range(partitions)
+        for y in range(block_size * parts_per_partition)
+    )
+    insert_values_2 = ",".join(
+        f"{values[1]}".format(x=x, y=y)
+        for x in range(partitions)
+        for y in range(block_size * parts_per_partition)
+    )
+    node.query("system stop merges")
+    node.query(
+        f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_1}"
+    )
+    node.query(
+        f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_2}"
+    )
+
+
 @TestStep(Given)
 def delete(self, first_delete_id, last_delete_id, table_name):
     """

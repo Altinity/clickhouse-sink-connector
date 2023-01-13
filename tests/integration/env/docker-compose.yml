@@ -83,7 +83,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:2022-12-13
+    image:  altinity/clickhouse-sink-connector:latest
     restart: "no"
     expose:
       - "8083"
@@ -103,6 +103,12 @@ services:
     depends_on:
       - kafka
 
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
+
+
   clickhouse:
     extends:
       file: clickhouse-service.yml
@@ -121,6 +127,9 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/etc/:/etc/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
 
 
   bash-tools:
@@ -136,4 +145,14 @@ services:
       - ../tests/manual_scripts:/manual_scripts
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
 
+
+  # dummy service which does nothing, but allows to postpone
+  # 'docker-compose up -d' till all dependecies will go healthy
+  all_services_ready:
+    image: hello-world
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
 
