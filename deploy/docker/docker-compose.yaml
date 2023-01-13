@@ -7,18 +7,9 @@ version: "3.4"
 # create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
 
 services:
-
   mysql-master:
-    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-    # SHOW VARIABLES LIKE 'server_id';
-    # SHOW VARIABLES LIKE 'log_bin';
-    # SHOW MASTER STATUS;
     container_name: mysql-master
     image: docker.io/bitnami/mysql:latest
-#    command:
-#      --default-authentication-plugin=mysql_native_password
-#      --server-id=1
-#      --binlog_do_db=test
     restart: "no"
     ports:
       - "3306:3306"
@@ -36,46 +27,6 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
-#    security_opt:
-#      - seccomp:unconfined
-
-#  mysql-slave:
-#    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-#    # SHOW VARIABLES LIKE 'server_id';
-#    # SHOW VARIABLES LIKE 'log_bin';
-#    # SHOW MASTER STATUS;
-#    container_name: mysql-slave
-#    image: docker.io/bitnami/mysql:8.0
-##    command:
-##      --default-authentication-plugin=mysql_native_password
-##      --server-id=1
-##      --binlog_do_db=test
-#    restart: "no"
-#    ports:
-#      - "3306"
-#    environment:
-#      - MYSQL_ROOT_PASSWORD=root
-#      - MYSQL_DATABASE=test
-#      - MYSQL_REPLICATION_MODE=slave
-#      - MYSQL_REPLICATION_USER=repl_user
-#      - MYSQL_MASTER_HOST=mysql-master
-#      - MYSQL_MASTER_PORT_NUMBER=3306
-#      - MYSQL_MASTER_ROOT_PASSWORD=root
-#      - ALLOW_EMPTY_PASSWORD=yes
-#    volumes:
-#      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-#    # volumes:
-#   #   - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-#    healthcheck:
-#      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
-#      interval: 15s
-#      timeout: 5s
-#      retries: 6
-#    #security_opt:
-#    #  - seccomp:unconfined
-#    depends_on:
-#      - mysql-master
-
 
   schemaregistry:
     container_name: schemaregistry
@@ -84,8 +35,6 @@ services:
     restart: "no"
     ports:
       - "8081:8081"
-    #environment:
-    #  - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     environment:
         - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092
         - SCHEMA_REGISTRY_HOST_NAME=schemaregistry
@@ -94,55 +43,6 @@ services:
 
     depends_on:
       - kafka
-
-  # kafka-connect:
-  #   image: confluentinc/cp-kafka-connect-base:6.2.0
-  #   container_name: kafka-connect
-  #   depends_on:
-  #     - broker
-  #     - schema-registry
-  #   ports:
-  #     - 8083:8083
-  #   environment:
-  #     CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
-  #     CONNECT_REST_PORT: 8083
-  #     CONNECT_GROUP_ID: kafka-connect
-  #     CONNECT_CONFIG_STORAGE_TOPIC: config-storage-topic-debezium
-  #     CONNECT_OFFSET_STORAGE_TOPIC: offset-storage-topic-debezium
-  #     CONNECT_STATUS_STORAGE_TOPIC: status-storage-topic-debezium
-  #     CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
-  #     CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
-  #     CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schemaregistry:8081'
-  #     CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
-  #     CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
-  #     CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
-  #     CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
-  #     CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
-  #     CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schemaregistry:8081'
-  #     #KAFKA_OPTS: -javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
-  #     MXHOST: localhost
-  #     JMXPORT: 1976
-  #   #  ---------------
-  #     CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars
-  #   # If you want to use the Confluent Hub installer to d/l component, but make them available
-  #   # when running this offline, spin up the stack once and then run : 
-  #   #   docker cp kafka-connect:/usr/share/confluent-hub-components ./data/connect-jars
-  #   volumes:
-  #     - $PWD/data:/data
-  #   # In the command section, $ are replaced with $$ to avoid the error 'Invalid interpolation format for "command" option'
-  #   command:
-  #     - bash
-  #     - -c
-  #     - |
-  #       echo "Installing Connector"
-  #       confluent-hub install --no-prompt debezium/debezium-connector-mysql:2.1.0.Alpha1
-  #       #
-  #       echo "Launching Kafka Connect worker"
-  #       /etc/confluent/docker/run &
-  #       #
-  #       sleep infinity
-  #   depends_on:
-  #     - kafka
 
   debezium:
     container_name: debezium
@@ -162,10 +62,6 @@ services:
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
-      # Maps to rest.advertised.host.name
-      #- ADVERTISED_HOST_NAME=kafka
-      # Maps to rest.advertised.port
-      #- ADVERTISED_PORT=9092
       - GROUP_ID=1
       - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
       - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
@@ -176,19 +72,15 @@ services:
       - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
       - JMXHOST=localhost
       - JMXPORT=1976
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
 
   kafka:
     container_name: kafka
-    image: vectorized/redpanda
+    image: vectorized/redpanda:v22.1.3
     restart: "no"
-    #    ports:
-    #      - "8081:8081"
-    #      - "8082:8082"
-    #      - "9091:9091"
-    #      - "9092:9092"
     ports:
       # Expose LOCALHOST_NETWORK listener on localhost
       - "19092:19092"
@@ -201,48 +93,6 @@ services:
       - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
       - --advertise-kafka-addr
       - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
-#    volumes:
-#      - test:/
-  #  kafka2:
-  #    container_name: kafka2
-  #    image: vectorized/redpanda
-  #    restart: always
-
-#  kafka-minion:
-#   # build:
-#   #   context: .
-#   #   dockerfile: ./Dockerfile
-#    image: quay.io/cloudhut/kminion:master
-#    hostname: kafka-minion
-#    container_name: kafka-minion
-#    depends_on:
-#      - kafka
-#    ports:
-#      - 8080:8080
-#    environment:
-#      KAFKA_BROKERS: kafka:19092
-#    restart: unless-stopped
-
-  console:
-    image: docker.redpanda.com/vectorized/console:master-217260f
-    restart: on-failure
-    entrypoint: /bin/sh
-    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
-    environment:
-      CONFIG_FILEPATH: /tmp/config.yml
-      CONSOLE_CONFIG_FILE: |
-        kafka:
-          brokers: ["kafka:9092"]
-        connect:
-          enabled: true
-          clusters:
-            - name: datagen
-              url: http://debezium:8083
-    ports:
-      - "8089:8080"
-    depends_on:
-      - kafka
-
 
   sink:
     container_name: sink
@@ -255,10 +105,6 @@ services:
     environment:
       # Where to find Kafka broker
       - BOOTSTRAP_SERVERS=kafka:9092
-      # Maps to rest.advertised.host.name
-      #- ADVERTISED_HOST_NAME=kafka
-      # Maps to rest.advertised.port
-      #- ADVERTISED_PORT=9092
       - GROUP_ID=2
       - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
       - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
@@ -268,6 +114,7 @@ services:
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -292,9 +139,31 @@ services:
       - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ./clickhouse/users.xml:/etc/clickhouse-server/users.xml
 
-  ##### MONITORING #####
-  #https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
-  # Bitnami bitnami/jmx-exporter vs sscaling images
+  #### MONITORING #####
+#  https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
+#   Bitnami bitnami/jmx-exporter vs sscaling images
+
+  ## KAFKA UI #####
+  console:
+    image: docker.redpanda.com/vectorized/console:master-217260f
+    restart: on-failure
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["kafka:9092"]
+        connect:
+          enabled: true
+          clusters:
+            - name: datagen
+              url: http://debezium:8083
+    ports:
+      - "8089:8080"
+    depends_on:
+      - kafka
+
   jmx_exporter:
     container_name: jmx_exporter
     image: sscaling/jmx-prometheus-exporter
@@ -305,13 +174,8 @@ services:
       SERVICE_PORT: 9072
     volumes:
       - ../config/jmx-config.yml:/opt/jmx_exporter/config.yml
-#
-#  blackbox_exporter:
-#    container_name: blackbox_exporter
-#    image: prom/blackbox-exporter:master
-#    restart: "no"
-#    ports:
-#      - "9115:9115"
+    depends_on:
+      - sink
 
   prometheus:
     container_name: prometheus
@@ -339,13 +203,4 @@ services:
       - GF_USERS_DEFAULT_THEME=light
     depends_on:
       - prometheus
-  #### END OF MONITORING ###
-
-  bash:
-    container_name: bash
-    image: ubuntu
-    restart: "no"
-    entrypoint:
-      - /bin/sleep
-    command:
-      - infinity
+  ### END OF MONITORING ###

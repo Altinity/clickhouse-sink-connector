@@ -7,7 +7,7 @@ The connector is tested with the following converters
 
 ![](doc/img/sink_connector_mysql_architecture.jpg)
 # Features
-- Inserts, Updates and Deletes using ReplacingMergeTree/CollapsingMergeTree - [Updates/Deletes](doc/mutable_data.md)
+- Inserts, Updates and Deletes using ReplacingMergeTree - [Updates/Deletes](doc/mutable_data.md)
 - Auto create tables in ClickHouse
 - Exactly once semantics 
 - Bulk insert to Clickhouse. 
@@ -20,28 +20,35 @@ The connector is tested with the following converters
 
 # Source Databases
 - MySQL (Debezium)
-- PostgreSQL (Debezium) (Testing in progress)
+  **Note:GTID Enabled - Highly encouraged for Updates/Deletes** 
+  Refer enabling Gtid in Replica for non-GTID sources - https://www.percona.com/blog/useful-gtid-feature-for-migrating-to-mysql-gtid-replication-assign_gtids_to_anonymous_transactions/
+- PostgreSQL (Debezium)
 
 |  Component    |   Version(Tested) |
 |---------------|-------------------|
-| Redpanda      | 22.1.3            |
+| Redpanda      | 22.1.3, 22.3.9    |
 | Kafka-connect | 1.9.5.Final       |
 | Debezium      | 2.1.0.Alpha1      |
 | MySQL         | 8.0               |
-| ClickHouse    | 22.9              |
+| ClickHouse    | 22.9, 22.10       |
 | PostgreSQL    | 15                |
-|
 
 
 ### Quick Start (Docker-compose)
-Docker image for Sink connector 
+Docker image for Sink connector (Updated December 12, 2022)
 `altinity/clickhouse-sink-connector:latest`
 https://hub.docker.com/r/altinity/clickhouse-sink-connector
 
-Recommended Memory limits.
+### Recommended Memory limits.
+**Production Usage**
+In `docker-compose.yml` file, its recommended to set Xmx to atleast 5G `-Xmx5G` when using in Production and 
+if you encounter a `Out of memory/Heap exception` error. 
+for both **Debezium** and **Sink**
+
 ```
-JAVA_OPTS="-Xms1G -Xmx5G"
+- KAFKA_HEAP_OPTS=-Xms2G -Xmx5G
 ```
+
 
 ### Kubernetes
 Docker Image for Sink connector(with Strimzi)
@@ -65,6 +72,13 @@ Recommended to atleast set 5Gi as memory limits to run on kubernetes using strim
 cd deploy/docker
 ./start-docker-compose.sh 
 ```
+#### PostgreSQL:
+```
+export SINK_VERSION=latest
+cd deploy/docker
+docker-compose -f docker-compose.yaml -f docker-compose-postgresql.override.yaml up
+```
+
 For Detailed setup instructions - [Setup](doc/setup.md)
 
 ## Development:
@@ -77,6 +91,7 @@ mvn install -DskipTests=true
 ```
 
 ## Data Types
+#### Note: Using float data types are highly discouraged, because of the behaviour in ClickHouse with handing precision.(Decimal is a better choice)
 
 | MySQL              | Kafka<br>Connect                                     | ClickHouse                      |
 |--------------------|------------------------------------------------------|---------------------------------|

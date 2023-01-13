@@ -23,13 +23,15 @@ import concurrent.futures
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
-def clickhouse_connection(host, database='default', user='default', port=9000, password=''):
+def clickhouse_connection(host, database='default', user='default', port=9000, password='',
+                          secure=False):
     conn = connect(host=host,
                    user=user,
                    password=password,
                    port=port,
                    database=database,
                    connect_timeout=20,
+                   secure=secure
                    )
     return conn
 
@@ -45,7 +47,9 @@ def clickhouse_execute_conn(conn, sql):
 def get_connection():
 
     conn = clickhouse_connection(args.clickhouse_host, database=args.clickhouse_database,
-                                 user=args.clickhouse_user, password=args.clickhouse_password, port=9000)
+                                 user=args.clickhouse_user, password=args.clickhouse_password,
+                                 port=args.clickhouse_port,
+                                 secure=args.secure)
     return conn
 
 
@@ -83,11 +87,14 @@ def execute_statement(strSql):
 def compute_checksum(table, statements):
 
     conn = get_connection()
+
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.ch.txt"
         #logging.info(f"Debug output to {out_file}")
         debug_out = open(out_file, 'w')
+    else:
+        logging.info("Skipping writing to file")
     try:
         for statement in statements:
             sql = statement
@@ -142,11 +149,16 @@ def get_primary_key_columns(table_schema, table_name):
 
 
 def get_table_checksum_query(table):
-
+    #logging.info(f"Excluded columns before join, {args.exclude_columns}")
     excluded_columns = "','".join(args.exclude_columns)
-    excluded_columns = "'"+excluded_columns+"'"
-    (rowset, rowcount) = execute_statement("select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" +
-                                          args.clickhouse_database+"' and table = '"+table+"' and name not in ("+excluded_columns+") order by position")
+    excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    #excluded_columns = "'"+excluded_columns+"'"
+    #logging.info(f"Excluded columns, {excluded_columns}")
+    excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
+    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' and name not in ("+ excluded_columns_str +") order by position"
+
+    (rowset, rowcount) = execute_statement(checksum_query)
+    #logging.info(f"CHECKSUM QUERY: {checksum_query}")
 
     select = ""
     nullables = []
@@ -241,10 +253,10 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     where = "1=1"
     if args.where:
         where = args.where
-    
+
     # skip deleted rows
-    where+= " and _sign > 0 "
-    
+    where+= f" and {args.sign_column} > 0 "
+
     sql = """ select
       count(*) as "cnt",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
@@ -276,6 +288,7 @@ def get_tables_from_regex(strDSN):
     schema = args.clickhouse_database
     strCommand = "select name from system.tables where database = '{d}' and match(name,'{t}') order by 1".format(
         d=schema, t=args.tables_regex)
+    logging.info(f"REGEX QUERY: {strCommand}")
     (rowset, rowcount) = execute_statement(strCommand)
     x = rowset
     return x
@@ -347,6 +360,9 @@ def main():
                         help='ClickHouse database', required=True)
     parser.add_argument('--clickhouse_port',
                         help='ClickHouse port', default=9000, required=False)
+    parser.add_argument('--secure',
+                        help='True or False', default=False, required=False)
+    parser.add_argument('--sign_column', help='Override sign column, by default its _sign', default='_sign', required=False)
     parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--order_by', help='order by` clause', required=False)
@@ -364,7 +380,7 @@ def main():
                         action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='+', default=['_sign', '_version'])
+                        nargs='*', default=['_sign,_version'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
 
