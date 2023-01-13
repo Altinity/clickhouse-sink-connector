@@ -60,21 +60,21 @@ def sysbench_tests(
             timeout=distinct_values_timeout,
             delay=distinct_values_delay,
         )(
-            f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",
+            f"SELECT count() FROM test.{table_name}  FINAL where sign !=-1  FORMAT CSV",
             message=mysql_count,
         )
 
     if script == "run_sysbench_bulk_insert.sh":
         with Then(f"I write data from ClickHouse table to file"):
             clickhouse.cmd(
-                'clickhouse client -uroot --password root --query "select id ,k from test.sbtest1 FINAL where _sign !=-1 '
+                'clickhouse client -uroot --password root --query "select id ,k from test.sbtest1 FINAL where sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
             # time.sleep(30)
     else:
         with Then(f"I write data from ClickHouse table to file"):
             clickhouse.cmd(
-                'clickhouse client -uroot --password root --query "select id ,k ,c ,pad from test.sbtest1 FINAL where _sign !=-1 '
+                'clickhouse client -uroot --password root --query "select id ,k ,c ,pad from test.sbtest1 FINAL where sign !=-1 '
                 'order by id format TSV" | grep -v "<jemalloc>" > /tmp/share_folder/CH.tsv'
             )
             # time.sleep(30)

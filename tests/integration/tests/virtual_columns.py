@@ -43,7 +43,7 @@ def virtual_column_names(
     with Then(f"I make check that ClickHouse table virtual column names are correct"):
         retry(clickhouse.query, timeout=50, delay=1)(
             f"SHOW CREATE TABLE test.{table_name}",
-            message="`_sign` Int8,\\n    `_version` UInt64\\n",
+            message="`sign` Int8,\\n    `ver` UInt64\\n",
         )
 
 
