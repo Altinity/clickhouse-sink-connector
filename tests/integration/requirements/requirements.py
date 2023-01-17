@@ -1,6 +1,6 @@
 # These requirements were auto generated
 # from software requirements specification (SRS)
-# document by TestFlows v1.9.220712.1163352.
+# document by TestFlows v1.9.221228.1171522.
 # Do not edit by hand but re-generate instead
 # using 'tfs requirements generate' command.
 from testflows.core import Specification
@@ -127,8 +127,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions = Requirement(
     num='4.4.1'
 )
 
-RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_ = Requirement(
-    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree ',
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree',
     version='1.0',
     priority=None,
     group=None,
@@ -161,8 +161,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replacing
     num='4.5.1.1'
 )
 
-RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree_ = Requirement(
-    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree ',
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree',
     version='1.0',
     priority=None,
     group=None,
@@ -176,6 +176,23 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Collapsin
     link=None,
     level=3,
     num='4.5.2'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to\n'
+        '"ReplicatedReplacingMergeTree" [ClickHouse] table engine.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.5.3'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requirement(
@@ -929,9 +946,10 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='Supported Versions', level=2, num='4.4'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions', level=3, num='4.4.1'),
         Heading(name='Supported Storage Engines', level=2, num='4.5'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree ', level=3, num='4.5.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree', level=3, num='4.5.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames', level=4, num='4.5.1.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree ', level=3, num='4.5.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree', level=3, num='4.5.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree', level=3, num='4.5.3'),
         Heading(name='Data Types', level=2, num='4.6'),
         Heading(name='Integer Types', level=3, num='4.6.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes', level=4, num='4.6.1.1'),
@@ -1017,9 +1035,10 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Transactions,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions,
-        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames,
-        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree_,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double,
@@ -1086,9 +1105,10 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
   * 4.4 [Supported Versions](#supported-versions)
     * 4.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlversions)
   * 4.5 [Supported Storage Engines](#supported-storage-engines)
-    * 4.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree ](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetree-)
+    * 4.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetree)
       * 4.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
-    * 4.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree ](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescollapsingmergetree-)
+    * 4.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescollapsingmergetree)
+    * 4.5.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
   * 4.6 [Data Types](#data-types)
     * 4.6.1 [Integer Types](#integer-types)
       * 4.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
@@ -1346,7 +1366,7 @@ version: 1.0
 
 ### Supported Storage Engines
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree 
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
@@ -1358,11 +1378,17 @@ version: 1.0
 [Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
 "ReplacingMergeTree" [ClickHouse] table engine and virtual column names should be "_version" and "_sign".
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree 
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
 "CollapsingMergeTree" [ClickHouse] table engine.
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
+"ReplicatedReplacingMergeTree" [ClickHouse] table engine.
 
 ### Data Types
 
