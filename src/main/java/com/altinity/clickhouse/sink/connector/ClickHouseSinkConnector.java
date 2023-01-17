@@ -1,7 +1,6 @@
 package com.altinity.clickhouse.sink.connector;
 
 
-import com.altinity.clickhouse.sink.connector.common.Const;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Version;
 import org.apache.kafka.common.config.Config;
@@ -110,7 +109,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
         log.debug("validate()");
         // Insert name of the connector.
         // TODO - should it be a parameter?
-        conf.put(Const.NAME, "TEST_CONNECTOR");
+        //conf.put(Const.NAME, "TEST_CONNECTOR");
         Config result = super.validate(conf);
         log.info("Config validated");
 

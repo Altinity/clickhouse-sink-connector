@@ -20,8 +20,12 @@ import datetime
 import zoneinfo
 from db_load.mysql_parser.mysql_parser import convert_to_clickhouse_table_antlr
 
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
+
+from db_compare.mysql import is_binary_datatype
+from subprocess import Popen, PIPE
 
 
 def run_command(cmd):
@@ -346,8 +350,7 @@ def load_schema_mysqlshell(args, dry_run=False):
     timezone = '+00:00'
     with get_connection(args, args.clickhouse_database) as conn:
 
-        schema_file_wildcard = args.dump_dir + \
-            f"/{args.mysql_source_database}@*.sql"
+        schema_file_wildcard = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
         schema_files = glob.glob(schema_file_wildcard)
         if len(schema_files) == 0:
             logging.error("Cannot find schema files")

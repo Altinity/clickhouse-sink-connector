@@ -29,7 +29,9 @@ public class ClickHouseConverter implements AbstractConverter {
         // Inserts
         CREATE("C"),
         // Deletes
-        DELETE("D");
+        DELETE("D"),
+        // Truncates
+        TRUNCATE("T");
 
         private final String operation;
 
@@ -182,9 +184,7 @@ public class ClickHouseConverter implements AbstractConverter {
         CDC_OPERATION cdcOperation = null;
         log.debug("convert()");
 
-        //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
-        ClickHouseStruct chStruct = null;
 
         if(convertedValue == null) {
             log.debug("Error converting Kafka Sink Record");
@@ -206,6 +206,10 @@ public class ClickHouseConverter implements AbstractConverter {
                 // Deletes.
                 log.debug("DELETE received");
                 cdcOperation = CDC_OPERATION.DELETE;
+            } else if (operation.equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+                // Truncates.
+                log.debug("TRUNCATE received");
+                cdcOperation = CDC_OPERATION.TRUNCATE;
             }
         }
 
@@ -246,7 +250,9 @@ public class ClickHouseConverter implements AbstractConverter {
                 // Deletes.
                 log.debug("DELETE received");
                 chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.DELETE);
-
+            } else if(operation.equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+                log.debug("TRUNCATE received");
+                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.TRUNCATE);
             }
         }
 
@@ -274,6 +280,10 @@ public class ClickHouseConverter implements AbstractConverter {
                     record.timestamp(), (Struct) beforeSection, (Struct) afterSection,
                     convertedValue, operation);
 
+        } else if(operation.getOperation().equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+            // Truncate does not have before/after.
+            chStruct = new ClickHouseStruct(record.kafkaOffset(), record.topic(), null, record.kafkaPartition(),
+                    record.timestamp(), null, null, convertedValue, operation);
         }
 
         return chStruct;

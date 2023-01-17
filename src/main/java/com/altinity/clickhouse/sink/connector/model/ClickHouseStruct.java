@@ -41,9 +41,14 @@ public class ClickHouseStruct {
     @Setter
     private ArrayList<String> primaryKey;
 
+    // Database processed timestamp
     @Getter
     @Setter
     private long ts_ms;
+
+    @Getter
+    @Setter
+    private long debezium_ts_ms;
 
     @Getter
     @Setter
@@ -73,6 +78,13 @@ public class ClickHouseStruct {
     @Setter
     private int gtid = -1;
 
+    @Getter
+    @Setter
+    // The insert position is described by a Log Sequence Number (LSN) that is a byte offset into the logs,
+    // increasing monotonically with each new record. LSN values are returned as the datatype pg_lsn.
+    // Values can be compared to calculate the volume of WAL data that separates them,
+    // so they are used to measure the progress of replication and recovery.
+    private long lsn = -1;
 
     // Inheritance doesn't work because of different package
     // error, composition.
@@ -181,7 +193,11 @@ public class ClickHouseStruct {
         }
         try {
             if (fieldNames.contains(TS_MS) && source.get(TS_MS) != null && source.get(TS_MS) instanceof Long) {
+                //  indicates the time that the change was made in the database.
                 this.setTs_ms((Long) source.get(TS_MS));
+            }
+            if(convertedValue.get(TS_MS) != null) {
+                this.setDebezium_ts_ms((Long) convertedValue.get(TS_MS));
             }
             if (fieldNames.contains(SNAPSHOT) && source.get(SNAPSHOT) != null && source.get(SNAPSHOT) instanceof String) {
                 this.setSnapshot(Boolean.parseBoolean((String) source.get(SNAPSHOT)));
@@ -206,6 +222,9 @@ public class ClickHouseStruct {
                 if(gtidArray.length == 2) {
                     this.setGtid(Integer.parseInt(gtidArray[1]));
                 }
+            }
+            if(fieldNames.contains(LSN) && source.get(LSN) != null && source.get(LSN) instanceof Long) {
+                this.setLsn((Long) source.get(LSN));
             }
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);

@@ -16,6 +16,8 @@ public class ClickHouseSinkConnectorConfigVariables {
     public static final String CLICKHOUSE_DATABASE = "clickhouse.server.database";
     public static final String CLICKHOUSE_PORT = "clickhouse.server.port";
 
+    public static final String CLICKHOUSE_TABLE = "clickhouse.table.name";
+
     public static final String PROVIDER_CONFIG = "provider";
     public static final String TASK_ID = "task_id";
 
@@ -55,6 +57,8 @@ public class ClickHouseSinkConnectorConfigVariables {
 
     // Config variable when set to true, columns will be added.
     public static final String ENABLE_SCHEMA_EVOLUTION = "schema.evolution";
+
+    public static final String SNOWFLAKE_ID = "snowflake.id";
 
 
 }
