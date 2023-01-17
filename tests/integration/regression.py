@@ -52,10 +52,11 @@ def regression(
     nodes = {
         "debezium": ("debezium",),
         "mysql-master": ("mysql-master",),
-        "clickhouse": ("clickhouse",),
+        "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "bash-tools": ("bash-tools",),
         "schemaregistry": ("schemaregistry",),
         "sink": ("sink",),
+        "zookeeper": ("zookeeper",),
     }
 
     self.context.clickhouse_version = clickhouse_version

@@ -180,7 +180,7 @@ def init_sink_connector(
 
     "enable.kafka.offset": false,
 
-    "replacingmergetree.delete.column": "sign","""
+    "replacingmergetree.delete.column": "_sign","""
         + f'"auto.create.tables": {auto_create_tables_local},'
         """
     "schema.evolution": false,
@@ -226,7 +226,7 @@ EOF"""
 
     "enable.kafka.offset": false,
 
-    "replacingmergetree.delete.column": "sign","""
+    "replacingmergetree.delete.column": "_sign","""
         + f'"auto.create.tables": {auto_create_tables_local},'
         """
     "schema.evolution": false,
@@ -645,7 +645,7 @@ def select(
                 node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 node.query(
-                    f"SELECT {statement} FROM test.{table_name} where sign !=-1 FORMAT CSV",
+                    f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
                     message=f"{insert}",
                 )
 

@@ -33,8 +33,8 @@ def check_datatype_replication(
             create_clickhouse_table(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, sign "
-                f"Int8, ver UInt64) "
+                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
+                f"Int8, _version UInt64) "
                 f"ENGINE = ReplacingMergeTree(ver) "
                 f"PRIMARY KEY id ORDER BY id SETTINGS "
                 f"index_granularity = 8192;",

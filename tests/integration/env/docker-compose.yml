@@ -83,7 +83,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:latest
+    image:  altinity/clickhouse-sink-connector:2023-01-13
     restart: "no"
     expose:
       - "8083"
@@ -127,6 +127,7 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/etc/:/etc/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse0/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -145,6 +146,44 @@ services:
       - ../tests/manual_scripts:/manual_scripts
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
 
+  clickhouse1:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse1
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse2:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse2
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse3:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse3
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse3/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse3/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse3/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
 
   # dummy service which does nothing, but allows to postpone
   # 'docker-compose up -d' till all dependecies will go healthy
@@ -152,6 +191,12 @@ services:
     image: hello-world
     depends_on:
       clickhouse:
+        condition: service_healthy
+      clickhouse1:
+        condition: service_healthy
+      clickhouse2:
+        condition: service_healthy
+      clickhouse3:
         condition: service_healthy
       zookeeper:
         condition: service_healthy

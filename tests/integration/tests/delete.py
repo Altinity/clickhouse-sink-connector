@@ -39,7 +39,7 @@ def delete(self, primary_key, engine=True):
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 clickhouse.query(
-                    f"SELECT count(*) FROM test.{table_name} FINAL where sign !=-1 FORMAT CSV",
+                    f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
                     message=mysql_rows_after_delete,
                 )
 
