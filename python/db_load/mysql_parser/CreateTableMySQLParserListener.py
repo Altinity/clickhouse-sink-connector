@@ -11,6 +11,7 @@ class CreateTableMySQLParserListener(MySQLParserListener):
       self.buffer = ""
       self.columns = ""
       self.primary_key = ""
+      self.columns_map = {}
 
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
