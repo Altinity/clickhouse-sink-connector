@@ -47,8 +47,12 @@ public class QueryFormatter {
             log.error("getInsertQueryUsingInputFunction, fields empty");
             return null;
         }
-        for(Field f: fields) {
-            String sourceColumnName = f.name();
+
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+
+            //for(Field f: fields) {
+            String sourceColumnName = entry.getKey();
+            //String sourceColumnName = f.name();
             // Get Field Name and lookup in the Clickhouse column to datatype map.
             String dataType = columnNameToDataTypeMap.get(sourceColumnName);
 
@@ -105,21 +109,21 @@ public class QueryFormatter {
         }
 
         // Add version column(Set timestamp))
-        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
-                colNamesDelimited.append(versionColumn).append(",");
-                colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
-                colNameToIndexMap.put(versionColumn, index++);
-
-            }
-
-            // Add replacingmergetree sign delete column.
-            if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
-                colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
-                colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
-                colNameToIndexMap.put(replacingMergeTreeDeleteColumn, index++);
-            }
-        }
+//        if(tableEngine != null && tableEngine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+//            if (versionColumn != null && columnNameToDataTypeMap.containsKey(versionColumn)) {
+//                colNamesDelimited.append(versionColumn).append(",");
+//                colNamesToDataTypes.append(versionColumn).append(" ").append(columnNameToDataTypeMap.get(versionColumn)).append(",");
+//                colNameToIndexMap.put(versionColumn, index++);
+//
+//            }
+//
+//            // Add replacingmergetree sign delete column.
+//            if(replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+//                colNamesDelimited.append(replacingMergeTreeDeleteColumn).append(",");
+//                colNamesToDataTypes.append(replacingMergeTreeDeleteColumn).append(" ").append(columnNameToDataTypeMap.get(replacingMergeTreeDeleteColumn)).append(",");
+//                colNameToIndexMap.put(replacingMergeTreeDeleteColumn, index++);
+//            }
+//        }
 
         //Remove terminating comma
         int colNamesIndex = colNamesDelimited.lastIndexOf(",");
@@ -155,10 +159,22 @@ public class QueryFormatter {
             colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
         }
 
-        //Remove terminating comma
-        colNamesDelimited.deleteCharAt(colNamesDelimited.lastIndexOf(","));
-        colNamesToDataTypes.deleteCharAt(colNamesToDataTypes.lastIndexOf(","));
+        if(colNamesDelimited.length() != 0) {
+            //Remove terminating comma
+            int indexOfComma = colNamesDelimited.lastIndexOf(",");
+            if (indexOfComma != -1) {
+                colNamesDelimited.deleteCharAt(indexOfComma);
 
+            }
+        }
+
+        if(colNamesToDataTypes.length() != 0) {
+            int indexOfComma = colNamesToDataTypes.lastIndexOf(",");
+
+            if(indexOfComma != -1) {
+                colNamesToDataTypes.deleteCharAt(indexOfComma);
+            }
+        }
         return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
     }
 }

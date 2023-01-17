@@ -4,6 +4,10 @@
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/debezium-connector-config.sh"
 
+CONNECTOR_NAME="debezium-connector-$1"
+CONNECTOR_CLASS="io.debezium.connector.mysql.MySqlConnector"
+
+echo "*********** ${CONNECTOR_NAME} **************"
 # Debezium parameters. Check
 # https://debezium.io/documentation/reference/stable/connectors/mysql.html#_required_debezium_mysql_connector_configuration_properties
 # for the full list of available properties
@@ -26,11 +30,64 @@ KAFKA_TOPIC="schema-changes.${DATABASE}"
 DATABASE_SERVER_ID="5432"
 # Unique across all other connectors, used as a prefix for Kafka topic names for events emitted by this connector.
 # Alphanumeric characters, hyphens, dots and underscores only.
-DATABASE_SERVER_NAME="SERVER5432"
+DATABASE_SERVER_NAME="SERVER5432-${DATABASE}"
+
+if [[ $3 == "postgres" ]]; then
+  echo "postgres database"
+  HOST="postgres"
+  PORT="5432"
+  USER="postgres_user"
+  PASSWORD="postgres"
+  # Comma-separated list of regular expressions that match the databases for which to capture changes
+  DBS="test"
+  # Comma-separated list of regular expressions that match fully-qualified table identifiers of tables
+  TABLES="Employee"
+  CONNECTOR_CLASS="io.debezium.connector.postgresql.PostgresConnector"
+  SNAPSHOT_MODE="initial_only"
+
+  if [[ $2 == "apicurio" ]]; then
+    curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @payload.json
+  else
+    cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
+    {
+            "name": "${CONNECTOR_NAME}",
+            "config": {
+              "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+              "tasks.max": 1,
+              "topic.prefix": "SERVER5432",
+              "database.hostname": "postgres",
+              "database.port": 5432,
+              "database.user": "postgres_user",
+              "database.password": "postgres",
+              "database.server.id": 5432,
+              "database.server.name": "SERVER5432",
+              "database.dbname": "test",
+              "plugin.name": "pgoutput",
+
+              "snapshot.locking.mode": "minimal",
+              "snapshot.delay.ms": 10000,
+              "include.schema.changes":"true",
+              "key.converter": "io.confluent.connect.avro.AvroConverter",
+              "value.converter": "io.confluent.connect.avro.AvroConverter",
+
+              "key.converter.schema.registry.url": "http://schemaregistry:8081",
+              "value.converter.schema.registry.url":"http://schemaregistry:8081",
+
+              "topic.creation.$alias.partitions": 6,
+              "topic.creation.default.replication.factor": 1,
+              "topic.creation.default.partitions": 6,
+
+              "provide.transaction.metadata": "true"
+            }
+    }
+EOF
+  fi
+  exit
+fi
 
 if [[ $2 == "apicurio" ]]; then
   echo "APICURIO SCHEMA REGISTRY"
-  A
+
   ######       Connector  registration ######
   cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'Content-Type: application/json' --data @-
   {
@@ -84,14 +141,13 @@ else
           "tasks.max": "1",
           "snapshot.mode": "initial",
           "snapshot.locking.mode": "minimal",
-          "snapshot.delay.ms": 10000,
+          "snapshot.delay.ms": 1,
           "include.schema.changes":"true",
           "include.schema.comments": "true",
           "database.hostname": "${MYSQL_HOST}",
           "database.port": "${MYSQL_PORT}",
           "database.user": "${MYSQL_USER}",
           "database.password": "${MYSQL_PASSWORD}",
-          "database.server.id": "${DATABASE_SERVER_ID}",
           "database.server.name": "${DATABASE_SERVER_NAME}",
           "database.whitelist": "${MYSQL_DBS}",
           "database.allowPublicKeyRetrieval":"true",
@@ -108,7 +164,14 @@ else
           "topic.creation.default.replication.factor": 1,
           "topic.creation.default.partitions": 6,
 
-          "provide.transaction.metadata": "true"
+          "provide.transaction.metadata": "true",
+
+          "topic.prefix" : "SERVER5432",
+          "database.server.id": "${DATABASE_SERVER_ID}",
+
+          "schema.history.internal.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+          "schema.history.internal.kafka.topic": "schemahistory.${DATABASE}",
+          "skipped.operations": "none"
         }
       }
 EOF
