@@ -14,24 +14,33 @@ jobs:
       - name: Install testflows
         working-directory: tests/integration
         run: pip3 install testflows
-#      - name: docker-compose version
-#        working-directory: tests/integration
-#        run: docker --version
-      - name: Run testflows tests
+
+      - name: docker-compose version
         working-directory: tests/integration
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
-#      - name: Download a single artifact
-#        uses: actions/download-artifact@v3
-#        with:
-#          name: my-artifact
-#      - name: Upload artifacts as release assets
-#        if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
-#        uses: svenstaro/upload-release-action@v2
-#        with:
-#          repo_token: ${{ secrets.GITHUB_TOKEN }}
-#          file: ${{ github.workspace }}/build/clickhouse-odbc-*
-#          overwrite: true
-#          tag: ${{ github.ref }}
-#          file_glob: true
+        run: docker-compose -v
+
+      - name: docker-compose upgrade
+        working-directory: tests/integration
+        run: pip3 install --upgrade docker-compose
+
+      - name: docker-compose version
+        working-directory: tests/integration
+        run: docker-compose -v
+#      - name: Run testflows tests
+#        working-directory: tests/integration
+##        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
+##      - name: Download a single artifact
+##        uses: actions/download-artifact@v3
+##        with:
+##          name: my-artifact
+##      - name: Upload artifacts as release assets
+##        if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
+##        uses: svenstaro/upload-release-action@v2
+##        with:
+##          repo_token: ${{ secrets.GITHUB_TOKEN }}
+##          file: ${{ github.workspace }}/build/clickhouse-odbc-*
+##          overwrite: true
+##          tag: ${{ github.ref }}
+##          file_glob: true
 #
