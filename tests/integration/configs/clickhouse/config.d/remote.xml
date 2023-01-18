@@ -50,15 +50,19 @@
             <shard>
                 <internal_replication>false</internal_replication>
                 <replica>
-                    <host>clickhouse1</host>
+                    <host>clickhouse</host>
                     <port>9000</port>
                 </replica>
                 <replica>
-                    <host>clickhouse2</host>
+                    <host>clickhouse1</host>
                     <port>9000</port>
                 </replica>
             </shard>
             <shard>
+                <replica>
+                    <host>clickhouse2</host>
+                    <port>9000</port>
+                </replica>
                 <replica>
                     <host>clickhouse3</host>
                     <port>9000</port>

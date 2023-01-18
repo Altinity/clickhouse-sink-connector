@@ -61,9 +61,6 @@ def regression(
 
     self.context.clickhouse_version = clickhouse_version
 
-    if check_clickhouse_version("<21.4")(self):
-        skip(reason="only supported on ClickHouse version >= 21.4")
-
     if stress is not None:
         self.context.stress = stress
 
@@ -85,6 +82,10 @@ def regression(
         )
 
     self.context.cluster = cluster
+
+    if check_clickhouse_version("<21.4")(self):
+        skip(reason="only supported on ClickHouse version >= 21.4")
+
     self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
@@ -92,7 +93,7 @@ def regression(
 
     features = ["sanity", "types_autocreate", "deduplication", "primary_keys", "autocreate", "schema_changes",
                 "multiple_tables", "multiple_tables", "virtual_columns", "delete", "update", "truncate",
-                "partition_limits"]
+                "partition_limits", "replicated_engine"]
     for feature in features:
         Feature(run=load(f"tests.{feature}", "feature"))
 
@@ -101,6 +102,7 @@ def regression(
     # Feature(run=load("tests.consistency", "feature"))
     # Feature(run=load("tests.sysbench", "feature"))
     # Feature(run=load("tests.manual_section", "feature"))
+
 
 if __name__ == "__main__":
     regression()

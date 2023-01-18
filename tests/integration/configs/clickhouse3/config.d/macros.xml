@@ -2,7 +2,7 @@
 <clickhouse>
     <macros>
         <replica>clickhouse3</replica>
-        <shard>04</shard>
+        <shard>02</shard>
 <!--        <shard2>03</shard2>-->
     </macros>
 </clickhouse>
