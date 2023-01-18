@@ -17,15 +17,16 @@ jobs:
 
       - name: docker-compose version
         working-directory: tests/integration
-        run: docker-compose -v
+        run: docker-compose version
 
-      - name: docker-compose upgrade
-        working-directory: tests/integration
-        run: pip3 install --upgrade docker-compose
+#      - name: docker-compose upgrade
+#        working-directory: tests/integration
+#        run: pip3 install --upgrade docker-compose
+#
+#      - name: docker-compose version
+#        working-directory: tests/integration
+#        run: docker-compose version
 
-      - name: docker-compose version
-        working-directory: tests/integration
-        run: docker-compose -v
 #      - name: Run testflows tests
 #        working-directory: tests/integration
 ##        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
