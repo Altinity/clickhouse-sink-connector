@@ -11,9 +11,9 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v2
-#      - name: Install testflows
-#        working-directory: tests/integration
-#        run: pip3 install testflows
+      - name: Install testflows
+        working-directory: tests/integration
+        run: pip3 install testflows
 
       - name: docker-compose version
         working-directory: tests/integration
@@ -27,10 +27,10 @@ jobs:
 #        working-directory: tests/integration
 #        run: docker-compose version
 
-#      - name: Run testflows tests
-#        working-directory: tests/integration
-##        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
+      - name: Run testflows tests
+        working-directory: tests/integration
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
 ##      - name: Download a single artifact
 ##        uses: actions/download-artifact@v3
 ##        with:
