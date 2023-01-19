@@ -45,7 +45,6 @@ def virtual_column_names(
             f"SHOW CREATE TABLE test.{table_name}",
             message="`_sign` Int8,\\n    `_version` UInt64\\n",
         )
-        pause()
 
 
 @TestFeature
