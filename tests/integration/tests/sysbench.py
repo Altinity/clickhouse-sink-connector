@@ -51,7 +51,7 @@ def sysbench_tests(
             f'"Using a password on the command line interface" > /tmp/MySQL.tsv'
         )
 
-    with Then(f"I wait unique values from CLickHouse table equal to MySQL table"):
+    with Then("I wait unique values from CLickHouse table equal to MySQL table"):
         mysql_count = mysql.query(
             f"SELECT count(*) FROM sbtest.{table_name}"
         ).output.strip()[90:]

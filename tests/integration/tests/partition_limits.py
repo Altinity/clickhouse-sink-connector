@@ -2,8 +2,8 @@ from integration.tests.steps import *
 
 
 @TestOutline
-def partition_limits(self, input):
-    """"""
+def partition_limits(self, input, partitions, parts_per_partition, block_size):
+    """Checking different types of insert"""
     with Given("Receive UID"):
         uid = getuid()
 
@@ -24,25 +24,33 @@ def partition_limits(self, input):
         )
 
     with When("I insert data in MySql table wtih more than 100 partitions per insert block"):
-        # mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
-        complex_insert(node=mysql, table_name=table_name, values=input,
-                       range_value=3)
-        pause()
+        complex_insert(node=mysql, table_name=table_name, values=input, partitions=partitions,
+                       parts_per_partition=parts_per_partition,
+                       block_size=block_size)
 
-    with Then("I check data inserted correct"):
+    with Then("I wait unique values from CLickHouse table equal to MySQL table"):
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-                clickhouse.query(
-                    f"SELECT col1,col2,col3 FROM test.{table_name} FINAL FORMAT CSV"
+                mysql_count = mysql.query(
+                    f"SELECT count(*) FROM {table_name}"
+                ).output.strip()[90:]
+                retry(
+                    clickhouse.query,
+                    timeout=50,
+                    delay=1,
+                )(
+                    f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",
+                    message=mysql_count,
                 )
 
 
 @TestScenario
 def exceed_partition_limit(self):
     """Test to check partition correct insert of data with partition limits option."""
+    xfail("doesn't ready")
     partition_limits(
-        input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"]
+        input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"], partitions=10001, parts_per_partition=30, block_size=1
     )
 
 
@@ -51,8 +59,6 @@ def exceed_partition_limit(self):
 @Name("partition limits")
 def feature(self):
     """Tests for cases when the partitioning limit is exceeded."""
-    xfail("doesn't ready")
-
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 

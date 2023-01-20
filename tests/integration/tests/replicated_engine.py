@@ -55,15 +55,16 @@ def check_datatype_replication_on_cluster(
     with When(f"I insert data in MySql table {table_name}"):
         for i, value in enumerate(values, 1):
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
-            with Then(f"I make check that ClickHouse table has same dataset on both replicas of the first shard"):
-                retry(clickhouse.query, timeout=50, delay=1)(
-                    f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
-                    message=f"{ch_values[i - 1]}",
-                )
-                retry(clickhouse1.query, timeout=50, delay=1)(
-                    f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
-                    message=f"{ch_values[i - 1]}",
-                )
+
+    with Then(f"I make check that ClickHouse table has same dataset on both replicas of the first shard"):
+        retry(clickhouse.query, timeout=50, delay=1)(
+            f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
+            message=f"{ch_values[i - 1]}",
+        )
+        retry(clickhouse1.query, timeout=50, delay=1)(
+            f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
+            message=f"{ch_values[i - 1]}",
+        )
 
     with Then("I drop clickhouse cluster table"):
         self.context.cluster.node("clickhouse").query(

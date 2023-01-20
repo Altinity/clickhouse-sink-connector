@@ -531,8 +531,6 @@ def complex_insert(
     self,
     table_name,
     values,
-    range_value,
-    distributed=False,
     node=None,
     partitions=101,
     parts_per_partition=3,
