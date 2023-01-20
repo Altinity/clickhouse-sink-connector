@@ -38,16 +38,18 @@ def check_datatype_replication_on_cluster(
         )
 
     if not auto_create_tables:
-        with And(f"I create ClickHouse replica test.{table_name} on cluster with 2 shards and 2 replicas"):
+        with And(
+            f"I create ClickHouse replica test.{table_name} on cluster with 2 shards and 2 replicas"
+        ):
             create_clickhouse_table(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
                 f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
                 f"Int8, _version UInt64) "
                 f"ENGINE = ReplicatedReplacingMergeTree("
-                          "'/clickhouse/tables/{shard}"
-                          f"/{table_name}',"
-                          " '{replica}', _version) "
+                "'/clickhouse/tables/{shard}"
+                f"/{table_name}',"
+                " '{replica}', _version) "
                 f"PRIMARY KEY id ORDER BY id SETTINGS "
                 f"index_granularity = 8192;",
             )
@@ -56,7 +58,9 @@ def check_datatype_replication_on_cluster(
         for i, value in enumerate(values, 1):
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
 
-    with Then(f"I make check that ClickHouse table has same dataset on both replicas of the first shard"):
+    with Then(
+        f"I make check that ClickHouse table has same dataset on both replicas of the first shard"
+    ):
         retry(clickhouse.query, timeout=50, delay=1)(
             f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
             message=f"{ch_values[i - 1]}",
@@ -94,7 +98,11 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
 
 
 @TestFeature
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
+        "1.0"
+    )
+)
 @Name("replicated engine")
 def feature(self):
     """
@@ -105,4 +113,3 @@ def feature(self):
 
     for scenario in loads(current_module(), Scenario):
         scenario()
-

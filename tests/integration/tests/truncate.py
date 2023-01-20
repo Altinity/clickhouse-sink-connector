@@ -12,17 +12,15 @@ def simple_scenario(self, node=None):
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(
-        auto_create_tables=True, topics=f"SERVER5432.test.{table_name}"
-    )
+    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySWL table {table_name}"):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      f"(id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
-                      f" col3 int4 default 777, PRIMARY KEY (id)) "
-                      f"ENGINE = InnoDB;"
+            f"(id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
+            f" col3 int4 default 777, PRIMARY KEY (id)) "
+            f"ENGINE = InnoDB;",
         )
 
     with And("I insert data in MySQL table"):
@@ -45,8 +43,7 @@ def simple_scenario(self, node=None):
 @TestFeature
 @Name("truncate")
 def feature(self):
-    """'ALTER TRUNCATE' query tests.
-    """
+    """'ALTER TRUNCATE' query tests."""
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 

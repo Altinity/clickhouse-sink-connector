@@ -289,7 +289,9 @@ def create_mysql_table(self, name=None, statement=None, node=None):
 
 
 @TestStep(Given)
-def create_clickhouse_table(self, name=None, statement=None, node=None, force_select_final = False):
+def create_clickhouse_table(
+    self, name=None, statement=None, node=None, force_select_final=False
+):
     """
     Creation of default ClickHouse table for tests
     :param self:
@@ -551,12 +553,8 @@ def complex_insert(
         for y in range(block_size * parts_per_partition)
     )
     node.query("system stop merges")
-    node.query(
-        f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_1}"
-    )
-    node.query(
-        f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_2}"
-    )
+    node.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_1}")
+    node.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {insert_values_2}")
 
 
 @TestStep(Given)

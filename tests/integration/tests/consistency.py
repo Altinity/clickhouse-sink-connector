@@ -151,9 +151,9 @@ def unstable_network_connection(self, services, loops=10):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
-                      "(id int(11) NOT NULL,"
-                      "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-                      f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
+            "(id int(11) NOT NULL,"
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
+            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
     with When("I add network fault"):
