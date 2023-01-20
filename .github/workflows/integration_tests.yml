@@ -21,8 +21,8 @@ jobs:
 
       - name: Run testflows tests
         working-directory: tests/integration
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/data consistency/combinatoric restart test/*"
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/virtual columns/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 -o classic --test-to-end
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/virtual columns/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
 ##      - name: Download a single artifact
 ##        uses: actions/download-artifact@v3
 ##        with:
