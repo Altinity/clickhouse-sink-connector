@@ -377,12 +377,8 @@ public class DbWriter extends BaseDbWriter {
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
 
-//        BlockMetaData bmd = new BlockMetaData();
-//        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
-
         if (records.isEmpty()) {
             log.debug("No Records to process");
-//            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
             return partitionToOffsetMap;
         }
 
@@ -498,14 +494,6 @@ public class DbWriter extends BaseDbWriter {
         return bmd;
     }
 
-
-
-    public void insertTopicOffsetMetadata(Map<TopicPartition, Long> topicPartitionToOffsetMap) {
-
-//        try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
-//
-//        }
-    }
     /**
      * Case-insensitive
      *
@@ -607,8 +595,7 @@ public class DbWriter extends BaseDbWriter {
             }
         }
 
-        // Sign column.
-        //String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
+        // CollapsingMergeTree
         if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
         this.signColumn != null)
         if (this.columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
@@ -627,26 +614,22 @@ public class DbWriter extends BaseDbWriter {
 
         }
 
-        // Version column.
-        //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
-        if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
+        // ReplacingMergeTree
+        if (this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
+            // Version column
             if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
-                long currentTimeInMs = System.currentTimeMillis();
-                //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))
-                {
-                    //ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
-                    if(columnNameToIndexMap.containsKey(versionColumn)) {
-                        if (record.getGtid() != -1) {
-                            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
-                            } else {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
-                            }
+                if (columnNameToIndexMap.containsKey(versionColumn)) {
+                    if (record.getGtid() != -1) {
+                        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)) {
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                         }
+                    } else {
+                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
                     }
                 }
+
             }
             // Sign column to mark deletes in ReplacingMergeTree
             if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
