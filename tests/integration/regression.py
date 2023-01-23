@@ -38,7 +38,7 @@ xflags = {}
 @XFlags(xflags)
 @Name("mysql to clickhouse replication")
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"))
-@Specifications()
+@Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
     self,
     local,

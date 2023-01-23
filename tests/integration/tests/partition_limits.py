@@ -55,12 +55,12 @@ def partition_limits(
 @TestScenario
 def exceed_partition_limit(self):
     """Test to check partition correct insert of data with partition limits option."""
-    xfail("doesn't ready")
+    # xfail("doesn't ready")
     partition_limits(
         input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"],
         max_insert_block_size=1,
-        partitions=1000,
-        parts_per_partition=30,
+        partitions=10001,
+        parts_per_partition=1,
         block_size=1,
     )
 

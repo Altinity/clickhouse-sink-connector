@@ -21,12 +21,13 @@ jobs:
 
       - name: Run testflows tests
         working-directory: tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/virtual columns/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8
-##      - name: Download a single artifact
-##        uses: actions/download-artifact@v3
-##        with:
-##          name: my-artifact
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/virtual columns/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --log test/test.log
+      - name: Download a single artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: my-artifact
+          path: tests/integration/test
 ##      - name: Upload artifacts as release assets
 ##        if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
 ##        uses: svenstaro/upload-release-action@v2

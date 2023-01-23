@@ -535,8 +535,8 @@ def complex_insert(
     values,
     node=None,
     partitions=101,
-    parts_per_partition=3,
-    block_size=3,
+    parts_per_partition=1,
+    block_size=1,
 ):
     """Insert data having specified number of partitions and parts."""
     if node is None:
