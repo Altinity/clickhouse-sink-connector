@@ -86,7 +86,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
         for (int i = 0; i < maxTasks; i++) {
             // Instantiate config from the main connector's config and personalize with additional params
             Map<String, String> conf = new HashMap<>(this.config);
-            conf.put(ClickHouseSinkConnectorConfigVariables.TASK_ID, Integer.toString(i));
+            conf.put(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString(), Integer.toString(i));
             configs.add(conf);
         }
         return configs;

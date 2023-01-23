@@ -20,6 +20,9 @@ import java.util.Map;
  * https://www.confluent.io/blog/write-a-kafka-connect-connector-with-configuration-handling/?_ga=2.60332132.837662403.1644687538-770780523.1642652755
  */
 public class ClickHouseSinkConnectorConfig extends AbstractConfig {
+
+    public static long BUFFER_COUNT_DEFAULT = 100;
+
     private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
 
     // Configuration groups
@@ -47,7 +50,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      * @param config
      */
     public static void setDefaultValues(Map<String, String> config) {
-        setFieldToDefaultValue(config, ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT, ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT_DEFAULT);
+        setFieldToDefaultValue(config, ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(), BUFFER_COUNT_DEFAULT);
     }
 
     /**
@@ -88,7 +91,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
         return new ConfigDef()
                 // Config Group "Connector config"
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
                         Type.STRING,
                         "",
                         new TopicToTableValidator(),
@@ -98,20 +101,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         0,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
                         Type.LONG,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT_DEFAULT,
+                        BUFFER_COUNT_DEFAULT,
                         ConfigDef.Range.atLeast(1),
                         Importance.LOW,
                         "BufCount",
                         CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT)
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY,
+                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString(),
                         Type.STRING,
                         DeDuplicationPolicy.OFF.name(),
                         new DeDuplicationPolicyValidator(),
@@ -120,9 +123,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
                         2,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY)
+                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.TASK_ID,
+                        ClickHouseSinkConnectorConfigVariables.TASK_ID.toString(),
                         Type.LONG,
                         0,
                         ConfigDef.Range.atLeast(0),
@@ -131,9 +134,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_TASK_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.TASK_ID)
+                        ClickHouseSinkConnectorConfigVariables.TASK_ID.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG,
+                        ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG.toString(),
                         Type.STRING,
                         KafkaProvider.UNKNOWN.name(),
                         new KafkaProviderValidator(),
@@ -142,11 +145,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         2,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG)
+                        ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG.toString())
 
                 // Config Group "ClickHouse login info"
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString(),
                         Type.STRING,
                         "localhost",
                         new ConfigDef.NonEmptyString(),
@@ -155,9 +158,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         0,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString(),
                         Type.STRING,
                         null,
                         new ConfigDef.NonEmptyString(),
@@ -166,9 +169,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString(),
                         Type.STRING,
                         null,
                         new ConfigDef.NonEmptyString(),
@@ -177,9 +180,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         2,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString(),
                         Type.STRING,
                         null,
                         new ConfigDef.NonEmptyString(),
@@ -188,9 +191,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString(),
                         Type.INT,
                         8123,
                         ConfigDef.Range.atLeast(1),
@@ -199,20 +202,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT)
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE,
-                        Type.STRING,
-                        null,
-                        new ConfigDef.NonEmptyString(),
-                        Importance.HIGH,
-                        "ClickHouse table name",
-                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
-                        3,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE)
-                .define(
-                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA,
+                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString(),
                         Type.BOOLEAN,
                         "false",
                         Importance.LOW,
@@ -220,9 +212,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)
+                        ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString(),
                         Type.BOOLEAN,
                         "true",
                         Importance.LOW,
@@ -230,9 +222,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS)
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT,
+                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString(),
                         Type.INT,
                         8084,
                         Importance.LOW,
@@ -240,9 +232,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT)
+                        ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA,
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString(),
                         Type.BOOLEAN,
                         "false",
                         Importance.LOW,
@@ -250,9 +242,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN,
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString(),
                         Type.STRING,
                         "",
                         Importance.LOW,
@@ -260,9 +252,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN)
+                        ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString())
                 .define(
-                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN,
+                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString(),
                     Type.STRING,
                     "sign",
                     Importance.LOW,
@@ -271,9 +263,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                     CONFIG_GROUP_CONNECTOR_CONFIG,
                     1,
                     ConfigDef.Width.NONE,
-                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN)
+                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString(),
                         Type.BOOLEAN,
                         false,
                         Importance.HIGH,
@@ -281,9 +273,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(),
                         Type.BOOLEAN,
                         false,
                         Importance.HIGH,
@@ -291,9 +283,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString(),
                         Type.BOOLEAN,
                         false,
                         Importance.HIGH,
@@ -301,9 +293,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION)
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID,
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString(),
                         Type.BOOLEAN,
                         true,
                         Importance.HIGH,
@@ -311,9 +303,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE,
+                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE.toString(),
                         Type.STRING,
                         "topic_offset_metadata",
                         Importance.HIGH,
@@ -321,9 +313,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE)
+                        ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString(),
                         Type.LONG,
                         30,
                         Importance.LOW,
@@ -331,9 +323,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME)
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT.toString(),
                         Type.LONG,
                         1000,
                         Importance.LOW,
@@ -341,9 +333,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT)
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString(),
                         Type.LONG,
                         100000,
                         Importance.LOW,
@@ -351,9 +343,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS)
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE,
+                        String.valueOf(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE),
                         Type.INT,
                         10,
                         Importance.HIGH,
@@ -361,7 +353,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE)
+                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.name())
 
                 // ToDo: Add JVM Proxy
                 ;

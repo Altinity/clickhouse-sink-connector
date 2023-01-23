@@ -59,17 +59,17 @@ public class ClickHouseSinkTask extends SinkTask {
 
         Map<String, String> topic2TableMap = null;
         try {
-             topic2TableMap = Utils.parseTopicToTableMap(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP));
+             topic2TableMap = Utils.parseTopicToTableMap(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString()));
         } catch (Exception e) {
             log.error("Error parsing topic to table map" + e);
         }
 
-        this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+        this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
         this.records = new ConcurrentHashMap<>();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
-        this.executor = new ClickHouseBatchExecutor(this.config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE));
-        this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME), TimeUnit.MILLISECONDS);
+        this.executor = new ClickHouseBatchExecutor(this.config.getInt(String.valueOf(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE)));
+        this.executor.scheduleAtFixedRate(runnable, 0, this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
     }
@@ -97,7 +97,7 @@ public class ClickHouseSinkTask extends SinkTask {
     public void put(Collection<SinkRecord> records) {
         totalRecords += records.size();
 
-        long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+        long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
