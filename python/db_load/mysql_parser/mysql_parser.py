@@ -45,11 +45,11 @@ def main(argv):
     handler.setFormatter(formatter)
     root.addHandler(handler)
 
-
     with open(argv[1], 'r') as file:
         source = file.read()
-        (res, columns)  = convert_to_clickhouse_table_antlr(source)
-        print(res)
+        logging.info(f"source = {source}")
+        (res, columns) = convert_to_clickhouse_table_antlr(source)
+        logging.info(f"target = {res}")
 
 if __name__ == '__main__':
     main(sys.argv)

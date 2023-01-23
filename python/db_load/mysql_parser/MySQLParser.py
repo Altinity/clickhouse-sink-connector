@@ -36,6 +36,11 @@ if __name__ is not None and "." in __name__:
 else:
     from MySQLBaseRecognizer import MySQLBaseRecognizer
 
+AnsiQuotes=''
+
+def isSqlModeActive(AnsiQuotes):
+        return True
+
 def serializedATN():
     return [
         4,1,806,8417,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,
