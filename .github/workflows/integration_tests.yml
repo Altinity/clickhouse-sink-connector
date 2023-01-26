@@ -32,11 +32,12 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: test-flows-artifact
-          path: |
-            tests/integration/raw.log
-            tests/integration/_instances
-          if-no-files-found: error
-          retention-days: 60
+#          path: |
+#            tests/integration/raw.log
+#            tests/integration/_instances
+          path: tests/integration/_instances/
+#          if-no-files-found: error
+#          retention-days: 60
 
 #      - name: Download a single artifact
 #        uses: actions/download-artifact@v2
