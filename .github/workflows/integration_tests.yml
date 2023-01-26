@@ -30,7 +30,7 @@ jobs:
 
       - name: Make nice logs
         working-directory: tests/integration
-        run:  cat raw.log | tfs transform nice
+        run:  tfs --help
 
       - uses: actions/upload-artifact@v3
         with:
