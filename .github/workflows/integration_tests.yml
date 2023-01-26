@@ -15,6 +15,10 @@ jobs:
         working-directory: tests/integration
         run: pip3 install testflows
 
+      - name: Make nice logs
+        working-directory: tests/integration
+        run: tfs -v
+
       - name: docker-compose version
         working-directory: tests/integration
         run: docker-compose version
@@ -23,14 +27,9 @@ jobs:
         id: date
         run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H%M%S')"
 
-
       - name: Run testflows tests
         working-directory: tests/integration
         run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
-
-      - name: Make nice logs
-        working-directory: tests/integration
-        run:  tfs --help
 
       - uses: actions/upload-artifact@v3
         with:
