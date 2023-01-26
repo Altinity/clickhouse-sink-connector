@@ -15,9 +15,9 @@ jobs:
         working-directory: tests/integration
         run: pip3 install testflows
 
-      - name: Make nice logs
+      - name: Check tfs job
         working-directory: tests/integration
-        run: tfs -v
+        run: pip3 install --upgrade testflows
 
       - name: docker-compose version
         working-directory: tests/integration
