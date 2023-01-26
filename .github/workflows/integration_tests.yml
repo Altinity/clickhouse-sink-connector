@@ -19,11 +19,10 @@ jobs:
         working-directory: tests/integration
         run: docker-compose version
 
-#      - name: Get current date
-#        id: date
-#        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H:%M:%S')"
+      - name: Get current date
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H:%M:%S')"
 
-      - name: Create logs directory
 
       - name: Run testflows tests
         working-directory: tests/integration
@@ -31,13 +30,12 @@ jobs:
 
       - uses: actions/upload-artifact@v3
         with:
-          name: test-flows-artifact
-#          path: |
-#            tests/integration/raw.log
-#            tests/integration/_instances
-          path: tests/integration/_instances/
-#          if-no-files-found: error
-#          retention-days: 60
+          name: testflows-artifacts-${{ steps.date.outputs.date }}
+          path: |
+            tests/integration/raw.log
+            tests/integration/_instances/
+          if-no-files-found: error
+          retention-days: 60
 
 #      - name: Download a single artifact
 #        uses: actions/download-artifact@v2
