@@ -33,7 +33,7 @@ jobs:
           name: testflows-artifacts-${{ steps.date.outputs.date }}
           path: |
             tests/integration/raw.log
-            tests/integration/_instances/
+            tests/integration/_instances/*.log
           if-no-files-found: error
           retention-days: 60
 
