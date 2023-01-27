@@ -1,6 +1,6 @@
 # These requirements were auto generated
 # from software requirements specification (SRS)
-# document by TestFlows v1.9.221228.1171522.
+# document by TestFlows v1.9.230125.1024636.
 # Do not edit by hand but re-generate instead
 # using 'tfs requirements generate' command.
 from testflows.core import Specification
@@ -193,6 +193,23 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replicate
     link=None,
     level=3,
     num='4.5.3'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to\n'
+        '"ReplicatedReplacingMergeTree" [ClickHouse] table engine with different version column names.\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.5.3.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requirement(
@@ -535,6 +552,24 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement
     num='4.7.2.1'
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimits = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support correct data inserts replication from [MySQL] to [CLickHouse] when partition \n'
+        'limits are hitting or avoid such situations.\n'
+        '\n'
+        '\n'
+    ),
+    link=None,
+    level=5,
+    num='4.7.2.1.1'
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates',
     version='1.0',
@@ -600,6 +635,22 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreat
     link=None,
     level=4,
     num='4.8.2.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support auto creation of multiple tables from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.8.2.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoDrop = Requirement(
@@ -950,6 +1001,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames', level=4, num='4.5.1.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree', level=3, num='4.5.2'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree', level=3, num='4.5.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames', level=4, num='4.5.3.1'),
         Heading(name='Data Types', level=2, num='4.6'),
         Heading(name='Integer Types', level=3, num='4.6.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes', level=4, num='4.6.1.1'),
@@ -980,6 +1032,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='Test Feature Diagram', level=3, num='4.7.1'),
         Heading(name='Inserts', level=3, num='4.7.2'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts', level=4, num='4.7.2.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits', level=5, num='4.7.2.1.1'),
         Heading(name='Updates', level=3, num='4.7.3'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates', level=4, num='4.7.3.1'),
         Heading(name='Deletes', level=3, num='4.7.4'),
@@ -988,6 +1041,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation', level=3, num='4.8.1'),
         Heading(name='Auto Create', level=3, num='4.8.2'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate', level=4, num='4.8.2.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate', level=4, num='4.8.2.2'),
         Heading(name='Auto Drop', level=3, num='4.8.3'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop', level=4, num='4.8.3.1'),
         Heading(name='Columns', level=2, num='4.9'),
@@ -1039,6 +1093,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double,
@@ -1053,10 +1108,12 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimits,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreate,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoDrop,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Columns_Modify,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Columns_Add,
@@ -1109,6 +1166,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
       * 4.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
     * 4.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescollapsingmergetree)
     * 4.5.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
+      * 4.5.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
   * 4.6 [Data Types](#data-types)
     * 4.6.1 [Integer Types](#integer-types)
       * 4.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
@@ -1139,6 +1197,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 4.7.1 [Test Feature Diagram](#test-feature-diagram)
     * 4.7.2 [Inserts](#inserts)
       * 4.7.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
+        * 4.7.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
     * 4.7.3 [Updates](#updates)
       * 4.7.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
     * 4.7.4 [Deletes](#deletes)
@@ -1147,6 +1206,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 4.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreation)
     * 4.8.2 [Auto Create](#auto-create)
       * 4.8.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautocreate)
+      * 4.8.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationmultipleautocreate)
     * 4.8.3 [Auto Drop](#auto-drop)
       * 4.8.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautodrop)
   * 4.9 [Columns](#columns)
@@ -1389,6 +1449,12 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
 "ReplicatedReplacingMergeTree" [ClickHouse] table engine.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
+"ReplicatedReplacingMergeTree" [ClickHouse] table engine with different version column names.
 
 ### Data Types
 
@@ -1660,6 +1726,13 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support new data inserts replication from [MySQL] to [CLickHouse].
 
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits
+version: 1.0
+
+[Altinity Sink Connector] SHALL support correct data inserts replication from [MySQL] to [CLickHouse] when partition 
+limits are hitting or avoid such situations.
+
+
 #### Updates
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates
@@ -1690,6 +1763,11 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support auto table creation from [MySQL] to [CLickHouse].
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate
+version: 1.0
+
+[Altinity Sink Connector] SHALL support auto creation of multiple tables from [MySQL] to [CLickHouse].
 
 #### Auto Drop
 

@@ -333,7 +333,6 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
 @Name("types")
 def feature(self):
     """Verify correct replication of all supported MySQL data types."""
-    xfail("xfailed while mapping is changing")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()

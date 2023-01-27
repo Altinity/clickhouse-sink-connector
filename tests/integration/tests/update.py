@@ -44,14 +44,12 @@ def update(self, primary_key, engine):
 @TestScenario
 def no_primary_key(self):
     """Check for `UPDATE` with no primary key without table engine."""
-    xfail("makes delete")
     update(primary_key="", engine=False)
 
 
 @TestScenario
 def no_primary_key_innodb(self):
     """Check for `UPDATE` with no primary key with table engine InnoDB."""
-    xfail("makes delete")
     update(primary_key="", engine=True)
 
 

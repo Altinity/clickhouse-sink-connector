@@ -47,14 +47,12 @@ def delete(self, primary_key, engine=True):
 @TestScenario
 def no_primary_key(self):
     """Check for `DELETE` with no primary key with InnoDB engine."""
-    xfail("doesn't work in row")
     delete(primary_key="", engine=True)
 
 
 @TestScenario
 def no_primary_key_innodb(self):
     """Check for `DELETE` with no primary key without InnoDB engine."""
-    xfail("doesn't work in row")
     delete(primary_key="", engine=False)
 
 

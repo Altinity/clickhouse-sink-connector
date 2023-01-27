@@ -8,6 +8,7 @@ def check_datatype_replication_on_cluster(
     ch_type,
     values,
     ch_values,
+    version_column="_version",
     nullable=False,
     hex_type=False,
     auto_create_tables=False,
@@ -45,11 +46,12 @@ def check_datatype_replication_on_cluster(
                 name=table_name,
                 statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
                 f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
-                f"Int8, _version UInt64) "
+                f"Int8, {version_column} UInt64) "
                 f"ENGINE = ReplicatedReplacingMergeTree("
                 "'/clickhouse/tables/{shard}"
                 f"/{table_name}',"
-                " '{replica}', _version) "
+                " '{replica}',"
+                f" {version_column}) "
                 f"PRIMARY KEY id ORDER BY id SETTINGS "
                 f"index_granularity = 8192;",
             )
@@ -77,6 +79,11 @@ def check_datatype_replication_on_cluster(
 
 
 @TestOutline(Scenario)
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
+        "1.0"
+    )
+)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -97,12 +104,33 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
     )
 
 
-@TestFeature
+@TestOutline(Scenario)
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames(
         "1.0"
     )
 )
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        ("BINARY", "String", ["'a'"], ['"a"'], False),
+    ],
+)
+def binary(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'BINARY' data types for
+    ReplicatedReplacingMergeTree engine."""
+    check_datatype_replication_on_cluster(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        hex_type=True,
+        version_column="some_version_column",
+    )
+
+
+@TestFeature
 @Name("replicated engine")
 def feature(self):
     """

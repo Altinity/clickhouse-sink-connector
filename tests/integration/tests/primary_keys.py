@@ -88,8 +88,6 @@ def composite_primary_key(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No("1.0"))
 def no_primary_key(self):
     """Check replicating MySQl table without any primary key."""
-
-    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     check_different_primary_keys(
         insert_values="(1, 'Ivan'),(1,'Sergio'),(1,'Alex'),(2,'Alex'),(2,'Andre')",
         output_values='1,"Ivan"\n1,"Sergio"\n1,"Alex"\n2,"Alex"\n2,"Andre"',

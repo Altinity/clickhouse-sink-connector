@@ -47,6 +47,11 @@ def tables_100(self):
 
 @TestFeature
 @Name("multiple tables")
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate(
+        "1.0"
+    )
+)
 def feature(self):
     """
     Multiple tables creation.

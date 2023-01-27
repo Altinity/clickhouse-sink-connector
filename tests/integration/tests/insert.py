@@ -4,7 +4,6 @@ from integration.tests.steps import *
 @TestOutline
 def mysql_to_clickhouse_postgres_inserts(self, input, output):
     """`INSERT` check section"""
-    # xfail("`SELECT ... FINAL` eats rows")
 
     table_name = "users"
     clickhouse = self.context.cluster.node("clickhouse")
@@ -88,7 +87,6 @@ def select_insert_3(self, auto_create_tables=True):
 @Name("insert")
 def feature(self):
     """Different `INSERT` tests section."""
-    xfail("doesn't work for latest version")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()

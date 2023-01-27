@@ -74,7 +74,11 @@ def create_all_data_types_null_table(self):
 
 
 @TestFeature
-@Requirements()
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreate(
+        "1.0"
+    )
+)
 @Name("autocreate")
 def feature(self):
     """Verify correct replication of all supported MySQL data types."""

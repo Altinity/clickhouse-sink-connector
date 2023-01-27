@@ -115,7 +115,6 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements()
 def double(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DOUBLE' data type."""
-    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,
@@ -242,7 +241,6 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def bigint_unsigned(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'INT' data types."""
-    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,
@@ -380,7 +378,6 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
 def json(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'JSON' data types."""
-    xfail("doesn't work in raw")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,

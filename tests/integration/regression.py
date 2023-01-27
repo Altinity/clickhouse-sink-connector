@@ -16,18 +16,52 @@ from integration.requirements.requirements import *
 from integration.tests.steps_global import *
 
 
-
 xfails = {
-    # "data types/date time/*": [
-    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
-    # ],
-    # "data types ac/date time/*": [
-    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/8")
-    # ],
-    "primary keys/*": [(Fail, "GitLab CI/CD only fail")],
-    #     "data consistency/*": [
-    #         (Fail, "doesn't finished")
-    #     ]
+    "schema changes/table recreation with different datatypes": [
+        (Fail, "debezium data conflict crash")
+    ],
+    "schema changes/consistency": [
+        (Fail, "doesn't finished")
+    ],
+    "primary keys/no primary key": [
+        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
+    ],
+    "delete/no primary key innodb": [
+        (Fail, "doesn't work in raw")
+    ],
+    "delete/no primary key": [
+        (Fail, "doesn't work in raw")
+    ],
+    "update/no primary key innodb": [
+        (Fail, "makes delete")
+    ],
+    "update/no primary key": [
+        (Fail, "makes delete")
+    ],
+    "update/types": [
+        (Fail, "xfailed while mapping is changing")
+    ],
+    "update/insert": [
+        (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
+    ],
+    "update/consistency": [
+        (Fail, "doesn't finished")
+    ],
+    "update/sysbench": [
+        (Fail, "doesn't have updates long time, need to recheck")
+    ],
+    "update/partition limits": [
+        (Fail, "doesn't ready")
+    ],
+    "update/types autocreate/json": [
+        (Fail, "doesn't work in raw")
+    ],
+    "update/types autocreate/double": [
+        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
+    ],
+    "update/types autocreate/bigint unsigned": [
+        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
+    ],
 }
 xflags = {}
 
@@ -37,7 +71,10 @@ xflags = {}
 @XFails(xfails)
 @XFlags(xflags)
 @Name("mysql to clickhouse replication")
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"))
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
+              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
+              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions("1.0"),
+              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree("1.0"))
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
     self,
