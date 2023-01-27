@@ -91,7 +91,7 @@ def check_datatype_replication_on_cluster(
         ("VARBINARY(4)", "String", ["'IVAN'"], ['"IVAN"'], False),
     ],
 )
-def binary(self, mysql_type, ch_type, values, ch_values, nullable):
+def replicated_engine(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'BINARY' data types for
     ReplicatedReplacingMergeTree engine."""
     check_datatype_replication_on_cluster(
@@ -116,7 +116,7 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
         ("BINARY", "String", ["'a'"], ['"a"'], False),
     ],
 )
-def binary(self, mysql_type, ch_type, values, ch_values, nullable):
+def random_version_column(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication with some random version column name."""
     check_datatype_replication_on_cluster(
         mysql_type=mysql_type,
