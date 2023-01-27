@@ -506,7 +506,7 @@ class Cluster(object):
                             for service_list in self.nodes:
                                 for service_node in self.nodes[service_list]:
                                     with By(f"getting log for {service_node}"):
-                                        log_path = f"../_instances"
+                                        log_path = f"../"
                                         snode = bash(
                                             f"docker-compose logs {service_node} "
                                             f"> {log_path}/{service_node}.log",

@@ -252,6 +252,7 @@ def bigint_unsigned(self, mysql_type, ch_type, values, ch_values, nullable):
         auto_create_tables=True,
     )
 
+
 @TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",

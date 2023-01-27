@@ -25,7 +25,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/types autocreate/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
 
       - uses: actions/upload-artifact@v3
         if: always()
@@ -33,7 +33,6 @@ jobs:
           name: testflows-artifacts-${{ steps.date.outputs.date }}
           path: |
             tests/integration/*.log
-            tests/integration/_instances/*.log
           if-no-files-found: error
           retention-days: 60
 
