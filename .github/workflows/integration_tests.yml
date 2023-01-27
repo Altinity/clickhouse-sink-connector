@@ -25,7 +25,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
 
       - uses: actions/upload-artifact@v3
         if: always()
@@ -35,14 +35,4 @@ jobs:
             tests/integration/*.log
           if-no-files-found: error
           retention-days: 60
-
-##      - name: Upload artifacts as release assets
-##        if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
-##        uses: svenstaro/upload-release-action@v2
-##        with:
-##          repo_token: ${{ secrets.GITHUB_TOKEN }}
-##          file: ${{ github.workspace }}/build/clickhouse-odbc-*
-##          overwrite: true
-##          tag: ${{ github.ref }}
-##          file_glob: true
 #
