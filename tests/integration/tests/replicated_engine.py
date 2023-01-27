@@ -117,8 +117,7 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
     ],
 )
 def binary(self, mysql_type, ch_type, values, ch_values, nullable):
-    """Check replication of MySQl 'BINARY' data types for
-    ReplicatedReplacingMergeTree engine."""
+    """Check replication with some random version column name."""
     check_datatype_replication_on_cluster(
         mysql_type=mysql_type,
         ch_type=ch_type,
