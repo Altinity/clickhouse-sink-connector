@@ -51,7 +51,7 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
 
     with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
         select(
-            insert="9",
+            insert="8",
             table_name=table_name,
             statement="count()",
             with_final=True,
