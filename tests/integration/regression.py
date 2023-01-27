@@ -97,10 +97,10 @@ def regression(
     for feature in features:
         Feature(run=load(f"tests.{feature}", "feature"))
 
-    # Feature(run=load("tests.types", "feature"))
-    # Feature(run=load("tests.insert", "feature"))
-    # Feature(run=load("tests.consistency", "feature"))
-    # Feature(run=load("tests.sysbench", "feature"))
+    Feature(run=load("tests.types", "feature"))
+    Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.consistency", "feature"))
+    Feature(run=load("tests.sysbench", "feature"))
     # Feature(run=load("tests.manual_section", "feature"))
 
 

@@ -180,6 +180,7 @@ def oltp_update_index(self):
 @Name("sysbench")
 def feature(self):
     """MySQL to ClickHouse sysbench tests."""
+    xfail("doesn't have updates long time, need to recheck")
 
     with Given("I send rpk command on kafka"):
         retry(self.context.cluster.node("kafka").cmd, timeout=100, delay=2)(

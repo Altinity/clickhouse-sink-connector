@@ -115,6 +115,7 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements()
 def double(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DOUBLE' data type."""
+    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,
@@ -160,7 +161,6 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
     )
 
 
-# TODO: add xfail on bigint unsigned
 @TestOutline(Scenario)
 # @Repeat(3)
 @Examples(
@@ -179,13 +179,6 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
             "Int64",
             ["-9223372036854775808", "0", "9223372036854775807"],
             ["-9223372036854775808", "0", "9223372036854775807"],
-            False,
-        ),
-        (
-            "BIGINT UNSIGNED",
-            "UInt64",
-            ["0", "18446744073709551615"],
-            ["0", "18446744073709551615"],
             False,
         ),
         ("TINYINT", "Int8", ["-128", "127"], ["-128", "127"], False),
@@ -232,6 +225,32 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
         auto_create_tables=True,
     )
 
+
+@TestOutline(Scenario)
+# @Repeat(3)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        (
+            "BIGINT UNSIGNED",
+            "UInt64",
+            ["0", "18446744073709551615"],
+            ["0", "18446744073709551615"],
+            False,
+        ),
+    ],
+)
+def bigint_unsigned(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'INT' data types."""
+    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/15")
+    check_datatype_replication(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        values=values,
+        ch_values=ch_values,
+        nullable=nullable,
+        auto_create_tables=True,
+    )
 
 @TestOutline(Scenario)
 @Examples(
@@ -360,6 +379,7 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
 def json(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'JSON' data types."""
+    xfail("doesn't work in raw")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,

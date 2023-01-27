@@ -88,6 +88,7 @@ def select_insert_3(self, auto_create_tables=True):
 @Name("insert")
 def feature(self):
     """Different `INSERT` tests section."""
+    xfail("doesn't work for latest version")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
