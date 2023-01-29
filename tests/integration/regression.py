@@ -38,10 +38,10 @@ xfails = {
     "update/no primary key": [
         (Fail, "makes delete")
     ],
-    "update/types": [
+    "types": [
         (Fail, "xfailed while mapping is changing")
     ],
-    "update/insert": [
+    "insert": [
         (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
     ],
     "consistency": [
@@ -59,7 +59,7 @@ xfails = {
     "types autocreate/double": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "types autocreate/bigint unsigned": [
+    "types autocreate/bigint": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
 }

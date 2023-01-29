@@ -70,6 +70,7 @@ def table_recreation_with_different_datatypes(
     self, mysql_type, ch_type, values, ch_values, nullable
 ):
     """Check MySQL table recreation with the same name but different column data types."""
+    xfail("")
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,

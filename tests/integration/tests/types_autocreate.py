@@ -239,7 +239,7 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
         ),
     ],
 )
-def bigint_unsigned(self, mysql_type, ch_type, values, ch_values, nullable):
+def bigint(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'INT' data types."""
     check_datatype_replication(
         mysql_type=mysql_type,
