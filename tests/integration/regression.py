@@ -44,22 +44,22 @@ xfails = {
     "update/insert": [
         (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
     ],
-    "update/consistency": [
+    "consistency": [
         (Fail, "doesn't finished")
     ],
-    "update/sysbench": [
+    "sysbench": [
         (Fail, "doesn't have updates long time, need to recheck")
     ],
-    "update/partition limits": [
+    "partition limits": [
         (Fail, "doesn't ready")
     ],
-    "update/types autocreate/json": [
+    "types autocreate/json": [
         (Fail, "doesn't work in raw")
     ],
-    "update/types autocreate/double": [
+    "types autocreate/double": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "update/types autocreate/bigint unsigned": [
+    "types autocreate/bigint unsigned": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
 }
