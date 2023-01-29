@@ -35,4 +35,14 @@ jobs:
             tests/integration/*.log
           if-no-files-found: error
           retention-days: 60
-#
+
+#      - name: Upload artifacts.
+#        uses: medlypharmacy/s3-artifacts-action@master
+#        with:
+#          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#          aws_s3_bucket_name: "altinity-test-reports"
+#          source_path: |
+#            test.txt
+#            test2.txt
+#          destination_path: /underfiles/files/
