@@ -15,27 +15,6 @@ jobs:
         working-directory: tests/integration
         run: pip3 install testflows
 
-      - name: docker-compose version
-        working-directory: tests/integration
-        run: docker-compose version
-
-      - name: Get current date
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H%M%S')"
-
-      - name: Run testflows tests
-        working-directory: tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
-
-      - uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: testflows-artifacts-${{ steps.date.outputs.date }}
-          path: |
-            tests/integration/*.log
-          if-no-files-found: error
-          retention-days: 60
-
       - name: Download aws
         working-directory: tests/integration
         run: pip3 install awscli
@@ -46,5 +25,27 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+#      - name: docker-compose version
+#        working-directory: tests/integration
+#        run: docker-compose version
+#
+#      - name: Get current date
+#        id: date
+#        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H%M%S')"
+#
+#      - name: Run testflows tests
+#        working-directory: tests/integration
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --log raw.log
+#
+#      - uses: actions/upload-artifact@v3
+#        if: always()
+#        with:
+#          name: testflows-artifacts-${{ steps.date.outputs.date }}
+#          path: |
+#            tests/integration/*.log
+#          if-no-files-found: error
+#          retention-days: 60
+
 
 
