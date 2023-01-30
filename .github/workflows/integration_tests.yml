@@ -36,12 +36,15 @@ jobs:
           if-no-files-found: error
           retention-days: 60
 
-      - name: Upload artifacts.
-        uses: medlypharmacy/s3-artifacts-action@master
-        with:
-          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws_s3_bucket_name: "altinity-test-reports"
-          source_path: |
-            tests/integration/raw.log
-#          destination_path: /altinity-sink-connector
+      - name: Download aws
+        working-directory: tests/integration
+        run: pip3 install awscli
+
+      - name: Test aws
+        working-directory: tests/integration
+        run: aws s3 ls s3://altinity-test-reports/reports
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+
