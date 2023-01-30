@@ -72,10 +72,10 @@ def check_datatype_replication_on_cluster(
             message=f"{ch_values[i - 1]}",
         )
 
-    with Then("I drop clickhouse cluster table"):
-        self.context.cluster.node("clickhouse").query(
-            f"DROP TABLE IF EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster;"
-        )
+    # with Then("I drop clickhouse cluster table"):
+    #     self.context.cluster.node("clickhouse").query(
+    #         f"DROP TABLE IF EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster;"
+    #     )
 
 
 @TestOutline(Scenario)

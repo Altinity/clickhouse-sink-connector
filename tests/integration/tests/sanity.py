@@ -2,7 +2,7 @@ from integration.tests.steps import *
 
 
 @TestOutline
-def mysql_to_clickhouse_connection(self, auto_create_tables):
+def mysql_to_clickhouse_connection(self, auto_create_tables, engine=None):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
     with Given("Receive UID"):
@@ -25,17 +25,32 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
         )
 
     if not auto_create_tables:
-        with And(
-            f"I create ClickHouse replica test.{table_name} to MySQL table with auto remove in the end of the test"
-        ):
-            create_clickhouse_table(
-                name=table_name,
-                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32, age Int32) "
-                f"ENGINE = ReplacingMergeTree "
-                f"PRIMARY KEY id ORDER BY id SETTINGS "
-                f"index_granularity = 8192;",
-            )
+        if engine == "ReplicatedReplacingMergeTree":
+            with And(f"I create ClickHouse replica test.{table_name} to MySQL table "):
+                create_clickhouse_table(
+                    name=table_name,
+                    statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
+                    f"(id Int32, age Int32, _version UInt64) "
+                    f"ENGINE = ReplicatedReplacingMergeTree("
+                    "'/clickhouse/tables/{shard}"
+                    f"/{table_name}',"
+                    " '{replica}',"
+                    f" _version) "
+                    f"PRIMARY KEY id ORDER BY id SETTINGS "
+                    f"index_granularity = 8192;",
+                )
+        else:
+            with And(
+                f"I create ClickHouse replica test.{table_name} to MySQL table with auto remove in the end of the test"
+            ):
+                create_clickhouse_table(
+                    name=table_name,
+                    statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
+                    f"(id Int32, age Int32) "
+                    f"ENGINE = ReplacingMergeTree "
+                    f"PRIMARY KEY id ORDER BY id SETTINGS "
+                    f"index_granularity = 8192;",
+                )
 
     with When(f"I insert data in MySql table"):
         mysql.query(
@@ -44,10 +59,16 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
         )
 
     if auto_create_tables:
-        with And("I check table creation"):
-            retry(clickhouse.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
+        if engine == "ReplicatedReplacingMergeTree":
+            with And("I check table creation on all nodes"):
+                retry(clickhouse.query, timeout=30, delay=3)(
+                    "SHOW TABLES FROM test", message=f"{table_name}"
+                )
+        else:
+            with And("I check table creation"):
+                retry(clickhouse.query, timeout=30, delay=3)(
+                    "SHOW TABLES FROM test", message=f"{table_name}"
+                )
 
     with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
         select(
@@ -63,15 +84,20 @@ def mysql_to_clickhouse_connection(self, auto_create_tables):
 def mysql_to_clickhouse_auto(self, auto_create_tables=True):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
-    # with Given("I collect Sink logs"):
-    #     with Shell() as bash:
-    #         cmd = bash("docker-compose logs sink > sink.log")
 
 
 @TestScenario
 def mysql_to_clickhouse_manual(self, auto_create_tables=False):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
+
+
+# @TestScenario
+# def mysql_to_clickhouse_manual(
+#     self, auto_create_tables=False, engine="ReplicatedReplacingMergeTree"
+# ):
+#     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
+#     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
 
 
 @TestFeature

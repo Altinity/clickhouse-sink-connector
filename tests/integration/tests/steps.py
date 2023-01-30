@@ -317,7 +317,9 @@ def create_clickhouse_table(
         yield
     finally:
         with Finally("I clean up by deleting table in ClickHouse"):
-            node.query(f"DROP TABLE IF EXISTS test.{name};")
+            node.query(
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+            )
 
 
 @TestStep(Given)
