@@ -29,7 +29,7 @@ jobs:
 
       - name: Upload aws S3
         working-directory: tests/integration
-        run: aws s3 cp raw.log s3://altinity-test-reports/altinity-sink-connector/raw.log
+        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows-artifacts-${{ steps.date.outputs.date }}/ --recursive --exclude "*" --include "*.log"
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
