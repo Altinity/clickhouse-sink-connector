@@ -44,4 +44,4 @@ jobs:
           aws_s3_bucket_name: "altinity-test-reports"
           source_path: |
             tests/integration/raw.log
-          destination_path: /altinity-sink-connector
+#          destination_path: /altinity-sink-connector
