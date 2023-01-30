@@ -29,11 +29,11 @@ jobs:
 
       - name: tfs report
         working-directory: tests/integration/logs
-        run: cat raw.log | ~/.local/bin/tfs report results | tfs document convert > report.html
+        run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
 
       - name: tfs coverage
         working-directory: tests/integration/logs
-        run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
+        run: cat raw.log | ~/.local/bin/tfs report coverage ../requirements/requirements.py | ~/.local/bin/tfs document convert > coverage.html
 
       - name: Upload aws S3
         working-directory: tests/integration/logs
