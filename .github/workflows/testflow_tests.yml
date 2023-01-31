@@ -34,11 +34,11 @@ jobs:
       - name: tfs report
         working-directory: tests/integration/logs
 #        run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
-        run: cat raw.log|~/.local/bin/tfs report results
+        run: ~/.local/bin/tfs report results raw.log > r.md
 
-      - name: tfs report
+      - name: tfs convert
         working-directory: tests/integration/logs
-        run: ~/.local/bin/tfs report results -h
+        run: ~/.local/bin/tfs document convert r.md > report.html
 #        run: cat raw.log > raw_log.2
 
 #      - name: tfs coverage
