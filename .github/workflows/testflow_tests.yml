@@ -15,30 +15,34 @@ jobs:
         working-directory: tests/integration
         run: pip3 install testflows
 
-      - name: Download aws
-        working-directory: tests/integration
-        run: pip3 install awscli
-
-      - name: Get current date
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H%M%S')"
-
-      - name: Run testflows tests
-        working-directory: tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="$GITHUB_ACTION_PATH" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" --log logs/raw.log
+#      - name: Download aws
+#        working-directory: tests/integration
+#        run: pip3 install awscli
+#
+#      - name: Get current date
+#        id: date
+#        run: echo "::set-output name=date::$(date +'%Y-%m-%dT%H%M%S')"
+#
+#      - name: Run testflows tests
+#        working-directory: tests/integration
+#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="$GITHUB_ACTION_PATH" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" --log logs/raw.log
 
       - name: tfs version
         working-directory: tests/integration/logs
-        run: ~/.local/bin/tfs --version
+        run: alias tfs='~/.local/bin/tfs'
 
-      - name: tfs report
+      - name: tfs version
         working-directory: tests/integration/logs
-#        run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
-        run: ~/.local/bin/tfs report results raw.log > r.md
+        run: tfs --version
 
-      - name: tfs convert
-        working-directory: tests/integration/logs
-        run: ~/.local/bin/tfs document convert r.md > report.html
+#      - name: tfs report
+#        working-directory: tests/integration/logs
+##        run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
+#        run: ~/.local/bin/tfs report results raw.log > r.md
+#
+#      - name: tfs convert
+#        working-directory: tests/integration/logs
+#        run: ~/.local/bin/tfs document convert r.md > report.html
 #        run: cat raw.log > raw_log.2
 
 #      - name: tfs coverage
