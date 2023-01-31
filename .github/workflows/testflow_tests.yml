@@ -27,6 +27,10 @@ jobs:
         working-directory: tests/integration
         run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="$GITHUB_ACTION_PATH" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" --log logs/raw.log
 
+      - name: tfs version
+        working-directory: tests/integration/logs
+        run: ~/.local/bin/tfs --version
+
       - name: tfs report
         working-directory: tests/integration/logs
         run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
