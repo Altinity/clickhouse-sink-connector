@@ -29,7 +29,7 @@ jobs:
 
       - name: add tfs path
         working-directory: tests/integration/logs
-        run: echo "~/.local/bin/tfs" >> $GITHUB_PATH
+        run: export PATH=~/.local/bin/tfs:$PATH
 
       - name: tfs report
         working-directory: tests/integration/logs

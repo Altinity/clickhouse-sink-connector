@@ -60,12 +60,11 @@ def mysql_to_clickhouse_connection(
         if replicated:
             select(
                 table_name=table_name,
-                statement="count()",
+                statement="count(*)",
                 node=self.context.cluster.node("clickhouse1"),
                 with_final=True,
                 timeout=50,
             )
-            pause()
 
 
 @TestScenario
@@ -112,7 +111,7 @@ def mysql_to_clickhouse_replicated(
     mysql_type="INT",
     ch_type="Int32",
     nullable=True,
-    replicated=False,
+    replicated=True,
     auto_create_tables=False,
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table creation."""
