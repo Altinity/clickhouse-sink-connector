@@ -322,6 +322,60 @@ def create_clickhouse_table(
             )
 
 
+@TestStep
+def create_tables(
+    self, table_name, mysql_type, ch_type, nullable, replicated, auto_create_tables
+):
+    """
+    Creation of the two column table with multiple options
+    :param self:
+    :param table_name: table name
+    :param mysql_type: MySQL datatype
+    :param ch_type: ClickHouse datatype
+    :param nullable: add nullable
+    :param replicated: true if we want to create replicated clickhouse table
+    :param auto_create_tables: false if wnat manual table creation
+    :return:
+    """
+    with Given(f"I create MySQL table {table_name})"):
+        create_mysql_table(
+            name=table_name,
+            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
+            f"(id INT AUTO_INCREMENT,"
+            f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
+            f" PRIMARY KEY (id))"
+            f" ENGINE = InnoDB;",
+        )
+
+        if not auto_create_tables:
+            if replicated:
+                with And(f"I create ClickHouse replica test.{table_name}"):
+                    create_clickhouse_table(
+                        name=table_name,
+                        statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
+                        f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
+                        f"Int8, _version UInt64) "
+                        f"ENGINE = ReplicatedReplacingMergeTree("
+                        "'/clickhouse/tables/{shard}"
+                        f"/{table_name}',"
+                        " '{replica}',"
+                        f" _version) "
+                        f"PRIMARY KEY id ORDER BY id SETTINGS "
+                        f"index_granularity = 8192;",
+                    )
+            else:
+                with And(f"I create ClickHouse replica test.{table_name}"):
+                    create_clickhouse_table(
+                        name=table_name,
+                        statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
+                        f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
+                        f"Int8, _version UInt64) "
+                        f"ENGINE = ReplacingMergeTree(_version) "
+                        f"PRIMARY KEY id ORDER BY id SETTINGS "
+                        f"index_granularity = 8192;",
+                    )
+
+
 @TestStep(Given)
 def create_all_data_types_table(
     self, table_name=None, node=None, manual_ch_table_create=False

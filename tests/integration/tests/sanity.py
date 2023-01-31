@@ -2,7 +2,9 @@ from integration.tests.steps import *
 
 
 @TestOutline
-def mysql_to_clickhouse_connection(self, auto_create_tables, engine=None):
+def mysql_to_clickhouse_connection(
+    self, mysql_type, ch_type, nullable, replicated, auto_create_tables
+):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
     with Given("Receive UID"):
@@ -12,56 +14,34 @@ def mysql_to_clickhouse_connection(self, auto_create_tables, engine=None):
         table_name = f"test{uid}"
 
     clickhouse = self.context.cluster.node("clickhouse")
+    clickhouse1 = self.context.cluster.node("clickhouse1")
     mysql = self.context.cluster.node("mysql-master")
 
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
-    with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
-            name=table_name,
-            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-            f"(id INT AUTO_INCREMENT,age INT, PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
+    with Given(f"I create tables for current test"):
+        create_tables(
+            table_name=table_name,
+            mysql_type=mysql_type,
+            ch_type=ch_type,
+            nullable=nullable,
+            replicated=replicated,
+            auto_create_tables=auto_create_tables,
         )
-
-    if not auto_create_tables:
-        if engine == "ReplicatedReplacingMergeTree":
-            with And(f"I create ClickHouse replica test.{table_name} to MySQL table "):
-                create_clickhouse_table(
-                    name=table_name,
-                    statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
-                    f"(id Int32, age Int32, _version UInt64) "
-                    f"ENGINE = ReplicatedReplacingMergeTree("
-                    "'/clickhouse/tables/{shard}"
-                    f"/{table_name}',"
-                    " '{replica}',"
-                    f" _version) "
-                    f"PRIMARY KEY id ORDER BY id SETTINGS "
-                    f"index_granularity = 8192;",
-                )
-        else:
-            with And(
-                f"I create ClickHouse replica test.{table_name} to MySQL table with auto remove in the end of the test"
-            ):
-                create_clickhouse_table(
-                    name=table_name,
-                    statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                    f"(id Int32, age Int32) "
-                    f"ENGINE = ReplacingMergeTree "
-                    f"PRIMARY KEY id ORDER BY id SETTINGS "
-                    f"index_granularity = 8192;",
-                )
 
     with When(f"I insert data in MySql table"):
         mysql.query(
-            f"insert into {table_name} values (1,777),(2,777),(3,777),(4,777),(5,777),(6,777),(7,777),"
+            f"INSERT INTO {table_name} VALUES (1,777),(2,777),(3,777),(4,777),(5,777),(6,777),(7,777),"
             f"(8,777),(9,777)"
         )
 
     if auto_create_tables:
-        if engine == "ReplicatedReplacingMergeTree":
+        if replicated:
             with And("I check table creation on all nodes"):
                 retry(clickhouse.query, timeout=30, delay=3)(
+                    "SHOW TABLES FROM test", message=f"{table_name}"
+                )
+                retry(clickhouse1.query, timeout=30, delay=3)(
                     "SHOW TABLES FROM test", message=f"{table_name}"
                 )
         else:
@@ -72,32 +52,77 @@ def mysql_to_clickhouse_connection(self, auto_create_tables, engine=None):
 
     with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
         select(
-            insert="9",
             table_name=table_name,
-            statement="count()",
+            statement="count(*)",
             with_final=True,
             timeout=50,
         )
+        if replicated:
+            select(
+                table_name=table_name,
+                statement="count()",
+                node=self.context.cluster.node("clickhouse1"),
+                with_final=True,
+                timeout=50,
+            )
+            pause()
 
 
 @TestScenario
-def mysql_to_clickhouse_auto(self, auto_create_tables=True):
+def mysql_to_clickhouse_auto(
+    self,
+    mysql_type="INT",
+    ch_type="Int32",
+    nullable=True,
+    replicated=False,
+    auto_create_tables=True,
+):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
-    mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
+    mysql_to_clickhouse_connection(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        nullable=nullable,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
 
 @TestScenario
-def mysql_to_clickhouse_manual(self, auto_create_tables=False):
+def mysql_to_clickhouse_manual(
+    self,
+    mysql_type="INT",
+    ch_type="Int32",
+    nullable=True,
+    replicated=False,
+    auto_create_tables=False,
+):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
-    mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
+    mysql_to_clickhouse_connection(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        nullable=nullable,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
 
-# @TestScenario
-# def mysql_to_clickhouse_manual(
-#     self, auto_create_tables=False, engine="ReplicatedReplacingMergeTree"
-# ):
-#     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
-#     mysql_to_clickhouse_connection(auto_create_tables=auto_create_tables)
+@TestScenario
+def mysql_to_clickhouse_replicated(
+    self,
+    mysql_type="INT",
+    ch_type="Int32",
+    nullable=True,
+    replicated=False,
+    auto_create_tables=False,
+):
+    """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table creation."""
+    mysql_to_clickhouse_connection(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        nullable=nullable,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
 
 @TestFeature
