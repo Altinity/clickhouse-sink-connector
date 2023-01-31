@@ -34,7 +34,7 @@ jobs:
       - name: tfs report
         working-directory: tests/integration/logs
 #        run: cat raw.log | ~/.local/bin/tfs report results | ~/.local/bin/tfs document convert > report.html
-        run: ~/.local/bin/tfs document convert -h
+        run: cat raw.log|~/.local/bin/tfs report results
 
       - name: tfs report
         working-directory: tests/integration/logs
