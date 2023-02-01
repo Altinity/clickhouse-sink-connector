@@ -1,4 +1,5 @@
-from integration.tests.steps import *
+from integration.tests.steps.sql import *
+from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
@@ -7,17 +8,13 @@ def mysql_to_clickhouse_connection(
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
-    with Given("Receive UID"):
-        uid = getuid()
+    table_name = f"test{getuid()}"
 
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
-
-    clickhouse = self.context.cluster.node("clickhouse")
-    clickhouse1 = self.context.cluster.node("clickhouse1")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create tables for current test"):
         create_tables(
@@ -30,41 +27,25 @@ def mysql_to_clickhouse_connection(
         )
 
     with When(f"I insert data in MySql table"):
-        mysql.query(
-            f"INSERT INTO {table_name} VALUES (1,777),(2,777),(3,777),(4,777),(5,777),(6,777),(7,777),"
-            f"(8,777),(9,777)"
+        complex_insert(
+            node=mysql,
+            table_name=table_name,
+            values=["({x},{y})", "({x},{y})"],
+            partitions=1,
+            parts_per_partition=1,
+            block_size=10,
         )
 
-    if auto_create_tables:
-        if replicated:
-            with And("I check table creation on all nodes"):
-                retry(clickhouse.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-                retry(clickhouse1.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-        else:
-            with And("I check table creation"):
-                retry(clickhouse.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-
-    with And(f"I check that ClickHouse table has same number of rows as MySQL table"):
-        select(
+    with Then(
+        "I check that MySQL tables and Clickhouse replication tables have the same data"
+    ):
+        complex_select(
             table_name=table_name,
+            auto_create_tables=auto_create_tables,
+            replicated=replicated,
             statement="count(*)",
             with_final=True,
-            timeout=50,
         )
-        if replicated:
-            select(
-                table_name=table_name,
-                statement="count(*)",
-                node=self.context.cluster.node("clickhouse1"),
-                with_final=True,
-                timeout=50,
-            )
 
 
 @TestScenario
@@ -114,7 +95,8 @@ def mysql_to_clickhouse_replicated(
     replicated=True,
     auto_create_tables=False,
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table creation."""
+    """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table
+    creation."""
     mysql_to_clickhouse_connection(
         mysql_type=mysql_type,
         ch_type=ch_type,

@@ -1,7 +1,6 @@
 from datetime import datetime
-
-from requirements import *
-from integration.tests.steps import *
+from integration.tests.steps.sql import *
+from integration.tests.steps.service_settings_steps import *
 
 
 @TestScenario

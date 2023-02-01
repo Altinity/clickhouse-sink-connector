@@ -1,16 +1,14 @@
-from integration.tests.steps import *
+from integration.tests.steps.sql import *
+from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.statements import *
 
 
-@TestScenario
-def create_all_data_types_not_null_table(self):
+@TestOutline
+def create_all_data_types(self, mysql_type, ch_type, replicated, auto_create_tables):
     """Check auto-creation of replicated MySQL table
     which contains all supported "NOT NULL" data types.
     """
-    with Given("Receive UID"):
-        uid = getuid()
-
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
+    table_name = f"test{getuid()}"
 
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
@@ -20,7 +18,14 @@ def create_all_data_types_not_null_table(self):
     with Given(
         f"I create MySQL table {table_name} with all supported NOT NULL data types"
     ):
-        create_all_data_types_table(table_name=table_name, manual_ch_table_create=False)
+        create_tables(
+            table_name=table_name,
+            mysql_type=mysql_type,
+            ch_type=ch_type,
+            manual_columns=True,
+            replicated=replicated,
+            auto_create_tables=auto_create_tables,
+        )
 
     with When(f"I check MySql table {table_name} was created"):
         mysql.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")
@@ -37,40 +42,116 @@ def create_all_data_types_not_null_table(self):
 
 
 @TestScenario
-def create_all_data_types_null_table(self):
+def create_all_data_types_not_null_table_auto(
+    self,
+    mysql_type=all_nullable_mysql_datatypes,
+    ch_type=all_nullable_ch_datatypes,
+    replicated=False,
+    auto_create_tables=True,
+):
+    """Check auto-creation of replicated MySQL table
+    which contains all supported "NOT NULL" data types.
+    """
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
+
+
+@TestScenario
+def create_all_data_types_null_table_auto(
+    self,
+    mysql_type=all_mysql_datatypes,
+    ch_type=all_ch_datatypes,
+    replicated=False,
+    auto_create_tables=True,
+):
     """Check auto-creation of replicated MySQL table that
     contains all supported "NULL" data types.
     """
-    with Given("Receive UID"):
-        uid = getuid()
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
+@TestScenario
+def create_all_data_types_not_null_table_auto(
+    self,
+    mysql_type=all_nullable_mysql_datatypes,
+    ch_type=all_nullable_ch_datatypes,
+    replicated=False,
+    auto_create_tables=False,
+):
+    """Check auto-creation of replicated MySQL table
+    which contains all supported "NOT NULL" data types.
+    """
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
-    clickhouse = self.context.cluster.node("clickhouse")
-    mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+@TestScenario
+def create_all_data_types_null_table_auto(
+    self,
+    mysql_type=all_mysql_datatypes,
+    ch_type=all_ch_datatypes,
+    replicated=False,
+    auto_create_tables=False,
+):
+    """Check auto-creation of replicated MySQL table that
+    contains all supported "NULL" data types.
+    """
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
-    with Given(
-        f"I create MySQL table {table_name} with all data types and ClickHouse replica to it)"
-    ):
-        create_all_data_types_table_nullable(
-            table_name=table_name, manual_ch_table_create=False
-        )
 
-    with When(f"I check MySql table {table_name} was created"):
-        mysql.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")
+@TestScenario
+def create_all_data_types_not_null_table_auto(
+    self,
+    mysql_type=all_nullable_mysql_datatypes,
+    ch_type=all_nullable_ch_datatypes,
+    replicated=True,
+    auto_create_tables=False,
+):
+    """Check auto-creation of replicated MySQL table
+    which contains all supported "NOT NULL" data types.
+    """
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
-    with Then(f"I make insert to create ClickHouse table"):
-        mysql.query(
-            f"INSERT INTO {table_name} VALUES (1,2/3,1.23,999.00009,'2012-12-12','2018-09-08 17:51:04.777','17:51:04.777','17:51:04.777',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,'x','some_text','IVAN','some_blob','x_Mediumblob','some_Longblobblobblob','a','IVAN')"
-        )
 
-    with Then(f"I make check that clickhouse table was created too"):
-        retry(clickhouse.query, timeout=30, delay=5)(
-            f"SHOW CREATE TABLE test.{table_name};", message=f"{table_name}"
-        )
+@TestScenario
+def create_all_data_types_null_table_auto(
+    self,
+    mysql_type=all_mysql_datatypes,
+    ch_type=all_ch_datatypes,
+    replicated=True,
+    auto_create_tables=False,
+):
+    """Check auto-creation of replicated MySQL table that
+    contains all supported "NULL" data types.
+    """
+    create_all_data_types(
+        mysql_type=mysql_type,
+        ch_type=ch_type,
+        replicated=replicated,
+        auto_create_tables=auto_create_tables,
+    )
 
 
 @TestFeature

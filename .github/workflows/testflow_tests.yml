@@ -15,7 +15,7 @@ jobs:
         working-directory: tests/integration
         run: pip3 install testflows
 
-      - name: Download aws
+      - name: Install awscli
         working-directory: tests/integration
         run: pip3 install awscli
 
@@ -34,32 +34,27 @@ jobs:
       - name: tfs report
         working-directory: tests/integration/logs
         run: cat raw.log | tfs report results | tfs document convert > report.html
-#        run: ~/.local/bin/tfs report results raw.log > r.md
-#
-#      - name: tfs convert2
-#        working-directory: tests/integration/logs
-#        run: ~/.local/bin/tfs document convert r.md > report.html
 
       - name: tfs coverage
         working-directory: tests/integration/logs
         run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
-#
-#      - name: Upload aws S3
-#        working-directory: tests/integration/logs
-#        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/ --recursive --exclude "*" --include "*.log" --include "*.html"
-#        env:
-#          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          AWS_DEFAULT_REGION: 'eu-west-2'
-#
-#      - uses: actions/upload-artifact@v3
-#        if: always()
-#        with:
-#          name: testflows-artifacts-${{ steps.date.outputs.date }}
-#          path: |
-#            tests/integration/logs/*.log
-#          if-no-files-found: error
-#          retention-days: 60
+
+      - name: Upload artifacts to Altinity Test Reports AWS s3
+        working-directory: tests/integration/logs
+        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/ --recursive --exclude "*" --include "*.log" --include "*.html"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'eu-west-2'
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: testflows-artifacts-${{ steps.date.outputs.date }}
+          path: |
+            tests/integration/logs/*.log
+          if-no-files-found: error
+          retention-days: 60
 
 
 
