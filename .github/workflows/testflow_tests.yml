@@ -36,7 +36,7 @@ jobs:
         run: cat raw.log | tfs report results | tfs document convert > report.html
 #        run: ~/.local/bin/tfs report results raw.log > r.md
 #
-#      - name: tfs convert
+#      - name: tfs convert2
 #        working-directory: tests/integration/logs
 #        run: ~/.local/bin/tfs document convert r.md > report.html
 
