@@ -70,35 +70,22 @@ def create_clickhouse_table(
 
 
 @TestStep
-def create_tables(
+def create_mysql_to_clickhouse_replicated_table(
     self,
     table_name,
-    mysql_type,
-    ch_type,
-    replicated,
-    auto_create_tables,
-    nullable=True,
-    manual_columns=False,
+    mysql_columns,
+    clickhouse_columns,
+    clickhouse_table,
 ):
-    """
-    Creation of the two column table with multiple options
+    """Create MySQL-to-ClickHouse replicated table.
+
     :param self:
-    :param table_name: table name
-    :param mysql_type: MySQL datatype
-    :param ch_type: ClickHouse datatype
-    :param nullable: add nullable
-    :param replicated: true if we want to create replicated clickhouse table
-    :param auto_create_tables: false if wnat manual table creation
+    :param table_name: replicated table name
+    :param mysql_columns: MySQL table columns
+    :param clickhouse_columns: coresponding ClickHouse columns
+    :param clickhouse_table: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
     :return:
     """
-    if manual_columns:
-        mysql_columns = mysql_type
-        ch_columns = ch_type
-    else:
-        mysql_columns = f"MyData {mysql_type}{' NOT NULL' if not nullable else ''}"
-        ch_columns = (
-            f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
-        )
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_table(
@@ -110,37 +97,43 @@ def create_tables(
             f" ENGINE = InnoDB;",
         )
 
-        if not auto_create_tables:
-            if replicated:
-                with And(
-                    f"I create ClickHouse replicated table as replication table to MySQL test.{table_name}"
-                ):
-                    create_clickhouse_table(
-                        name=table_name,
-                        statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
-                        f"(id Int32,{ch_columns}, _sign "
-                        f"Int8, _version UInt64) "
-                        f"ENGINE = ReplicatedReplacingMergeTree("
-                        "'/clickhouse/tables/{shard}"
-                        f"/{table_name}',"
-                        " '{replica}',"
-                        f" _version) "
-                        f"PRIMARY KEY id ORDER BY id SETTINGS "
-                        f"index_granularity = 8192;",
-                    )
-            else:
-                with And(
-                    f"I create ClickHouse table as replication table to MySQL test.{table_name}"
-                ):
-                    create_clickhouse_table(
-                        name=table_name,
-                        statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                        f"(id Int32,{ch_columns}, _sign "
-                        f"Int8, _version UInt64) "
-                        f"ENGINE = ReplacingMergeTree(_version) "
-                        f"PRIMARY KEY id ORDER BY id SETTINGS "
-                        f"index_granularity = 8192;",
-                    )
+    if ch_table == "auto":
+        pass
+    
+    elif ch_table == "ReplicatedReplacingMergeTree:
+        with And(
+            f"I create ReplicatedReplacingMergeTree as a replication table", description= f"{table_name}"
+        ):
+            create_clickhouse_table(
+                name=table_name,
+                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
+                f"(id Int32,{clickhouse_columns}, _sign "
+                f"Int8, _version UInt64) "
+                f"ENGINE = ReplicatedReplacingMergeTree("
+                "'/clickhouse/tables/{shard}"
+                f"/{table_name}',"
+                " '{replica}',"
+                f" _version) "
+                f"PRIMARY KEY id ORDER BY id SETTINGS "
+                f"index_granularity = 8192;",
+            )
+         
+    elif ch_table == "ReplacingMergeTree:
+        with And(
+            f"I create ClickHouse table as replication table to MySQL test.{table_name}"
+        ):
+            create_clickhouse_table(
+                name=table_name,
+                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
+                f"(id Int32,{clickhouse_columns}, _sign "
+                f"Int8, _version UInt64) "
+                f"ENGINE = ReplacingMergeTree(_version) "
+                f"PRIMARY KEY id ORDER BY id SETTINGS "
+                f"index_granularity = 8192;",
+            )
+    
+    else:
+        raise NotImplementedError(f"table '{clickhouse_table}' not supported")
 
 
 @TestStep(Given)
