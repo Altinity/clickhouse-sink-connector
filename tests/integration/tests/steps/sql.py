@@ -76,6 +76,7 @@ def create_mysql_to_clickhouse_replicated_table(
     mysql_columns,
     clickhouse_columns,
     clickhouse_table,
+
 ):
     """Create MySQL-to-ClickHouse replicated table.
 
@@ -87,7 +88,7 @@ def create_mysql_to_clickhouse_replicated_table(
     :return:
     """
 
-    with Given(f"I create MySQL table {table_name})"):
+    with Given(f"I create MySQL table", description=table_name):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
@@ -97,12 +98,12 @@ def create_mysql_to_clickhouse_replicated_table(
             f" ENGINE = InnoDB;",
         )
 
-    if ch_table == "auto":
+    if clickhouse_table == "auto":
         pass
     
-    elif ch_table == "ReplicatedReplacingMergeTree:
+    elif clickhouse_table == "ReplicatedReplacingMergeTree":
         with And(
-            f"I create ReplicatedReplacingMergeTree as a replication table", description= f"{table_name}"
+            f"I create ReplicatedReplacingMergeTree as a replication table", description=table_name
         ):
             create_clickhouse_table(
                 name=table_name,
@@ -118,7 +119,7 @@ def create_mysql_to_clickhouse_replicated_table(
                 f"index_granularity = 8192;",
             )
          
-    elif ch_table == "ReplacingMergeTree:
+    elif clickhouse_table == "ReplacingMergeTree":
         with And(
             f"I create ClickHouse table as replication table to MySQL test.{table_name}"
         ):

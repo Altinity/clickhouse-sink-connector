@@ -4,7 +4,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def mysql_to_clickhouse_connection(
-    self, mysql_type, ch_type, nullable, replicated, auto_create_tables
+    self, mysql_columns, clickhouse_columns, replicated, auto_create_tables, clickhouse_table
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
@@ -17,13 +17,12 @@ def mysql_to_clickhouse_connection(
     )
 
     with Given(f"I create tables for current test"):
-        create_tables(
+        create_mysql_to_clickhouse_replicated_table(
             table_name=table_name,
-            mysql_type=mysql_type,
-            ch_type=ch_type,
-            nullable=nullable,
-            replicated=replicated,
-            auto_create_tables=auto_create_tables,
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table
+
         )
 
     with When(f"I insert data in MySql table"):
@@ -51,58 +50,58 @@ def mysql_to_clickhouse_connection(
 @TestScenario
 def mysql_to_clickhouse_auto(
     self,
-    mysql_type="INT",
-    ch_type="Int32",
-    nullable=True,
+    mysql_columns="MyData INT",
+    clickhouse_columns="MyData Int32",
     replicated=False,
     auto_create_tables=True,
+    clickhouse_table="auto"
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
     mysql_to_clickhouse_connection(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        nullable=nullable,
+        mysql_columns=mysql_columns,
+        clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
+        clickhouse_table=clickhouse_table
     )
 
 
 @TestScenario
 def mysql_to_clickhouse_manual(
     self,
-    mysql_type="INT",
-    ch_type="Int32",
-    nullable=True,
+    mysql_columns="MyData INT",
+    clickhouse_columns="MyData Int32",
     replicated=False,
     auto_create_tables=False,
+    clickhouse_table="ReplacingMergeTree"
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
     mysql_to_clickhouse_connection(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        nullable=nullable,
+        mysql_columns=mysql_columns,
+        clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
+        clickhouse_table=clickhouse_table
     )
 
 
 @TestScenario
 def mysql_to_clickhouse_replicated(
     self,
-    mysql_type="INT",
-    ch_type="Int32",
-    nullable=True,
+    mysql_columns="MyData INT",
+    clickhouse_columns="MyData Int32",
     replicated=True,
     auto_create_tables=False,
+    clickhouse_table="ReplicatedReplacingMergeTree"
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table
     creation."""
     mysql_to_clickhouse_connection(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        nullable=nullable,
+        mysql_columns=mysql_columns,
+        clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
+        clickhouse_table=clickhouse_table
     )
 
 

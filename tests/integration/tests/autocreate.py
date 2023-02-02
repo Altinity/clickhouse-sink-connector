@@ -41,6 +41,7 @@ def create_all_data_types(self, mysql_type, ch_type, replicated, auto_create_tab
         )
 
 
+
 @TestScenario
 def create_all_data_types_not_null_table_auto(
     self,
