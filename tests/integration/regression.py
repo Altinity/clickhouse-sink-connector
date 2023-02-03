@@ -40,9 +40,9 @@ xfails = {
     "types": [
         (Fail, "xfailed while mapping is changing")
     ],
-    "insert": [
-        (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
-    ],
+    # "insert": [
+    #     (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
+    # ],
     "consistency": [
         (Fail, "doesn't finished")
     ],

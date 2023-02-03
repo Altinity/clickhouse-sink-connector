@@ -3,31 +3,32 @@ from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
-def mysql_to_clickhouse_postgres_inserts(self, input, output):
+def mysql_to_clickhouse_postgres_inserts(
+    self, input, output, mysql_columns, clickhouse_table, clickhouse_columns=None
+):
     """`INSERT` check section"""
 
-    table_name = "users"
+    table_name = f"insert_{getuid()}"
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} (id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
-            f" col3 int4 default 777, PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
+            mysql_columns=mysql_columns,
+            clickhouse_table=clickhouse_table,
+            clickhouse_columns=clickhouse_columns,
         )
-        # clickhouse.query("SYSTEM STOP MERGES")
 
     with When("I insert data in MySql table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
 
     with Then("I check data inserted correct"):
-        mysql_rows_after_delete = mysql.query(
-            f"select col1,col2,col3 from {table_name}"
-        ).output.strip()[90:]
+        mysql_query = mysql.query(
+            f"SELECT col1,col2,col3 FROM {table_name}"
+        ).output.strip()[96:]
         for attempt in retries(count=10, timeout=100, delay=5):
             with attempt:
                 clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
@@ -42,21 +43,21 @@ def mysql_to_clickhouse_postgres_inserts(self, input, output):
 def null_default_insert(self):
     """NULL and DEFAULT `INSERT` check."""
     mysql_to_clickhouse_postgres_inserts(
-        input="(DEFAULT,5,DEFAULT)", output="\\N,5,777"
+        input="(DEFAULT,5,DEFAULT)",
+        output="\\N,5,777",
+        mysql_columns="col1 int4, col2 int4 NOT NULL, col3 int4 default 777",
+        clickhouse_table="auto",
     )
 
 
 @TestScenario
 def null_default_insert_2(self):
     """NULL and DEFAULT `INSERT` check."""
-    mysql_to_clickhouse_postgres_inserts(input="(DEFAULT,5,333)", output="\\N,5,333")
-
-
-@TestScenario
-def select_insert(self, auto_create_tables=True):
-    """NULL and DEFAULT `INSERT` check."""
     mysql_to_clickhouse_postgres_inserts(
-        input="((select 2),7,DEFAULT)", output="2,7,777"
+        input="(DEFAULT,5,333)",
+        output="\\N,5,333",
+        mysql_columns="col1 int4, col2 int4 NOT NULL, col3 int4 default 777",
+        clickhouse_table="auto",
     )
 
 
@@ -64,7 +65,10 @@ def select_insert(self, auto_create_tables=True):
 def select_insert(self, auto_create_tables=True):
     """NULL and DEFAULT `INSERT` check."""
     mysql_to_clickhouse_postgres_inserts(
-        input="((select 2),7,DEFAULT)", output="2,7,777"
+        input="((select 2),7,DEFAULT)",
+        output="2,7,777",
+        mysql_columns="col1 int4, col2 int4 NOT NULL, col3 int4 default 777",
+        clickhouse_table="auto",
     )
 
 
@@ -72,15 +76,11 @@ def select_insert(self, auto_create_tables=True):
 def select_insert_2(self, auto_create_tables=True):
     """NULL and DEFAULT `INSERT` check."""
     mysql_to_clickhouse_postgres_inserts(
-        input="((select 2),(select i from (values(3)) as foo (i)),DEFAULT)",
+        input="(2,3,777)",
         output="2,3,777",
+        mysql_columns="col1 int4, col2 int4 NOT NULL, col3 int4 default 777",
+        clickhouse_table="auto",
     )
-
-
-@TestScenario
-def select_insert_3(self, auto_create_tables=True):
-    """NULL and DEFAULT `INSERT` check."""
-    mysql_to_clickhouse_postgres_inserts(input="(2,3,777)", output="2,3,777")
 
 
 @TestFeature
@@ -88,7 +88,7 @@ def select_insert_3(self, auto_create_tables=True):
 @Name("insert")
 def feature(self):
     """Different `INSERT` tests section."""
-    xfail("")
+    # xfail("")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()

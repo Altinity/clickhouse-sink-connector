@@ -4,11 +4,16 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def mysql_to_clickhouse_connection(
-    self, mysql_columns, clickhouse_columns, replicated, auto_create_tables, clickhouse_table
+    self,
+    mysql_columns,
+    replicated,
+    auto_create_tables,
+    clickhouse_table,
+    clickhouse_columns=None,
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
-    table_name = f"test{getuid()}"
+    table_name = f"sanity_{getuid()}"
 
     mysql = self.context.cluster.node("mysql-master")
 
@@ -16,13 +21,12 @@ def mysql_to_clickhouse_connection(
         auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
     )
 
-    with Given(f"I create tables for current test"):
+    with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
-            table_name=table_name,
+            name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table
-
+            clickhouse_table=clickhouse_table,
         )
 
     with When(f"I insert data in MySql table"):
@@ -51,18 +55,16 @@ def mysql_to_clickhouse_connection(
 def mysql_to_clickhouse_auto(
     self,
     mysql_columns="MyData INT",
-    clickhouse_columns="MyData Int32",
     replicated=False,
     auto_create_tables=True,
-    clickhouse_table="auto"
+    clickhouse_table="auto",
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with auto table creation."""
     mysql_to_clickhouse_connection(
         mysql_columns=mysql_columns,
-        clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
-        clickhouse_table=clickhouse_table
+        clickhouse_table=clickhouse_table,
     )
 
 
@@ -73,7 +75,7 @@ def mysql_to_clickhouse_manual(
     clickhouse_columns="MyData Int32",
     replicated=False,
     auto_create_tables=False,
-    clickhouse_table="ReplacingMergeTree"
+    clickhouse_table="ReplacingMergeTree",
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual table creation."""
     mysql_to_clickhouse_connection(
@@ -81,7 +83,7 @@ def mysql_to_clickhouse_manual(
         clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
-        clickhouse_table=clickhouse_table
+        clickhouse_table=clickhouse_table,
     )
 
 
@@ -92,7 +94,7 @@ def mysql_to_clickhouse_replicated(
     clickhouse_columns="MyData Int32",
     replicated=True,
     auto_create_tables=False,
-    clickhouse_table="ReplicatedReplacingMergeTree"
+    clickhouse_table="ReplicatedReplacingMergeTree",
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with manual replicated table
     creation."""
@@ -101,7 +103,7 @@ def mysql_to_clickhouse_replicated(
         clickhouse_columns=clickhouse_columns,
         replicated=replicated,
         auto_create_tables=auto_create_tables,
-        clickhouse_table=clickhouse_table
+        clickhouse_table=clickhouse_table,
     )
 
 

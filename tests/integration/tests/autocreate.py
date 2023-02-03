@@ -4,7 +4,9 @@ from integration.tests.steps.statements import *
 
 
 @TestOutline
-def create_all_data_types(self, mysql_type, ch_type, replicated, auto_create_tables):
+def create_all_data_types(
+    self, mysql_columns, clickhouse_table, clickhouse_columns=None
+):
     """Check auto-creation of replicated MySQL table
     which contains all supported "NOT NULL" data types.
     """
@@ -18,13 +20,11 @@ def create_all_data_types(self, mysql_type, ch_type, replicated, auto_create_tab
     with Given(
         f"I create MySQL table {table_name} with all supported NOT NULL data types"
     ):
-        create_tables(
+        create_mysql_to_clickhouse_replicated_table(
             table_name=table_name,
-            mysql_type=mysql_type,
-            ch_type=ch_type,
-            manual_columns=True,
-            replicated=replicated,
-            auto_create_tables=auto_create_tables,
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
         )
 
     with When(f"I check MySql table {table_name} was created"):
@@ -41,117 +41,67 @@ def create_all_data_types(self, mysql_type, ch_type, replicated, auto_create_tab
         )
 
 
-
 @TestScenario
 def create_all_data_types_not_null_table_auto(
     self,
-    mysql_type=all_nullable_mysql_datatypes,
-    ch_type=all_nullable_ch_datatypes,
-    replicated=False,
-    auto_create_tables=True,
+    mysql_columns=all_nullable_mysql_datatypes,
+    clickhouse_table="auto",
 ):
     """Check auto-creation of replicated MySQL table
     which contains all supported "NOT NULL" data types.
     """
     create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
+        mysql_columns=mysql_columns,
+        clickhouse_table=clickhouse_table,
     )
 
 
 @TestScenario
 def create_all_data_types_null_table_auto(
     self,
-    mysql_type=all_mysql_datatypes,
-    ch_type=all_ch_datatypes,
-    replicated=False,
-    auto_create_tables=True,
+    mysql_columns=all_mysql_datatypes,
+    clickhouse_table="auto",
 ):
     """Check auto-creation of replicated MySQL table that
     contains all supported "NULL" data types.
     """
     create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
+        mysql_columns=mysql_columns,
+        clickhouse_table=clickhouse_table,
     )
 
+
 @TestScenario
-def create_all_data_types_not_null_table_auto(
+def create_all_data_types_not_null_table_manual(
     self,
-    mysql_type=all_nullable_mysql_datatypes,
-    ch_type=all_nullable_ch_datatypes,
-    replicated=False,
-    auto_create_tables=False,
+    mysql_columns=all_nullable_mysql_datatypes,
+    clickhouse_columns=all_nullable_ch_datatypes,
+    clickhouse_table="ReplacingMergeTree",
 ):
     """Check auto-creation of replicated MySQL table
     which contains all supported "NOT NULL" data types.
     """
     create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
+        mysql_columns=mysql_columns,
+        clickhouse_columns=clickhouse_columns,
+        clickhouse_table=clickhouse_table,
     )
 
 
 @TestScenario
-def create_all_data_types_null_table_auto(
+def create_all_data_types_not_null_table_replicated_manual(
     self,
-    mysql_type=all_mysql_datatypes,
-    ch_type=all_ch_datatypes,
-    replicated=False,
-    auto_create_tables=False,
-):
-    """Check auto-creation of replicated MySQL table that
-    contains all supported "NULL" data types.
-    """
-    create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
-    )
-
-
-@TestScenario
-def create_all_data_types_not_null_table_auto(
-    self,
-    mysql_type=all_nullable_mysql_datatypes,
-    ch_type=all_nullable_ch_datatypes,
-    replicated=True,
-    auto_create_tables=False,
+    mysql_columns=all_nullable_mysql_datatypes,
+    clickhouse_columns=all_nullable_ch_datatypes,
+    clickhouse_table="ReplicatedReplacingMergeTree",
 ):
     """Check auto-creation of replicated MySQL table
     which contains all supported "NOT NULL" data types.
     """
     create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
-    )
-
-
-@TestScenario
-def create_all_data_types_null_table_auto(
-    self,
-    mysql_type=all_mysql_datatypes,
-    ch_type=all_ch_datatypes,
-    replicated=True,
-    auto_create_tables=False,
-):
-    """Check auto-creation of replicated MySQL table that
-    contains all supported "NULL" data types.
-    """
-    create_all_data_types(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        replicated=replicated,
-        auto_create_tables=auto_create_tables,
+        mysql_columns=mysql_columns,
+        clickhouse_columns=clickhouse_columns,
+        clickhouse_table=clickhouse_table,
     )
 
 

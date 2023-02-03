@@ -72,11 +72,12 @@ def create_clickhouse_table(
 @TestStep
 def create_mysql_to_clickhouse_replicated_table(
     self,
-    table_name,
+    name,
     mysql_columns,
     clickhouse_columns,
     clickhouse_table,
-
+    mysql_node=None,
+    clickhouse_node=None,
 ):
     """Create MySQL-to-ClickHouse replicated table.
 
@@ -85,56 +86,73 @@ def create_mysql_to_clickhouse_replicated_table(
     :param mysql_columns: MySQL table columns
     :param clickhouse_columns: coresponding ClickHouse columns
     :param clickhouse_table: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
+    :param mysql_node: MySql docker compose node
+    :param clickhouse_node: CH docker compose node
     :return:
     """
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySQL table", description=table_name):
-        create_mysql_table(
-            name=table_name,
-            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-            f"(id INT AUTO_INCREMENT,"
-            f"{mysql_columns},"
-            f" PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
-        )
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
 
-    if clickhouse_table == "auto":
-        pass
-    
-    elif clickhouse_table == "ReplicatedReplacingMergeTree":
-        with And(
-            f"I create ReplicatedReplacingMergeTree as a replication table", description=table_name
-        ):
-            create_clickhouse_table(
-                name=table_name,
-                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster"
-                f"(id Int32,{clickhouse_columns}, _sign "
-                f"Int8, _version UInt64) "
-                f"ENGINE = ReplicatedReplacingMergeTree("
-                "'/clickhouse/tables/{shard}"
-                f"/{table_name}',"
-                " '{replica}',"
-                f" _version) "
-                f"PRIMARY KEY id ORDER BY id SETTINGS "
-                f"index_granularity = 8192;",
+    try:
+        with Given(f"I create MySQL table", description=name):
+            mysql_node.query(
+                f"CREATE TABLE IF NOT EXISTS {name} "
+                f"(id INT AUTO_INCREMENT,"
+                f"{mysql_columns},"
+                f" PRIMARY KEY (id))"
+                f" ENGINE = InnoDB;",
             )
-         
-    elif clickhouse_table == "ReplacingMergeTree":
-        with And(
-            f"I create ClickHouse table as replication table to MySQL test.{table_name}"
+
+        if clickhouse_table == "auto":
+            pass
+
+        elif clickhouse_table == "ReplicatedReplacingMergeTree":
+            with And(
+                f"I create ReplicatedReplacingMergeTree as a replication table",
+                description=name,
+            ):
+                clickhouse_node.query(
+                    f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
+                    f"(id Int32,{clickhouse_columns}, _sign "
+                    f"Int8, _version UInt64) "
+                    f"ENGINE = ReplicatedReplacingMergeTree("
+                    "'/clickhouse/tables/{shard}"
+                    f"/{name}',"
+                    " '{replica}',"
+                    f" _version) "
+                    f"PRIMARY KEY id ORDER BY id SETTINGS "
+                    f"index_granularity = 8192;",
+                )
+
+        elif clickhouse_table == "ReplacingMergeTree":
+            with And(
+                f"I create ClickHouse table as replication table to MySQL test.{name}"
+            ):
+                clickhouse_node.query(
+                    f"CREATE TABLE IF NOT EXISTS test.{name} "
+                    f"(id Int32,{clickhouse_columns}, _sign "
+                    f"Int8, _version UInt64) "
+                    f"ENGINE = ReplacingMergeTree(_version) "
+                    f"PRIMARY KEY id ORDER BY id SETTINGS "
+                    f"index_granularity = 8192;",
+                )
+
+        else:
+            raise NotImplementedError(f"table '{clickhouse_table}' not supported")
+
+        yield
+    finally:
+        with Finally(
+            "I clean up by deleting MySql to CH replicated table", description={name}
         ):
-            create_clickhouse_table(
-                name=table_name,
-                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32,{clickhouse_columns}, _sign "
-                f"Int8, _version UInt64) "
-                f"ENGINE = ReplacingMergeTree(_version) "
-                f"PRIMARY KEY id ORDER BY id SETTINGS "
-                f"index_granularity = 8192;",
+            mysql_node.query(f"DROP TABLE IF EXISTS {name};")
+            clickhouse_node.query(
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;;"
             )
-    
-    else:
-        raise NotImplementedError(f"table '{clickhouse_table}' not supported")
+            time.sleep(5)
 
 
 @TestStep(Given)
