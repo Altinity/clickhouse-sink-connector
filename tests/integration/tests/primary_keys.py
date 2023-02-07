@@ -97,9 +97,9 @@ def no_primary_key(self):
     )
 
 
-@TestFeature
+@TestModule
 @Name("primary keys")
-def feature(self):
+def module(self):
     """MySql to ClickHouse replication simple and composite primary keys tests."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):

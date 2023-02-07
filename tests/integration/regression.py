@@ -19,46 +19,24 @@ xfails = {
     "schema changes/table recreation with different datatypes": [
         (Fail, "debezium data conflict crash")
     ],
-    "schema changes/consistency": [
-        (Fail, "doesn't finished")
-    ],
+    "schema changes/consistency": [(Fail, "doesn't finished")],
     "primary keys/no primary key": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     ],
-    "delete/no primary key innodb": [
-        (Fail, "doesn't work in raw")
-    ],
-    "delete/no primary key": [
-        (Fail, "doesn't work in raw")
-    ],
-    "update/no primary key innodb": [
-        (Fail, "makes delete")
-    ],
-    "update/no primary key": [
-        (Fail, "makes delete")
-    ],
-    "types": [
-        (Fail, "xfailed while mapping is changing")
-    ],
-    # "insert": [
-    #     (Fail, "doesn't work for latest version `SELECT ... FINAL` eats rows")
-    # ],
-    "consistency": [
-        (Fail, "doesn't finished")
-    ],
-    "sysbench": [
-        (Fail, "doesn't have updates long time, need to recheck")
-    ],
-    "partition limits": [
-        (Fail, "doesn't ready")
-    ],
-    "types autocreate/json": [
-        (Fail, "doesn't work in raw")
-    ],
-    "types autocreate/double": [
+    "delete/no primary key innodb": [(Fail, "doesn't work in raw")],
+    "delete/no primary key": [(Fail, "doesn't work in raw")],
+    "update/no primary key innodb": [(Fail, "makes delete")],
+    "update/no primary key": [(Fail, "makes delete")],
+    "truncate/no primary key innodb": [(Fail, "doesn't work")],
+    "truncate/no primary key": [(Fail, "doesn't work")],
+    "consistency": [(Fail, "doesn't finished")],
+    "sysbench": [(Fail, "doesn't have updates long time, need to recheck")],
+    "partition limits": [(Fail, "doesn't ready")],
+    "types/json": [(Fail, "doesn't work in raw")],
+    "types/double": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "types autocreate/bigint": [
+    "types/bigint": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
 }
@@ -70,10 +48,14 @@ xflags = {}
 @XFails(xfails)
 @XFlags(xflags)
 @Name("mysql to clickhouse replication")
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
-              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
-              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions("1.0"),
-              RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions("1.0"),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree(
+        "1.0"
+    ),
+)
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
     self,
@@ -127,16 +109,30 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-    features = ["sanity", "types_autocreate", "deduplication", "primary_keys", "autocreate", "schema_changes",
-                "multiple_tables", "multiple_tables", "virtual_columns", "delete", "update", "truncate",
-                "partition_limits", "replicated_engine"]
-    for feature in features:
-        Feature(run=load(f"tests.{feature}", "feature"))
+    modules = [
+        "sanity",
+        "autocreate",
+        "insert",
+        "update",
+        "delete",
+        "truncate",
+        "deduplication",
+        "types",
+        # "types_autocreate",
+        # "primary_keys",
+        # "schema_changes",
+        # "multiple_tables",
+        # "virtual_columns",
+        # "partition_limits",
+        # "replicated_engine",
+    ]
+    for module in modules:
+        Feature(run=load(f"tests.{module}", "module"))
 
-    Feature(run=load("tests.types", "feature"))
-    Feature(run=load("tests.insert", "feature"))
-    Feature(run=load("tests.consistency", "feature"))
-    Feature(run=load("tests.sysbench", "feature"))
+    # Feature(run=load("tests.types", "module"))
+    # Feature(run=load("tests.insert", "module"))
+    # Feature(run=load("tests.consistency", "module"))
+    # Feature(run=load("tests.sysbench", "module"))
     # Feature(run=load("tests.manual_section", "feature"))
 
 

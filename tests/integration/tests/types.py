@@ -1,4 +1,5 @@
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
@@ -9,45 +10,30 @@ def check_datatype_replication(
     ch_type,
     values,
     ch_values,
+    clickhouse_table,
     nullable=False,
     hex_type=False,
-    auto_create_tables=False,
 ):
     """Check replication of a given MySQL data type."""
-    with Given("Receive UID"):
-        uid = getuid()
-
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
+    table_name = f"types_{getuid()}"
 
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
+    mysql_columns = f"MyData {mysql_type}{' NOT NULL' if not nullable else ''}"
+    clickhouse_columns = f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
+
     init_sink_connector(
-        auto_create_tables=auto_create_tables, topics=f"SERVER5432.test.{table_name}"
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
     )
 
-    with Given(f"I create MySQL table {table_name})"):
-        create_mysql_table(
+    with Given(f"I create MySQL table", description={table_name}):
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-            f"(id INT AUTO_INCREMENT,"
-            f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
-            f" PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
         )
-
-    if not auto_create_tables:
-        with And(f"I create ClickHouse replica test.{table_name}"):
-            create_clickhouse_table(
-                name=table_name,
-                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
-                f"Int8, _version UInt64) "
-                f"ENGINE = ReplacingMergeTree(_version) "
-                f"PRIMARY KEY id ORDER BY id SETTINGS "
-                f"index_granularity = 8192;",
-            )
 
     with When(f"I insert data in MySql table {table_name}"):
         for i, value in enumerate(values, 1):
@@ -59,7 +45,7 @@ def check_datatype_replication(
                 )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -82,16 +68,19 @@ def check_datatype_replication(
 )
 def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DECIMAL' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -107,31 +96,34 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements()
 def double(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DOUBLE' data type."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
     [
-        ("DATE", "Date", ["'2012-12-12'"], ['"2012-12-12"'], False),
+        ("DATE", "Date32", ["'2012-12-12'"], ['"2012-12-12"'], False),
         (
-            "DATETIME(6)",
-            "String",
-            ["'2018-09-08 17:51:04.777'"],
-            ['"2018-09-08 17:51:04.777000"'],
+            "DATETIME",
+            "DateTime64",
+            ["'2018-09-08 17:51:04'"],
+            ['"2018-09-08 17:51:04.000"'],
             False,
         ),
-        ("TIME", "String", ["'17:51:04.777'"], ['"17:51:05"'], False),
+        ("TIME", "String", ["'17:51:04.777'"], ['"17:51:05.000000"'], False),
         ("TIME(6)", "String", ["'17:51:04.777'"], ['"17:51:04.777000"'], False),
-        ("DATE", "Date", ["NULL"], ["\\N"], True),
-        ("DATETIME(6)", "String", ["NULL"], ["\\N"], True),
+        ("DATE", "Date32", ["NULL"], ["\\N"], True),
+        ("DATETIME", "DateTime64", ["NULL"], ["\\N"], True),
         ("TIME", "String", ["NULL"], ["\\N"], True),
         ("TIME(6)", "String", ["NULL"], ["\\N"], True),
     ],
@@ -141,16 +133,19 @@ def double(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'DATE' and 'TIME' data type."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 # @Repeat(3)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
@@ -168,13 +163,6 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
             "Int64",
             ["-9223372036854775808", "0", "9223372036854775807"],
             ["-9223372036854775808", "0", "9223372036854775807"],
-            False,
-        ),
-        (
-            "BIGINT UNSIGNED",
-            "UInt64",
-            ["0", "18446744073709551615"],
-            ["0", "18446744073709551615"],
             False,
         ),
         ("TINYINT", "Int8", ["-128", "127"], ["-128", "127"], False),
@@ -212,16 +200,46 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'INT' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
 
 
 @TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        (
+            "BIGINT UNSIGNED",
+            "UInt64",
+            ["0", "18446744073709551615"],
+            ["0", "18446744073709551615"],
+            False,
+        ),
+    ],
+)
+def bigint(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'BIGINT UNSIGNED' data type."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
+
+
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -238,16 +256,19 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def string(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'STRING' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -270,17 +291,20 @@ def string(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def blob(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'BLOB' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-        hex_type=True,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table,
+                hex_type=True
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -295,17 +319,20 @@ def blob(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def binary(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'BINARY' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-        hex_type=True,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table,
+                hex_type=True,
+            )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -318,26 +345,59 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def enum(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'ENUM' data types."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table
+            )
+
+
+@TestOutline(Scenario)
+@Examples(
+    "mysql_type ch_type values ch_values nullable",
+    [
+        (
+            "JSON",
+            "String",
+            ['\'{\\"key1\\": \\"value1\\", \\"key2\\": \\"value2\\"}\''],
+            ['{""key1"": ""value1"", ""key2"": ""value2""}'],
+            False,
+        ),
+        ("JSON", "String", ["NULL"], ["\\N"], True),
+    ],
+)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
+def json(self, mysql_type, ch_type, values, ch_values, nullable):
+    """Check replication of MySQl 'JSON' data types."""
     check_datatype_replication(
         mysql_type=mysql_type,
         ch_type=ch_type,
         values=values,
         ch_values=ch_values,
         nullable=nullable,
+        auto_create_tables=True,
     )
 
 
-@TestFeature
+@TestModule
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")
 )
 @Name("types")
-def feature(self):
+def module(self):
     """Verify correct replication of all supported MySQL data types."""
-    xfail("")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()

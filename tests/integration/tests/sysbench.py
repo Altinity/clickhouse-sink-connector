@@ -175,9 +175,9 @@ def oltp_update_index(self):
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_update_index")
 
 
-@TestFeature
+@TestModule
 @Name("sysbench")
-def feature(self):
+def module(self):
     """MySQL to ClickHouse sysbench tests."""
     xfail("")
 

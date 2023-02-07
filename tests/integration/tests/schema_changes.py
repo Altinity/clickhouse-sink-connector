@@ -82,9 +82,9 @@ def table_recreation_with_different_datatypes(
     )
 
 
-@TestFeature
+@TestModule
 @Name("schema changes")
-def feature(self):
+def module(self):
     """Test some table schema changes."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):

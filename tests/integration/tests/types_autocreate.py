@@ -430,12 +430,12 @@ def bytes(self, mysql_type, ch_type, values, ch_values, nullable):
     )
 
 
-@TestFeature
+@TestModule
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")
 )
 @Name("types autocreate")
-def feature(self):
+def module(self):
     """Verify correct replication of all supported MySQL data types with CLickHouse table auto creation."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):

@@ -1,29 +1,30 @@
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
-def delete(self, primary_key, engine=True):
+def delete(self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine):
     """Check `DELETE` query replicating from MySQl table to CH with different primary keys."""
 
-    with Given("Receive UID"):
-        uid = getuid()
+    table_name = f"delete_{getuid()}"
 
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
-
-    clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
+
+    init_sink_connector(
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
+    )
 
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} "
-            "(id int(11) NOT NULL,"
-            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-            f"pad char(60) NOT NULL DEFAULT ''{primary_key}){' ENGINE = InnoDB;' if engine else ''}",
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
+            primary_key=primary_key,
+            engine=engine,
         )
 
     with When(f"I insert data in MySql table"):
@@ -32,63 +33,110 @@ def delete(self, primary_key, engine=True):
         mysql.query(f"DELETE FROM {table_name} WHERE id=1;")
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
-        mysql_rows_after_delete = mysql.query(
-            f"select count(*) from {table_name}"
-        ).output.strip()[90:]
-        for attempt in retries(count=10, timeout=100, delay=5):
-            with attempt:
-                clickhouse.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                clickhouse.query(
-                    f"SELECT count(*) FROM test.{table_name} FINAL where _sign !=-1 FORMAT CSV",
-                    message=mysql_rows_after_delete,
-                )
-
-
-@TestScenario
-def no_primary_key(self):
-    """Check for `DELETE` with no primary key with InnoDB engine."""
-    delete(primary_key="", engine=True)
-
-
-@TestScenario
-def no_primary_key_innodb(self):
-    """Check for `DELETE` with no primary key without InnoDB engine."""
-    delete(primary_key="", engine=False)
-
-
-@TestScenario
-def simple_primary_key(self):
-    """Check for `DELETE` with simple primary key without InnoDB engine."""
-    delete(primary_key=", PRIMARY KEY (id)", engine=False)
-
-
-@TestScenario
-def simple_primary_key_innodb(self):
-    """Check for `DELETE` with simple primary key with InnoDB engine."""
-    delete(primary_key=", PRIMARY KEY (id)", engine=True)
-
-
-@TestScenario
-def complex_primary_key(self):
-    """Check for `DELETE` with complex primary key without engine InnoDB."""
-    delete(primary_key=", PRIMARY KEY (id,k)", engine=False)
-
-
-@TestScenario
-def complex_primary_key_innodb(self):
-    """Check for `DELETE` with complex primary key with engine InnoDB."""
-    delete(primary_key=", PRIMARY KEY (id,k)", engine=True)
+        complex_check_creation_and_select(
+            table_name=table_name,
+            clickhouse_table=clickhouse_table,
+            statement="count(*)",
+            with_final=True,
+        )
 
 
 @TestFeature
+def no_primary_key(self):
+    """Check for `DELETE` with no primary key without InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key=None,
+                engine=False,
+            )
+
+
+@TestFeature
+def no_primary_key_innodb(self):
+    """Check for `DELETE` with no primary key with InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key=None,
+                engine=True,
+            )
+
+
+@TestFeature
+def simple_primary_key(self):
+    """Check for `DELETE` with simple primary key without InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id",
+                engine=False,
+            )
+
+
+@TestFeature
+def simple_primary_key_innodb(self):
+    """Check for `DELETE` with simple primary key with InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id",
+                engine=True,
+            )
+
+
+@TestFeature
+def complex_primary_key(self):
+    """Check for `DELETE` with complex primary key without engine InnoDB."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id,k",
+                engine=True,
+            )
+
+
+@TestFeature
+def complex_primary_key_innodb(self):
+    """Check for `DELETE` with complex primary key with engine InnoDB."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            delete(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id,k",
+                engine=False,
+            )
+
+
+@TestModule
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes("1.0"))
 @Name("delete")
-def feature(self):
+def module(self):
     """MySql to ClickHouse replication delete tests to test `DELETE` queries."""
 
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()

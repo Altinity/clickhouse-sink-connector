@@ -65,9 +65,9 @@ def combinatoric_restart_test(self):
         )
 
 
-@TestFeature
+@TestModule
 @Name("manual section")
-def feature(self):
+def module(self):
     """MySql to ClickHouse replication sanity test that checks
     basic replication using a simple table."""
 

@@ -285,12 +285,12 @@ def combinatoric_kill_start(self):
             )
 
 
-@TestFeature
+@TestModule
 @Name("consistency")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee("1.0")
 )
-def feature(self):
+def module(self):
     """Сheck data consistency when network or service faults are introduced."""
     xfail("")
     with Given("I enable debezium and sink connectors after kafka starts up"):

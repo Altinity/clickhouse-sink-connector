@@ -48,9 +48,9 @@ def virtual_column_names(
         )
 
 
-@TestFeature
+@TestModule
 @Name("virtual columns")
-def feature(self):
+def module(self):
     """Section to check behavior of virtual columns."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):

@@ -46,14 +46,14 @@ def tables_100(self):
         multiple_table_creation(number_of_tables=10)
 
 
-@TestFeature
+@TestModule
 @Name("multiple tables")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate(
         "1.0"
     )
 )
-def feature(self):
+def module(self):
     """
     Multiple tables creation.
     """

@@ -7,7 +7,7 @@ from integration.helpers.common import *
 def init_sink_connector(
     self,
     node=None,
-    auto_create_tables=False,
+    auto_create_tables="auto",
     topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users",
 ):
     """
@@ -16,7 +16,7 @@ def init_sink_connector(
     if node is None:
         node = self.context.cluster.node("bash-tools")
 
-    if auto_create_tables:
+    if auto_create_tables == "auto":
         auto_create_tables_local = "true"
     else:
         auto_create_tables_local = "false"

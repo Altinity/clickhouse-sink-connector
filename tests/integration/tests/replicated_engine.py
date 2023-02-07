@@ -130,9 +130,9 @@ def random_version_column(self, mysql_type, ch_type, values, ch_values, nullable
     )
 
 
-@TestFeature
+@TestModule
 @Name("replicated engine")
-def feature(self):
+def module(self):
     """
     Tests for ReplicatedReplacingMergeTree engine
     """

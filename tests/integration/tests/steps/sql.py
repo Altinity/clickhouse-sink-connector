@@ -78,6 +78,8 @@ def create_mysql_to_clickhouse_replicated_table(
     clickhouse_table,
     mysql_node=None,
     clickhouse_node=None,
+    primary_key="id",
+    engine=True,
 ):
     """Create MySQL-to-ClickHouse replicated table.
 
@@ -101,47 +103,59 @@ def create_mysql_to_clickhouse_replicated_table(
             mysql_node.query(
                 f"CREATE TABLE IF NOT EXISTS {name} "
                 f"(id INT AUTO_INCREMENT,"
-                f"{mysql_columns},"
-                f" PRIMARY KEY (id))"
-                f" ENGINE = InnoDB;",
+                f"{mysql_columns}"
+                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''})"
+                f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
-        if clickhouse_table == "auto":
-            pass
-
-        elif clickhouse_table == "ReplicatedReplacingMergeTree":
-            with And(
-                f"I create ReplicatedReplacingMergeTree as a replication table",
-                description=name,
-            ):
-                clickhouse_node.query(
-                    f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
-                    f"(id Int32,{clickhouse_columns}, _sign "
-                    f"Int8, _version UInt64) "
-                    f"ENGINE = ReplicatedReplacingMergeTree("
-                    "'/clickhouse/tables/{shard}"
-                    f"/{name}',"
-                    " '{replica}',"
-                    f" _version) "
-                    f"PRIMARY KEY id ORDER BY id SETTINGS "
-                    f"index_granularity = 8192;",
+        if clickhouse_table[0] == "auto":
+            if clickhouse_table[1] == "ReplacingMergeTree":
+                pass
+            else:
+                raise NotImplementedError(
+                    f"table '{clickhouse_table[1]}' not supported"
                 )
 
-        elif clickhouse_table == "ReplacingMergeTree":
-            with And(
-                f"I create ClickHouse table as replication table to MySQL test.{name}"
-            ):
-                clickhouse_node.query(
-                    f"CREATE TABLE IF NOT EXISTS test.{name} "
-                    f"(id Int32,{clickhouse_columns}, _sign "
-                    f"Int8, _version UInt64) "
-                    f"ENGINE = ReplacingMergeTree(_version) "
-                    f"PRIMARY KEY id ORDER BY id SETTINGS "
-                    f"index_granularity = 8192;",
+        elif clickhouse_table[0] == "manual":
+            if clickhouse_table[1] == "ReplicatedReplacingMergeTree":
+                with And(
+                    f"I create ReplicatedReplacingMergeTree as a replication table",
+                    description=name,
+                ):
+                    clickhouse_node.query(
+                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
+                        f"(id Int32,{clickhouse_columns}, _sign "
+                        f"Int8, _version UInt64) "
+                        f"ENGINE = ReplicatedReplacingMergeTree("
+                        "'/clickhouse/tables/{shard}"
+                        f"/{name}',"
+                        " '{replica}',"
+                        f" _version) "
+                        f"PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
+                        f"index_granularity = 8192;",
+                    )
+            elif clickhouse_table[1] == "ReplacingMergeTree":
+                with And(
+                    f"I create ClickHouse table as replication table to MySQL test.{name}"
+                ):
+                    clickhouse_node.query(
+                        f"CREATE TABLE IF NOT EXISTS test.{name} "
+                        f"(id Int32,{clickhouse_columns}, _sign "
+                        f"Int8, _version UInt64) "
+                        f"ENGINE = ReplacingMergeTree(_version) "
+                        f" PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
+                        f"index_granularity = 8192;",
+                    )
+
+            else:
+                raise NotImplementedError(
+                    f"table '{clickhouse_table[1]}' not supported"
                 )
 
         else:
-            raise NotImplementedError(f"table '{clickhouse_table}' not supported")
+            raise NotImplementedError(
+                f"table creation method '{clickhouse_table[0]}' not supported"
+            )
 
         yield
     finally:
@@ -215,7 +229,7 @@ def complex_insert(
 @TestStep(Then)
 def select(
     self,
-    insert=None,
+    manual_output=None,
     table_name=None,
     statement=None,
     node=None,
@@ -244,13 +258,13 @@ def select(
         90:
     ]
 
-    if insert is None:
-        insert = mysql_output
+    if manual_output is None:
+        manual_output = mysql_output
 
     if with_final:
         retry(node.query, timeout=timeout, delay=10,)(
-            f"SELECT {statement} FROM test.{table_name} FINAL FORMAT CSV",
-            message=f"{insert}",
+            f"SELECT {statement} FROM test.{table_name} FINAL  where _sign !=-1 FORMAT CSV",
+            message=f"{manual_output}",
         )
     elif with_optimize:
         for attempt in retries(count=10, timeout=100, delay=5):
@@ -259,73 +273,86 @@ def select(
 
                 node.query(
                     f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
-                    message=f"{insert}",
+                    message=f"{manual_output}",
                 )
 
     else:
         retry(node.query, timeout=timeout, delay=10,)(
-            f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
-            message=f"{insert}",
+            f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
+            message=f"{manual_output}",
         )
 
 
 @TestStep(Then)
-def complex_select(
+def complex_check_creation_and_select(
     self,
     table_name,
-    auto_create_tables,
-    replicated,
+    clickhouse_table,
     statement,
+    timeout=50,
+    manual_output=None,
     with_final=False,
     with_optimize=False,
 ):
+    """
+    Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySql
+    :param self:
+    :param table_name:
+    :param auto_create_tables:
+    :param replicated:
+    :param statement:
+    :param with_final:
+    :param with_optimize:
+    :return:
+    """
     clickhouse = self.context.cluster.node("clickhouse")
     clickhouse1 = self.context.cluster.node("clickhouse1")
     clickhouse2 = self.context.cluster.node("clickhouse2")
     clickhouse3 = self.context.cluster.node("clickhouse3")
     mysql = self.context.cluster.node("mysql-master")
 
-    if auto_create_tables:
-        if replicated:
-            with Then("I check table creation on few nodes"):
-                retry(clickhouse.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-                retry(clickhouse1.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-                retry(clickhouse2.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-                retry(clickhouse3.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
-        else:
-            with Then("I check table creation"):
-                retry(clickhouse.query, timeout=30, delay=3)(
-                    "SHOW TABLES FROM test", message=f"{table_name}"
-                )
+    if clickhouse_table[1].startswith("Replicated"):
+        with Then("I check table creation on few nodes"):
+            retry(clickhouse.query, timeout=30, delay=3)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
+            retry(clickhouse1.query, timeout=30, delay=3)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
+            retry(clickhouse2.query, timeout=30, delay=3)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
+            retry(clickhouse3.query, timeout=30, delay=3)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
+    else:
+        with Then("I check table creation"):
+            retry(clickhouse.query, timeout=30, delay=3)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
         select(
             table_name=table_name,
+            manual_output=manual_output,
             statement=statement,
             with_final=with_final,
             with_optimize=with_optimize,
-            timeout=50,
+            timeout=timeout,
         )
-        if replicated:
+        if clickhouse_table[1].startswith("Replicated"):
             with Then(
                 "I check that ClickHouse table has same number of rows as MySQL table on the replica node if it is "
                 "replicted table"
             ):
                 select(
                     table_name=table_name,
+                    manual_output=manual_output,
                     statement=statement,
                     node=self.context.cluster.node("clickhouse1"),
                     with_final=with_final,
                     with_optimize=with_optimize,
-                    timeout=50,
+                    timeout=timeout,
                 )
 
 

@@ -1,52 +1,144 @@
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
-@TestScenario
-def simple_scenario(self, node=None):
+@TestOutline
+def truncate(self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine):
     """
     Just simple 'TRUNCATE' query check
     """
-    if node is None:
-        node = self.context.node
-    table_name = f"test_{getuid()}"
-    clickhouse = self.context.cluster.node("clickhouse")
+    table_name = f"truncate_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySWL table {table_name}"):
-        create_mysql_table(
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} "
-            f"(id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
-            f" col3 int4 default 777, PRIMARY KEY (id)) "
-            f"ENGINE = InnoDB;",
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
+            primary_key=primary_key,
+            engine=engine,
         )
 
-    with And("I insert data in MySQL table"):
-        mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES (2,3,777)")
+    with When(f"I insert data in MySql table"):
+        mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
-    with And("I check that clickhouse table received data"):
-        retry(clickhouse.query, timeout=50, delay=2)(
-            f"SELECT count() FROM test.{table_name}", message="1"
+    with Then("I check that clickhouse table received data"):
+        complex_check_creation_and_select(
+            table_name=table_name,
+            clickhouse_table=clickhouse_table,
+            statement="count(*)",
+            with_final=True,
         )
 
-    with When("I truncate MySQL table"):
+    with And("I truncate MySQL table"):
         mysql.query(f"TRUNCATE TABLE {table_name}")
 
-    with Then("I check that clickhouse table empty"):
-        retry(clickhouse.query, timeout=50, delay=2)(
-            f"SELECT count() FROM test.{table_name}", message="0"
+    with And("I check that clickhouse table empty"):
+        complex_check_creation_and_select(
+            table_name=table_name,
+            clickhouse_table=clickhouse_table,
+            statement="count(*)",
+            with_final=True,
         )
 
 
 @TestFeature
+def no_primary_key(self):
+    """Check for `DELETE` with no primary key without InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key=None,
+                engine=False,
+            )
+
+
+@TestFeature
+def no_primary_key_innodb(self):
+    """Check for `DELETE` with no primary key with InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key=None,
+                engine=True,
+            )
+
+
+@TestFeature
+def simple_primary_key(self):
+    """Check for `DELETE` with simple primary key without InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id",
+                engine=False,
+            )
+
+
+@TestFeature
+def simple_primary_key_innodb(self):
+    """Check for `DELETE` with simple primary key with InnoDB engine."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id",
+                engine=True,
+            )
+
+
+@TestFeature
+def complex_primary_key(self):
+    """Check for `DELETE` with complex primary key without engine InnoDB."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id,k",
+                engine=True,
+            )
+
+
+@TestFeature
+def complex_primary_key_innodb(self):
+    """Check for `DELETE` with complex primary key with engine InnoDB."""
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            truncate(
+                clickhouse_table=clickhouse_table,
+                mysql_columns=" k INT,c CHAR, pad CHAR",
+                clickhouse_columns=" k Int32,c String, pad String",
+                primary_key="id,k",
+                engine=False,
+            )
+
+@TestModule
 @Name("truncate")
-def feature(self):
+def module(self):
     """'ALTER TRUNCATE' query tests."""
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()
