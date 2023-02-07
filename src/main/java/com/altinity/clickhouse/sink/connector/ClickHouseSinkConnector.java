@@ -44,8 +44,8 @@ public class ClickHouseSinkConnector extends SinkConnector {
         this.ready = true;
 
         // Initialize Metrics
-        Metrics.initialize(this.config.get(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS),
-                this.config.get(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT));
+        Metrics.initialize(this.config.get(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
+                this.config.get(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
     }
 
     /**

@@ -95,7 +95,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         try {
             int numRecords = records.size();
             if (numRecords <= 0) {
-                log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
+                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
                 return;
             }
 

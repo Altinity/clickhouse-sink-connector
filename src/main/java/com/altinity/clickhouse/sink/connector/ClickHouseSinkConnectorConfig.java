@@ -174,7 +174,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString(),
                         Type.STRING,
                         null,
-                        new ConfigDef.NonEmptyString(),
                         Importance.HIGH,
                         "ClickHouse password",
                         CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
@@ -345,7 +344,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString())
                 .define(
-                        String.valueOf(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE),
+                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString(),
                         Type.INT,
                         10,
                         Importance.HIGH,
@@ -353,7 +352,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.name())
+                        ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString())
 
                 // ToDo: Add JVM Proxy
                 ;
