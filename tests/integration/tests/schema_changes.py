@@ -1,4 +1,5 @@
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
@@ -11,47 +12,38 @@ def check_datatype_replication(
     ch_values,
     nullable,
     table_name,
+    clickhouse_table,
     hex_type=False,
-    auto_create_tables=True,
 ):
     """Check replication of a given MySQL data type."""
     table_name = table_name
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySQL table {table_name})"):
-        create_mysql_table(
-            name=table_name,
-            statement=f"CREATE TABLE IF NOT EXISTS {table_name} "
-            f"(id INT AUTO_INCREMENT,"
-            f"MyData {mysql_type}{' NOT NULL' if not nullable else ''},"
-            f" PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
-        )
+    mysql_columns = f"MyData {mysql_type}{' NOT NULL' if not nullable else ''}"
+    clickhouse_columns = (
+        f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
+    )
 
-    if not auto_create_tables:
-        with And(f"I create ClickHouse replica test.{table_name}"):
-            create_clickhouse_table(
-                name=table_name,
-                statement=f"CREATE TABLE IF NOT EXISTS test.{table_name} "
-                f"(id Int32,{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}, _sign "
-                f"Int8, _version UInt64) "
-                f"ENGINE = ReplacingMergeTree(ver) "
-                f"PRIMARY KEY id ORDER BY id SETTINGS "
-                f"index_granularity = 8192;",
-            )
+    with Given(f"I create MySql to CH replicated table", description=table_name):
+        create_mysql_to_clickhouse_replicated_table(
+            name=table_name,
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
+        )
 
     with When(f"I insert data in MySql table {table_name}"):
         for i, value in enumerate(values, 1):
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
             with Then(f"I make check that ClickHouse table has same dataset"):
-                retry(clickhouse.query, timeout=50, delay=1)(
+                retry(clickhouse.query, timeout=5, delay=1)(
                     f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FORMAT CSV",
                     message=f"{ch_values[i - 1]}",
                 )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -70,16 +62,20 @@ def check_datatype_replication(
 def table_recreation_with_different_datatypes(
     self, mysql_type, ch_type, values, ch_values, nullable
 ):
-    """Check MySQL table recreation with the same name but different column data types."""
-    xfail("")
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-        table_name="users1",
-    )
+    """Check MySQL to CH replicated table auto recreation with the same name but different column data types."""
+
+    for clickhouse_table in available_clickhouse_tables:
+        if clickhouse_table[0] == "auto":
+            with Example({clickhouse_table}, flags=TE):
+                check_datatype_replication(
+                    mysql_type=mysql_type,
+                    ch_type=ch_type,
+                    values=values,
+                    ch_values=ch_values,
+                    nullable=nullable,
+                    clickhouse_table=clickhouse_table,
+                    table_name="users1",
+                )
 
 
 @TestModule
@@ -89,7 +85,11 @@ def module(self):
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
-        init_sink_connector(auto_create_tables=True)
+        init_sink_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()

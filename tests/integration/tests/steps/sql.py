@@ -74,10 +74,12 @@ def create_mysql_to_clickhouse_replicated_table(
     self,
     name,
     mysql_columns,
-    clickhouse_columns,
     clickhouse_table,
+    clickhouse_columns=None,
     mysql_node=None,
     clickhouse_node=None,
+    version_column="_version",
+    sign_column="_sign",
     primary_key="id",
     engine=True,
 ):
@@ -124,13 +126,13 @@ def create_mysql_to_clickhouse_replicated_table(
                 ):
                     clickhouse_node.query(
                         f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
-                        f"(id Int32,{clickhouse_columns}, _sign "
-                        f"Int8, _version UInt64) "
+                        f"(id Int32,{clickhouse_columns}, {sign_column} "
+                        f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplicatedReplacingMergeTree("
                         "'/clickhouse/tables/{shard}"
                         f"/{name}',"
                         " '{replica}',"
-                        f" _version) "
+                        f" {version_column}) "
                         f"PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
                         f"index_granularity = 8192;",
                     )
@@ -140,9 +142,9 @@ def create_mysql_to_clickhouse_replicated_table(
                 ):
                     clickhouse_node.query(
                         f"CREATE TABLE IF NOT EXISTS test.{name} "
-                        f"(id Int32,{clickhouse_columns}, _sign "
-                        f"Int8, _version UInt64) "
-                        f"ENGINE = ReplacingMergeTree(_version) "
+                        f"(id Int32,{clickhouse_columns}, {sign_column} "
+                        f"Int8, {version_column} UInt64) "
+                        f"ENGINE = ReplacingMergeTree({version_column}) "
                         f" PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
                         f"index_granularity = 8192;",
                     )
@@ -235,6 +237,7 @@ def select(
     node=None,
     with_final=False,
     with_optimize=False,
+    sign_column="_sign",
     timeout=100,
 ):
     """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
@@ -263,7 +266,7 @@ def select(
 
     if with_final:
         retry(node.query, timeout=timeout, delay=10,)(
-            f"SELECT {statement} FROM test.{table_name} FINAL  where _sign !=-1 FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} FINAL  where {sign_column} !=-1 FORMAT CSV",
             message=f"{manual_output}",
         )
     elif with_optimize:
@@ -272,13 +275,13 @@ def select(
                 node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 node.query(
-                    f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
+                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
                     message=f"{manual_output}",
                 )
 
     else:
         retry(node.query, timeout=timeout, delay=10,)(
-            f"SELECT {statement} FROM test.{table_name} where _sign !=-1 FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
             message=f"{manual_output}",
         )
 

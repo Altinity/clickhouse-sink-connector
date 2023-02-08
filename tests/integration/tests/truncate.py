@@ -4,16 +4,20 @@ from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
-def truncate(self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine):
+def truncate(
+    self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine
+):
     """
     Just simple 'TRUNCATE' query check
     """
     table_name = f"truncate_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
+    )
 
-    with Given(f"I create MySWL table {table_name}"):
+    with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -128,6 +132,7 @@ def complex_primary_key_innodb(self):
                 primary_key="id,k",
                 engine=False,
             )
+
 
 @TestModule
 @Name("truncate")

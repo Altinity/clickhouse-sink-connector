@@ -17,14 +17,14 @@ def update(
         auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
     )
 
-    with Given(f"I create MySQL table {table_name}"):
+    with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
             clickhouse_table=clickhouse_table,
             primary_key=primary_key,
-            engine=engine
+            engine=engine,
         )
 
     with When(f"I insert data in MySql table"):

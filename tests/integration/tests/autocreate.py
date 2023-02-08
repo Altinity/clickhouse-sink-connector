@@ -17,7 +17,8 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
     )
 
     with Given(
-        f"I create MySQL table {table_name} with all supported NOT NULL data types"
+        f"I create MySql to CH replicated table with all supported NOT NULL data types",
+        description=table_name,
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,

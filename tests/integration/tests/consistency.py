@@ -16,7 +16,9 @@ def stop_start(self, services, loops=10):
     with Given("I create unique table name"):
         table_name = f"test{uid}"
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables="auto", topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(

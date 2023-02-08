@@ -1,78 +1,83 @@
-from itertools import combinations
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
-def restart(self, services, loops=10, delete_number=1500):
-    """Check for data consistency with concurrently service restart 10 times."""
-    uid = getuid()
+def mysql_to_clickhouse_connection(
+    self,
+    mysql_columns,
+    clickhouse_table,
+    clickhouse_columns=None,
+):
+    """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
-    clickhouse = self.context.cluster.node("clickhouse")
+    table_name = f"manual_{getuid()}"
+
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given("I create unique table name"):
-        table_name = f"test"
+    init_sink_connector(
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
+    )
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
-    pause()
-
-    with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
+    with Given(f"I create MySql to CH replicated table", description=table_name):
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} "
-            "(id int(11) NOT NULL,"
-            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table=clickhouse_table,
         )
 
-    with When(
-        "I insert, update, delete data in MySql table concurrently with services restart"
-    ):
-        Step(
-            "I insert, update, delete data in MySql table",
-            test=concurrent_queries,
-            parallel=True,
-        )(
+    with When(f"I insert data in MySql table"):
+        complex_insert(
+            node=mysql,
             table_name=table_name,
-            first_insert_number=1,
-            last_insert_number=3000,
-            first_insert_id=3001,
-            last_insert_id=6000,
-            first_delete_id=1,
-            last_delete_id=1500,
-            first_update_id=1501,
-            last_update_id=3000,
+            values=["({x},{y})", "({x},{y})"],
+            partitions=1,
+            parts_per_partition=1,
+            block_size=10,
         )
 
-        # for i in range(loops):
-        #     with Step(f"LOOP STEP {i}"):
-        #         for node in services:
-        #             self.context.cluster.node(f"{node}").restart()
-
-    with And("I check that ClickHouse table has same number of rows as MySQL table"):
-        select(statement="count(*)", table_name=table_name, with_optimize=True)
-
-
-@TestSuite
-def combinatoric_restart_test(self):
-    """Check all possibilities of restart services."""
-    nodes_list = ["debezium"]
-    service_combinations = list(combinations(nodes_list, 1))
-    for combination in service_combinations:
-        Scenario(f"{combination} restart", test=restart, flags=TE)(
-            services=combination, loops=5
+    with Then(
+        "I check that MySQL tables and Clickhouse replication tables have the same data"
+    ):
+        complex_check_creation_and_select(
+            table_name=table_name,
+            clickhouse_table=clickhouse_table,
+            statement="count(*)",
+            with_final=True,
         )
+
+
+@TestFeature
+@Name("mysql to clickhouse")
+def mysql_to_clickhouse(
+    self,
+    mysql_columns="MyData INT",
+    clickhouse_columns="MyData Int32",
+):
+    """Just imitation of tests."""
+    for clickhouse_table in available_clickhouse_tables:
+        if clickhouse_table[0] == "auto":
+            with Example({clickhouse_table}, flags=TE):
+                mysql_to_clickhouse_connection(
+                    mysql_columns=mysql_columns,
+                    clickhouse_columns=clickhouse_columns,
+                    clickhouse_table=clickhouse_table,
+                )
 
 
 @TestModule
 @Name("manual section")
 def module(self):
-    """MySql to ClickHouse replication sanity test that checks
-    basic replication using a simple table."""
+    """MySql to ClickHouse replication manual checks section."""
 
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 
-    for suite in loads(current_module(), Suite):
-        Suite(run=suite)
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()

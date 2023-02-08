@@ -115,7 +115,7 @@ def insert_bulk(self):
 @Repeat(3)
 def oltp_delete(self):
     """Run "oltp delete" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_oltp_delete.sh")
 
 
@@ -123,7 +123,7 @@ def oltp_delete(self):
 @Repeat(1)
 def read_write_load_test(self):
     """Run "read write load" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_read_write_load_test.sh")
 
 
@@ -131,7 +131,7 @@ def read_write_load_test(self):
 @Repeat(1)
 def update_index(self):
     """Check MySQl by sysbench "update index" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_update_index.sh")
 
 
@@ -139,7 +139,7 @@ def update_index(self):
 @Repeat(1)
 def update_non_index(self):
     """Run "update non index" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_update_non_index.sh")
 
 
@@ -147,7 +147,7 @@ def update_non_index(self):
 @Repeat(1)
 def oltp_delete2(self):
     """Run "oltp delete" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_delete")
 
 
@@ -155,7 +155,7 @@ def oltp_delete2(self):
 @Repeat(1)
 def oltp_insert(self):
     """Run "oltp update non index" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_insert")
 
 
@@ -163,7 +163,7 @@ def oltp_insert(self):
 @Repeat(1)
 def oltp_update_non_index(self):
     """Run "oltp update non index" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_update_non_index")
 
 
@@ -171,7 +171,7 @@ def oltp_update_non_index(self):
 @Repeat(1)
 def oltp_update_index(self):
     """Run "oltp update index" test."""
-    # xfail("expected")
+    xfail("expected")
     sysbench_tests(script="run_sysbench_tests.sh", test_name="oltp_update_index")
 
 
@@ -179,7 +179,6 @@ def oltp_update_index(self):
 @Name("sysbench")
 def module(self):
     """MySQL to ClickHouse sysbench tests."""
-    xfail("")
 
     with Given("I send rpk command on kafka"):
         retry(self.context.cluster.node("kafka").cmd, timeout=100, delay=2)(
@@ -190,7 +189,7 @@ def module(self):
 
     with And("I enable debezium connector"):
         sb_debizium_script_connector()
-        init_sink_connector(auto_create_tables=True)
+        init_sink_connector(auto_create_tables="auto")
 
     for scenario in loads(current_module(), Scenario):
         scenario()

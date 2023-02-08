@@ -21,13 +21,15 @@ def check_datatype_replication(
     mysql = self.context.cluster.node("mysql-master")
 
     mysql_columns = f"MyData {mysql_type}{' NOT NULL' if not nullable else ''}"
-    clickhouse_columns = f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
+    clickhouse_columns = (
+        f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
+    )
 
     init_sink_connector(
         auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
     )
 
-    with Given(f"I create MySQL table", description={table_name}):
+    with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -76,7 +78,7 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
@@ -104,7 +106,7 @@ def double(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
@@ -141,7 +143,7 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
@@ -208,11 +210,11 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -235,7 +237,7 @@ def bigint(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
@@ -264,7 +266,7 @@ def string(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
@@ -300,7 +302,7 @@ def blob(self, mysql_type, ch_type, values, ch_values, nullable):
                 ch_values=ch_values,
                 nullable=nullable,
                 clickhouse_table=clickhouse_table,
-                hex_type=True
+                hex_type=True,
             )
 
 
@@ -353,11 +355,11 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
                 values=values,
                 ch_values=ch_values,
                 nullable=nullable,
-                clickhouse_table=clickhouse_table
+                clickhouse_table=clickhouse_table,
             )
 
 
-@TestOutline(Scenario)
+@TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [

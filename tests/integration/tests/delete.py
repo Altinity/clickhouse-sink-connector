@@ -4,7 +4,9 @@ from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
-def delete(self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine):
+def delete(
+    self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine
+):
     """Check `DELETE` query replicating from MySQl table to CH with different primary keys."""
 
     table_name = f"delete_{getuid()}"
@@ -17,7 +19,7 @@ def delete(self, mysql_columns, clickhouse_columns, clickhouse_table, primary_ke
 
     init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
 
-    with Given(f"I create MySQL table {table_name}"):
+    with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,

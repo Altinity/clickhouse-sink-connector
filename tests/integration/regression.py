@@ -30,7 +30,6 @@ xfails = {
     "truncate/no primary key innodb": [(Fail, "doesn't work")],
     "truncate/no primary key": [(Fail, "doesn't work")],
     "consistency": [(Fail, "doesn't finished")],
-    "sysbench": [(Fail, "doesn't have updates long time, need to recheck")],
     "partition limits": [(Fail, "doesn't ready")],
     "types/json": [(Fail, "doesn't work in raw")],
     "types/double": [
@@ -55,6 +54,9 @@ xflags = {}
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree(
         "1.0"
     ),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
+        "1.0"
+    )
 )
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
@@ -118,22 +120,19 @@ def regression(
         "truncate",
         "deduplication",
         "types",
-        # "types_autocreate",
-        # "primary_keys",
-        # "schema_changes",
-        # "multiple_tables",
-        # "virtual_columns",
-        # "partition_limits",
-        # "replicated_engine",
+        "primary_keys",
+        "schema_changes",
+        "multiple_tables",
+        "virtual_columns",
+        "partition_limits",
+
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
 
-    # Feature(run=load("tests.types", "module"))
-    # Feature(run=load("tests.insert", "module"))
-    # Feature(run=load("tests.consistency", "module"))
-    # Feature(run=load("tests.sysbench", "module"))
-    # Feature(run=load("tests.manual_section", "feature"))
+    Feature(run=load("tests.consistency", "module"))
+    Feature(run=load("tests.sysbench", "module"))
+    Feature(run=load("tests.manual_section", "module"))
 
 
 if __name__ == "__main__":
