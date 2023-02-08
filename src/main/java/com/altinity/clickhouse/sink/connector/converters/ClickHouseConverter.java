@@ -7,6 +7,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.sink.SinkRecord;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -297,6 +298,30 @@ public class ClickHouseConverter implements AbstractConverter {
     @Override
     public Map<String, Object> convertValue(SinkRecord record) {
         return this.convertRecord(record, KafkaSchemaRecordType.VALUE);
+    }
+
+    @Override
+    public Map<String, Object> convertValue(SourceRecord record) {
+        KafkaSchemaRecordType what = KafkaSchemaRecordType.VALUE;
+        Schema schema = what == KafkaSchemaRecordType.KEY ? record.keySchema() : record.valueSchema();
+        Object obj = what == KafkaSchemaRecordType.KEY ? record.key() : record.value();
+        Map<String, Object> result = null;
+
+        if (schema == null) {
+            log.debug("Schema is empty");
+            if (obj instanceof Map) {
+                log.info("SCHEMA LESS RECORD");
+            }
+        } else {
+            if (schema.type() != Schema.Type.STRUCT) {
+                log.error("NON STRUCT records ignored");
+            } else {
+                // Convert STRUCT
+                log.debug("RECEIVED STRUCT");
+                result = convertStruct(obj, schema);
+            }
+        }
+        return result;
     }
 
     /**

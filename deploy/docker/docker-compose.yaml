@@ -72,7 +72,7 @@ services:
       - KAFKA_OPTS=-javaagent:/kafka/etc/jmx_prometheus_javaagent.jar=8080:/kafka/etc/config.yml
       - JMXHOST=localhost
       - JMXPORT=1976
-      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
@@ -114,7 +114,7 @@ services:
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
-      - KAFKA_HEAP_OPTS=-Xms1G -Xmx2G
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
       #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka

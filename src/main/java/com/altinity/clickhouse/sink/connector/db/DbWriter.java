@@ -77,17 +77,21 @@ public class DbWriter extends BaseDbWriter {
             }
 
             DBMetadata metadata = new DBMetadata();
-            if(false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+            try {
+                if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
+                    new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+                }
+            } catch(Exception e) {
+                log.error("Error creating Database", database);
             }
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
-            long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+            long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
-                if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES)) {
+                if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
                     log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
@@ -111,7 +115,7 @@ public class DbWriter extends BaseDbWriter {
         } catch(Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
-        this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN);
+        this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
     }
 
     public boolean wasTableMetaDataRetrieved() {
@@ -245,7 +249,7 @@ public class DbWriter extends BaseDbWriter {
             // that's inserted.
             int recordPartition = record.getKafkaPartition();
 
-            boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION);
+            boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString());
 
             boolean result = false;
 
@@ -296,9 +300,9 @@ public class DbWriter extends BaseDbWriter {
 
         MutablePair<String, Map<String, Integer>>  response= new QueryFormatter().getInsertQueryUsingInputFunction
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
-                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA),
-                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA),
-                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN),
+                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString()),
+                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString()),
+                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()),
                         this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
 
 
@@ -468,7 +472,7 @@ public class DbWriter extends BaseDbWriter {
                 int[] result = ps.executeBatch();
                 success = true;
 
-                long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+                long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
@@ -598,7 +602,7 @@ public class DbWriter extends BaseDbWriter {
         // Kafka metadata columns.
         for (KafkaMetaData metaDataColumn : KafkaMetaData.values()) {
             String metaDataColName = metaDataColumn.getColumn();
-            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA)) {
+            if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString())) {
                 if (this.columnNameToDataTypeMap.containsKey(metaDataColName)) {
                     if(columnNameToIndexMap != null && columnNameToIndexMap.containsKey(metaDataColName)) {
                         TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps);
@@ -637,7 +641,7 @@ public class DbWriter extends BaseDbWriter {
                     //ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
                     if(columnNameToIndexMap.containsKey(versionColumn)) {
                         if (record.getGtid() != -1) {
-                            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)) {
+                            if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
                             } else {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
@@ -661,8 +665,8 @@ public class DbWriter extends BaseDbWriter {
         }
 
         // Store raw data in JSON form.
-        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA)) {
-            String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN);
+        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString())) {
+            String userProvidedColName = this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString());
             String rawDataColumnDataType = this.columnNameToDataTypeMap.get(userProvidedColName);
             if (this.columnNameToDataTypeMap.containsKey(userProvidedColName) &&  rawDataColumnDataType.contains("String")) {
                 if(columnNameToIndexMap.containsKey(userProvidedColName)) {

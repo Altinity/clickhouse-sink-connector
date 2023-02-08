@@ -18,7 +18,7 @@ public class DeDuplicatorTest {
     @Test
     public void testIsNew() {
         Map<String, String> properties = new HashMap<String, String>();
-        properties.put(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY, "new");
+        properties.put(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString(), "new");
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(properties);
         DeDuplicator dedupe = new DeDuplicator(config);

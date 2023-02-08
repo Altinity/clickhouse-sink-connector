@@ -74,11 +74,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     private DBCredentials parseDBConfiguration() {
         DBCredentials dbCredentials = new DBCredentials();
 
-        dbCredentials.setHostName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL));
-        dbCredentials.setDatabase(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE));
-        dbCredentials.setPort(config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT));
-        dbCredentials.setUserName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER));
-        dbCredentials.setPassword(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS));
+        dbCredentials.setHostName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString()));
+        dbCredentials.setDatabase(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString()));
+        dbCredentials.setPort(config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString()));
+        dbCredentials.setUserName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString()));
+        dbCredentials.setPassword(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString()));
 
         return dbCredentials;
     }
@@ -91,11 +91,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     @Override
     public void run() {
 
-        Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID);
+        Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
             int numRecords = records.size();
             if (numRecords <= 0) {
-                log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
+                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
                 return;
             }
 
@@ -191,7 +191,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             queryToRecordsMap.remove(topicName);
         }
 
-        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET)) {
+        if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
             DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(), dbCredentials.getPort(), dbCredentials.getDatabase(),
                     "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config);
@@ -223,7 +223,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         long currentTime = System.currentTimeMillis();
         long diffInMs = currentTime - lastFlushTimeInMs;
-        long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT);
+        long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT.toString());
 
         writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
 
