@@ -382,7 +382,6 @@ def json(self, mysql_type, ch_type, values, ch_values, nullable):
         values=values,
         ch_values=ch_values,
         nullable=nullable,
-        auto_create_tables=True,
     )
 
 
