@@ -30,3 +30,17 @@ python3 -u mysql_to_clickhouse_replication/regression.py --only "/mysql to click
 To save service logs to mysql_to_clickhouse_replication/_instances folder use `--collect-service-logs`
 
 To run all test with error ignore use `--test-to-end`
+
+### Sink connector version
+
+For local runs:
+```bash
+ export SINK_CONNECTOR_VERSION="2023-02-07"
+```
+For CI/CD change testflow_tests.yml:
+
+```yml
+env:
+  SINK_CONNECTOR_VERSION: "2023-02-07"
+```
+
