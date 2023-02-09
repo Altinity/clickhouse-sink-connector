@@ -83,7 +83,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image:  altinity/clickhouse-sink-connector:2023-02-07
+    image: "altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}"
     restart: "no"
     expose:
       - "8083"
