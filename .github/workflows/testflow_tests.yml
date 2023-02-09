@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main , develop]
 
+env:
+  SINK_CONNECTOR_VERSION: "2023-02-07"
+
 jobs:
   integration_tests:
 #    runs-on: [self-hosted, linux, x64]
@@ -29,10 +32,6 @@ jobs:
         working-directory: tests/integration/logs
         run: export PATH=~/.local/bin/tfs:$PATH
 
-      - name: add sink connector version
-        if: always()
-        working-directory: tests/integration
-        run: export SINK_CONNECTOR_VERSION="2023-02-07"
 
       - name: Run testflows tests
         working-directory: tests/integration
