@@ -376,13 +376,16 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
 def json(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'JSON' data types."""
-    check_datatype_replication(
-        mysql_type=mysql_type,
-        ch_type=ch_type,
-        values=values,
-        ch_values=ch_values,
-        nullable=nullable,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            check_datatype_replication(
+                mysql_type=mysql_type,
+                ch_type=ch_type,
+                values=values,
+                ch_values=ch_values,
+                nullable=nullable,
+                clickhouse_table=clickhouse_table,
+            )
 
 
 @TestModule
