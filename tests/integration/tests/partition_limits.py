@@ -1,35 +1,31 @@
 from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 
 
 @TestOutline
 def partition_limits(
-    self, input, max_insert_block_size, partitions, parts_per_partition, block_size
+    self, input, max_insert_block_size, partitions, parts_per_partition, block_size,  mysql_columns, clickhouse_table, clickhouse_columns=None
 ):
-    """Checking different types of insert"""
-    with Given("Receive UID"):
-        uid = getuid()
-
-    with And("I create unique table name"):
-        table_name = f"test{uid}"
+    """Creating table and append it with partition limits setting"""
+    table_name = f"partition_limits_{getuid()}"
 
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=True, topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}")
 
     with Given(f"I create MySQL table {table_name}"):
-        create_mysql_table(
+        create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            statement=f"CREATE TABLE {table_name} (id INT AUTO_INCREMENT,col1 int4, col2 int4 NOT NULL,"
-            f" col3 int4 default 777, PRIMARY KEY (id))"
-            f" ENGINE = InnoDB;",
+            mysql_columns=mysql_columns,
+            clickhouse_table=clickhouse_table,
+            clickhouse_columns=clickhouse_columns,
         )
 
     with When(
         "I insert data in MySql table wtih more than 100 partitions per insert block"
     ):
-        clickhouse.query(f"SET max_insert_block_size={max_insert_block_size};")
         complex_insert(
             node=mysql,
             table_name=table_name,
@@ -37,6 +33,7 @@ def partition_limits(
             partitions=partitions,
             parts_per_partition=parts_per_partition,
             block_size=block_size,
+            max_insert_block_size=max_insert_block_size
         )
 
     with Then("I wait unique values from CLickHouse table equal to MySQL table"):
@@ -61,13 +58,17 @@ def partition_limits(
 )
 def exceed_partition_limit(self):
     """Test to check partition correct insert of data with partition limits option."""
-    partition_limits(
-        input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"],
-        max_insert_block_size=1,
-        partitions=10001,
-        parts_per_partition=1,
-        block_size=1,
-    )
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            partition_limits(
+                input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"],
+                max_insert_block_size=1,
+                partitions=10001,
+                parts_per_partition=1,
+                block_size=1,
+                mysql_columns="col1 INT, col2 INT NOT NULL, col3 INT default 777",
+                clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
+            )
 
 
 @TestModule

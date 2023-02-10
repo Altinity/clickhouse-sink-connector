@@ -125,6 +125,7 @@ def regression(
         "multiple_tables",
         "virtual_columns",
         "partition_limits",
+        "columns_inconsistency"
 
     ]
     for module in modules:

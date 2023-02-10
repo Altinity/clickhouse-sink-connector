@@ -208,6 +208,7 @@ def complex_insert(
     partitions=101,
     parts_per_partition=1,
     block_size=1,
+    max_insert_block_size=1000
 ):
     """Insert data having specified number of partitions and parts."""
     if node is None:
@@ -224,8 +225,8 @@ def complex_insert(
         for y in range(block_size * parts_per_partition)
     )
     node.query("system stop merges")
-    node.query(f"INSERT INTO {table_name} VALUES {insert_values_1}")
-    node.query(f"INSERT INTO {table_name} VALUES {insert_values_2}")
+    node.query(f"INSERT INTO {table_name} VALUES {insert_values_1}", settings=[("max_insert_block_size", max_insert_block_size)])
+    node.query(f"INSERT INTO {table_name} VALUES {insert_values_2}", settings=[("max_insert_block_size", max_insert_block_size)])
 
 
 @TestStep(Then)
