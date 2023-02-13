@@ -62,6 +62,7 @@ def exceed_partition_limit(self):
         with Example({clickhouse_table}, flags=TE):
             partition_limits(
                 input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"],
+                clickhouse_table=clickhouse_table,
                 max_insert_block_size=1,
                 partitions=10001,
                 parts_per_partition=1,
@@ -76,7 +77,7 @@ def exceed_partition_limit(self):
 @Name("partition limits")
 def module(self):
     """Tests for cases when the partitioning limit is exceeded."""
-    xfail("")
+    # xfail("")
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
