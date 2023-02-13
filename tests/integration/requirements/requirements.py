@@ -153,29 +153,13 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replacing
     uid=None,
     description=(
         '[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to\n'
-        '"ReplacingMergeTree" [ClickHouse] table engine and virtual column names should be "_version" and "_sign".\n'
+        '"ReplacingMergeTree" [ClickHouse] table engine and virtual column names by default should be "_version" and "_sign".\n'
+        '\n'
         '\n'
     ),
     link=None,
     level=4,
     num='4.5.1.1'
-)
-
-RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree = Requirement(
-    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        '[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to\n'
-        '"CollapsingMergeTree" [ClickHouse] table engine.\n'
-        '\n'
-    ),
-    link=None,
-    level=3,
-    num='4.5.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree = Requirement(
@@ -192,7 +176,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replicate
     ),
     link=None,
     level=3,
-    num='4.5.3'
+    num='4.5.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames = Requirement(
@@ -209,7 +193,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replicate
     ),
     link=None,
     level=4,
-    num='4.5.3.1'
+    num='4.5.2.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requirement(
@@ -869,6 +853,23 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnMappingAndTransformatio
     num='4.16.1'
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] replica table when it has fewer columns.\n'
+        'In other cases replication is not available.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.17.1'
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Latency = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency',
     version='1.0',
@@ -882,7 +883,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Latency = Requirement(
     ),
     link=None,
     level=3,
-    num='4.17.1'
+    num='4.18.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance = Requirement(
@@ -898,7 +899,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance = Requirement(
     ),
     link=None,
     level=3,
-    num='4.18.1'
+    num='4.19.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance_LargeDailyDataVolumes = Requirement(
@@ -914,7 +915,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance_LargeDailyDataVol
     ),
     link=None,
     level=4,
-    num='4.18.2.1'
+    num='4.19.2.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Settings_Topic2TableMap = Requirement(
@@ -931,7 +932,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Settings_Topic2TableMap = Req
     ),
     link=None,
     level=4,
-    num='4.19.1.1'
+    num='4.20.1.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
@@ -954,7 +955,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=3,
-    num='4.20.1'
+    num='4.21.1'
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -999,9 +1000,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='Supported Storage Engines', level=2, num='4.5'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree', level=3, num='4.5.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames', level=4, num='4.5.1.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree', level=3, num='4.5.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree', level=3, num='4.5.3'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames', level=4, num='4.5.3.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree', level=3, num='4.5.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames', level=4, num='4.5.2.1'),
         Heading(name='Data Types', level=2, num='4.6'),
         Heading(name='Integer Types', level=3, num='4.6.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes', level=4, num='4.6.1.1'),
@@ -1070,17 +1070,19 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition', level=3, num='4.15.1'),
         Heading(name='Column Mapping And Transformation Rules', level=2, num='4.16'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules', level=3, num='4.16.1'),
-        Heading(name='Latency', level=2, num='4.17'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency', level=3, num='4.17.1'),
-        Heading(name='Performance ', level=2, num='4.18'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance', level=3, num='4.18.1'),
-        Heading(name='Large Daily Data Volumes', level=3, num='4.18.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes', level=4, num='4.18.2.1'),
-        Heading(name='Settings', level=2, num='4.19'),
-        Heading(name='clickhouse.topic2table.map', level=3, num='4.19.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap', level=4, num='4.19.1.1'),
-        Heading(name='Prometheus ', level=2, num='4.20'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus', level=3, num='4.20.1'),
+        Heading(name='Columns Inconsistency', level=2, num='4.17'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency', level=3, num='4.17.1'),
+        Heading(name='Latency', level=2, num='4.18'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency', level=3, num='4.18.1'),
+        Heading(name='Performance ', level=2, num='4.19'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance', level=3, num='4.19.1'),
+        Heading(name='Large Daily Data Volumes', level=3, num='4.19.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes', level=4, num='4.19.2.1'),
+        Heading(name='Settings', level=2, num='4.20'),
+        Heading(name='clickhouse.topic2table.map', level=3, num='4.20.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap', level=4, num='4.20.1.1'),
+        Heading(name='Prometheus ', level=2, num='4.21'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus', level=3, num='4.21.1'),
         ),
     requirements=(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication,
@@ -1091,7 +1093,6 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames,
-        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CollapsingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes,
@@ -1127,6 +1128,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BootstrappingMode,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BinlogPosition,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnMappingAndTransformationRules,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Latency,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance_LargeDailyDataVolumes,
@@ -1164,9 +1166,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
   * 4.5 [Supported Storage Engines](#supported-storage-engines)
     * 4.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetree)
       * 4.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
-    * 4.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescollapsingmergetree)
-    * 4.5.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
-      * 4.5.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
+    * 4.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
+      * 4.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
   * 4.6 [Data Types](#data-types)
     * 4.6.1 [Integer Types](#integer-types)
       * 4.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
@@ -1235,17 +1236,19 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 4.15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition](#rqsrs-030clickhousemysqltoclickhousereplicationbinlogposition)
   * 4.16 [Column Mapping And Transformation Rules](#column-mapping-and-transformation-rules)
     * 4.16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnmappingandtransformationrules)
-  * 4.17 [Latency](#latency)
-    * 4.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
-  * 4.18 [Performance ](#performance-)
-    * 4.18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
-    * 4.18.2 [Large Daily Data Volumes](#large-daily-data-volumes)
-      * 4.18.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
-  * 4.19 [Settings](#settings)
-    * 4.19.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
-      * 4.19.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
-  * 4.20 [Prometheus ](#prometheus-)
-    * 4.20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+  * 4.17 [Columns Inconsistency](#columns-inconsistency)
+    * 4.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnsinconsistency)
+  * 4.18 [Latency](#latency)
+    * 4.18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
+  * 4.19 [Performance ](#performance-)
+    * 4.19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
+    * 4.19.2 [Large Daily Data Volumes](#large-daily-data-volumes)
+      * 4.19.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
+  * 4.20 [Settings](#settings)
+    * 4.20.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
+      * 4.20.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
+  * 4.21 [Prometheus ](#prometheus-)
+    * 4.21.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -1436,13 +1439,8 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
-"ReplacingMergeTree" [ClickHouse] table engine and virtual column names should be "_version" and "_sign".
+"ReplacingMergeTree" [ClickHouse] table engine and virtual column names by default should be "_version" and "_sign".
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CollapsingMergeTree
-version: 1.0
-
-[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
-"CollapsingMergeTree" [ClickHouse] table engine.
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree
 version: 1.0
@@ -1871,6 +1869,14 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with support for
 defining column mapping and transformations rules.
+
+### Columns Inconsistency
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency
+version: 1.0
+
+[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] replica table when it has fewer columns.
+In other cases replication is not available.
 
 ### Latency
 

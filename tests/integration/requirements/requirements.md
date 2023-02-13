@@ -98,17 +98,19 @@
     * 4.15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition](#rqsrs-030clickhousemysqltoclickhousereplicationbinlogposition)
   * 4.16 [Column Mapping And Transformation Rules](#column-mapping-and-transformation-rules)
     * 4.16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnmappingandtransformationrules)
-  * 4.17 [Latency](#latency)
-    * 4.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
-  * 4.18 [Performance ](#performance-)
-    * 4.18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
-    * 4.18.2 [Large Daily Data Volumes](#large-daily-data-volumes)
-      * 4.18.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
-  * 4.19 [Settings](#settings)
-    * 4.19.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
-      * 4.19.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
-  * 4.20 [Prometheus ](#prometheus-)
-    * 4.20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+  * 4.17 [Columns Inconsistency](#columns-inconsistency)
+    * 4.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnsinconsistency)
+  * 4.18 [Latency](#latency)
+    * 4.18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
+  * 4.19 [Performance ](#performance-)
+    * 4.19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
+    * 4.19.2 [Large Daily Data Volumes](#large-daily-data-volumes)
+      * 4.19.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
+  * 4.20 [Settings](#settings)
+    * 4.20.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
+      * 4.20.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
+  * 4.21 [Prometheus ](#prometheus-)
+    * 4.21.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -729,6 +731,14 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with support for
 defining column mapping and transformations rules.
+
+### Columns Inconsistency
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency
+version: 1.0
+
+[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] replica table when it has fewer columns.
+[MySQL] replication to [CLickHouse] is not available in all other cases of columns inconsistency .
 
 ### Latency
 

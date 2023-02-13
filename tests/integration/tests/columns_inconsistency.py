@@ -124,7 +124,7 @@ def equal_columns_some_different_names(
 
 
 @TestModule
-@Requirements()
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency("1.0"))
 @Name("columns inconsistency")
 def module(self):
     """Check for different columns inconsistency."""
