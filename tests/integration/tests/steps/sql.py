@@ -81,6 +81,7 @@ def create_mysql_to_clickhouse_replicated_table(
     version_column="_version",
     sign_column="_sign",
     primary_key="id",
+    partition_by=None,
     engine=True,
 ):
     """Create MySQL-to-ClickHouse replicated table.
@@ -133,7 +134,9 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"/{name}',"
                         " '{replica}',"
                         f" {version_column}) "
-                        f"PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})'if primary_key is not None else ''}"
+                        f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
+                        f" SETTINGS "
                         f"index_granularity = 8192;",
                     )
             elif clickhouse_table[1] == "ReplacingMergeTree":
@@ -145,7 +148,9 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplacingMergeTree({version_column}) "
-                        f" PRIMARY KEY ({primary_key}) ORDER BY ({primary_key}) SETTINGS "
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else ''}"
+                        f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
+                        f" SETTINGS "
                         f"index_granularity = 8192;",
                     )
 

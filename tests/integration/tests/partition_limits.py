@@ -21,6 +21,7 @@ def partition_limits(
             mysql_columns=mysql_columns,
             clickhouse_table=clickhouse_table,
             clickhouse_columns=clickhouse_columns,
+            partition_by="id"
         )
 
     with When(
