@@ -3,9 +3,8 @@ package com.altinity.clickhouse.sink.connector.converters;
 import com.clickhouse.client.ClickHouseDataType;
 import com.clickhouse.client.data.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
+import io.debezium.data.*;
 import io.debezium.data.Enum;
-import io.debezium.data.EnumSet;
-import io.debezium.data.Json;
 import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -65,7 +64,7 @@ public class ClickHouseDataTypeMapper {
         dataTypesMap.put(new MutablePair(Schema.Type.BYTES, null), ClickHouseDataType.String);
 
         // BYTES, BIT
-        dataTypesMap.put(new MutablePair(Schema.Type.BYTES, io.debezium.data.Bits.LOGICAL_NAME), ClickHouseDataType.String);
+        dataTypesMap.put(new MutablePair(Schema.Type.BYTES, Bits.LOGICAL_NAME), ClickHouseDataType.String);
 
         // Boolean -> Boolean
         dataTypesMap.put(new MutablePair<>(Schema.Type.BOOLEAN, null), ClickHouseDataType.Bool);
@@ -84,6 +83,9 @@ public class ClickHouseDataTypeMapper {
 
         // Geometry -> Geometry
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
+
+        // PostgreSQL UUID -> UUID
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Uuid.LOGICAL_NAME), ClickHouseDataType.UUID);
 
     }
 

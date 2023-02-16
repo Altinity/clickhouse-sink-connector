@@ -5,7 +5,6 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.clickhouse.client.data.ClickHouseArrayValue;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -22,7 +21,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.PreparedStatement;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Testcontainers
@@ -32,7 +34,7 @@ public class DbWriterTest {
 
     // will be started before and stopped after each test method
     @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql");
             //.withDatabaseName("test")
 //            .withUsername("test")
@@ -42,6 +44,7 @@ public class DbWriterTest {
     @BeforeAll
     public static void init() {
 
+        clickHouseContainer.start();
         String hostName = "remoteClickHouse";
         Integer port = 8123;
         String database = "default";
@@ -223,45 +226,54 @@ public class DbWriterTest {
     @Tag("IntegrationTest")
     public void testBatchArrays() {
         String hostName = "localhost";
-        Integer port = 8123;
+        Integer port = clickHouseContainer.getFirstMappedPort();
 
-        String database = "test";
-        String userName = "root";
-        String password = "root";
-        String tableName = "test_ch_jdbc_complex_2";
+        String database = "default";
+        String userName = "default";
+        String tableName = "employees";
 
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
+        properties.setProperty("session_id", "123333");
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, "", config, null);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
-        String insertQueryTemplate = "insert into test_ch_jdbc_complex_2(col1, col2, col3, col4, col5, col6) values(?, ?, ?, ?, ?, ?)";
+        /**
+         * CREATE TABLE products(
+         *   `productCode` String,
+         *   `productName` String,
+         *   `productLine` String,
+         *   `productScale` String,
+         *   `productVendor` String,
+         *   `productDescription` String,
+         *   `quantityInStock` Int32,
+         *   `buyPrice` Decimal(10,2),
+         *   `MSRP` Decimal(10,2),
+         *   `raw_data` String,
+         *   `sign` Int8
+         * )
+         */
+        String insertQueryTemplate = "insert into products(productCode, productName, productLine, productScale, productVendor, productDescription, buyPrice, MSRP, raw_data, sign) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try {
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
-            ClickHouseConnection conn = dataSource.getConnection(userName, password);
+            ClickHouseConnection conn = dataSource.getConnection(userName, "");
 
             PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
 
-            boolean[] boolArray = {true, false, true};
-            float[] floatArray = {0.012f, 0.1255f, 1.22323f};
-            ps.setObject(1, "test_string");
-            ps.setBoolean(2, true);
-            ps.setObject(3, ClickHouseArrayValue.of(new Object[] {Arrays.asList("one", "two", "three")}));
-            ps.setObject(4, ClickHouseArrayValue.ofEmpty().update(boolArray));
-            ps.setObject(5, ClickHouseArrayValue.ofEmpty().update(floatArray));
+            int index = 1;
+            ps.setString(index++, "123333");
+            ps.setString(index++, "Great product");
+            ps.setString(index++, "Grocery");
+            ps.setString(index++, "11");
+            ps.setString(index++, "WM");
+            ps.setString(index++, "Product description");
+            ps.setFloat(index++, 0.02f);
+            ps.setFloat(index++, 11.30f);
+            ps.setString(index++, "raw data");
+            ps.setInt(index++, 1);
 
-            Map<String, Float> test_map = new HashMap<String, Float>();
-            test_map.put("2", 0.02f);
-            test_map.put("3", 0.02f);
-
-            ps.setObject(6, Collections.unmodifiableMap(test_map));
-
-//            ps.setObject(5, ClickHouseArrayValue.of(new Object[]
-//                    {
-//                            Arrays.asList(new Float(0.2), new Float(0.3))
-//                    }));
             ps.addBatch();
             ps.executeBatch();
 
