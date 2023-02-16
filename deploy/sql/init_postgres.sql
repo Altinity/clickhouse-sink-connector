@@ -15817,3 +15817,25 @@ INSERT INTO "PlaylistTrack" ("PlaylistId", "TrackId") VALUES (17, 2096);
 INSERT INTO "PlaylistTrack" ("PlaylistId", "TrackId") VALUES (17, 3290);
 INSERT INTO "PlaylistTrack" ("PlaylistId", "TrackId") VALUES (18, 597);
 
+CREATE TABLE "tm" (
+id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+secid uuid,
+acc_id uuid,
+ccatz character varying,
+tcred boolean DEFAULT false ,
+am numeric(21,5) ,
+set_date timestamp with time zone ,
+created timestamp with time zone,
+updated timestamp with time zone,
+events_id uuid,
+events_transaction_id uuid ,
+events_status character varying,
+events_payment_snapshot jsonb,
+events_created timestamp with time zone,
+vid uuid,
+vtid uuid ,
+vstatus character varying ,
+vamount numeric(21,5) ,
+vcreated timestamp with time zone,
+vbilling_currency character varying
+);
