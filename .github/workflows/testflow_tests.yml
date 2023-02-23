@@ -1,4 +1,4 @@
-name: testflows
+name: TestFlows Tests
 
 on:
   push:
@@ -22,7 +22,9 @@ jobs:
       
       - name: Install testflows
         working-directory: tests/integration
-        run: pip3 install testflows
+        run: |
+          env
+          pip3 install testflows
 
       - name: Install awscli
         working-directory: tests/integration
