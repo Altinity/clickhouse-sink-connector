@@ -12,7 +12,6 @@ env:
 jobs:
   integration_tests:
     runs-on: [self-hosted, linux, x64]
-#    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
@@ -35,7 +34,7 @@ jobs:
 
       - name: Add ./local/bin to the PATH
         if: always()
-        working-directory: tests/integration/logs
+        working-directory: tests/integration
         run: export PATH=~/.local/bin:$PATH
 
       - name: Run testflows tests
