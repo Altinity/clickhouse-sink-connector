@@ -1,4 +1,4 @@
-name: testflows tests
+name: testflows
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   SINK_CONNECTOR_VERSION: "2023-02-07"
 
 jobs:
-  integration_tests:
+  testflows:
     runs-on: [self-hosted, linux, x64]
 
     steps:
@@ -18,7 +18,10 @@ jobs:
       
       - name: Install docker-compose
         working-directory: tests/integration
-        run: pip3 install docker-compose==1.29.2
+        run: >
+          pip3 install docker-compose==1.29.2
+          pwd
+          ls ~/.local/bin
       
       - name: Install testflows
         working-directory: tests/integration
@@ -32,10 +35,12 @@ jobs:
         id: date
         run: echo "::set-output name=date::$(date +'%Y-%m-%d_%H%M%S')"
 
-      - name: Add ./local/bin to the PATH
+      - name: Add ~./local/bin to the PATH
         if: always()
         working-directory: tests/integration
-        run: export PATH=~/.local/bin:$PATH
+        run: >
+          export PATH=~/.local/bin:$PATH
+          echo $PATH
 
       - name: Run testflows tests
         working-directory: tests/integration
