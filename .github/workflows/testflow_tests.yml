@@ -18,7 +18,7 @@ jobs:
       
       - name: Install docker-compose
         working-directory: tests/integration
-        run: >
+        run: |
           pip3 install docker-compose==1.29.2
           pwd
           ls ~/.local/bin
@@ -38,7 +38,7 @@ jobs:
       - name: Add ~./local/bin to the PATH
         if: always()
         working-directory: tests/integration
-        run: >
+        run: |
           export PATH=~/.local/bin:$PATH
           echo $PATH
 
