@@ -20,7 +20,6 @@ jobs:
       - name: Install docker-compose
         working-directory: tests/integration
         run: pip3 install docker-compose==1.29.2
-
       
       - name: Install testflows
         working-directory: tests/integration
@@ -34,32 +33,26 @@ jobs:
         id: date
         run: echo "::set-output name=date::$(date +'%Y-%m-%d_%H%M%S')"
 
-      - name: add tfs path
+      - name: Add ./local/bin to the PATH
         if: always()
         working-directory: tests/integration/logs
-        run: export PATH=~/.local/bin/tfs:$PATH
-
+        run: export PATH=~/.local/bin:$PATH
 
       - name: Run testflows tests
         working-directory: tests/integration
         run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
-      - name: add tfs path
-        if: always()
-        working-directory: tests/integration/logs
-        run: export PATH=~/.local/bin/tfs:$PATH
-
-      - name: tfs report
+      - name: Create tfs results report
         if: always()
         working-directory: tests/integration/logs
         run: cat raw.log | tfs report results | tfs document convert > report.html
 
-      - name: tfs coverage
+      - name: Create tfs coverage report
         if: always()
         working-directory: tests/integration/logs
         run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
 
-      - name: Upload artifacts to Altinity Test Reports AWS s3
+      - name: Upload artifacts to Altinity Test Reports S3 bucket
         if: always()
         working-directory: tests/integration/logs
         run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}/ --recursive --exclude "*" --include "*.log" --include "*.html"
