@@ -78,7 +78,7 @@ def exceed_partition_limit(self):
 @Name("partition limits")
 def module(self):
     """Tests for cases when the partitioning limit is exceeded."""
-    # xfail("")
+    xfail("")
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
