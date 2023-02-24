@@ -27,7 +27,6 @@ def mysql_to_clickhouse_insert(
     with When("I insert data in MySql table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
         time.sleep(20)
-        pause()
 
     with Then("I check data inserted correct"):
         complex_check_creation_and_select(
