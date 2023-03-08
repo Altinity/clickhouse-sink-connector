@@ -95,7 +95,14 @@ public class DbWriter extends BaseDbWriter {
                     log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
-                        act.createNewTable(record.getPrimaryKey(), tableName, record.getAfterStruct().schema().fields().toArray(new Field[0]), this.conn);
+                        Field[] fields = null;
+                        if(record.getAfterStruct() != null) {
+                            fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
+                        } else if(record.getBeforeStruct() != null) {
+                            fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
+                        }
+
+                        act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);
                         this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
                         response = metadata.getTableEngine(this.conn, database, tableName);
                         this.engine = response.getLeft();
