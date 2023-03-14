@@ -1,0 +1,15 @@
+version: "2.3"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  mongo:
+    image: mongo:latest
+    restart: always
+    ports:
+      - "27017:27017"
