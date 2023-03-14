@@ -24,6 +24,10 @@ Example : assuming the world database was dumped with mysqlsh using this command
 MySQL Shell(JS version works better with Python)
 ```
 mysqlsh -uroot -proot -hlocalhost -e "util.dumpSchemas(['world'], '$HOME/dbdumps/world');"
+
+## Dump separate tables
+ ## If there are no permissions for LOCKING, use consistent: false flag.
+ util.dumpTables("db_name", ["table1", "table2"], "output_directory", {"consistent": "false"})
 ```
 
 !mydumper is not supported at this stage!  
