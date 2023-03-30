@@ -52,6 +52,9 @@ public class Metrics {
     private static Counter.Builder topicsErrorRecordsCounter;
     private static Gauge maxBinLogPositionCounter;
 
+    // DDL k
+    private static Counter.Builder ddlProcessingCounter;
+
     private static Gauge upTimeCounter;
     private static Gauge partitionOffsetCounter;
 
@@ -131,6 +134,10 @@ public class Metrics {
         }
     }
 
+    /**
+     * Function to register prometheus metrics
+     * @param collectorRegistry
+     */
     private static void registerMetrics(CollectorRegistry collectorRegistry) {
 
         Map<String, String> metricsToHelp = MetricsConstants.getMetricsToHelpMap();
@@ -172,6 +179,9 @@ public class Metrics {
 
         topicsErrorRecordsCounter = Counter.builder(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC)
                 .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC));
+
+        ddlProcessingCounter = Counter.builder(MetricsConstants.CLICKHOUSE_SINK_DDL)
+                .description(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_DDL));
 
     }
 
@@ -266,6 +276,13 @@ public class Metrics {
         if(enableMetrics) {
             topicsErrorRecordsCounter
                     .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+        }
+    }
+
+    public static void updateDdlMetrics(String ddl, long timestamp, long timeTaken, boolean failed) {
+        if(enableMetrics) {
+            ddlProcessingCounter
+                    .tag("ddl", ddl).tag("fail", String.valueOf(failed)).tag("timestamp", String.valueOf(timestamp)).register(Metrics.meterRegistry()).increment(timeTaken);
         }
     }
 }

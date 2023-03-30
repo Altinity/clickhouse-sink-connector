@@ -24,6 +24,8 @@ public class MetricsConstants {
 
     public static final String CLICKHOUSE_NUM_RECORDS_BY_TOPIC = "clickhouse.sink.topics.num.records";
 
+    public static final String CLICKHOUSE_SINK_DDL = "clickhouse.sink.ddl";
+
     public static final String CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC = "clickhouse.sink.topics.error.records";
 
     public static final String CLICKHOUSE_SINK_CONNECTOR_UPTIME = "clickhouse_sink_connector_uptime";
@@ -43,6 +45,8 @@ public class MetricsConstants {
         metricsToHelp.put(CLICKHOUSE_NUM_ERROR_RECORDS_BY_TOPIC, "Total number of Sink Error records by Topic(Count)");
 
         metricsToHelp.put(CLICKHOUSE_SINK_CONNECTOR_UPTIME, "Connector uptime in milliseconds");
+
+        metricsToHelp.put(CLICKHOUSE_SINK_DDL, "DDL Statements and execution time");
 
     }
 

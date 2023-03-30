@@ -222,8 +222,6 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = false;
 
         long currentTime = System.currentTimeMillis();
-        long diffInMs = currentTime - lastFlushTimeInMs;
-        long bufferFlushTimeout = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIMEOUT.toString());
 
         writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
 
