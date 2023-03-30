@@ -27,15 +27,16 @@ mysqlsh -uroot -proot -hlocalhost -e "util.dumpSchemas(['world'], '$HOME/dbdumps
 
 ## Dump separate tables
  ## If there are no permissions for LOCKING, use consistent: false flag.
- util.dumpTables("db_name", ["table1", "table2"], "output_directory", {"consistent": "false"})
+ util.dumpTables("db_name", ["table1", "table2"], "output_directory", {"consistent": "false", "threads": "100"})
 ```
 
 !mydumper is not supported at this stage!  
 
 ```
 DATABASE=world
+## Error with max number of concurrent connections(100)
 docker exec -it clickhouse clickhouse-client -uroot --password root --query "drop database if exists $DATABASE"
-python db_load/clickhouse_loader.py --clickhouse_host localhost  --clickhouse_database $DATABASE --dump_dir $HOME/dbdumps/$DATABASE --clickhouse_user root --clickhouse_password root --threads 4  --mysql_source_database $DATABASE --mysqlshell
+python db_load/clickhouse_loader.py --clickhouse_host localhost  --clickhouse_database $DATABASE --dump_dir $HOME/dbdumps/$DATABASE --clickhouse_user root --clickhouse_password root --threads 50  --mysql_source_database $DATABASE --mysqlshell
 ```
 
 If you loaded the same data in MySQL, you can then run checksums (see test_db.sh)

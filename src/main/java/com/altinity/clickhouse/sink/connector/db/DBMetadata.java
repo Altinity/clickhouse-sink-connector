@@ -68,7 +68,7 @@ public class DBMetadata {
         try (Statement stmt = conn.createStatement()) {
             String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
             ResultSet rs = stmt.executeQuery(showSchemaQuery);
-            if (rs.next()) {
+            if (rs != null && rs.next()) {
                 String response = rs.getString(1);
                 if(response.equalsIgnoreCase(databaseName)) {
                     result = true;
@@ -104,7 +104,7 @@ public class DBMetadata {
             try(Statement stmt = conn.createStatement()) {
                 String showSchemaQuery = String.format("show create table %s", tableName);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
-                if(rs.next()) {
+                if(rs != null && rs.next()) {
                     String response =  rs.getString(1);
                     if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
                         result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
@@ -170,7 +170,12 @@ public class DBMetadata {
             }
         }
         else if(createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            versionColumn = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")").trim();
+            if(createDML != null && createDML.indexOf("(") != -1 && createDML.indexOf(")") != -1) {
+                String subString = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")");
+                if(subString != null) {
+                    versionColumn = subString.trim();
+                }
+            }
         } else {
             log.error("Error: Trying to retrieve ver from table that is not ReplacingMergeTree");
         }
@@ -197,7 +202,7 @@ public class DBMetadata {
                 String showSchemaQuery = String.format("select engine_full from system.tables where name='%s' and database='%s'",
                         tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
-                if(rs.next()) {
+                if(rs.wasNull() == false && rs.next()) {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
                 }
