@@ -65,7 +65,10 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(decimalTable.get("Minimum_Value").equalsIgnoreCase("Decimal(10, 0)"));
+        Assert.assertTrue(decimalTable.get("Minimum_Value").equalsIgnoreCase("Decimal(65, 30)"));
+        Assert.assertTrue(decimalTable.get("Zero_Value").equalsIgnoreCase("Decimal(65, 30)"));
+        Assert.assertTrue(decimalTable.get("Maximum_Value").equalsIgnoreCase("Decimal(65, 30)"));
+
 
         // Validate dateTime64 records.
         Assert.assertTrue(dateTimeTable.get("Type").equalsIgnoreCase("String"));

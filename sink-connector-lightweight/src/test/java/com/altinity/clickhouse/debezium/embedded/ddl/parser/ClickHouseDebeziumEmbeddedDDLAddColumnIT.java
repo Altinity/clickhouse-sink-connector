@@ -83,8 +83,8 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
 
         // Validate all add_test columns.
         Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("String"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
 
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();

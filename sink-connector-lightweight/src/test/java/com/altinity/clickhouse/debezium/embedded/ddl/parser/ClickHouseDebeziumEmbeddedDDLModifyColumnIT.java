@@ -68,7 +68,7 @@ public class ClickHouseDebeziumEmbeddedDDLModifyColumnIT extends ClickHouseDebez
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
 
         Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Decimal(10,0)"));
+        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
 
         Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Int32"));
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));

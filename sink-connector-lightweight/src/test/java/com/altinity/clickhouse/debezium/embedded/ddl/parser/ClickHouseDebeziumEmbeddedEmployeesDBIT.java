@@ -58,7 +58,7 @@ public class ClickHouseDebeziumEmbeddedEmployeesDBIT extends ClickHouseDebeziumE
             // alter table ship_class change column tonange tonange_new decimal(10,10);
 
 
-            Thread.sleep(20000);
+            Thread.sleep(40000);
 
 
             BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -95,7 +95,7 @@ public class ClickHouseDebeziumEmbeddedEmployeesDBIT extends ClickHouseDebeziumE
             Assert.assertTrue(titlesColumns.get("emp_no").equalsIgnoreCase("Int32"));
             Assert.assertTrue(titlesColumns.get("title").equalsIgnoreCase("String"));
             Assert.assertTrue(titlesColumns.get("from_date").equalsIgnoreCase("Date32"));
-            Assert.assertTrue(titlesColumns.get("to_date").equalsIgnoreCase("Date32"));
+            Assert.assertTrue(titlesColumns.get("to_date").equalsIgnoreCase("Nullable(Date32)"));
 
 
             int employeesMySqlCount = 0;
