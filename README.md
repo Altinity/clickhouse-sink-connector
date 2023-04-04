@@ -1,3 +1,9 @@
+[![Integration tests Sink connector lightweight](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml)
+<p align="center">
+   <a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
+       <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
+   </a>
+  </p>
 # Altinity ClickHouse Replicator(Lightweight version)
 New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
 Single executable and lightweight.
