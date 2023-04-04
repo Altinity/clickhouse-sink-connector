@@ -1,3 +1,15 @@
+# Altinity ClickHouse Replicator(Lightweight version)
+New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
+Single executable and lightweight.
+##### Supports DDL in MySQL.
+
+### Release
+Images are published in Gitlab.
+
+`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
+
+![](doc/img/kafka_replication_tool.jpg)
+
 # Altinity Sink Connector for ClickHouse
 
 Sink connector is used to transfer data from Kafka to Clickhouse using the Kafka connect framework.
