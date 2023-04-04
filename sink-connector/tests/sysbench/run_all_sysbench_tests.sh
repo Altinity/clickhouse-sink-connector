@@ -12,7 +12,7 @@ docker exec -it mysql-master mysql -uroot -proot -e "GRANT ALL PRIVILEGES ON sbt
 ####
 
 #for sysbench_test in bulk_insert oltp_insert oltp_delete oltp_update_index oltp_update_non_index
-for sysbench_test in oltp_insert
+for sysbench_test in oltp_update_index
 #for sysbench_test in oltp_insert_truncate
 do
   echo "*** Setup connectors"

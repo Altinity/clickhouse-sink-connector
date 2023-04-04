@@ -5,8 +5,8 @@
 --user="root" \
 --password="root" \
 --host=localhost \
---database="employees" \
---table="orders" \
+--database="sbtest" \
+--table="sbtest1" \
 --verbose \
 --alter="ADD COLUMN random int(11)" \
 --max-load=Threads_running=25 \
