@@ -132,7 +132,7 @@ Build the JAR file
 
 Build docker images and start docker compose
 `cd docker` \
-`docker-compose build` \
+`docker-compose build`
 
 **MySQL need to be started before starting the application**\
 
@@ -154,6 +154,7 @@ ALTER TABLE
 | ADD COLUMN NULL/NOT NULL                               |                                                                 |
 | ADD COLUMN DEFAULT                                     |                                                                 |
 | ADD COLUMN FIRST, AFTER                                |                                                                 |
+| DROP COLUMN                                            |                                                                 |
 | MODIFY COLUMN data_type                                |                                                                 |
 | MODIFY COLUMN data_type NULL/NOT NULL                  |                                                                 |
 | MODIFY COLUMN data_type DEFAULT                        |                                                                 |

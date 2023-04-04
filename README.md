@@ -8,6 +8,7 @@ Images are published in Gitlab.
 
 `registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
 
+[Setup instructions](sink-connector-lightweight/README.md)
 ![](doc/img/kafka_replication_tool.jpg)
 
 # Altinity Sink Connector for ClickHouse
