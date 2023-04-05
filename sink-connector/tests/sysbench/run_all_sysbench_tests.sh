@@ -12,11 +12,11 @@ docker exec -it mysql-master mysql -uroot -proot -e "GRANT ALL PRIVILEGES ON sbt
 ####
 
 #for sysbench_test in bulk_insert oltp_insert oltp_delete oltp_update_index oltp_update_non_index
-for sysbench_test in oltp_update_index
-#for sysbench_test in oltp_insert_truncate
+#for sysbench_test in oltp_insert
+for sysbench_test in oltp_insert_truncate
 do
   echo "*** Setup connectors"
-  deploy/./configure_sysbench.sh
+  ../../deploy/./configure_sysbench.sh
   echo "*** Running Sysbench tests ****"
   ./run_sysbench_tests.sh -t $sysbench_test
   result=$(./compare_mysql_ch.sh $sysbench_test)
