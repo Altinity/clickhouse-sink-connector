@@ -211,8 +211,8 @@
             <artifactId>sink</artifactId>
             <version>1.0</version>
             <scope>system</scope>
-            <!-- <classifier>sources</classifier>
-            <systemPath>${project.basedir}/src/main/resources/clickhouse-kafka-sink-connector-0.0.1.jar</systemPath>-->
+            <!-- <classifier>sources</classifier> -->
+            <systemPath>${project.basedir}/src/main/resources/clickhouse-kafka-sink-connector-0.0.1.jar</systemPath>
         </dependency>
         <!--junit for unit test-->
         <dependency>
