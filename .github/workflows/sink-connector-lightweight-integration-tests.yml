@@ -22,4 +22,4 @@ jobs:
         run: mvn install -DskipTests=true
       - name: Build Replicator with Maven
         working-directory: sink-connector-lightweight
-        run: mvn test -o
+        run: mvn test
