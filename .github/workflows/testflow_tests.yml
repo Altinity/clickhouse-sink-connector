@@ -65,7 +65,7 @@ jobs:
         with:
           name: testflows-artifacts-${{ steps.date.outputs.date }}
           path: |
-            tests/integration/logs/*.log
+            sink-connector/tests/integration/logs/*.log
           if-no-files-found: error
           retention-days: 60
 
