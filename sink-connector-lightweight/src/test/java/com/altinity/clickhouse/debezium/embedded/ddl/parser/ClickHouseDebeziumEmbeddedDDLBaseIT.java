@@ -23,7 +23,7 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:22.8.15.23-alpine")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("init_clickhouse.sql")
             .withExposedPorts(8123);
 
