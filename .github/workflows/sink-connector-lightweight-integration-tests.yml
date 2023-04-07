@@ -18,7 +18,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
       - name: Install maven
-        run: sudo apt-get update && sudo apt-get install -y mvn
+        run: sudo apt-get update && sudo apt-get install -y maven
       - name: Build Library with Maven
         working-directory: sink-connector
         run: mvn install -DskipTests=true
