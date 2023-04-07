@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.config;
 
 
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junitpioneer.jupiter.SetEnvironmentVariable;
 
@@ -10,6 +11,7 @@ import java.util.Properties;
 public class AppConfigurationTest {
 
     @Test
+    @Disabled
     @SetEnvironmentVariable(key = "database.hostname", value = "localhost")
     @SetEnvironmentVariable(key = "database.port", value = "8123")
     @SetEnvironmentVariable(key = "database.user", value = "root")

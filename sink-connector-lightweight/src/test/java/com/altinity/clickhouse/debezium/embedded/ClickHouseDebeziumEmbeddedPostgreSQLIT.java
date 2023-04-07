@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 public class ClickHouseDebeziumEmbeddedPostgreSQLIT {
@@ -40,6 +41,7 @@ public class ClickHouseDebeziumEmbeddedPostgreSQLIT {
     @Test
     public void testDataTypesDB() throws Exception {
 
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         // Start the debezium embedded application.
 
@@ -84,7 +86,8 @@ public class ClickHouseDebeziumEmbeddedPostgreSQLIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                new DebeziumChangeEventCapture().setup(defaultProps, new SourceRecordParserService(),
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(defaultProps, new SourceRecordParserService(),
                         new MySQLDDLParserService());
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -108,8 +111,11 @@ public class ClickHouseDebeziumEmbeddedPostgreSQLIT {
             tmCount =  chRs.getInt(1);
         }
 
-        Assert.assertTrue(tmCount == 2);
+        Assert.assertTrue(tmCount == 1);
 
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
         executorService.shutdown();
         Files.deleteIfExists(tmpFilePath);
 

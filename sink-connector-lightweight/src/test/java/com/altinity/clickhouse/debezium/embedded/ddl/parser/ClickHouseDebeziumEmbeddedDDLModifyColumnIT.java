@@ -16,6 +16,7 @@ import java.sql.Connection;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 public class ClickHouseDebeziumEmbeddedDDLModifyColumnIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
@@ -36,11 +37,13 @@ public class ClickHouseDebeziumEmbeddedDDLModifyColumnIT extends ClickHouseDebez
 
     @Test
     public void testModifyColumn() throws Exception {
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                new DebeziumChangeEventCapture().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
                         new MySQLDDLParserService());
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -74,6 +77,9 @@ public class ClickHouseDebeziumEmbeddedDDLModifyColumnIT extends ClickHouseDebez
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
 
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
 

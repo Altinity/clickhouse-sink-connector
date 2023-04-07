@@ -22,6 +22,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
@@ -45,6 +46,8 @@ public class DebeziumChangeEventCapture {
     // Records grouped by Topic Name
     private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
 
+
+    DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
     private void performDDLOperation(String DDL,  ClickHouseSinkConnectorConfig config) {
 
@@ -168,7 +171,7 @@ public class DebeziumChangeEventCapture {
     public int numRetries = 0;
 
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) {
+                                          ClickHouseSinkConnectorConfig config) throws IOException {
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
@@ -177,7 +180,7 @@ public class DebeziumChangeEventCapture {
                 processEveryChangeRecord(props, record, debeziumRecordParserService, config);
 
             });
-            DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine = changeEventBuilder
+            this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
                         public void handle(boolean b, String s, Throwable throwable) {
@@ -191,7 +194,11 @@ public class DebeziumChangeEventCapture {
                                     } catch (InterruptedException e) {
                                         throw new RuntimeException(e);
                                     }
-                                    setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                    try {
+                                        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                    } catch (IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
                                 }
                             }
                             log.info("Completion callback");
@@ -202,6 +209,9 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Exception", e);
             //   throw new RuntimeException(e);
+            if(this.engine != null) {
+                this.engine.close();;
+            }
         }
 
     }
@@ -213,7 +223,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) {
+                      DDLParserService ddlParserService) throws IOException {
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
@@ -223,6 +233,12 @@ public class DebeziumChangeEventCapture {
         this.setupProcessingThread(config, ddlParserService);
 
         setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+    }
+
+    public void stop() throws IOException {
+        if(this.engine != null) {
+            this.engine.close();
+        }
     }
 
     private DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {

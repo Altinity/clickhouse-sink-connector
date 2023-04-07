@@ -44,12 +44,13 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
 
     @AfterEach
     public void stopContainers() {
-//        if(mySqlContainer != null && mySqlContainer.isRunning()) {
-//            mySqlContainer.stop();;
-//        }
-//        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
-//            clickHouseContainer.stop();
-//        }
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
     Connection connectToMySQL() {
