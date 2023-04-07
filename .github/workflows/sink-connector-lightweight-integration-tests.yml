@@ -17,6 +17,8 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
           cache: maven
+      - name: Install maven
+        run: sudo apt-get install -y mvn
       - name: Build Library with Maven
         working-directory: sink-connector
         run: mvn install -DskipTests=true

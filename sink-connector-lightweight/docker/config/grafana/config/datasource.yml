@@ -8,3 +8,17 @@ datasources:
      url: 'http://prometheus:9090'       # url of the prom instance
      database: 'prometheus'
      version: 1                            # well, versioning
+  -  name: Clickhouse
+     type: vertamedia-clickhouse-datasource
+     access: proxy
+     url: http://clickhouse:8123
+     basicAuth: true
+     basicAuthUser: "ch_user"
+     basicAuthPassword: "root"
+     withCredentials: true
+     isDefault: false
+     addCorsHeader: false
+     usePOST: false
+     defaultDatabase: "test"
+     tlsAuth: false
+     tlsAuthWithCACert: false
