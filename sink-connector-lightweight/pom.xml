@@ -366,11 +366,6 @@
             <version>5.5.1</version>
             <scope>test</scope>
         </dependency> -->
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-core</artifactId>
-            <version>2.1.0.Alpha1</version>
-        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -641,7 +636,7 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
-                    <parallel>all</parallel>
+                    <!-- <parallel>all</parallel> -->
                     <threadCount>10</threadCount>
                     <useUnlimitedThreads>true</useUnlimitedThreads>
                     <perCoreThreadCount>true</perCoreThreadCount>
