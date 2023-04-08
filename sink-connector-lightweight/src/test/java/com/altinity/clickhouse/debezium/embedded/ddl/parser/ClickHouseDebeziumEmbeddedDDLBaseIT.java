@@ -23,7 +23,7 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:22.8.15.23-alpine")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("init_clickhouse.sql")
             .withExposedPorts(8123);
 
@@ -44,12 +44,13 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
 
     @AfterEach
     public void stopContainers() {
-//        if(mySqlContainer != null && mySqlContainer.isRunning()) {
-//            mySqlContainer.stop();;
-//        }
-//        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
-//            clickHouseContainer.stop();
-//        }
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
     Connection connectToMySQL() {

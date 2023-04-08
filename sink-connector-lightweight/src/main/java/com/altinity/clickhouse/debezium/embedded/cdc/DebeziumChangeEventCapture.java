@@ -22,6 +22,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
@@ -40,8 +41,55 @@ public class DebeziumChangeEventCapture {
 
     private ClickHouseBatchExecutor executor;
 
+    private ClickHouseBatchRunnable runnable;
+
     // Records grouped by Topic Name
     private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+
+
+    DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
+
+    private void performDDLOperation(String DDL,  ClickHouseSinkConnectorConfig config) {
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery);
+        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config);
+
+        long currentTime = System.currentTimeMillis();
+        boolean ddlProcessingResult = true;
+        Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
+        try {
+            String formattedQuery = clickHouseQuery.toString().replaceAll(",$", "");
+            if (formattedQuery != null && formattedQuery.isEmpty() == false) {
+                if (formattedQuery.contains("\n")) {
+                    String[] queries = formattedQuery.split("\n");
+                    for (String query : queries) {
+                        if (query != null && query.isEmpty() == false) {
+                            log.info("ClickHouse DDL: " + query);
+                            cat.runQuery(query, writer.getConnection());
+                        }
+                    }
+                } else {
+                    log.info("ClickHouse DDL: " + formattedQuery);
+                    cat.runQuery(formattedQuery, writer.getConnection());
+                }
+            } else {
+                log.error("DDL translation failed: " + DDL);
+            }
+        } catch (Exception e) {
+            log.error("Error running DDL Query: " + e);
+            ddlProcessingResult = false;
+            //throw new RuntimeException(e);
+        }
+        long elapsedTime = System.currentTimeMillis() - currentTime;
+        Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
+    }
 
 
     /**
@@ -86,45 +134,14 @@ public class DebeziumChangeEventCapture {
                 if (DDL != null && DDL.isEmpty() == false)
                 //&& ((DDL.toUpperCase().contains("ALTER TABLE") || DDL.toUpperCase().contains("RENAME TABLE"))))
                 {
-                    StringBuffer clickHouseQuery = new StringBuffer();
-                    MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
-                    mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery);
-                    ClickHouseAlterTable cat = new ClickHouseAlterTable();
+                    log.info("***** DDL received, Flush all existing records");
+                    this.executor.shutdown();
+                    this.executor.awaitTermination(60, TimeUnit.SECONDS);
 
-                    DBCredentials dbCredentials = parseDBConfiguration(config);
-                    BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                            dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                            dbCredentials.getPassword(), config);
+                    performDDLOperation(DDL, config);
+                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
 
-                    long currentTime = System.currentTimeMillis();
-                    boolean ddlProcessingResult = true;
-                    Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
-                    try {
-                        String formattedQuery = clickHouseQuery.toString().replaceAll(",$", "");
-                        if (formattedQuery != null && formattedQuery.isEmpty() == false) {
-                            if (formattedQuery.contains("\n")) {
-                                String[] queries = formattedQuery.split("\n");
-                                for (String query : queries) {
-                                    if (query != null && query.isEmpty() == false) {
-                                        log.info("ClickHouse DDL: " + query);
-                                        cat.runQuery(query, writer.getConnection());
-                                    }
-                                }
-                            } else {
-                                log.info("ClickHouse DDL: " + formattedQuery);
-                                cat.runQuery(formattedQuery, writer.getConnection());
-                            }
-                        } else {
-                            log.error("DDL translation failed: " + DDL);
-                        }
-                    } catch (Exception e) {
-                        log.error("Error running DDL Query: " + e);
-                        ddlProcessingResult = false;
-                        //throw new RuntimeException(e);
-                    }
-                    long elapsedTime = System.currentTimeMillis() - currentTime;
-                    Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
-
+                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
@@ -154,7 +171,7 @@ public class DebeziumChangeEventCapture {
     public int numRetries = 0;
 
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) {
+                                          ClickHouseSinkConnectorConfig config) throws IOException {
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
@@ -163,12 +180,13 @@ public class DebeziumChangeEventCapture {
                 processEveryChangeRecord(props, record, debeziumRecordParserService, config);
 
             });
-            DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine = changeEventBuilder
+            this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
                         public void handle(boolean b, String s, Throwable throwable) {
                             if (b == false) {
-                                log.error("Error starting connector" + throwable.toString());
+
+                                log.error("Error starting connector" + throwable);
                                 log.error("Retrying - try number:" + numRetries);
                                 if (numRetries++ <= MAX_RETRIES) {
                                     try {
@@ -176,7 +194,11 @@ public class DebeziumChangeEventCapture {
                                     } catch (InterruptedException e) {
                                         throw new RuntimeException(e);
                                     }
-                                    setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                    try {
+                                        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                    } catch (IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
                                 }
                             }
                             log.info("Completion callback");
@@ -187,6 +209,9 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Exception", e);
             //   throw new RuntimeException(e);
+            if(this.engine != null) {
+                this.engine.close();;
+            }
         }
 
     }
@@ -198,7 +223,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) {
+                      DDLParserService ddlParserService) throws IOException {
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
@@ -208,6 +233,12 @@ public class DebeziumChangeEventCapture {
         this.setupProcessingThread(config, ddlParserService);
 
         setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+    }
+
+    public void stop() throws IOException {
+        if(this.engine != null) {
+            this.engine.close();
+        }
     }
 
     private DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
@@ -230,9 +261,9 @@ public class DebeziumChangeEventCapture {
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
         // Setup separate thread to read messages from shared buffer.
         this.records = new ConcurrentHashMap<>();
-        ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
+        this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
         this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
-        this.executor.scheduleAtFixedRate(runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
     /**

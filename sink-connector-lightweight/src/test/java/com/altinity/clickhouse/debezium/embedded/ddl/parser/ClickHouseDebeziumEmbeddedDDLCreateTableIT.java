@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
@@ -37,6 +38,7 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
 
     @Test
     public void testCreateTable() throws Exception {
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
@@ -46,7 +48,8 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
                 props.setProperty("database.include.list", "datatypes");
                 props.setProperty("clickhouse.server.database", "datatypes");
 
-                new DebeziumChangeEventCapture().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
                         new MySQLDDLParserService());
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -83,7 +86,9 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
         Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(3)"));
         Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(3)"));
         Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(3))"));
-
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
 
