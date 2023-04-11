@@ -169,7 +169,7 @@ ALTER TABLE
 | ADD CONSTRAINT  (CHECK)                                |                                                                 |
 | ADD CONSTRAINT                                         | Add constraint with Primary key(Not supported)                  |
 | DROP CONSTRAINT                                        | Add constraint with Primary key(Not supported)                  |
-| RENAME CONSTRAINT                                      | Add constraint with Primary key(Not supported)                  |
+
 
 
 ## TABLE operations
