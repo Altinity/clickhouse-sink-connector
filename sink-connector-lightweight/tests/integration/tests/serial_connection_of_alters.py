@@ -1,0 +1,104 @@
+from integration.tests.steps.sql import *
+from integration.tests.steps.statements import *
+from integration.tests.steps.service_settings_steps import *
+
+
+@TestOutline
+def create_replicated_tables(
+    self,
+    name,
+    clickhouse_table,
+    node=None,
+):
+    """Outline to create MySQL to CLickHouse replicated table."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = name
+
+    with Given("I create MySQL to ClickHouse replicated tables"):
+        tables_list = define(
+            "List of tables for test",
+            create_tables(table_name=name, clickhouse_table=clickhouse_table),
+        )
+
+    for table_name in tables_list:
+        with When("I insert some data into MySQL table"):
+            node.query(f"INSERT INTO {table_name} values (1,1);")
+
+        with And("I check that ClickHouse replicated table was created"):
+            retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
+                "SHOW TABLES FROM test", message=f"{table_name}"
+            )
+
+    return tables_list
+
+
+@TestFeature
+def add_change_column(self, node=None):
+    """Check that after `ALTER TABLE ADD COLUMN, CHANGE COLUMN` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table in self.context.available_clickhouse_tables:
+        with Given("I create MySQL to ClickHouse replicated tables"):
+            tables_list = define(
+                "List of tables for test",
+                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+            )
+
+        for table_name in tables_list:
+            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+                with When(
+                    "I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` in MySQL to make the same result query in replicated ClickHouse table"
+                ):
+                    node.query(f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, CHANGE COLUMN x x2 varchar(255) NULL")
+
+
+                with Then("I check that Clickhouse replicated table has the new column and renamed column"):
+                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
+                        f"DESC test.{table_name} FORMAT CSV", message='"new_col","String","","","","",""\n"x2","Nullable(String)"'
+                    )
+
+
+@TestFeature
+def change_add_column(self, node=None):
+    """Check that after `ALTER TABLE CHANGE COLUMN, ADD COLUMN` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table in self.context.available_clickhouse_tables:
+        with Given("I create MySQL to ClickHouse replicated tables"):
+            tables_list = define(
+                "List of tables for test",
+                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+            )
+
+        for table_name in tables_list:
+            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+                with When(
+                    "I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` in MySQL to make the same result query in replicated ClickHouse table"
+                ):
+                    node.query(f"ALTER TABLE {table_name} CHANGE COLUMN x x2 varchar(255) NULL, ADD COLUMN new_col varchar(255) AFTER id")
+
+
+                with Then("I check that Clickhouse replicated table has the new column and renamed column"):
+                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
+                        f"DESC test.{table_name} FORMAT CSV", message='"new_col","String","","","","",""\n"x2","Nullable(String)"'
+                    )
+
+
+@TestModule
+@Name("serial connection of alters")
+def module(self):
+    """Check serial connection of `ALTER` queries for MySql to ClickHouse replication."""
+    with Pool(1) as executor:
+        try:
+            for feature in loads(current_module(), Feature):
+                Feature(test=feature, parallel=True, executor=executor)()
+        finally:
+            join()

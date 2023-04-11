@@ -12,13 +12,9 @@ def mysql_to_clickhouse_connection(
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
 
-    table_name = f"sanity_{getuid()}"
+    table_name = f"manual_{getuid()}"
 
     mysql = self.context.cluster.node("mysql-master")
-
-    init_sink_connector(
-        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
-    )
 
     with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
@@ -33,9 +29,9 @@ def mysql_to_clickhouse_connection(
             node=mysql,
             table_name=table_name,
             values=["({x},{y})", "({x},{y})"],
-            partitions=10,
+            partitions=1,
             parts_per_partition=1,
-            block_size=1,
+            block_size=10,
         )
 
     with Then(
@@ -56,24 +52,21 @@ def mysql_to_clickhouse(
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with all availabe methods and tables."""
-    for clickhouse_table in available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
-            mysql_to_clickhouse_connection(
-                mysql_columns=mysql_columns,
-                clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
-            )
+    """Just imitation of tests."""
+    for clickhouse_table in self.context.available_clickhouse_tables:
+        if clickhouse_table[0] == "auto":
+            with Example({clickhouse_table}, flags=TE):
+                mysql_to_clickhouse_connection(
+                    mysql_columns=mysql_columns,
+                    clickhouse_columns=clickhouse_columns,
+                    clickhouse_table=clickhouse_table,
+                )
 
 
 @TestModule
-@Name("sanity")
+@Name("manual section")
 def module(self):
-    """MySql to ClickHouse replication sanity test that checks
-    basic replication using a simple table."""
-
-    with Given("I enable debezium connector after kafka starts up"):
-        init_debezium_connector()
+    """MySql to ClickHouse replication manual checks section."""
 
     with Pool(1) as executor:
         try:

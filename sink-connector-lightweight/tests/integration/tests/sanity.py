@@ -16,10 +16,6 @@ def mysql_to_clickhouse_connection(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(
-        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
-    )
-
     with Given(f"I create MySql to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
@@ -57,7 +53,8 @@ def mysql_to_clickhouse(
     clickhouse_columns="MyData Int32",
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with all availabe methods and tables."""
-    for clickhouse_table in available_clickhouse_tables:
+
+    for clickhouse_table in self.context.available_clickhouse_tables:
         with Example({clickhouse_table}, flags=TE):
             mysql_to_clickhouse_connection(
                 mysql_columns=mysql_columns,
@@ -71,9 +68,6 @@ def mysql_to_clickhouse(
 def module(self):
     """MySql to ClickHouse replication sanity test that checks
     basic replication using a simple table."""
-
-    with Given("I enable debezium connector after kafka starts up"):
-        init_debezium_connector()
 
     with Pool(1) as executor:
         try:
