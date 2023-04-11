@@ -636,7 +636,7 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
-                    <forkCount>10</forkCount>
+                    <!-- <forkCount>10</forkCount> -->
                     <parallel>all</parallel>
                     <threadCount>10</threadCount>
                     <useUnlimitedThreads>true</useUnlimitedThreads>

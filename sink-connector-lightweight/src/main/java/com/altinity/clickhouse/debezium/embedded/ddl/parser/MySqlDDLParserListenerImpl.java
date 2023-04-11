@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
-import com.clickhouse.client.ClickHouseDataType;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -16,8 +16,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.ListIterator;
-
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
 public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
@@ -313,16 +311,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                             } else if (colDefTree instanceof MySqlParser.ColumnDefinitionContext) {
                                 String colDataTypeDefinition = colDefTree.getText();
 
-                                int precision = 0;
-                                int scale = 0;
-                                if(colDataTypeDefinition.contains("(") && colDataTypeDefinition.contains(")") && colDataTypeDefinition.contains(",")) {
-                                    precision = Integer.parseInt(colDataTypeDefinition.substring(colDataTypeDefinition.indexOf("(") + 1, colDataTypeDefinition.indexOf(",")));
-                                    scale = Integer.parseInt(colDataTypeDefinition.substring(colDataTypeDefinition.indexOf(",") + 1, colDataTypeDefinition.indexOf(")")));
-
-                                }
-                                MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
-                                colDataType = DataTypeConverter.convertToString(columnName,
-                                         scale, precision, dtc);
+                                colDataType = getClickHouseDataType(colDataTypeDefinition, colDefTree, columnName);
                                 // Null Column and DimensionDataType are children of ColumnDefinition
                                 for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
@@ -367,6 +356,30 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 //        }
 
         // this.query.append(")");
+    }
+
+    /**
+     * Function to get the ClickHouse Data type from DDL Datatype.
+     * @param parsedDataType
+     * @return
+     */
+    private String getClickHouseDataType(String parsedDataType, ParseTree colDefTree, String columnName) {
+        int precision = 0;
+        int scale = 0;
+
+        String chDataType = null;
+        if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
+            precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
+            scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
+
+        }
+
+        MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
+        chDataType = DataTypeConverter.convertToString(columnName,
+                scale, precision, dtc);
+
+        return chDataType;
+
     }
 
 
@@ -1726,16 +1739,13 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                     } else if (columnDefChild instanceof MySqlParser.DimensionDataTypeContext || columnDefChild instanceof MySqlParser.SimpleDataTypeContext
                             || columnDefChild instanceof MySqlParser.StringDataTypeContext) {
                         columnType = (columnDefChild.getText());
-                        //if(columnDefChild instanceof MySqlParser.StringDataTypeContext)
-                        {
-                            //` int type = ((MySqlParser.StringDataTypeContext) columnDefChild).typeName.getType();
-                            ClickHouseDataType chDataType = DataTypeConverter.convert(columnName, (MySqlParser.DataTypeContext) columnDefChild);
-                            if (chDataType != null) {
-                                columnType = chDataType.toString();
+                        String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
+                           if (chDataType != null) {
+                                columnType = chDataType;
                             }
 
                         }
-                    }
+
                 }
             } else if (columnChild instanceof TerminalNodeImpl) {
                 String columnPosition = columnChild.getText();

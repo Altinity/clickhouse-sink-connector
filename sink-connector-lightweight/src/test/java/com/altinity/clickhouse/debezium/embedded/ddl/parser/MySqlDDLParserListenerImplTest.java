@@ -1,7 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import org.junit.Assert;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,14 +34,13 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    @Disabled
     public void testCreateTableWithPrimaryKey() {
         String createDBQuery = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createDBQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2),max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE 730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY (id)"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -254,6 +252,20 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
     }
 
+    @Test
+    public void testChangeColumnWithDecimalScaleAndPrecision() {
+        String sql = "alter table ship_class change column tonange tonange_new decimal(10,10)";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String expectedCHQuery = "ALTER TABLE ship_class MODIFY COLUMN tonange Decimal(10,10)\n" +
+                "ALTER TABLE ship_class RENAME COLUMN tonange to tonange_new";
+
+        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
+        mySQLDDLParserService2.parseSql(sql, "t2", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
+    }
     @Test
     public void testAddConstraints() {
         StringBuffer clickHouseQuery = new StringBuffer();
