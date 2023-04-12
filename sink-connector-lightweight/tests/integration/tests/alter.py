@@ -80,7 +80,7 @@ def add_column(self, node=None):
                         delay=5,
                     )(
                         f"DESC test.{table_name} FORMAT CSV",
-                        message='"new_col","String"',
+                        message='"new_col","Nullable(String)"',
                     )
 
 
