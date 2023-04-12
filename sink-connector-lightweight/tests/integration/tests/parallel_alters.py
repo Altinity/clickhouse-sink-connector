@@ -59,33 +59,38 @@ def multiple_parallel_add_column(self, node=None):
                         node=node,
                         table_name=name,
                         column_name="new_col1",
-
                     )
                     By(f"add columt new_col2", test=add_column, parallel=True)(
                         node=node,
                         table_name=name,
                         column_name="new_col2",
-
                     )
                     By(f"add columt new_col3", test=add_column, parallel=True)(
                         node=node,
                         table_name=name,
                         column_name="new_col3",
-
                     )
 
                     join()
 
-                with Then("I check that Clickhouse replicated table has all the new columns"):
-                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                        f"DESC test.{table_name} FORMAT CSV", message='"new_col1"'
-                    )
-                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                        f"DESC test.{table_name} FORMAT CSV", message='"new_col2"'
-                    )
-                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                        f"DESC test.{table_name} FORMAT CSV", message='"new_col3"'
-                    )
+                with Then(
+                    "I check that Clickhouse replicated table has all the new columns"
+                ):
+                    retry(
+                        self.context.cluster.node("clickhouse").query,
+                        timeout=100,
+                        delay=5,
+                    )(f"DESC test.{table_name} FORMAT CSV", message='"new_col1"')
+                    retry(
+                        self.context.cluster.node("clickhouse").query,
+                        timeout=100,
+                        delay=5,
+                    )(f"DESC test.{table_name} FORMAT CSV", message='"new_col2"')
+                    retry(
+                        self.context.cluster.node("clickhouse").query,
+                        timeout=100,
+                        delay=5,
+                    )(f"DESC test.{table_name} FORMAT CSV", message='"new_col3"')
 
 
 @TestModule

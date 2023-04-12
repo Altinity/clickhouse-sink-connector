@@ -16,20 +16,24 @@ def create_replicated_tables(
 
     name = name
 
-    with Given("I create MySQL to ClickHouse replicated tables"):
+    with Given(
+        f"I create different MySQL to ClickHouse replicated tables with "
+        f"ClickHouse table creation method {clickhouse_table[0]} "
+        f"and ClickHouse table engine {clickhouse_table[1]}"
+    ):
         tables_list = define(
-            "List of tables for test",
+            "List of replicated tables for test",
             create_tables(table_name=name, clickhouse_table=clickhouse_table),
         )
 
-    for table_name in tables_list:
-        with When("I insert some data into MySQL table"):
-            node.query(f"INSERT INTO {table_name} values (1,1);")
+        for table_name in tables_list:
+            with When("I insert some data into MySQL table"):
+                node.query(f"INSERT INTO {table_name} values (1,1);")
 
-        with And("I check that ClickHouse replicated table was created"):
-            retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
+            with And("I check that ClickHouse replicated table was created"):
+                retry(
+                    self.context.cluster.node("clickhouse").query, timeout=100, delay=5
+                )("SHOW TABLES FROM test", message=f"{table_name}")
 
     return tables_list
 
@@ -43,24 +47,37 @@ def add_change_column(self, node=None):
     name = f"{getuid()}"
 
     for clickhouse_table in self.context.available_clickhouse_tables:
-        with Given("I create MySQL to ClickHouse replicated tables"):
+        with Given(
+            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+            f"ClickHouse table creation method {clickhouse_table[0]} "
+            f"and ClickHouse table engine {clickhouse_table[1]}"
+        ):
             tables_list = define(
-                "List of tables for test",
+                "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
             )
 
         for table_name in tables_list:
             with Example(f"{table_name} {clickhouse_table}", flags=TE):
-                with When(
-                    "I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` in MySQL to make the same result query in replicated ClickHouse table"
-                ):
-                    node.query(f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, CHANGE COLUMN x x2 varchar(255) NULL")
+                if not table_name.endswith("_complex"):
+                    with When(
+                        f"I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, CHANGE COLUMN x x2 varchar(255) NULL"
+                        )
 
-
-                with Then("I check that Clickhouse replicated table has the new column and renamed column"):
-                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                        f"DESC test.{table_name} FORMAT CSV", message='"new_col","String","","","","",""\n"x2","Nullable(String)"'
-                    )
+                    with Then(
+                        f"I check that Clickhouse replicated table test.{table_name} has the new column and renamed column"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                        )
 
 
 @TestFeature
@@ -72,24 +89,38 @@ def change_add_column(self, node=None):
     name = f"{getuid()}"
 
     for clickhouse_table in self.context.available_clickhouse_tables:
-        with Given("I create MySQL to ClickHouse replicated tables"):
+        with Given(
+            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+            f"ClickHouse table creation method {clickhouse_table[0]} "
+            f"and ClickHouse table engine {clickhouse_table[1]}"
+        ):
             tables_list = define(
-                "List of tables for test",
+                "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
             )
 
         for table_name in tables_list:
             with Example(f"{table_name} {clickhouse_table}", flags=TE):
-                with When(
-                    "I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` in MySQL to make the same result query in replicated ClickHouse table"
-                ):
-                    node.query(f"ALTER TABLE {table_name} CHANGE COLUMN x x2 varchar(255) NULL, ADD COLUMN new_col varchar(255) AFTER id")
+                if not table_name.endswith("_complex"):
+                    with When(
+                        "I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} CHANGE COLUMN x x2 varchar(255) NULL, ADD COLUMN new_col varchar(255) AFTER id"
+                        )
 
-
-                with Then("I check that Clickhouse replicated table has the new column and renamed column"):
-                    retry(self.context.cluster.node("clickhouse").query, timeout=100, delay=5)(
-                        f"DESC test.{table_name} FORMAT CSV", message='"new_col","String","","","","",""\n"x2","Nullable(String)"'
-                    )
+                    with Then(
+                        f"I check that Clickhouse replicated table test.{table_name} has the new column and renamed "
+                        f"column"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                        )
 
 
 @TestModule

@@ -4,7 +4,9 @@ from integration.helpers.common import *
 
 
 @TestStep(When)
-def add_column(self, table_name, column_name="new_col", column_type="varchar(255)", node=None):
+def add_column(
+    self, table_name, column_name="new_col", column_type="varchar(255)", node=None
+):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 

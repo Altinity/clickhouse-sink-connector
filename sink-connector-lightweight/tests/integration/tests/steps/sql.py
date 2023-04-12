@@ -178,21 +178,21 @@ def create_mysql_to_clickhouse_replicated_table(
 
 
 @TestStep
-def create_tables(self, table_name, clickhouse_table, node=None):
-    """Check INSERT that creates one partition and one part."""
+def create_tables(self, table_name, clickhouse_table):
+    """Create different types of replicated tables."""
     table_name = table_name
 
     tables_list = [
-        # table_name,
-        # table_name + "_primary_key_complex",
-        # table_name + "_no_engine_complex",
+        table_name,
+        table_name + "_primary_key_complex",
+        table_name + "_no_engine_complex",
         table_name + "_no_primary_key",
         table_name + "_no_engine",
         table_name + "_no_engine_no_primary_key",
     ]
 
     with Given(
-        "I create MySQL to ClickHouse replicated table with primaty key and with engine"
+        "I create MySQL to ClickHouse replicated table with primary key and with engine"
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
@@ -304,7 +304,7 @@ def complex_insert(
         node = self.context.cluster.node("mysql-master")
 
     insert_values_1 = ",".join(
-        f"{values[0]}".format(x=x+1, y=y+1)
+        f"{values[0]}".format(x=x + 1, y=y + 1)
         for x in range(partitions)
         for y in range(block_size * parts_per_partition)
     )
