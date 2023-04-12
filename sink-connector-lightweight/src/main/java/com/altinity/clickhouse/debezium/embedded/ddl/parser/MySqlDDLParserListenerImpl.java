@@ -289,14 +289,14 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         String modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
         String defaultModifier = null;
 
+        this.query.append(Constants.CREATE_TABLE).append(" ");
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                this.query.append(String.format(Constants.CREATE_TABLE, tree.getText())).append("(");
-            }
-
-           // HashMap<String, String> colNamesToDataTypeMap = new HashMap<String, String>();
-            if (tree instanceof MySqlParser.CreateDefinitionsContext) {
+                this.query.append(tree.getText()).append("(");
+            }else if(tree instanceof MySqlParser.IfNotExistsContext) {
+                this.query.append(Constants.IF_NOT_EXISTS);
+            }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
                 for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
                     if (subtree instanceof TerminalNodeImpl) {
                        // this.query.append(subtree.getText());
@@ -1695,6 +1695,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
             modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
+            isNullColumn = true;
 
         } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
             modifier = Constants.MODIFY_COLUMN;
@@ -1732,6 +1733,9 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
+                        else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
+                            isNullColumn = false;
+                        }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
@@ -1778,6 +1782,8 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
             postProcessModifyColumn(this.tableName, columnName, newColumnName, columnType);
         }
 
+        String trimmedQuery = this.query.toString().trim();
+        this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
 
     /**
@@ -2433,16 +2439,18 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     @Override
     public void enterDropTable(MySqlParser.DropTableContext dropTableContext) {
         log.debug("DROP TABLE enter");
-        this.query.append(Constants.DROP_TABLE);
+        this.query.append(Constants.DROP_TABLE).append(" ");
         for (ParseTree child : dropTableContext.children) {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
-                        this.query.append(" ").append(tableNameChild.getText());
+                        this.query.append(tableNameChild.getText());
                     } else if (tableNameChild instanceof TerminalNodeImpl) {
                         this.query.append(tableNameChild.getText());
                     }
                 }
+            } else if(child instanceof MySqlParser.IfExistsContext) {
+                this.query.append(Constants.IF_EXISTS);
             }
         }
     }
