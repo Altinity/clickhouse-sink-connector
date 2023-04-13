@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def simple_delete(
-    self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine
+    self, mysql_columns, clickhouse_columns, clickhouse_table_engine, primary_key, engine
 ):
     """Check that simple deletes to MySQL is properly propagated to the replicated ClickHouse table."""
 
@@ -18,7 +18,7 @@ def simple_delete(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=primary_key,
             engine=engine,
         )
@@ -31,7 +31,7 @@ def simple_delete(
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -40,10 +40,10 @@ def simple_delete(
 @TestFeature
 def no_primary_key(self):
     """Check replication for `DELETE` with no primary key without InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key=None,
@@ -54,10 +54,10 @@ def no_primary_key(self):
 @TestFeature
 def no_primary_key_innodb(self):
     """Check replication for `DELETE` with no primary key with InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key=None,
@@ -68,10 +68,10 @@ def no_primary_key_innodb(self):
 @TestFeature
 def simple_primary_key(self):
     """Check replication for `DELETE` with simple primary key without InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id",
@@ -82,10 +82,10 @@ def simple_primary_key(self):
 @TestFeature
 def simple_primary_key_innodb(self):
     """Check replication for `DELETE` with simple primary key with InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id",
@@ -96,10 +96,10 @@ def simple_primary_key_innodb(self):
 @TestFeature
 def complex_primary_key(self):
     """Check replication for `DELETE` with complex primary key without engine InnoDB."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id,k",
@@ -110,10 +110,10 @@ def complex_primary_key(self):
 @TestFeature
 def complex_primary_key_innodb(self):
     """Check replication for `DELETE` with complex primary key with engine InnoDB."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_delete(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id,k",
@@ -240,12 +240,12 @@ def one_partition_one_part(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -289,12 +289,12 @@ def one_partition_many_parts(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -339,12 +339,12 @@ def one_partition_mixed_parts(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -401,12 +401,12 @@ def many_partitions_one_part(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -451,12 +451,12 @@ def many_partitions_many_parts(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -504,12 +504,12 @@ def many_partitions_mixed_parts(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -569,12 +569,12 @@ def one_million_datapoints(self):
             with Scenario(test=outline):
                 name = f"{getuid()}"
 
-                for clickhouse_table in self.context.available_clickhouse_tables:
+                for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
                         tables_list = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table=clickhouse_table
+                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
@@ -619,11 +619,11 @@ def parallel(self):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:

@@ -8,7 +8,7 @@ from integration.tests.steps.service_settings_steps import *
 def create_replicated_tables(
         self,
         name,
-        clickhouse_table,
+        clickhouse_table_engine,
         node=None,
 ):
     """Outline to create MySQL to CLickHouse replicated table."""
@@ -19,12 +19,12 @@ def create_replicated_tables(
 
     with Given(
             f"I create different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
     ):
         tables_list = define(
             "List of replicated tables for test",
-            create_tables(table_name=name, clickhouse_table=clickhouse_table),
+            create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
         )
 
         for table_name in tables_list:
@@ -51,19 +51,19 @@ def multiple_parallel_add_column(self, node=None):
 
     output = ['"new_col1"', '"new_col2"', '"new_col3"']
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
                 f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-                f"ClickHouse table creation method {clickhouse_table[0]} "
-                f"and ClickHouse table engine {clickhouse_table[1]}"
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
@@ -100,19 +100,19 @@ def multiple_parallel_add_and_rename_column(self, node=None):
 
     output = ["new_col111", "new_col222", "new_col333"]
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
                 f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-                f"ClickHouse table creation method {clickhouse_table[0]} "
-                f"and ClickHouse table engine {clickhouse_table[1]}"
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
@@ -173,19 +173,19 @@ def multiple_parallel_add_and_change_column(self, node=None):
 
     output = ['"new_col111","Int32"', '"new_col222","Int32"', '"new_col333","Int32"']
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
                 f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-                f"ClickHouse table creation method {clickhouse_table[0]} "
-                f"and ClickHouse table engine {clickhouse_table[1]}"
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
@@ -249,19 +249,19 @@ def multiple_parallel_add_and_modify_column(self, node=None):
 
     output = ['"new_col1","Int32"', '"new_col2","Int32"', '"new_col3","Int32"']
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
                 f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-                f"ClickHouse table creation method {clickhouse_table[0]} "
-                f"and ClickHouse table engine {clickhouse_table[1]}"
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):

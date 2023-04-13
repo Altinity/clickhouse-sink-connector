@@ -36,7 +36,7 @@ def create_mysql_table(self, name=None, statement=None, node=None):
 
 
 @TestStep(Given)
-def create_clickhouse_table(
+def create_clickhouse_table_engine(
     self, name=None, statement=None, node=None, force_select_final=False
 ):
     """
@@ -74,7 +74,7 @@ def create_mysql_to_clickhouse_replicated_table(
     self,
     name,
     mysql_columns,
-    clickhouse_table,
+    clickhouse_table_engine,
     clickhouse_columns=None,
     mysql_node=None,
     clickhouse_node=None,
@@ -90,7 +90,7 @@ def create_mysql_to_clickhouse_replicated_table(
     :param table_name: replicated table name
     :param mysql_columns: MySQL table columns
     :param clickhouse_columns: coresponding ClickHouse columns
-    :param clickhouse_table: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
+    :param clickhouse_table_engine: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
     :param mysql_node: MySql docker compose node
     :param clickhouse_node: CH docker compose node
     :return:
@@ -112,16 +112,16 @@ def create_mysql_to_clickhouse_replicated_table(
                 f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
-        if clickhouse_table[0] == "auto":
-            if clickhouse_table[1] == "ReplacingMergeTree":
+        if self.context.env.endswith("auto"):
+            if clickhouse_table_engine == "ReplacingMergeTree":
                 pass
             else:
                 raise NotImplementedError(
-                    f"table '{clickhouse_table[1]}' not supported"
+                    f"table '{clickhouse_table_engine}' not supported"
                 )
 
-        elif clickhouse_table[0] == "manual":
-            if clickhouse_table[1] == "ReplicatedReplacingMergeTree":
+        elif self.context.env.endswith("manual"):
+            if clickhouse_table_engine == "ReplicatedReplacingMergeTree":
                 with And(
                     f"I create ReplicatedReplacingMergeTree as a replication table",
                     description=name,
@@ -140,7 +140,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f" SETTINGS "
                         f"index_granularity = 8192;",
                     )
-            elif clickhouse_table[1] == "ReplacingMergeTree":
+            elif clickhouse_table_engine == "ReplacingMergeTree":
                 with And(
                     f"I create ClickHouse table as replication table to MySQL test.{name}"
                 ):
@@ -157,12 +157,12 @@ def create_mysql_to_clickhouse_replicated_table(
 
             else:
                 raise NotImplementedError(
-                    f"table '{clickhouse_table[1]}' not supported"
+                    f"table '{clickhouse_table_engine}' not supported"
                 )
 
         else:
             raise NotImplementedError(
-                f"table creation method '{clickhouse_table[0]}' not supported"
+                f"table creation method '{self.context.env}' not supported"
             )
 
         yield
@@ -178,7 +178,7 @@ def create_mysql_to_clickhouse_replicated_table(
 
 
 @TestStep
-def create_tables(self, table_name, clickhouse_table):
+def create_tables(self, table_name, clickhouse_table_engine):
     """Create different types of replicated tables."""
     table_name = table_name
 
@@ -198,7 +198,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name,
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     with And(
@@ -208,7 +208,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name + "_primary_key_complex",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key="id,x",
         )
 
@@ -219,7 +219,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name + "_no_engine_complex",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key="id,x",
             engine=False,
         )
@@ -231,7 +231,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name + "_no_primary_key",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
         )
 
@@ -242,7 +242,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name + "_no_engine",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             engine=False,
         )
 
@@ -253,7 +253,7 @@ def create_tables(self, table_name, clickhouse_table):
             name=table_name + "_no_engine_no_primary_key",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
             engine=False,
         )
@@ -388,7 +388,7 @@ def complex_check_creation_and_select(
     self,
     table_name,
     statement,
-    clickhouse_table=("", ""),
+    clickhouse_table_engine=(""),
     timeout=300,
     manual_output=None,
     with_final=False,
@@ -411,7 +411,7 @@ def complex_check_creation_and_select(
     clickhouse3 = self.context.cluster.node("clickhouse3")
     mysql = self.context.cluster.node("mysql-master")
 
-    if clickhouse_table[1].startswith("Replicated"):
+    if clickhouse_table_engine.startswith("Replicated"):
         with Then("I check table creation on few nodes"):
             retry(clickhouse.query, timeout=100, delay=3)(
                 "SHOW TABLES FROM test", message=f"{table_name}"
@@ -440,7 +440,7 @@ def complex_check_creation_and_select(
             with_optimize=with_optimize,
             timeout=timeout,
         )
-        if clickhouse_table[1].startswith("Replicated"):
+        if clickhouse_table_engine.startswith("Replicated"):
             with Then(
                 "I check that ClickHouse table has same number of rows as MySQL table on the replica node if it is "
                 "replicted table"

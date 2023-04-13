@@ -117,7 +117,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
-    env="env",
+    env="env/auto",
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
@@ -139,8 +139,6 @@ def regression(
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
 
-    env = env
-
     with Given("docker-compose cluster"):
         cluster = create_cluster(
             local=local,
@@ -155,15 +153,11 @@ def regression(
 
     self.context.cluster = cluster
 
-    if env == "env":
-        self.context.available_clickhouse_tables = [
-            ("auto", "ReplacingMergeTree")
-        ]
-    else:
-        self.context.available_clickhouse_tables = [
-            ("manual", "ReplacingMergeTree"),
-            ("manual", "ReplicatedReplacingMergeTree"),
-        ]
+    self.context.env = env
+
+    self.context.clickhouse_table_engines = [
+        "ReplacingMergeTree"
+    ]
 
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
@@ -203,4 +197,4 @@ def regression(
 
 
 if __name__ == "__main__":
-    regression(env="env")
+    regression()

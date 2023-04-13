@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def truncate(
-    self, mysql_columns, clickhouse_columns, clickhouse_table, primary_key, engine
+    self, mysql_columns, clickhouse_columns, clickhouse_table_engine, primary_key, engine
 ):
     """
     Just simple 'TRUNCATE' query check
@@ -18,7 +18,7 @@ def truncate(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=primary_key,
             engine=engine,
         )
@@ -29,7 +29,7 @@ def truncate(
     with Then("I check that clickhouse table received data"):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -40,7 +40,7 @@ def truncate(
     with And("I check that clickhouse table empty"):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -49,10 +49,10 @@ def truncate(
 @TestFeature
 def no_primary_key(self):
     """Check for `DELETE` with no primary key without InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key=None,
@@ -63,10 +63,10 @@ def no_primary_key(self):
 @TestFeature
 def no_primary_key_innodb(self):
     """Check for `DELETE` with no primary key with InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key=None,
@@ -77,10 +77,10 @@ def no_primary_key_innodb(self):
 @TestFeature
 def simple_primary_key(self):
     """Check for `DELETE` with simple primary key without InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id",
@@ -91,10 +91,10 @@ def simple_primary_key(self):
 @TestFeature
 def simple_primary_key_innodb(self):
     """Check for `DELETE` with simple primary key with InnoDB engine."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id",
@@ -105,10 +105,10 @@ def simple_primary_key_innodb(self):
 @TestFeature
 def complex_primary_key(self):
     """Check for `DELETE` with complex primary key without engine InnoDB."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id,k",
@@ -119,10 +119,10 @@ def complex_primary_key(self):
 @TestFeature
 def complex_primary_key_innodb(self):
     """Check for `DELETE` with complex primary key with engine InnoDB."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             truncate(
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id,k",

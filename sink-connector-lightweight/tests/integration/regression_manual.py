@@ -103,7 +103,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
-    env="envman",
+    env="env/manual",
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
@@ -141,15 +141,12 @@ def regression(
 
     self.context.cluster = cluster
 
-    if env == "env":
-        self.context.available_clickhouse_tables = [
-            ("auto", "ReplacingMergeTree")
-        ]
-    else:
-        self.context.available_clickhouse_tables = [
-            ("manual", "ReplacingMergeTree"),
-            ("manual", "ReplicatedReplacingMergeTree"),
-        ]
+    self.context.env = env
+
+    self.context.clickhouse_table_engines = [
+        "ReplacingMergeTree",
+        "ReplicatedReplacingMergeTree"
+    ]
 
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
@@ -189,4 +186,4 @@ def regression(
 
 
 if __name__ == "__main__":
-    regression(env="envman")
+    regression()

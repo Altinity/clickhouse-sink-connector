@@ -10,7 +10,7 @@ def check_different_primary_keys(
     output_values,
     mysql_columns,
     clickhouse_columns,
-    clickhouse_table,
+    clickhouse_table_engine,
     primary_key,
     engine,
 ):
@@ -27,7 +27,7 @@ def check_different_primary_keys(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=primary_key,
             engine=engine,
         )
@@ -39,7 +39,7 @@ def check_different_primary_keys(
         complex_check_creation_and_select(
             manual_output=output_values,
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="id, Name",
             with_final=True,
         )
@@ -51,12 +51,12 @@ def check_different_primary_keys(
 )
 def simple_primary_key(self):
     """Check replicating MySQl table with simple primary key."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
                 insert_values="(1, 'Ivan'),(3,'Sergio'),(4,'Alex'),(2,'Alex'),(5,'Andre')",
                 output_values='1,"Ivan"\n2,"Alex"\n3,"Sergio"\n4,"Alex"\n5,"Andre"',
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" Name VARCHAR(14)",
                 clickhouse_columns=" Name String",
                 primary_key="id",
@@ -70,12 +70,12 @@ def simple_primary_key(self):
 )
 def composite_primary_key(self):
     """Check replicating MySQl table with composite key."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
                 insert_values="(1, 'Ivan'),(1,'Sergio'),(1,'Alex'),(2,'Alex'),(2,'Andre')",
                 output_values='1,"Alex"\n1,"Ivan"\n1,"Sergio"\n2,"Alex"\n2,"Andre"',
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" Name VARCHAR(14)",
                 clickhouse_columns=" Name String",
                 primary_key="id,Name",
@@ -87,12 +87,12 @@ def composite_primary_key(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No("1.0"))
 def no_primary_key(self):
     """Check replicating MySQl table without any primary key."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
                 insert_values="(1, 'Ivan'),(1,'Sergio'),(1,'Alex'),(2,'Alex'),(2,'Andre')",
                 output_values='1,"Ivan"\n1,"Sergio"\n1,"Alex"\n2,"Alex"\n2,"Andre"',
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 mysql_columns=" Name VARCHAR(14)",
                 clickhouse_columns=" Name String",
                 primary_key="",

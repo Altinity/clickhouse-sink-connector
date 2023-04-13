@@ -9,12 +9,12 @@ def insert_update_delete(self):
     table_name = f"table_{getuid()}"
 
     with Given("I create MySQL to ClickHouse replicated table"):
-        for clickhouse_table in self.context.available_clickhouse_tables:
+        for clickhouse_table_engine in self.context.clickhouse_table_engines:
             create_mysql_to_clickhouse_replicated_table(
                 name=table_name,
                 mysql_columns="x INT",
                 clickhouse_columns="x Int32",
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
     with When(

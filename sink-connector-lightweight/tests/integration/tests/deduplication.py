@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def deduplication(
-    self, clickhouse_table, inserts=False, big_insert=False, insert_number=1000
+    self, clickhouse_table_engine, inserts=False, big_insert=False, insert_number=1000
 ):
     """Check MySQL to Clickhouse connection for non-duplication data"""
 
@@ -18,7 +18,7 @@ def deduplication(
             name=table_name,
             mysql_columns="age INT",
             clickhouse_columns="age Int32",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     if inserts:
@@ -38,7 +38,7 @@ def deduplication(
             manual_output=insert_number,
             table_name=table_name,
             statement="count(*)",
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             with_final=True,
             timeout=50,
         )
@@ -47,20 +47,20 @@ def deduplication(
 @TestFeature
 def deduplication_on_big_insert(self):
     """Check MySQL to Clickhouse connection for non-duplication data on 10 000 inserts."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             deduplication(
-                clickhouse_table=clickhouse_table, big_insert=True, insert_number=10000
+                clickhouse_table_engine=clickhouse_table_engine, big_insert=True, insert_number=10000
             )
 
 
 @TestFeature
 def deduplication_on_many_inserts(self):
     """Check MySQL to Clickhouse connection for non-duplication data on big inserts."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             deduplication(
-                clickhouse_table=clickhouse_table, inserts=True, insert_number=1000
+                clickhouse_table_engine=clickhouse_table_engine, inserts=True, insert_number=1000
             )
 
 

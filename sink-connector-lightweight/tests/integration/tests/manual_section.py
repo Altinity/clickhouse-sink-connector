@@ -7,7 +7,7 @@ from integration.tests.steps.service_settings_steps import *
 def mysql_to_clickhouse_connection(
     self,
     mysql_columns,
-    clickhouse_table,
+    clickhouse_table_engine,
     clickhouse_columns=None,
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert."""
@@ -21,7 +21,7 @@ def mysql_to_clickhouse_connection(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     with When(f"I insert data in MySql table"):
@@ -39,7 +39,7 @@ def mysql_to_clickhouse_connection(
     ):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -53,13 +53,13 @@ def mysql_to_clickhouse(
     clickhouse_columns="MyData Int32",
 ):
     """Just imitation of tests."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "auto":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("auto"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 mysql_to_clickhouse_connection(
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
 
 

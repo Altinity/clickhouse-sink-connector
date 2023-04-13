@@ -12,7 +12,7 @@ def partition_limits(
     parts_per_partition,
     block_size,
     mysql_columns,
-    clickhouse_table,
+    clickhouse_table_engine,
     clickhouse_columns=None,
 ):
     """Creating table and append it with partition limits setting"""
@@ -25,7 +25,7 @@ def partition_limits(
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             clickhouse_columns=clickhouse_columns,
             partition_by="id",
         )
@@ -65,11 +65,11 @@ def partition_limits(
 )
 def exceed_partition_limit(self):
     """Test to check partition correct insert of data with partition limits option."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             partition_limits(
                 input=["({x},{y},DEFAULT)", "({x},{y},DEFAULT)"],
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 max_insert_block_size=1,
                 partitions=10001,
                 parts_per_partition=1,

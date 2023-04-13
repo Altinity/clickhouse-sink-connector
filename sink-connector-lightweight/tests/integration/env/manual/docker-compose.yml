@@ -3,6 +3,7 @@ version: "2.3"
 
 services:
   mysql-master:
+    hostname: debezium
     image: docker.io/bitnami/mysql:8.0
     restart: "no"
     expose:
@@ -15,8 +16,8 @@ services:
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
-     - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+     - ../../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+     - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/share_folder:/tmp/share_folder"
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
       interval: 15s
@@ -59,10 +60,10 @@ services:
         soft: 262144
         hard: 262144
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/database/:/var/lib/clickhouse/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/logs/:/var/log/clickhouse-server/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse/etc/:/etc/clickhouse-server/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse/etc/:/etc/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/share_folder:/tmp/share_folder"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse0/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:
@@ -78,8 +79,8 @@ services:
     command:
       - infinity
     volumes:
-      - ../tests/manual_scripts:/manual_scripts
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+      - ../../tests/manual_scripts:/manual_scripts
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/share_folder:/tmp/share_folder"
 
   clickhouse1:
     extends:
@@ -87,8 +88,8 @@ services:
       service: clickhouse
     hostname: clickhouse1
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database/:/var/lib/clickhouse/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse1/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse1/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:
@@ -100,8 +101,8 @@ services:
       service: clickhouse
     hostname: clickhouse2
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/database/:/var/lib/clickhouse/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse2/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse2/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:
@@ -113,8 +114,8 @@ services:
       service: clickhouse
     hostname: clickhouse3
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse3/database/:/var/lib/clickhouse/"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse3/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse3/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_manual/clickhouse3/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse3/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:

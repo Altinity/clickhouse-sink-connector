@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def simple_insert(
-    self, input, output, mysql_columns, clickhouse_table, clickhouse_columns=None
+    self, input, output, mysql_columns, clickhouse_table_engine, clickhouse_columns=None
 ):
     """Check that simple insert to MySQL is properly propagated to the replicated ClickHouse table."""
 
@@ -18,7 +18,7 @@ def simple_insert(
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             clickhouse_columns=clickhouse_columns,
         )
 
@@ -29,7 +29,7 @@ def simple_insert(
         complex_check_creation_and_select(
             table_name=table_name,
             manual_output=output,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="col1,col2,col3",
             with_final=True,
         )
@@ -44,14 +44,14 @@ def default_with_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains only one DEFAULT value which is set to NULL."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
                 input=input,
                 output=output,
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
 
@@ -64,14 +64,14 @@ def default_with_null_and_non_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains two DEFAULT values one of which is set to NULL value."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
                 input=input,
                 output=output,
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
 
@@ -84,14 +84,14 @@ def use_select_constant_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT constant query."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
                 input=input,
                 output=output,
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
 
@@ -116,14 +116,14 @@ def use_select_from_table_as_value(
                 f"INSERT INTO {auxiliary_table} VALUES (2)",
             )
 
-        for clickhouse_table in self.context.available_clickhouse_tables:
-            with Example({clickhouse_table}, flags=TE):
+        for clickhouse_table_engine in self.context.clickhouse_table_engines:
+            with Example({clickhouse_table_engine}, flags=TE):
                 simple_insert(
                     input=input,
                     output=output,
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
     finally:
         with Finally(f"I drop MySQL table", description=auxiliary_table):
@@ -138,11 +138,11 @@ def one_partition_one_part(self, node=None):
     """Check `INSERT` that creates one partition and one part."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -180,11 +180,11 @@ def one_partition_many_parts(self, node=None):
     ClickHouse table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -222,11 +222,11 @@ def one_partition_mixed_parts(self, node=None):
     propagated to the replicated ClickHouse table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -276,11 +276,11 @@ def many_partitions_one_part(self, node=None):
     table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -320,11 +320,11 @@ def many_partitions_many_parts(self, node=None):
     table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -363,11 +363,11 @@ def many_partitions_mixed_parts(self, node=None):
     propagated to the replicated ClickHouse table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -417,11 +417,11 @@ def one_million_datapoints(self, node=None):
     """Check that `INSERT` of one million entries to MySQL is properly propagated to the replicated ClickHouse table."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
@@ -459,11 +459,11 @@ def parallel(self):
     """Check that after different `INSERT` queries in parallel MySQL and Clickhouse has the same data."""
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_list = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table=clickhouse_table),
+                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:

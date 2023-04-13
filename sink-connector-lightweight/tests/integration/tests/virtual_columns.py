@@ -11,7 +11,7 @@ from integration.tests.steps.service_settings_steps import *
 )
 def virtual_column_names(
     self,
-    clickhouse_table,
+    clickhouse_table_engine,
     version_column="_version",
     clickhouse_columns=None,
     mysql_columns=" MyData DATETIME",
@@ -29,7 +29,7 @@ def virtual_column_names(
             name=table_name,
             clickhouse_columns=clickhouse_columns,
             mysql_columns=mysql_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     with When(f"I insert data in MySql table {table_name}"):
@@ -44,7 +44,7 @@ def virtual_column_names(
     with And(f"I check that data is replicated"):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -53,10 +53,10 @@ def virtual_column_names(
 @TestFeature
 def virtual_column_names_default(self):
     """Check correctness of default virtual column names."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "auto":
-            with Example({clickhouse_table}, flags=TE):
-                virtual_column_names(clickhouse_table=clickhouse_table)
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("auto"):
+            with Example({clickhouse_table_engine}, flags=TE):
+                virtual_column_names(clickhouse_table_engine=clickhouse_table_engine)
 
 
 @TestFeature
@@ -67,11 +67,11 @@ def virtual_column_names_default(self):
 )
 def virtual_column_names_replicated_random(self):
     """Check replication with some random version column name."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[1].startswith("Replicated"):
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if clickhouse_table_engine.startswith("Replicated"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 virtual_column_names(
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                     clickhouse_columns=" MyData String",
                     version_column="some_version_column",
                 )

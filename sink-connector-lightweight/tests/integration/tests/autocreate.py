@@ -4,7 +4,7 @@ from integration.tests.steps.statements import *
 
 
 @TestOutline
-def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table):
+def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table_engine):
     """Check auto-creation of replicated MySQL table
     which contains all supported data types.
     """
@@ -20,7 +20,7 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     with When(f"I check MySql table {table_name} was created"):
@@ -36,7 +36,7 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
     ):
         complex_check_creation_and_select(
             table_name=table_name,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -52,12 +52,12 @@ def create_all_data_types_null_table(
     contains all supported "NULL" data types.
     """
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             create_all_data_types(
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
 
@@ -70,12 +70,12 @@ def create_all_data_types_not_null_table_manual(
     """Check all availabe methods and tables creation of replicated MySQL to CH table
     which contains all supported "NOT NULL" data types.
     """
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
             create_all_data_types(
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
             )
 
 

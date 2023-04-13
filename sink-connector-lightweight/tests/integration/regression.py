@@ -50,7 +50,7 @@ def regression(
                 executor=pool,
             )(**args)
             Feature(
-                test=load("regression_man", "regression"),
+                test=load("regression_manual", "regression"),
                 parallel=True,
                 executor=pool,
             )(**args)

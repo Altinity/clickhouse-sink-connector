@@ -7,7 +7,7 @@ from integration.tests.steps.service_settings_steps import *
 def create_replicated_tables(
     self,
     name,
-    clickhouse_table,
+    clickhouse_table_engine,
     node=None,
 ):
     """Outline to create MySQL to CLickHouse replicated table."""
@@ -18,12 +18,12 @@ def create_replicated_tables(
 
     with Given(
         f"I create different MySQL to ClickHouse replicated tables with "
-        f"ClickHouse table creation method {clickhouse_table[0]} "
-        f"and ClickHouse table engine {clickhouse_table[1]}"
+        f"ClickHouse table creation method {self.context.env} "
+        f"and ClickHouse table engine {clickhouse_table_engine}"
     ):
         tables_list = define(
             "List of replicated tables for test",
-            create_tables(table_name=name, clickhouse_table=clickhouse_table),
+            create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
         )
 
         for table_name in tables_list:
@@ -46,19 +46,19 @@ def add_change_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` on replicated table {table_name}"
@@ -88,19 +88,19 @@ def change_add_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` on replicated table {table_name}"
@@ -131,19 +131,19 @@ def add_modify_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE ADD COLUMN, MODIFY COLUMN` on replicated table {table_name}"
@@ -173,19 +173,19 @@ def modify_add_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE MODIFY COLUMN, ADD COLUMN` on replicated table {table_name}"
@@ -216,19 +216,19 @@ def add_rename_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE ADD COLUMN, RENAME COLUMN` on replicated table {table_name}"
@@ -258,19 +258,19 @@ def rename_add_column(self, node=None):
 
     name = f"{getuid()}"
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
             f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {clickhouse_table[0]} "
-            f"and ClickHouse table engine {clickhouse_table[1]}"
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_list = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table=clickhouse_table),
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
         for table_name in tables_list:
-            with Example(f"{table_name} {clickhouse_table}", flags=TE):
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 if not table_name.endswith("_complex"):
                     with When(
                         f"I perform `ALTER TABLE RENAME COLUMN, ADD COLUMN` on replicated table {table_name}"

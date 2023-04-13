@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def mysql_to_clickhouse_insert(
-    self, input, output, mysql_columns, clickhouse_table, clickhouse_columns=None
+    self, input, output, mysql_columns, clickhouse_table_engine, clickhouse_columns=None
 ):
     """Manual creation table section"""
 
@@ -16,7 +16,7 @@ def mysql_to_clickhouse_insert(
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             clickhouse_columns=clickhouse_columns,
         )
 
@@ -28,7 +28,7 @@ def mysql_to_clickhouse_insert(
         complex_check_creation_and_select(
             table_name=table_name,
             manual_output=output,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
             with_final=True,
         )
@@ -43,15 +43,15 @@ def more_columns(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32, col4 Int32",
 ):
     """Check when manual created table has more columns than MySQL table."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "manual":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("manual"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 mysql_to_clickhouse_insert(
                     input=input,
                     output=output,
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
 
 
@@ -64,15 +64,15 @@ def less_columns(
     clickhouse_columns="col1 Int32, col2 Int32",
 ):
     """Check when manual created table has fewer columns than MySQL table."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "manual":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("manual"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 mysql_to_clickhouse_insert(
                     input=input,
                     output=output,
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
 
 
@@ -85,15 +85,15 @@ def equal_columns_different_names(
     clickhouse_columns="col11 Int32, col22 Int32, col33 Int32",
 ):
     """Check when manual created table has different named columns than MySQL table."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "manual":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("manual"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 mysql_to_clickhouse_insert(
                     input=input,
                     output=output,
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
 
 
@@ -106,15 +106,15 @@ def equal_columns_some_different_names(
     clickhouse_columns="col1 Int32, col22 Int32, col33 Int32",
 ):
     """Check when manual created table has some different named columns than MySQL table."""
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "manual":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("manual"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 mysql_to_clickhouse_insert(
                     input=input,
                     output=output,
                     mysql_columns=mysql_columns,
                     clickhouse_columns=clickhouse_columns,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                 )
 
 

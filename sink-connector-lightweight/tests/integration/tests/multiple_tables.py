@@ -5,7 +5,7 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def multiple_table_auto_creation(
-    self, number_of_tables, mysql_columns, clickhouse_table, clickhouse_columns=None
+    self, number_of_tables, mysql_columns, clickhouse_table_engine, clickhouse_columns=None
 ):
     """
     Multiple tables auto creation
@@ -20,7 +20,7 @@ def multiple_table_auto_creation(
             create_mysql_to_clickhouse_replicated_table(
                 name=table_name,
                 mysql_columns=mysql_columns,
-                clickhouse_table=clickhouse_table,
+                clickhouse_table_engine=clickhouse_table_engine,
                 clickhouse_columns=clickhouse_columns,
             )
 
@@ -32,7 +32,7 @@ def multiple_table_auto_creation(
                 "SELECT count() FROM system.tables WHERE name ilike 'users%'",
                 message=f"{i+1}",
             )
-            if clickhouse_table[1].startswith("Replicated"):
+            if clickhouse_table_engine.startswith("Replicated"):
                 retry(clickhouse1.query, timeout=50, delay=1)(
                     "SELECT count() FROM system.tables WHERE name ilike 'users%'",
                     message=f"{i + 1}",
@@ -48,23 +48,23 @@ def tables_100(
     Creation of 10 tables (if --stress enabled 100 tables creation).
     """
     if self.context.cluster.stress:
-        for clickhouse_table in self.context.available_clickhouse_tables:
-            if clickhouse_table[0] == "auto":
-                with Example({clickhouse_table}, flags=TE):
+        for clickhouse_table_engine in self.context.clickhouse_table_engines:
+            if self.context.env.endswith("auto"):
+                with Example({clickhouse_table_engine}, flags=TE):
                     multiple_table_auto_creation(
                         number_of_tables=100,
                         mysql_columns=mysql_columns,
-                        clickhouse_table=clickhouse_table,
+                        clickhouse_table_engine=clickhouse_table_engine,
                     )
 
     else:
-        for clickhouse_table in self.context.available_clickhouse_tables:
-            if clickhouse_table[0] == "auto":
-                with Example({clickhouse_table}, flags=TE):
+        for clickhouse_table_engine in self.context.clickhouse_table_engines:
+            if self.context.env.endswith("auto"):
+                with Example({clickhouse_table_engine}, flags=TE):
                     multiple_table_auto_creation(
                         number_of_tables=10,
                         mysql_columns=mysql_columns,
-                        clickhouse_table=clickhouse_table,
+                        clickhouse_table_engine=clickhouse_table_engine,
                     )
 
 

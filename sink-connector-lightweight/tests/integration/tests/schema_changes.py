@@ -12,7 +12,7 @@ def check_datatype_replication(
     ch_values,
     nullable,
     table_name,
-    clickhouse_table,
+    clickhouse_table_engine,
     hex_type=False,
 ):
     """Check replication of a given MySQL data type."""
@@ -30,7 +30,7 @@ def check_datatype_replication(
             name=table_name,
             mysql_columns=mysql_columns,
             clickhouse_columns=clickhouse_columns,
-            clickhouse_table=clickhouse_table,
+            clickhouse_table_engine=clickhouse_table_engine,
         )
 
     with When(f"I insert data in MySql table {table_name}"):
@@ -64,16 +64,16 @@ def table_recreation_with_different_datatypes(
 ):
     """Check MySQL to CH replicated table auto recreation with the same name but different column data types."""
 
-    for clickhouse_table in self.context.available_clickhouse_tables:
-        if clickhouse_table[0] == "auto":
-            with Example({clickhouse_table}, flags=TE):
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        if self.context.env.endswith("auto"):
+            with Example({clickhouse_table_engine}, flags=TE):
                 check_datatype_replication(
                     mysql_type=mysql_type,
                     ch_type=ch_type,
                     values=values,
                     ch_values=ch_values,
                     nullable=nullable,
-                    clickhouse_table=clickhouse_table,
+                    clickhouse_table_engine=clickhouse_table_engine,
                     table_name="users1",
                 )
 
