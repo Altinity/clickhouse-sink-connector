@@ -281,6 +281,136 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
                         )(f"DESC test.{table_name} FORMAT CSV", message=f'"{column_name}","Int32')
 
 
+@TestFeature
+def multiple_parallel_add_and_drop_column(self, column_number=5, node=None):
+    """Check that after multiple `ALTER TABLE DROP COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    if self.context.stress:
+        column_number = 64
+
+    columns = [f"column_{i}" for i in range(column_number)]
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_list = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_list:
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                with When(
+                        "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
+                ):
+                    for column_name in columns:
+                        By(f"add column {column_name}", test=add_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                        )
+
+                    join()
+
+                with Then(
+                        f"I check that Clickhouse replicated table {table_name} has all the new columns"
+                ):
+                    for column_name in columns:
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(f"DESC test.{table_name} FORMAT CSV", message=column_name)
+
+                with When(
+                        "I perform multiple `ALTER TABLE DROP COLUMN` parallel in MySQL"
+                ):
+                    for column_name in columns:
+                        By(f"drop column {column_name}", test=drop_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                        )
+
+                    join()
+
+                with Then(
+                        f"I check that Clickhouse replicated table {table_name} has the same number of columns "
+                        f"as in MySQL table {table_name}"
+                ):
+                    mysql_columns_number = node.query(columns_number.format(table_name=table_name)).output.strip()
+
+                    retry(
+                        self.context.cluster.node("clickhouse").query,
+                        timeout=100,
+                        delay=5,
+                    )(columns_number.format(table_name=table_name),
+                      message=mysql_columns_number[len("mysql: [Warning] Using a password on the command line "
+                                                       "interface can be insecure.\ncount(*)\n"):])
+
+
+@TestFeature
+def multiple_parallel_add_modify_drop_column(self, column_number=5, node=None):
+    """Check that after multiple `ALTER TABLE ADD COLUMN`,`ALTER TABLE MODIFY COLUMN`,`ALTER TABLE DROP COLUMN` parallel
+     queries MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    if self.context.stress:
+        column_number = 64
+
+    columns = [f"column_{i}" for i in range(column_number)]
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_list = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_list:
+            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                with When(
+                        "I perform multiple `ALTER TABLE ADD COLUMN`,`ALTER TABLE MODIFY COLUMN`,"
+                        "`ALTER TABLE DROP COLUMN` parallel in MySQL"
+                ):
+                    for column_name in columns:
+                        By(f"add,modify,drop column {column_name},", test=add_modify_drop_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                        )
+
+                    join()
+
+                with Then(
+                        f"I check that Clickhouse replicated table {table_name} has the same number of columns "
+                        f"as in MySQL table {table_name}"
+                ):
+                    mysql_columns_number = node.query(columns_number.format(table_name=table_name)).output.strip()
+
+                    retry(
+                        self.context.cluster.node("clickhouse").query,
+                        timeout=100,
+                        delay=5,
+                    )(columns_number.format(table_name=table_name),
+                      message=mysql_columns_number[len("mysql: [Warning] Using a password on the command line "
+                                                       "interface can be insecure.\ncount(*)\n"):])
+
+
 @TestModule
 @Name("parallel alters")
 def module(self):
