@@ -68,7 +68,7 @@ def add_change_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and changed column"
+                        f"I check that Clickhouse replicated table {table_name} has the new column and changed column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -110,7 +110,7 @@ def change_add_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and changed "
+                        f"I check that Clickhouse replicated table {table_name} has the new column and changed "
                         f"column"
                     ):
                         retry(
@@ -153,7 +153,7 @@ def add_modify_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and modified column"
+                        f"I check that Clickhouse replicated table {table_name} has the new column and modified column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -195,7 +195,7 @@ def modify_add_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and modified "
+                        f"I check that Clickhouse replicated table {table_name} has the new column and modified "
                         f"column"
                     ):
                         retry(
@@ -238,7 +238,7 @@ def add_rename_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and renamed column"
+                        f"I check that Clickhouse replicated table {table_name} has the new column and renamed column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -280,7 +280,7 @@ def rename_add_column(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the new column and renamed "
+                        f"I check that Clickhouse replicated table {table_name} has the new column and renamed "
                         f"column"
                     ):
                         retry(

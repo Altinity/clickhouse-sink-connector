@@ -72,7 +72,7 @@ def add_column(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -117,7 +117,7 @@ def add_column_not_null(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -161,7 +161,7 @@ def add_column_default(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -212,7 +212,7 @@ def add_column_first_after(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the `new_column` "
+                    f"I check that Clickhouse replicated table {table_name} has the `new_column` "
                     f"and `second_col` and `id` columns are after it"
                 ):
                     retry(
@@ -257,7 +257,7 @@ def drop_column(self, node=None):
                     )
 
                 with And(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -274,7 +274,7 @@ def drop_column(self, node=None):
                     node.query(f"ALTER TABLE {table_name} DROP COLUMN new_col;")
 
                 with Then(
-                    f"I check that new column in Clickhouse replicated table test.{table_name} has been deleted"
+                    f"I check that new column in Clickhouse replicated table {table_name} has been deleted"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -319,7 +319,7 @@ def modify_column(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -362,7 +362,7 @@ def modify_column_null(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -408,7 +408,7 @@ def modify_column_not_null(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the new column"
+                    f"I check that Clickhouse replicated table {table_name} has the new column"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -467,7 +467,7 @@ def modify_column_default(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the DEFAULT value"
+                    f"I check that Clickhouse replicated table {table_name} has the DEFAULT value"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -511,7 +511,7 @@ def modify_column_first_after(self, node=None):
                     node.query(f"ALTER TABLE {table_name} MODIFY COLUMN x int FIRST;")
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the `x` column first"
+                    f"I check that Clickhouse replicated table {table_name} has the `x` column first"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -530,7 +530,7 @@ def modify_column_first_after(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} "
+                    f"I check that Clickhouse replicated table {table_name} "
                     f"has the `x` column after 'id' column"
                 ):
                     retry(
@@ -577,7 +577,7 @@ def change_column_name_to_new_name_null(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has column with new name and new data"
+                    f"I check that Clickhouse replicated table {table_name} has column with new name and new data"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -623,7 +623,7 @@ def change_column_name_to_new_name_not_null(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has column with new name and "
+                    f"I check that Clickhouse replicated table {table_name} has column with new name and "
                     f"new data"
                 ):
                     retry(
@@ -667,7 +667,7 @@ def change_column_first_after(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the `x2` column first"
+                    f"I check that Clickhouse replicated table {table_name} has the `x2` column first"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -686,7 +686,7 @@ def change_column_first_after(self, node=None):
                     )
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has the `x` column after "
+                    f"I check that Clickhouse replicated table {table_name} has the `x` column after "
                     f"'id' column"
                 ):
                     retry(
@@ -729,7 +729,7 @@ def rename_column(self, node=None):
                     node.query(f"ALTER TABLE {table_name} RENAME COLUMN x TO x2;")
 
                 with Then(
-                    f"I check that Clickhouse replicated table test.{table_name} has column with the new name"
+                    f"I check that Clickhouse replicated table {table_name} has column with the new name"
                 ):
                     retry(
                         self.context.cluster.node("clickhouse").query,
@@ -787,7 +787,7 @@ def alter_column_set_default(self, node=None):
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the DEFAULT value"
+                        f"I check that Clickhouse replicated table {table_name} has the DEFAULT value"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -835,7 +835,7 @@ def alter_column_drop_default(self, node=None):
                         )(f"DESC test.{table_name} FORMAT CSV", message='"new_col"')
 
                     with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has the DEFAULT value"
+                        f"I check that Clickhouse replicated table {table_name} has the DEFAULT value"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -854,7 +854,7 @@ def alter_column_drop_default(self, node=None):
                         )
 
                     with Then(
-                        f"I check that in the Clickhouse replicated table test.{table_name} the DEFAULT value has"
+                        f"I check that in the Clickhouse replicated table {table_name} the DEFAULT value has"
                         f" been removed"
                     ):
                         assert (

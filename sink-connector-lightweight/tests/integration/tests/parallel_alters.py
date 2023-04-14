@@ -48,7 +48,7 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
     name = f"{getuid()}"
 
     if self.context.stress:
-        column_number = 30
+        column_number = 64
 
     columns = [f"column_{i}" for i in range(column_number)]
 
@@ -77,8 +77,9 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
 
                     join()
 
+
                 with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has all the new columns"
+                        f"I check that Clickhouse replicated table {table_name} has all the new columns"
                 ):
                     for column_name in columns:
                         retry(
@@ -98,7 +99,7 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     name = f"{getuid()}"
 
     if self.context.stress:
-        column_number = 30
+        column_number = 64
 
     columns = [f"column_{i}" for i in range(column_number)]
 
@@ -141,7 +142,7 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
                     join()
 
                 with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has all the new columns"
+                        f"I check that Clickhouse replicated table {table_name} has all the new columns"
                 ):
                     for column_name in columns:
                         retry(
@@ -161,7 +162,7 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
     name = f"{getuid()}"
 
     if self.context.stress:
-        column_number = 30
+        column_number = 64
 
     columns = [f"column_{i}" for i in range(column_number)]
 
@@ -205,7 +206,7 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
                     join()
 
                 with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has all the changed columns"
+                        f"I check that Clickhouse replicated table {table_name} has all the changed columns"
                 ):
                     for column_name in columns:
                         retry(
@@ -227,7 +228,7 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
     name = f"{getuid()}"
 
     if self.context.stress:
-        column_number = 30
+        column_number = 64
 
     columns = [f"column_{i}" for i in range(column_number)]
 
@@ -270,7 +271,7 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
                     join()
 
                 with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has all the modified columns"
+                        f"I check that Clickhouse replicated table {table_name} has all the modified columns"
                 ):
                     for column_name in columns:
                         retry(
