@@ -40,16 +40,17 @@ def create_replicated_tables(
 
 
 @TestFeature
-def multiple_parallel_add_column(self, node=None):
+def multiple_parallel_add_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
     name = f"{getuid()}"
 
-    input = ["new_col1", "new_col2", "new_col3"]
+    if self.context.stress:
+        column_number = 30
 
-    output = ['"new_col1"', '"new_col2"', '"new_col3"']
+    columns = [f"column_{i}" for i in range(column_number)]
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -67,7 +68,7 @@ def multiple_parallel_add_column(self, node=None):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
-                    for column_name in input:
+                    for column_name in columns:
                         By(f"add column {column_name}", test=add_column, parallel=True)(
                             node=node,
                             table_name=table_name,
@@ -79,16 +80,16 @@ def multiple_parallel_add_column(self, node=None):
                 with Then(
                         f"I check that Clickhouse replicated table test.{table_name} has all the new columns"
                 ):
-                    for message in output:
+                    for column_name in columns:
                         retry(
                             self.context.cluster.node("clickhouse").query,
                             timeout=100,
                             delay=5,
-                        )(f"DESC test.{table_name} FORMAT CSV", message=message)
+                        )(f"DESC test.{table_name} FORMAT CSV", message=column_name)
 
 
 @TestFeature
-def multiple_parallel_add_and_rename_column(self, node=None):
+def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
      multiple `ALTER TABLE RENAME COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
     if node is None:
@@ -96,9 +97,10 @@ def multiple_parallel_add_and_rename_column(self, node=None):
 
     name = f"{getuid()}"
 
-    input = ["new_col1", "new_col2", "new_col3"]
+    if self.context.stress:
+        column_number = 30
 
-    output = ["new_col111", "new_col222", "new_col333"]
+    columns = [f"column_{i}" for i in range(column_number)]
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -116,7 +118,7 @@ def multiple_parallel_add_and_rename_column(self, node=None):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
-                    for column_name in input:
+                    for column_name in columns:
                         By(f"add column {column_name}", test=add_column, parallel=True)(
                             node=node,
                             table_name=table_name,
@@ -128,40 +130,29 @@ def multiple_parallel_add_and_rename_column(self, node=None):
                 with And(
                         "I perform multiple `ALTER TABLE RENAME COLUMN` parallel in MySQL"
                 ):
-                    By(f"rename column new_col1", test=rename_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col1",
-                        new_column_name="new_col111"
-                    )
-                    By(f"rename column new_col2", test=rename_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col2",
-                        new_column_name="new_col222"
-                    )
-                    By(f"rename column new_col3", test=rename_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col3",
-                        new_column_name="new_col333"
-                    )
+                    for column_name in columns:
+                        By(f"rename column {column_name}", test=rename_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                            new_column_name=f"new_{column_name}"
+                        )
 
                     join()
 
                 with Then(
-                        f"I check that Clickhouse replicated table test.{table_name} has all the renamed columns"
+                        f"I check that Clickhouse replicated table test.{table_name} has all the new columns"
                 ):
-                    for message in output:
+                    for column_name in columns:
                         retry(
                             self.context.cluster.node("clickhouse").query,
                             timeout=100,
                             delay=5,
-                        )(f"DESC test.{table_name} FORMAT CSV", message=message)
+                        )(f"DESC test.{table_name} FORMAT CSV", message="new_"+column_name)
 
 
 @TestFeature
-def multiple_parallel_add_and_change_column(self, node=None):
+def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
      multiple `ALTER TABLE CHANGE COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
     if node is None:
@@ -169,9 +160,10 @@ def multiple_parallel_add_and_change_column(self, node=None):
 
     name = f"{getuid()}"
 
-    input = ["new_col1", "new_col2", "new_col3"]
+    if self.context.stress:
+        column_number = 30
 
-    output = ['"new_col111","Int32"', '"new_col222","Int32"', '"new_col333","Int32"']
+    columns = [f"column_{i}" for i in range(column_number)]
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -189,7 +181,7 @@ def multiple_parallel_add_and_change_column(self, node=None):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
-                    for column_name in input:
+                    for column_name in columns:
                         By(f"add column {column_name}", test=add_column, parallel=True)(
                             node=node,
                             table_name=table_name,
@@ -201,43 +193,30 @@ def multiple_parallel_add_and_change_column(self, node=None):
                 with And(
                         "I perform multiple `ALTER TABLE CHANGE COLUMN` parallel in MySQL"
                 ):
-                    By(f"change column new_col1", test=change_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col1",
-                        new_column_name="new_col111",
-                        new_column_type="INT"
-                    )
-                    By(f"change column new_col2", test=change_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col2",
-                        new_column_name="new_col222",
-                        new_column_type="INT"
-                    )
-                    By(f"change column new_col3", test=change_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col3",
-                        new_column_name="new_col333",
-                        new_column_type="INT"
-                    )
+                    for column_name in columns:
+                        By(f"change column {column_name}", test=change_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                            new_column_name=f"new_{column_name}",
+                            new_column_type="INT"
+                        )
 
                     join()
 
                 with Then(
                         f"I check that Clickhouse replicated table test.{table_name} has all the changed columns"
                 ):
-                    for message in output:
+                    for column_name in columns:
                         retry(
                             self.context.cluster.node("clickhouse").query,
                             timeout=100,
                             delay=5,
-                        )(f"DESC test.{table_name} FORMAT CSV", message=message)
+                        )(f"DESC test.{table_name} FORMAT CSV", message=f'"new_{column_name}","Int32')
 
 
 @TestFeature
-def multiple_parallel_add_and_modify_column(self, node=None):
+def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
      multiple `ALTER TABLE MODIFY COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
     if node is None:
@@ -245,9 +224,12 @@ def multiple_parallel_add_and_modify_column(self, node=None):
 
     name = f"{getuid()}"
 
-    input = ["new_col1", "new_col2", "new_col3"]
+    name = f"{getuid()}"
 
-    output = ['"new_col1","Int32"', '"new_col2","Int32"', '"new_col3","Int32"']
+    if self.context.stress:
+        column_number = 30
+
+    columns = [f"column_{i}" for i in range(column_number)]
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -265,7 +247,7 @@ def multiple_parallel_add_and_modify_column(self, node=None):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
                 ):
-                    for column_name in input:
+                    for column_name in columns:
                         By(f"add column {column_name}", test=add_column, parallel=True)(
                             node=node,
                             table_name=table_name,
@@ -277,36 +259,25 @@ def multiple_parallel_add_and_modify_column(self, node=None):
                 with And(
                         "I perform multiple `ALTER TABLE MODIFY COLUMN` parallel in MySQL"
                 ):
-                    By(f"modify column new_col1", test=modify_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col1",
-                        new_column_type="INT"
-                    )
-                    By(f"modify column new_col2", test=modify_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col2",
-                        new_column_type="INT"
-                    )
-                    By(f"modify column new_col3", test=modify_column, parallel=True)(
-                        node=node,
-                        table_name=table_name,
-                        column_name="new_col3",
-                        new_column_type="INT"
-                    )
+                    for column_name in columns:
+                        By(f"modify column {column_name}", test=modify_column, parallel=True)(
+                            node=node,
+                            table_name=table_name,
+                            column_name=column_name,
+                            new_column_type="INT"
+                        )
 
                     join()
 
                 with Then(
                         f"I check that Clickhouse replicated table test.{table_name} has all the modified columns"
                 ):
-                    for message in output:
+                    for column_name in columns:
                         retry(
                             self.context.cluster.node("clickhouse").query,
                             timeout=100,
                             delay=5,
-                        )(f"DESC test.{table_name} FORMAT CSV", message=message)
+                        )(f"DESC test.{table_name} FORMAT CSV", message=f'"{column_name}","Int32')
 
 
 @TestModule
