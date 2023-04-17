@@ -22,12 +22,12 @@ def create_replicated_tables(
             f"ClickHouse table creation method {self.context.env} "
             f"and ClickHouse table engine {clickhouse_table_engine}"
     ):
-        tables_list = define(
+        tables_names = define(
             "List of replicated tables for test",
             create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
         )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with When("I insert some data into MySQL table"):
                 node.query(f"INSERT INTO {table_name} values (1,1);")
 
@@ -36,7 +36,7 @@ def create_replicated_tables(
                     "SHOW TABLES FROM test", message=f"{table_name}"
                 )
 
-    return tables_list
+    return tables_names
 
 
 @TestFeature
@@ -58,12 +58,12 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
@@ -109,12 +109,12 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
@@ -172,12 +172,12 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
@@ -238,12 +238,12 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
@@ -300,12 +300,12 @@ def multiple_parallel_add_and_drop_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN` parallel in MySQL"
@@ -376,12 +376,12 @@ def multiple_parallel_add_modify_drop_column(self, column_number=5, node=None):
                 f"ClickHouse table creation method {self.context.env} "
                 f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
-            tables_list = define(
+            tables_names = define(
                 "List of different replicated tables with inserted data",
                 create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
+        for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                 with When(
                         "I perform multiple `ALTER TABLE ADD COLUMN`,`ALTER TABLE MODIFY COLUMN`,"

@@ -242,19 +242,19 @@ def one_partition_one_part(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
+                        if table_name.endswith("_no_primary_key"):
+                            xfail(
+                                "doesn't work without primary key as only last row of insert is replicated"
+                            )
                         with Example(f"{table_name}", flags=TE):
-                            if table_name.endswith("_no_primary_key"):
-                                xfail(
-                                    "doesn't work without primary key as only last row of insert is replicated"
-                                )
                             with When(
                                 "I perform insert in MySQL to create one partition and one part in replicated ClickHouse table"
                             ):
@@ -291,20 +291,20 @@ def one_partition_many_parts(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
-                        with Example(f"{table_name}", flags=TE):
-                            if table_name.endswith("_no_primary_key"):
-                                xfail(
-                                    "doesn't work without primary key as only last row of insert is replicated"
-                                )
+                    for table_name in tables_names:
+                        if table_name.endswith("_no_primary_key"):
+                            xfail(
+                                "doesn't work without primary key as only last row of insert is replicated"
+                            )
 
+                        with Example(f"{table_name}", flags=TE):
                             with When(
                                 "I perform insert in MySQL to create one partition with many parts in replicated ClickHouse table"
                             ):
@@ -341,54 +341,53 @@ def one_partition_mixed_parts(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
+                        if table_name.endswith("_no_primary_key"):
+                            xfail(
+                                "doesn't work without primary key as only last row of insert is replicated"
+                            )
                         with Example(f"{table_name}", flags=TE):
-                            if table_name.endswith("_no_primary_key"):
-                                xfail(
-                                    "doesn't work without primary key as only last row of insert is replicated"
+                            with When(
+                                "I perform insert in MySQL to create one large part in replicated ClickHouse table"
+                            ):
+                                complex_insert(
+                                    node=self.context.cluster.node("mysql-master"),
+                                    table_name=table_name,
+                                    values=["({x},{y})", "({x},{y})"],
+                                    partitions=1,
+                                    parts_per_partition=1,
+                                    block_size=1000,
                                 )
 
-                        with When(
-                            "I perform insert in MySQL to create one large part in replicated ClickHouse table"
-                        ):
-                            complex_insert(
-                                node=self.context.cluster.node("mysql-master"),
-                                table_name=table_name,
-                                values=["({x},{y})", "({x},{y})"],
-                                partitions=1,
-                                parts_per_partition=1,
-                                block_size=1000,
-                            )
+                            with And(
+                                "I perform insert in MySQL to create many small parts in replicated ClickHouse table"
+                            ):
+                                complex_insert(
+                                    node=self.context.cluster.node("mysql-master"),
+                                    table_name=table_name,
+                                    values=["({x},{y})", "({x},{y})"],
+                                    partitions=1,
+                                    parts_per_partition=100,
+                                    block_size=10,
+                                )
 
-                        with And(
-                            "I perform insert in MySQL to create many small parts in replicated ClickHouse table"
-                        ):
-                            complex_insert(
-                                node=self.context.cluster.node("mysql-master"),
-                                table_name=table_name,
-                                values=["({x},{y})", "({x},{y})"],
-                                partitions=1,
-                                parts_per_partition=100,
-                                block_size=10,
-                            )
+                            with And(
+                                "I check that MySQL tables and Clickhouse replication tables have the same data"
+                            ):
+                                complex_check_creation_and_select(
+                                    table_name=table_name,
+                                    statement="count(*)",
+                                    with_final=True,
+                                )
 
-                        with And(
-                            "I check that MySQL tables and Clickhouse replication tables have the same data"
-                        ):
-                            complex_check_creation_and_select(
-                                table_name=table_name,
-                                statement="count(*)",
-                                with_final=True,
-                            )
-
-                        outline(table_name=table_name)
+                            outline(table_name=table_name)
 
 
 @TestFeature
@@ -403,20 +402,19 @@ def many_partitions_one_part(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
+                        if table_name.endswith("_no_primary_key"):
+                            xfail(
+                                "doesn't work without primary key as only last row of insert is replicated"
+                            )
                         with Example(f"{table_name}", flags=TE):
-                            if table_name.endswith("_no_primary_key"):
-                                xfail(
-                                    "doesn't work without primary key as only last row of insert is replicated"
-                                )
-
                             with When(
                                 "I perform insert in MySQL to create many partition and one part in replicated ClickHouse table"
                             ):
@@ -453,23 +451,23 @@ def many_partitions_many_parts(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
                         if table_name.endswith("complex") or table_name.endswith(
                             "no_primary_key"
                         ):
-                            with Example(f"{table_name}", flags=TE):
-                                if table_name.endswith("_no_primary_key"):
-                                    xfail(
-                                        "doesn't work without primary key as only last row of insert is replicated"
-                                    )
+                            if table_name.endswith("_no_primary_key"):
+                                xfail(
+                                    "doesn't work without primary key as only last row of insert is replicated"
+                                )
 
+                            with Example(f"{table_name}", flags=TE):
                                 with When(
                                     "I perform insert in MySQL to create many partition and many parts in replicated ClickHouse table"
                                 ):
@@ -506,23 +504,22 @@ def many_partitions_mixed_parts(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
                         if table_name.endswith("complex") or table_name.endswith(
                             "no_primary_key"
                         ):
+                            if table_name.endswith("_no_primary_key"):
+                                xfail(
+                                    "doesn't work without primary key as only last row of insert is replicated"
+                                )
                             with Example(f"{table_name}", flags=TE):
-                                if table_name.endswith("_no_primary_key"):
-                                    xfail(
-                                        "doesn't work without primary key as only last row of insert is replicated"
-                                    )
-
                                 with When(
                                     "I perform insert in MySQL to create one large part in replicated ClickHouse table"
                                 ):
@@ -571,23 +568,23 @@ def one_million_datapoints(self):
 
                 for clickhouse_table_engine in self.context.clickhouse_table_engines:
                     with Given("I create MySQL to ClickHouse replicated tables"):
-                        tables_list = define(
+                        tables_names = define(
                             "List of tables for test",
                             create_tables(
                                 table_name=name, clickhouse_table_engine=clickhouse_table_engine
                             ),
                         )
 
-                    for table_name in tables_list:
+                    for table_name in tables_names:
                         if table_name.endswith("complex") or table_name.endswith(
                             "no_primary_key"
                         ):
-                            with Example(f"{table_name}", flags=TE):
-                                if table_name.endswith("_no_primary_key"):
-                                    xfail(
-                                        "doesn't work without primary key as only last row of insert is replicated"
-                                    )
+                            if table_name.endswith("_no_primary_key"):
+                                xfail(
+                                    "doesn't work without primary key as only last row of insert is replicated"
+                                )
 
+                            with Example(f"{table_name}", flags=TE):
                                 with When(
                                     "I perform insert in MySQL to create one million entries in replicated ClickHouse table"
                                 ):
@@ -621,18 +618,18 @@ def parallel(self):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
-            tables_list = define(
+            tables_names = define(
                 "List of tables for test",
                 create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
             )
 
-        for table_name in tables_list:
-            with Example(f"{table_name}", flags=TE):
-                if table_name.endswith("_no_primary_key"):
-                    xfail(
-                        "doesn't work without primary key as only last row of insert is replicated"
-                    )
+        for table_name in tables_names:
+            if table_name.endswith("_no_primary_key"):
+                xfail(
+                    "doesn't work without primary key as only last row of insert is replicated"
+                )
 
+            with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to create one partition and one part in replicated ClickHouse table"
                 ):

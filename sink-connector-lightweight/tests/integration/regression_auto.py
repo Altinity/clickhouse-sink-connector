@@ -175,7 +175,7 @@ def regression(
         "delete",
         "parallel",
         "alter",
-        "serial_connection_of_alters",
+        "compound_alters",
         "parallel_alters",
         "truncate",
         "deduplication",
