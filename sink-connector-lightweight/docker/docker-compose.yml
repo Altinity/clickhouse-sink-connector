@@ -7,6 +7,8 @@ version: "3.4"
 # create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
 
 services:
+
+
   mysql-master:
     container_name: mysql-master
     image: docker.io/bitnami/mysql:latest
@@ -37,7 +39,7 @@ services:
       - "8123:8123"
       - "9000:9000"
     environment:
-      - CLICKHOUSE_USER=ch_user
+      - CLICKHOUSE_USER=root
       - CLICKHOUSE_PASSWORD=root
       - CLICKHOUSE_DB=test
       - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0
@@ -51,7 +53,7 @@ services:
     depends_on:
       zookeeper:
         condition: service_healthy
-#
+
   zookeeper:
       image: zookeeper:3.6.2
       expose:
@@ -83,7 +85,7 @@ services:
       - "host.docker.internal:host-gateway"
 
 
-  #### MONITORING ####
+  ### MONITORING ####
   prometheus:
     container_name: prometheus
     image: bitnami/prometheus:2.36.0
@@ -112,4 +114,4 @@ services:
       - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
     depends_on:
       - prometheus
-    ### END OF MONITORING ###
+    ## END OF MONITORING ###

@@ -27,7 +27,7 @@
     <!-- Users and ACL. -->
     <users>
         <!-- If user name was not specified, 'default' user is used. -->
-        <ch_user>
+        <default>
             <!-- See also the files in users.d directory where the password can be overridden.
 
                  Password could be specified in plaintext or in SHA256 (in hex format).
@@ -63,7 +63,7 @@
                  Execute: PASSWORD=$(base64 < /dev/urandom | head -c8); echo "$PASSWORD"; echo -n "$PASSWORD" | sha1sum | tr -d '-' | xxd -r -p | sha1sum | tr -d '-'
                  In first line will be password and in second - corresponding double SHA1.
             -->
-            <password>root</password>
+            <!-- <password>root</password> -->
 
             <!-- List of networks with open access.
 
@@ -97,7 +97,7 @@
 
             <!-- User can create other users and grant rights to them. -->
             <!-- <access_management>1</access_management> -->
-        </ch_user>
+        </default>
     </users>
 
     <!-- Quotas. -->

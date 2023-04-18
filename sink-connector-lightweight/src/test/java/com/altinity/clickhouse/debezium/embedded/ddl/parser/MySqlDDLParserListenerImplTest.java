@@ -424,6 +424,28 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
     }
 
+    @Test
+    public void renameMultipleTables() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "rename /* gh-ost */ table `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`, `trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`\n";
+        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
+        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`,`trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`"));
+    }
+    @Test
+    public void alterTableRenameTable() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE test_table rename to test_table_new";
+        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
+        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE test_table to test_table_new"));
+    }
+
+
 //    @Test
 //    public void testDropDatabase() {
 //        StringBuffer clickHouseQuery = new StringBuffer();

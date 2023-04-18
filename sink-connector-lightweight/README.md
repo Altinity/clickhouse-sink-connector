@@ -125,22 +125,19 @@ cd helm
 helm install clickhouse-debezium-embedded .
 
 ```
-### Getting started (Docker-compose)
+### Getting started
 
+
+**Start application**
+```
+cd docker
+docker-compose up
+```
+
+### Building from sources
 Build the JAR file
 `mvn clean install`
 
-Build docker images and start docker compose
-`cd docker` \
-`docker-compose build`
-
-**MySQL need to be started before starting the application**\
-
-**Start MySQL docker** \
-`docker-compose -f docker-compose-mysql.yml up`
-
-**Start application**\
-`docker-compose up`
 
 
 #### DDL Support:
@@ -165,6 +162,11 @@ ALTER TABLE
 | ALTER COLUMN col_name ADD DEFAULT                      | Not supported by grammar                                        |
 | ALTER COLUMN col_name ADD DROP DEFAULT                 | Not supported by grammar                                        |
 | ADD PRIMARY KEY                                        | Cannot modify primary key in CH                                 |
+
+###  Not supported:
+
+| MySQL                                                  | ClickHouse                                                      |
+|--------------------------------------------------------|-----------------------------------------------------------------|
 | ADD INDEX                                              | Secondary indexes in CH, what about type and index granularity? |
 | ADD CONSTRAINT  (CHECK)                                |                                                                 |
 | ADD CONSTRAINT                                         | Add constraint with Primary key(Not supported)                  |
@@ -173,13 +175,13 @@ ALTER TABLE
 
 
 ## TABLE operations
-| MySQL                | ClickHouse |
-|----------------------|------------|
-| RENAME TABLE name_1 to name_2 |            |
-| TRUNCATE TABLE       |            |
-| DROP TABLE name_1    |            |
-| DROP TABLE name_1, name_2 |            |
-|                      |            |
+| MySQL                                    | ClickHouse                          |
+|------------------------------------------|-------------------------------------|
+| RENAME TABLE name_1 to name_2            |                                     |
+| TRUNCATE TABLE                           |                                     |
+| DROP TABLE name_1                        |                                     |
+| DROP TABLE name_1, name_2                |                                     |
+| ALTER TABLE table_name to new_table_name | RENAME table_name to new_table_name |
 
 ## DATABASE operations
 | MySQL           | ClickHouse |

@@ -888,7 +888,7 @@
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
-        "fullHighlight": false,
+        "fullHighlight": true,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -897,14 +897,15 @@
           "showLegend": true
         },
         "orientation": "auto",
-        "showValue": "auto",
+        "showValue": "always",
         "stacking": "none",
         "tooltip": {
-          "mode": "single",
+          "mode": "multi",
           "sort": "none"
         },
+        "xField": "Time",
         "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
+        "xTickLabelSpacing": -200
       },
       "pluginVersion": "9.4.7",
       "targets": [
@@ -915,18 +916,18 @@
           },
           "dateTimeType": "DATETIME",
           "extrapolate": true,
-          "format": "table",
+          "format": "time_series",
           "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
           "hide": false,
           "intervalFactor": 1,
-          "query": " select sum(tmp.rows), tmp.event_time from ( select rows,event_time ,event_type from system.part_log pl where event_type='NewPart' order by event_time desc) tmp where tmp.event_time >= toDateTime($from) and tmp.event_time <= toDateTime($to) group by tmp.event_time",
-          "rawQuery": "select sum(tmp.rows), tmp.event_time from ( select rows,event_time ,event_type from system.part_log pl where event_type='NewPart' order by event_time desc) tmp where tmp.event_time >= toDateTime(1681141796) and tmp.event_time <= toDateTime(1681163396) group by tmp.event_time",
+          "query": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime($from) and  event_time < toDateTime($to)\nGROUP BY _time_dec, table",
+          "rawQuery": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime(1681314113) and  event_time < toDateTime(1681335713)\nGROUP BY _time_dec, table",
           "refId": "A",
           "round": "0s",
           "skip_comments": true
         }
       ],
-      "title": "New Parts rate",
+      "title": "Rows inserted ",
       "type": "barchart"
     },
     {
@@ -1332,8 +1333,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1423,8 +1423,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1783,7 +1782,7 @@
       "type": "barchart"
     }
   ],
-  "refresh": "",
+  "refresh": false,
   "revision": 1,
   "schemaVersion": 38,
   "style": "dark",
@@ -1792,7 +1791,7 @@
     "list": []
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},

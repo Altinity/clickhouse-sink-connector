@@ -13,6 +13,9 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import io.debezium.config.Configuration;
+import io.debezium.connector.postgresql.PostgresConnectorConfig;
+import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
@@ -23,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
@@ -165,7 +169,7 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    public static int MAX_RETRIES = 5;
+    public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
     public int numRetries = 0;
@@ -186,7 +190,7 @@ public class DebeziumChangeEventCapture {
                         public void handle(boolean b, String s, Throwable throwable) {
                             if (b == false) {
 
-                                log.error("Error starting connector" + throwable);
+                                log.error("Error starting connector" + throwable + " Message:" + s);
                                 log.error("Retrying - try number:" + numRetries);
                                 if (numRetries++ <= MAX_RETRIES) {
                                     try {
@@ -225,8 +229,9 @@ public class DebeziumChangeEventCapture {
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
                       DDLParserService ddlParserService) throws IOException {
 
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+        trySomething(Configuration.from(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
@@ -284,6 +289,23 @@ public class DebeziumChangeEventCapture {
         structs.add(chs);
         synchronized (this.records) {
             this.records.put(topicName, structs);
+        }
+    }
+
+    private void trySomething(Configuration config){
+        PostgresConnectorConfig postgresConfig = new PostgresConnectorConfig(config);
+       // ConfigValue hostnameValue = (ConfigValue) configValues.get(RelationalDatabaseConnectorConfig.HOSTNAME.name());
+        PostgresConnection connection = new PostgresConnection(postgresConfig.getJdbcConfig(), "Debezium Validate Connection");
+
+        try {
+            try {
+                connection.connection(false);
+                connection.execute(new String[]{"SELECT version()"});
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        } catch(Exception e) {
+
         }
     }
 }

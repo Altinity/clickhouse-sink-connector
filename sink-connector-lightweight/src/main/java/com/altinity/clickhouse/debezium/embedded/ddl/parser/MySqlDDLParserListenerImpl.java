@@ -788,6 +788,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     }
 
+//    @Override
+//    public void enterClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+//
+//    }
+
     @Override
     public void enterUniqueKeyColumnConstraint(MySqlParser.UniqueKeyColumnConstraintContext uniqueKeyColumnConstraintContext) {
 
@@ -917,6 +927,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitCheckTableConstraint(MySqlParser.CheckTableConstraintContext checkTableConstraintContext) {
 
     }
+
+//    @Override
+//    public void enterClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
+//
+//    }
 
     @Override
     public void enterReferenceDefinition(MySqlParser.ReferenceDefinitionContext referenceDefinitionContext) {
@@ -1830,10 +1850,23 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
                 }
+            } else if(tree instanceof MySqlParser.AlterByRenameContext) {
+                parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
             }
         }
     }
 
+    private void parseAlterTableByRename(String originalTableName, MySqlParser.AlterByRenameContext tree) {
+        String newTableName = null;
+        for(ParseTree alterByRenameChildren: tree.children) {
+            if(alterByRenameChildren instanceof MySqlParser.UidContext) {
+                newTableName = alterByRenameChildren.getText();
+            }
+        }
+
+        this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+
+    }
     @Override
     public void exitAlterTable(MySqlParser.AlterTableContext alterTableContext) {
     }
@@ -1970,6 +2003,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         log.info("Exit check table constraint");
     }
 
+//    @Override
+//    public void enterAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+//
+//    }
+
     @Override
     public void enterAlterBySetAlgorithm(MySqlParser.AlterBySetAlgorithmContext alterBySetAlgorithmContext) {
 
@@ -2085,6 +2128,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitAlterByRenameIndex(MySqlParser.AlterByRenameIndexContext alterByRenameIndexContext) {
 
     }
+
+//    @Override
+//    public void enterAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
+//
+//    }
 
     @Override
     public void enterAlterByAlterIndexVisibility(MySqlParser.AlterByAlterIndexVisibilityContext alterByAlterIndexVisibilityContext) {
@@ -2524,6 +2577,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     @Override
     public void enterRenameTable(MySqlParser.RenameTableContext renameTableContext) {
         log.info("Rename table enter");
+        this.query.append(Constants.RENAME_TABLE).append(" ");
         String originalTableName = null;
         String newTableName = null;
         for (ParseTree child : renameTableContext.children) {
@@ -2533,14 +2587,19 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
+                    this.query.append(originalTableName).append(" to ").append(newTableName);
+                }
+            } else if(child instanceof TerminalNodeImpl) {
+                if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {
+                    this.query.append(",");
                 }
             }
         }
-
-        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
-                newTableName.isEmpty() == false) {
-            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
-        }
+//
+//        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
+//                newTableName.isEmpty() == false) {
+//            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
+//        }
     }
 
     @Override
@@ -5472,6 +5531,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitLongVarbinaryDataType(MySqlParser.LongVarbinaryDataTypeContext longVarbinaryDataTypeContext) {
 
     }
+
+//    @Override
+//    public void enterUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
+//
+//    }
 
     @Override
     public void enterCollectionOptions(MySqlParser.CollectionOptionsContext collectionOptionsContext) {
