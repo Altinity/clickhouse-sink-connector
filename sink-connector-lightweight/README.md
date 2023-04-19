@@ -93,6 +93,13 @@ export metrics.port="8087"
 export database.allowPublicKeyRetrieval="true"
 ```
 
+After the environment variables are set, start the docker container
+```
+cd sink-connector-lightweight
+cd docker
+docker-compose up -f docker-compose-mongo.yml
+```
+
 ###  Getting Started (Helm Charts)
 #### Helm Charts
 Update the MySQL/PostgreSQL and ClickHouse configuration values 
