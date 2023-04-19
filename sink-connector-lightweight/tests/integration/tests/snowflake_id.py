@@ -1,16 +1,17 @@
 from integration.tests.steps.sql import *
 from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
+import random
 
 
 @TestOutline
-def mysql_to_clickhouse_connection(
+def mysql_to_clickhouse_snowflake(
     self,
     mysql_columns,
     clickhouse_table_engine,
     clickhouse_columns=None,
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert."""
+    """Basic check MySQL to Clickhouse replicated table `_version` column receives snowflake data."""
 
     table_name = f"sanity_{getuid()}"
 
@@ -25,14 +26,9 @@ def mysql_to_clickhouse_connection(
         )
 
     with When(f"I insert data in MySql table"):
-        complex_insert(
-            node=mysql,
-            table_name=table_name,
-            values=["({x},{y})", "({x},{y})"],
-            partitions=1,
-            parts_per_partition=1,
-            block_size=1,
-        )
+        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (1,1)")
+        time.sleep(random.randint(0, 10))
+        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (2,2)")
 
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
@@ -44,19 +40,32 @@ def mysql_to_clickhouse_connection(
             with_final=True,
         )
 
+    with And(
+        "I check that Clickhouse replication tables have correct snowflake data"
+    ):
+        row_one_version = self.context.cluster.node("clickhouse").query(f"SELECT _version FROM test.{table_name} WHERE id == 1").output.strip()
+        row_two_version = self.context.cluster.node("clickhouse").query(f"SELECT _version FROM test.{table_name} WHERE id == 2").output.strip()
+
+        if int(row_one_version) > 0 and int(row_two_version) > 0:
+            assert (int(row_one_version) <= int(row_two_version))
+        else:
+            raise Error(
+                "wrong data in version column"
+            )
+
 
 @TestFeature
-@Name("mysql to clickhouse")
+@Name("snowflake id simple")
 def mysql_to_clickhouse(
     self,
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with all availabe methods and tables."""
+    """Check MySQL to Clickhouse version column receives snowflake id for all available methods."""
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
-            mysql_to_clickhouse_connection(
+            mysql_to_clickhouse_snowflake(
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
                 clickhouse_table_engine=clickhouse_table_engine,
@@ -64,10 +73,9 @@ def mysql_to_clickhouse(
 
 
 @TestModule
-@Name("sanity")
+@Name("snowflake id")
 def module(self):
-    """MySql to ClickHouse replication sanity test that checks
-    basic replication using a simple table."""
+    """Check MySql to ClickHouse replication 64-bit snowflake id for the version column"""
 
     with Pool(1) as executor:
         try:
