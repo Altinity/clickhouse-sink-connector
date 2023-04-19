@@ -7,22 +7,15 @@ version: "3.4"
 # create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
 
 services:
-  postgres:
-    image: debezium/postgres:15-alpine
+  mongo:
+    image: mongo:latest
     restart: always
     ports:
-      - "5432:5432"
+      - "27017:27017"
     environment:
-      - POSTGRES_PASSWORD=root
-      - POSTGRES_USER=root
-      - POSTGRES_DB=public
+      - MONGO_INITDB_DATABASE=project
     volumes:
-      - ../sql/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql
-    command:
-      - "postgres"
-      - "-c"
-      - "wal_level=logical"
-
+      - ../sql/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
 
   clickhouse:
     # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
@@ -72,8 +65,8 @@ services:
     ports:
       - "8083:8083"
     depends_on:
-      - clickhouse 
+      - clickhouse
     env_file:
-      - docker_postgres.env
+      - docker_mongo.env
     extra_hosts:
       - "host.docker.internal:host-gateway"

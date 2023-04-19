@@ -21,6 +21,8 @@ vcreated timestamp with time zone,
 vbilling_currency character varying
 );
 
+ALTER TABLE public.tm REPLICA IDENTITY FULL;
+
 
 INSERT INTO public.tm VALUES (
 '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71',

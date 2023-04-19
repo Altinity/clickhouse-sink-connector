@@ -1,5 +1,8 @@
+### Altinity Replicator for ClickHosue
+### Getting started (MySQL)
+Currently the configuration is passed to the application as environment variables. \
+`(sink-connector-lightweight/docker/docker.env)`
 
-### Configuration
 **Configuration**
 ```
 export database.hostname="mysql-master"
@@ -7,6 +10,10 @@ export database.port="3306"
 export database.user="root"
 export database.password="root"
 export database.include.list=sbtest
+export clickhouse.server.url="clickhouse"
+export clickhouse.server.user="root"
+export clickhouse.server.pass="root"
+export clickhouse.server.port="8123"
 #export table.include.list=sbtest1
 export database.allowPublicKeyRetrieval"="true"
 export snapshot.mode="schema_only"
@@ -15,40 +22,31 @@ export clickhouse.server.database="test"
 export auto.create.tables=true
 export replacingmergetree.delete.column="_sign"
 export metrics.port=8083
-export clickhouse.server.url="clickhouse"
-export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
-export clickhouse.server.port="8123"
-
+```
+After the environment variables are set, start the docker container
+A Sample docker-compose is provided , it starts the docker container \
+`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
+```
+cd sink-connector-lightweight
+cd docker
+docker-compose up
 ```
 
-In `deploy\docker.env`, Update **MySQL** and **ClickHouse** configuration.
+###  Getting Started (PostgreSQL)
 
+`(sink-connector-lightweight/docker/docker_postgres.env)` 
 
-**MySQL**
+**Configuration**
 ```
-export database.hostname="localhost"
-export database.port="3306"
-export database.user="root"
-export database.password="root"
-export database.whitelist="test"
-```
-**ClickHouse**
-```
-export clickhouse.server.url="clickhouse"
-export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
-export clickhouse.server.port="8123"
-```
-
-**PostgreSQL**
-```
-
 export database.hostname="postgres"
 export database.port="5432"
 export database.user="root"
 export database.password="root"
 export snapshot.mode="schema_only"
+export clickhouse.server.url="clickhouse"
+export clickhouse.server.user="root"
+export clickhouse.server.pass="root"
+export clickhouse.server.port="8123"
 export connector.class="io.debezium.connector.postgresql.PostgresConnector"
 export plugin.name="pgoutput"
 export table.include.list="public.tm"
@@ -56,19 +54,25 @@ export clickhouse.server.database="test"
 export auto.create.tables=true
 export replacingmergetree.delete.column="_sign"
 export metrics.port=8083
-export clickhouse.server.url="clickhouse"
-export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
-export clickhouse.server.port="8123"
+
 ```
 
-PostgreSQL specific configuration:
+After the environment variables are set, start the docker container
 ```
-export connector.class="io.debezium.connector.postgresql.PostgresConnector"
-export database.dbname="public"
-export plugin.name="pgoutput"
+cd sink-connector-lightweight
+cd docker
+docker-compose up -f docker-compose-postgres.yml
 ```
 
+###  Getting Started (MongoDB)
+`(sink-connector-lightweight/docker/docker_mongo.env)`
+
+**Configuration**
+```
+
+```
+
+###  Getting Started (Helm Charts)
 #### Helm Charts
 Update the MySQL/PostgreSQL and ClickHouse configuration values 
 `
@@ -119,19 +123,10 @@ Update the MySQL/PostgreSQL and ClickHouse configuration values
     value: "8083"
 ```
 
-
 ```
 cd helm
 helm install clickhouse-debezium-embedded .
 
-```
-### Getting started
-
-
-**Start application**
-```
-cd docker
-docker-compose up
 ```
 
 ### Building from sources

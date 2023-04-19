@@ -292,6 +292,7 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    // db.items.insert({_id:ObjectId(), uuid:ObjectId(), price:22, name:"New record"});
     private void trySomething(Configuration config){
         PostgresConnectorConfig postgresConfig = new PostgresConnectorConfig(config);
        // ConfigValue hostnameValue = (ConfigValue) configValues.get(RelationalDatabaseConnectorConfig.HOSTNAME.name());
