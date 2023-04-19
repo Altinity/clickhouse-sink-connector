@@ -95,7 +95,11 @@
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
-            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.5.4</version>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
@@ -187,12 +191,7 @@
             <scope>test</scope>
         </dependency>
         <!-- https://mvnrepository.com/artifact/org.postgresql/postgresql -->
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>42.5.3</version>
-            <scope>test</scope>
-        </dependency>
+
 
 
         <!-- <dependency>
@@ -367,12 +366,7 @@
             <scope>test</scope>
         </dependency> -->
 
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.22</version>
-            <scope>provided</scope>
-        </dependency>
+
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -522,6 +516,21 @@
             </extension>
         </extensions>
         <plugins>
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <!-- <includeArtifactIds>io.debezium.ddl.parser</includeArtifactIds> -->
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
@@ -540,6 +549,30 @@
                         </execution>
                     </executions>
                 </plugin>
+           <!-- <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
+                        </manifest>
+                    </archive>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>assemble-all</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin> -->
             <!-- <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-install-plugin</artifactId>
@@ -563,6 +596,37 @@
                     </execution>
                 </executions>
             </plugin> -->
+            <!-- <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <overWriteReleases>false</overWriteReleases>
+                            <overWriteSnapshots>true</overWriteSnapshots>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin> -->
+            <!-- <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>true</addClasspath>
+                             <classpathPrefix>lib/</classpathPrefix>
+                            <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -577,6 +641,12 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
+
+                                    <!-- <manifestEntries>
+
+                                    <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
+                                    <Class-Path>lib/*.jar</Class-Path>
+                                    </manifestEntries> -->
                                 </transformer>
                             </transformers>
                             <artifactSet>
@@ -636,7 +706,8 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
-                    <!-- <parallel>all</parallel> -->
+                    <!-- <forkCount>10</forkCount> -->
+                    <parallel>all</parallel>
                     <threadCount>10</threadCount>
                     <useUnlimitedThreads>true</useUnlimitedThreads>
                     <perCoreThreadCount>true</perCoreThreadCount>

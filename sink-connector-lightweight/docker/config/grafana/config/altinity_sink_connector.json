@@ -24,6 +24,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
+  "id": 1,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -53,10 +54,15 @@
       },
       "id": 2,
       "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
         "content": "<div>\n  <img width=\"100\" height=\"100\" src=\"https://logosandtypes.com/wp-content/uploads/2020/12/altinity.svg\"/>\n<p>Altinity Sink Connector for ClickHouse</p>\n<p>For more information, visit <href https://github.com/Altinity/clickhouse-sink-connector\n</div>",
         "mode": "html"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -128,7 +134,7 @@
         "text": {},
         "textMode": "value_and_name"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -192,7 +198,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -258,7 +264,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -323,7 +329,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -352,7 +358,9 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
             "filterable": false,
             "inspect": false
           },
@@ -419,6 +427,7 @@
       "id": 8,
       "options": {
         "footer": {
+          "countRows": false,
           "fields": "",
           "reducer": [
             "sum"
@@ -429,7 +438,7 @@
         "showHeader": true,
         "sortBy": []
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -473,6 +482,9 @@
             "lineWidth": 1,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -502,6 +514,7 @@
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
+        "fullHighlight": false,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -560,6 +573,9 @@
             "lineWidth": 1,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -589,6 +605,7 @@
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
+        "fullHighlight": false,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -649,6 +666,9 @@
             "lineWidth": 1,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -678,6 +698,7 @@
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
+        "fullHighlight": false,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -723,7 +744,9 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
             "filterable": false,
             "inspect": false
           },
@@ -753,6 +776,7 @@
       "id": 62,
       "options": {
         "footer": {
+          "countRows": false,
           "fields": "",
           "reducer": [
             "sum"
@@ -761,7 +785,7 @@
         },
         "showHeader": true
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -808,12 +832,111 @@
       "type": "table"
     },
     {
+      "datasource": {
+        "type": "vertamedia-clickhouse-datasource",
+        "uid": "PDF61E9E97939C7ED"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 64,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": true,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xField": "Time",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": -200
+      },
+      "pluginVersion": "9.4.7",
+      "targets": [
+        {
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "PDF61E9E97939C7ED"
+          },
+          "dateTimeType": "DATETIME",
+          "extrapolate": true,
+          "format": "time_series",
+          "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+          "hide": false,
+          "intervalFactor": 1,
+          "query": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime($from) and  event_time < toDateTime($to)\nGROUP BY _time_dec, table",
+          "rawQuery": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime(1681314113) and  event_time < toDateTime(1681335713)\nGROUP BY _time_dec, table",
+          "refId": "A",
+          "round": "0s",
+          "skip_comments": true
+        }
+      ],
+      "title": "Rows inserted ",
+      "type": "barchart"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 30
       },
       "id": 28,
       "panels": [],
@@ -851,7 +974,7 @@
         "h": 8,
         "w": 4,
         "x": 0,
-        "y": 23
+        "y": 31
       },
       "id": 30,
       "options": {
@@ -868,7 +991,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "9.1.1",
+      "pluginVersion": "9.4.7",
       "targets": [
         {
           "datasource": {
@@ -946,7 +1069,7 @@
         "h": 8,
         "w": 10,
         "x": 4,
-        "y": 23
+        "y": 31
       },
       "id": 32,
       "options": {
@@ -1038,7 +1161,7 @@
         "h": 8,
         "w": 10,
         "x": 14,
-        "y": 23
+        "y": 31
       },
       "id": 34,
       "options": {
@@ -1115,7 +1238,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -1130,7 +1254,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 39
       },
       "id": 48,
       "options": {
@@ -1167,7 +1291,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 47
       },
       "id": 22,
       "panels": [],
@@ -1199,6 +1323,9 @@
             "lineWidth": 1,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -1221,12 +1348,13 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 48
       },
       "id": 24,
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
+        "fullHighlight": false,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -1285,6 +1413,9 @@
             "lineWidth": 1,
             "scaleDistribution": {
               "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "mappings": [],
@@ -1307,12 +1438,13 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 48
       },
       "id": 18,
       "options": {
         "barRadius": 0,
         "barWidth": 0.97,
+        "fullHighlight": false,
         "groupWidth": 0.7,
         "legend": {
           "calcs": [],
@@ -1351,7 +1483,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 56
       },
       "id": 36,
       "panels": [],
@@ -1388,7 +1520,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 49
+        "y": 57
       },
       "id": 38,
       "options": {
@@ -1452,7 +1584,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 49
+        "y": 57
       },
       "id": 40,
       "options": {
@@ -1492,7 +1624,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 65
       },
       "id": 42,
       "panels": [],
@@ -1529,7 +1661,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 66
       },
       "id": 44,
       "options": {
@@ -1610,7 +1742,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 66
       },
       "id": 46,
       "options": {
@@ -1651,14 +1783,15 @@
     }
   ],
   "refresh": false,
-  "schemaVersion": 37,
+  "revision": 1,
+  "schemaVersion": 38,
   "style": "dark",
   "tags": [],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},

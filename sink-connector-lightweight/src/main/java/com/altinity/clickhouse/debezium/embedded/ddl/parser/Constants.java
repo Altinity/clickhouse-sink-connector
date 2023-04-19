@@ -3,7 +3,9 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 public class Constants {
 
     public static final String ALTER_TABLE = "ALTER TABLE %s";
-    public static final String CREATE_TABLE = "CREATE TABLE %s";
+
+    public static final String ALTER_RENAME_TABLE = "RENAME TABLE %s TO %s";
+    public static final String CREATE_TABLE = "CREATE TABLE";
     public static final String NULLABLE = "Nullable";
 
 
@@ -27,7 +29,9 @@ public class Constants {
     public static final String NOT_NULL = "notnull";
     public static final String NULL = "NULL";
 
-    public static final String RENAME_TABLE = "RENAME TABLE %s to %s";
+    public static final String IF_EXISTS = "if exists ";
+    public static final String IF_NOT_EXISTS = "if not exists ";
+    public static final String RENAME_TABLE = "RENAME TABLE";
     public static final String TRUNCATE_TABLE = "TRUNCATE TABLE %s";
     public static final String DROP_TABLE = "DROP TABLE";
 

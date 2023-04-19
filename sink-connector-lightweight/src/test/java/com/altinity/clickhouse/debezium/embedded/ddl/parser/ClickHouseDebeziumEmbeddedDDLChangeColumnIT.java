@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
@@ -58,6 +59,9 @@ public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebez
         conn.prepareStatement("alter table ship_class change column class_name class_name_new int").execute();
         conn.prepareStatement("alter table ship_class change column tonange tonange_new decimal(10,10)").execute();
         conn.prepareStatement("alter table add_test change column col1 col1_new int, modify column col2 varchar(255)").execute();
+        conn.prepareStatement("alter table add_test change column col2 new_col2_name int after col3;").execute();
+        conn.prepareStatement("alter table add_test change column col3 new_col3_name int first").execute();
+
 //        conn.prepareStatement("alter table add_test change column col1 int").execute();
 //        conn.prepareStatement("alter table add_test change column col3 int first").execute();
 //        conn.prepareStatement("alter table add_test change column col2 int after col3").execute();
@@ -72,9 +76,15 @@ public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebez
 
         Thread.sleep(10000);
         // Validate all ship_class columns.
-//        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Int32"));
-//        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Decimal(10, 0)"));
+        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Decimal(10, 10)"));
+        Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
+
         // Files.deleteIfExists(tmpFilePath);
+        Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Int32"));
+
 
         if(engine.get() != null) {
             engine.get().stop();

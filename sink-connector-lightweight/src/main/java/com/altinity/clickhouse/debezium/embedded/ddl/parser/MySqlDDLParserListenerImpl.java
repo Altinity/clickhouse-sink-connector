@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
-import com.clickhouse.client.ClickHouseDataType;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -16,8 +16,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.ListIterator;
-
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
 public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
@@ -291,14 +289,14 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         String modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
         String defaultModifier = null;
 
+        this.query.append(Constants.CREATE_TABLE).append(" ");
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                this.query.append(String.format(Constants.CREATE_TABLE, tree.getText())).append("(");
-            }
-
-           // HashMap<String, String> colNamesToDataTypeMap = new HashMap<String, String>();
-            if (tree instanceof MySqlParser.CreateDefinitionsContext) {
+                this.query.append(tree.getText()).append("(");
+            }else if(tree instanceof MySqlParser.IfNotExistsContext) {
+                this.query.append(Constants.IF_NOT_EXISTS);
+            }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
                 for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
                     if (subtree instanceof TerminalNodeImpl) {
                        // this.query.append(subtree.getText());
@@ -313,16 +311,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                             } else if (colDefTree instanceof MySqlParser.ColumnDefinitionContext) {
                                 String colDataTypeDefinition = colDefTree.getText();
 
-                                int precision = 0;
-                                int scale = 0;
-                                if(colDataTypeDefinition.contains("(") && colDataTypeDefinition.contains(")") && colDataTypeDefinition.contains(",")) {
-                                    precision = Integer.parseInt(colDataTypeDefinition.substring(colDataTypeDefinition.indexOf("(") + 1, colDataTypeDefinition.indexOf(",")));
-                                    scale = Integer.parseInt(colDataTypeDefinition.substring(colDataTypeDefinition.indexOf(",") + 1, colDataTypeDefinition.indexOf(")")));
-
-                                }
-                                MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
-                                colDataType = DataTypeConverter.convertToString(columnName,
-                                         scale, precision, dtc);
+                                colDataType = getClickHouseDataType(colDataTypeDefinition, colDefTree, columnName);
                                 // Null Column and DimensionDataType are children of ColumnDefinition
                                 for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
@@ -367,6 +356,30 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 //        }
 
         // this.query.append(")");
+    }
+
+    /**
+     * Function to get the ClickHouse Data type from DDL Datatype.
+     * @param parsedDataType
+     * @return
+     */
+    private String getClickHouseDataType(String parsedDataType, ParseTree colDefTree, String columnName) {
+        int precision = 0;
+        int scale = 0;
+
+        String chDataType = null;
+        if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
+            precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
+            scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
+
+        }
+
+        MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
+        chDataType = DataTypeConverter.convertToString(columnName,
+                scale, precision, dtc);
+
+        return chDataType;
+
     }
 
 
@@ -775,6 +788,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     }
 
+//    @Override
+//    public void enterClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+//
+//    }
+
     @Override
     public void enterUniqueKeyColumnConstraint(MySqlParser.UniqueKeyColumnConstraintContext uniqueKeyColumnConstraintContext) {
 
@@ -904,6 +927,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitCheckTableConstraint(MySqlParser.CheckTableConstraintContext checkTableConstraintContext) {
 
     }
+
+//    @Override
+//    public void enterClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
+//
+//    }
 
     @Override
     public void enterReferenceDefinition(MySqlParser.ReferenceDefinitionContext referenceDefinitionContext) {
@@ -1682,6 +1715,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
             modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
+            isNullColumn = true;
 
         } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
             modifier = Constants.MODIFY_COLUMN;
@@ -1719,6 +1753,9 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
+                        else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
+                            isNullColumn = false;
+                        }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
@@ -1726,16 +1763,13 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                     } else if (columnDefChild instanceof MySqlParser.DimensionDataTypeContext || columnDefChild instanceof MySqlParser.SimpleDataTypeContext
                             || columnDefChild instanceof MySqlParser.StringDataTypeContext) {
                         columnType = (columnDefChild.getText());
-                        //if(columnDefChild instanceof MySqlParser.StringDataTypeContext)
-                        {
-                            //` int type = ((MySqlParser.StringDataTypeContext) columnDefChild).typeName.getType();
-                            ClickHouseDataType chDataType = DataTypeConverter.convert(columnName, (MySqlParser.DataTypeContext) columnDefChild);
-                            if (chDataType != null) {
-                                columnType = chDataType.toString();
+                        String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
+                           if (chDataType != null) {
+                                columnType = chDataType;
                             }
 
                         }
-                    }
+
                 }
             } else if (columnChild instanceof TerminalNodeImpl) {
                 String columnPosition = columnChild.getText();
@@ -1768,6 +1802,8 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
             postProcessModifyColumn(this.tableName, columnName, newColumnName, columnType);
         }
 
+        String trimmedQuery = this.query.toString().trim();
+        this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
 
     /**
@@ -1814,10 +1850,23 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
                 }
+            } else if(tree instanceof MySqlParser.AlterByRenameContext) {
+                parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
             }
         }
     }
 
+    private void parseAlterTableByRename(String originalTableName, MySqlParser.AlterByRenameContext tree) {
+        String newTableName = null;
+        for(ParseTree alterByRenameChildren: tree.children) {
+            if(alterByRenameChildren instanceof MySqlParser.UidContext) {
+                newTableName = alterByRenameChildren.getText();
+            }
+        }
+
+        this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+
+    }
     @Override
     public void exitAlterTable(MySqlParser.AlterTableContext alterTableContext) {
     }
@@ -1954,6 +2003,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         log.info("Exit check table constraint");
     }
 
+//    @Override
+//    public void enterAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+//
+//    }
+
     @Override
     public void enterAlterBySetAlgorithm(MySqlParser.AlterBySetAlgorithmContext alterBySetAlgorithmContext) {
 
@@ -2069,6 +2128,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitAlterByRenameIndex(MySqlParser.AlterByRenameIndexContext alterByRenameIndexContext) {
 
     }
+
+//    @Override
+//    public void enterAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
+//
+//    }
 
     @Override
     public void enterAlterByAlterIndexVisibility(MySqlParser.AlterByAlterIndexVisibilityContext alterByAlterIndexVisibilityContext) {
@@ -2423,16 +2492,18 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     @Override
     public void enterDropTable(MySqlParser.DropTableContext dropTableContext) {
         log.debug("DROP TABLE enter");
-        this.query.append(Constants.DROP_TABLE);
+        this.query.append(Constants.DROP_TABLE).append(" ");
         for (ParseTree child : dropTableContext.children) {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
-                        this.query.append(" ").append(tableNameChild.getText());
+                        this.query.append(tableNameChild.getText());
                     } else if (tableNameChild instanceof TerminalNodeImpl) {
                         this.query.append(tableNameChild.getText());
                     }
                 }
+            } else if(child instanceof MySqlParser.IfExistsContext) {
+                this.query.append(Constants.IF_EXISTS);
             }
         }
     }
@@ -2506,6 +2577,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     @Override
     public void enterRenameTable(MySqlParser.RenameTableContext renameTableContext) {
         log.info("Rename table enter");
+        this.query.append(Constants.RENAME_TABLE).append(" ");
         String originalTableName = null;
         String newTableName = null;
         for (ParseTree child : renameTableContext.children) {
@@ -2515,14 +2587,19 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
+                    this.query.append(originalTableName).append(" to ").append(newTableName);
+                }
+            } else if(child instanceof TerminalNodeImpl) {
+                if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {
+                    this.query.append(",");
                 }
             }
         }
-
-        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
-                newTableName.isEmpty() == false) {
-            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
-        }
+//
+//        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
+//                newTableName.isEmpty() == false) {
+//            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
+//        }
     }
 
     @Override
@@ -5454,6 +5531,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitLongVarbinaryDataType(MySqlParser.LongVarbinaryDataTypeContext longVarbinaryDataTypeContext) {
 
     }
+
+//    @Override
+//    public void enterUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
+//
+//    }
+//
+//    @Override
+//    public void exitUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
+//
+//    }
 
     @Override
     public void enterCollectionOptions(MySqlParser.CollectionOptionsContext collectionOptionsContext) {

@@ -79,14 +79,14 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
 
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("String"));
-        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
         Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
         // Validate all add_test columns.
-        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("String"));
+        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
 
