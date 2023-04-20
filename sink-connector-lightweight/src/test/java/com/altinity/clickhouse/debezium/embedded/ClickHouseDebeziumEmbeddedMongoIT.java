@@ -12,7 +12,6 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.result.InsertOneResult;
 import org.bson.Document;
 import org.bson.types.ObjectId;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.MongoDBContainer;
@@ -53,7 +52,6 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
 //            .withCommand("postgres -c wal_level=logical");
 
     @Test
-    @Disabled
     public void testDataTypesDB() throws Exception {
 
 
@@ -65,28 +63,20 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
         defaultProps.setProperty("mongodb.connection.string", mongoContainer.getConnectionString());
         defaultProps.setProperty("mongodb.members.auto.discover", "true");
         defaultProps.setProperty("topic.prefix", "mongo-ch");
-        defaultProps.setProperty("collection.include.list", "project.items");
-        defaultProps.setProperty("snapshot.include.collection.list", "project.items");
+        defaultProps.setProperty("collection.include.list", "project.items,project.airbnb");
+        defaultProps.setProperty("snapshot.include.collection.list", "project.items,project.airbnb");
         defaultProps.setProperty("database.include.list", "project");
-        defaultProps.setProperty("key.converter", "org.apache.kafka.connect.json.JsonConverter");
+//        defaultProps.setProperty("key.converter", "org.apache.kafka.connect.json.JsonConverter");
+//
+//        defaultProps.setProperty("value.converter", "org.apache.kafka.connect.storage.StringConverter");
+//        defaultProps.setProperty("value.converter.schemas.enable", "true");
 
-        defaultProps.setProperty("value.converter", "org.apache.kafka.connect.storage.StringConverter");
-        defaultProps.setProperty("value.converter.schemas.enable", "true");
-
-        //defaultProps.setProperty("mongodb.hosts", mongoContainer.getHost() + ":" + mongoContainer.getFirstMappedPort());
-       // defaultProps.setProperty("topic.prefix", mongoContainer.getC());
-        //System.out.println("JDBC URL" + mySqlContainer.getJdbcUrl());
-//        defaultProps.setProperty("database.hostname", mongoContainer.getHost());
-//        defaultProps.setProperty("database.port", String.valueOf(mongoContainer.getFirstMappedPort()));
-       defaultProps.setProperty("database.dbname", "project");
+        defaultProps.setProperty("database.dbname", "project");
         defaultProps.setProperty("database.user", "project");
         defaultProps.setProperty("database.password", "project");
 
-        // defaultProps.setProperty("database.include.list", "public");
         defaultProps.setProperty("snapshot.mode", "initial");
         defaultProps.setProperty("connector.class", "io.debezium.connector.mongodb.MongoDbConnector");
-        //defaultProps.setProperty("plugin.name", "pgoutput");
-        //defaultProps.setProperty("table.include.list", "public.tm");
 
 
         defaultProps.setProperty("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
@@ -123,7 +113,8 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
         Thread.sleep(15000);
 
         insertNewDocument();
-        Thread.sleep(60000);
+        Thread.sleep(10000);
+
 
 //        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
 //                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
