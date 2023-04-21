@@ -4,7 +4,9 @@ from integration.tests.steps.statements import *
 
 
 @TestOutline
-def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table_engine):
+def create_all_data_types(
+    self, mysql_columns, clickhouse_columns, clickhouse_table_engine
+):
     """Check auto-creation of replicated MySQL table
     which contains all supported data types.
     """

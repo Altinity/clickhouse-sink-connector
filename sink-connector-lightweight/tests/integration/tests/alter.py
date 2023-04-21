@@ -23,7 +23,9 @@ def create_replicated_tables(
     ):
         tables_names = define(
             "List of replicated tables for test",
-            create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+            create_tables(
+                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+            ),
         )
 
         for table_name in tables_names:
@@ -59,7 +61,9 @@ def add_column(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -105,7 +109,9 @@ def add_column_not_null(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
         for table_name in tables_names:
             with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
@@ -148,7 +154,9 @@ def add_column_default(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -194,7 +202,9 @@ def add_column_first_after(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -244,7 +254,9 @@ def drop_column(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -306,7 +318,9 @@ def modify_column(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -349,7 +363,9 @@ def modify_column_null(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -395,7 +411,9 @@ def modify_column_not_null(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -438,7 +456,9 @@ def modify_column_default(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -500,7 +520,9 @@ def modify_column_first_after(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -564,7 +586,9 @@ def change_column_name_to_new_name_null(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -610,7 +634,9 @@ def change_column_name_to_new_name_not_null(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -654,7 +680,9 @@ def change_column_first_after(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -718,7 +746,9 @@ def rename_column(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -758,7 +788,9 @@ def alter_column_set_default(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
             for table_name in tables_names:
@@ -816,7 +848,9 @@ def alter_column_drop_default(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
             for table_name in tables_names:
@@ -885,7 +919,9 @@ def add_constraint(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
             for table_name in tables_names:
@@ -919,7 +955,9 @@ def drop_constraint(self, node=None):
         ):
             tables_names = define(
                 "List of different replicated tables for test",
-                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_replicated_tables(
+                    name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
             for table_name in tables_names:

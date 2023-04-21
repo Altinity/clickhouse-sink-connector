@@ -5,7 +5,12 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def simple_delete(
-    self, mysql_columns, clickhouse_columns, clickhouse_table_engine, primary_key, engine
+    self,
+    mysql_columns,
+    clickhouse_columns,
+    clickhouse_table_engine,
+    primary_key,
+    engine,
 ):
     """Check that simple deletes to MySQL is properly propagated to the replicated ClickHouse table."""
 
@@ -245,7 +250,8 @@ def one_partition_one_part(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -294,7 +300,8 @@ def one_partition_many_parts(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -344,7 +351,8 @@ def one_partition_mixed_parts(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -405,7 +413,8 @@ def many_partitions_one_part(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -454,7 +463,8 @@ def many_partitions_many_parts(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -507,7 +517,8 @@ def many_partitions_mixed_parts(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -571,7 +582,8 @@ def one_million_datapoints(self):
                         tables_names = define(
                             "List of tables for test",
                             create_tables(
-                                table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                                table_name=name,
+                                clickhouse_table_engine=clickhouse_table_engine,
                             ),
                         )
 
@@ -620,7 +632,9 @@ def parallel(self):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:

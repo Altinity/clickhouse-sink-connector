@@ -5,7 +5,11 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def multiple_table_auto_creation(
-    self, number_of_tables, mysql_columns, clickhouse_table_engine, clickhouse_columns=None
+    self,
+    number_of_tables,
+    mysql_columns,
+    clickhouse_table_engine,
+    clickhouse_columns=None,
 ):
     """
     Multiple tables auto creation

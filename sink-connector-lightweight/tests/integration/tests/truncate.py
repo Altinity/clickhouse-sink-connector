@@ -5,7 +5,12 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def truncate(
-    self, mysql_columns, clickhouse_columns, clickhouse_table_engine, primary_key, engine
+    self,
+    mysql_columns,
+    clickhouse_columns,
+    clickhouse_table_engine,
+    primary_key,
+    engine,
 ):
     """
     Just simple 'TRUNCATE' query check

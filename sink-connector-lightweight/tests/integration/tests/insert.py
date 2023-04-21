@@ -142,7 +142,9 @@ def one_partition_one_part(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -184,7 +186,9 @@ def one_partition_many_parts(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -226,7 +230,9 @@ def one_partition_mixed_parts(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -280,7 +286,9 @@ def many_partitions_one_part(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -324,7 +332,9 @@ def many_partitions_many_parts(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -367,7 +377,9 @@ def many_partitions_mixed_parts(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -421,7 +433,9 @@ def one_million_datapoints(self, node=None):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:
@@ -463,7 +477,9 @@ def parallel(self):
         with Given("I create MySQL to ClickHouse replicated tables"):
             tables_names = define(
                 "List of tables for test",
-                create_tables(table_name=name, clickhouse_table_engine=clickhouse_table_engine),
+                create_tables(
+                    table_name=name, clickhouse_table_engine=clickhouse_table_engine
+                ),
             )
 
         for table_name in tables_names:

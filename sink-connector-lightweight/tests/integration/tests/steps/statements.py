@@ -106,6 +106,8 @@ all_ch_datatypes = (
     f" x_varbinary String"
 )
 
-columns_number = ("SELECT count(*) FROM INFORMATION_SCHEMA.COLUMNS"
-                             " WHERE table_name = '{table_name}' "
-                             "AND table_schema = 'test' AND column_name LIKE 'column_%';")
+columns_number = (
+    "SELECT count(*) FROM INFORMATION_SCHEMA.COLUMNS"
+    " WHERE table_name = '{table_name}' "
+    "AND table_schema = 'test' AND column_name LIKE 'column_%';"
+)

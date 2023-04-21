@@ -50,7 +50,9 @@ def deduplication_on_big_insert(self):
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             deduplication(
-                clickhouse_table_engine=clickhouse_table_engine, big_insert=True, insert_number=10000
+                clickhouse_table_engine=clickhouse_table_engine,
+                big_insert=True,
+                insert_number=10000,
             )
 
 
@@ -60,7 +62,9 @@ def deduplication_on_many_inserts(self):
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             deduplication(
-                clickhouse_table_engine=clickhouse_table_engine, inserts=True, insert_number=1000
+                clickhouse_table_engine=clickhouse_table_engine,
+                inserts=True,
+                insert_number=1000,
             )
 
 

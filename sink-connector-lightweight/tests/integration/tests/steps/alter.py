@@ -16,44 +16,54 @@ def add_column(
 
 @TestStep(When)
 def rename_column(
-    self, table_name, column_name="new_col", new_column_name="new_column_name", node=None
+    self,
+    table_name,
+    column_name="new_col",
+    new_column_name="new_column_name",
+    node=None,
 ):
     """RENAME COLUMN"""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(f"ALTER TABLE {table_name} RENAME COLUMN {column_name} to {new_column_name};")
+    node.query(
+        f"ALTER TABLE {table_name} RENAME COLUMN {column_name} to {new_column_name};"
+    )
 
 
 @TestStep(When)
 def change_column(
-    self, table_name, column_name="new_col", new_column_name="new_column_name", new_column_type="varchar(255)",
-        node=None
+    self,
+    table_name,
+    column_name="new_col",
+    new_column_name="new_column_name",
+    new_column_type="varchar(255)",
+    node=None,
 ):
     """CHANGE COLUMN"""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(f"ALTER TABLE {table_name} CHANGE COLUMN {column_name} {new_column_name} {new_column_type};")
+    node.query(
+        f"ALTER TABLE {table_name} CHANGE COLUMN {column_name} {new_column_name} {new_column_type};"
+    )
 
 
 @TestStep(When)
 def modify_column(
-    self, table_name, column_name="new_col", new_column_type="varchar(255)",
-        node=None
+    self, table_name, column_name="new_col", new_column_type="varchar(255)", node=None
 ):
     """MODIFY COLUMN"""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(f"ALTER TABLE {table_name} MODIFY COLUMN {column_name} {new_column_type};")
+    node.query(
+        f"ALTER TABLE {table_name} MODIFY COLUMN {column_name} {new_column_type};"
+    )
 
 
 @TestStep(When)
-def drop_column(
-    self, table_name, column_name="new_col",
-        node=None
-):
+def drop_column(self, table_name, column_name="new_col", node=None):
     """DROP COLUMN"""
     if node is None:
         node = self.context.cluster.node("mysql-master")
@@ -63,8 +73,7 @@ def drop_column(
 
 @TestStep(When)
 def add_modify_drop_column(
-    self, table_name, column_name="new_col",  new_column_type="INT",
-        node=None
+    self, table_name, column_name="new_col", new_column_type="INT", node=None
 ):
     """ADD MODIFY DROP COLUMN in parallel"""
     if node is None:
@@ -80,7 +89,7 @@ def add_modify_drop_column(
         node=node,
         table_name=table_name,
         column_name=column_name,
-        new_column_type=new_column_type
+        new_column_type=new_column_type,
     )
 
     By(f"drop column {column_name}", test=drop_column, parallel=True)(

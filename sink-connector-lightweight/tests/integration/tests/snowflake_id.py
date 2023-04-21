@@ -26,9 +26,13 @@ def mysql_to_clickhouse_snowflake(
         )
 
     with When(f"I insert data in MySql table"):
-        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (1,1)")
+        self.context.cluster.node("mysql-master").query(
+            f"INSERT INTO {table_name} values (1,1)"
+        )
         time.sleep(random.randint(0, 10))
-        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (2,2)")
+        self.context.cluster.node("mysql-master").query(
+            f"INSERT INTO {table_name} values (2,2)"
+        )
 
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
@@ -40,18 +44,22 @@ def mysql_to_clickhouse_snowflake(
             with_final=True,
         )
 
-    with And(
-        "I check that Clickhouse replication tables have correct snowflake data"
-    ):
-        row_one_version = self.context.cluster.node("clickhouse").query(f"SELECT _version FROM test.{table_name} WHERE id == 1").output.strip()
-        row_two_version = self.context.cluster.node("clickhouse").query(f"SELECT _version FROM test.{table_name} WHERE id == 2").output.strip()
+    with And("I check that Clickhouse replication tables have correct snowflake data"):
+        row_one_version = (
+            self.context.cluster.node("clickhouse")
+            .query(f"SELECT _version FROM test.{table_name} WHERE id == 1")
+            .output.strip()
+        )
+        row_two_version = (
+            self.context.cluster.node("clickhouse")
+            .query(f"SELECT _version FROM test.{table_name} WHERE id == 2")
+            .output.strip()
+        )
 
         if int(row_one_version) > 0 and int(row_two_version) > 0:
-            assert (int(row_one_version) <= int(row_two_version))
+            assert int(row_one_version) <= int(row_two_version)
         else:
-            raise Error(
-                "wrong data in version column"
-            )
+            raise Error("wrong data in version column")
 
 
 @TestFeature
@@ -78,7 +86,7 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
     mysql_columns,
     clickhouse_table_engine,
     clickhouse_columns=None,
-    mysql_restarts_number=3
+    mysql_restarts_number=3,
 ):
     """Check MySQL to Clickhouse replicated table `_version` column receives increased snowflake values after MySQL restart."""
 
@@ -95,23 +103,27 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
         )
 
     with When(f"I insert data in MySql table"):
-        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (1,777)")
+        self.context.cluster.node("mysql-master").query(
+            f"INSERT INTO {table_name} values (1,777)"
+        )
 
     for i in range(mysql_restarts_number):
-        with And(f"I make {mysql_restarts_number} MySQL's node restart and insert data in MySql table"):
+        with And(
+            f"I make {mysql_restarts_number} MySQL's node restart and insert data in MySql table"
+        ):
             self.context.cluster.node("mysql-master").restart()
             retry(
                 self.context.cluster.node("mysql-master").query,
                 timeout=100,
                 delay=3,
-            )(
-                f"SHOW TABLES", message=f"{table_name}"
+            )(f"SHOW TABLES", message=f"{table_name}")
+
+            self.context.cluster.node(f"mysql-master").query(
+                f"INSERT INTO {table_name} values ({i+2},2)"
             )
 
-            self.context.cluster.node(f"mysql-master").query(f"INSERT INTO {table_name} values ({i+2},2)")
-
         with Then(
-                "I check that MySQL tables and Clickhouse replication tables have the same data"
+            "I check that MySQL tables and Clickhouse replication tables have the same data"
         ):
             complex_check_creation_and_select(
                 table_name=table_name,
@@ -121,19 +133,23 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
             )
 
         with And(
-                "I check that Clickhouse replication tables have correct snowflake data"
+            "I check that Clickhouse replication tables have correct snowflake data"
         ):
-            row_one_version = self.context.cluster.node("clickhouse").query(
-                f"SELECT _version FROM test.{table_name} WHERE id == {i}+1").output.strip()
-            row_two_version = self.context.cluster.node("clickhouse").query(
-                f"SELECT _version FROM test.{table_name} WHERE id == {i}+2").output.strip()
+            row_one_version = (
+                self.context.cluster.node("clickhouse")
+                .query(f"SELECT _version FROM test.{table_name} WHERE id == {i}+1")
+                .output.strip()
+            )
+            row_two_version = (
+                self.context.cluster.node("clickhouse")
+                .query(f"SELECT _version FROM test.{table_name} WHERE id == {i}+2")
+                .output.strip()
+            )
 
             if int(row_one_version) > 0 and int(row_two_version) > 0:
-                assert (int(row_one_version) <= int(row_two_version))
+                assert int(row_one_version) <= int(row_two_version)
             else:
-                raise Error(
-                    "wrong data in version column"
-                )
+                raise Error("wrong data in version column")
 
 
 @TestFeature
