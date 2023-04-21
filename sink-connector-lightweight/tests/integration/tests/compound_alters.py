@@ -5,10 +5,10 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def create_replicated_tables(
-    self,
-    name,
-    clickhouse_table_engine,
-    node=None,
+        self,
+        name,
+        clickhouse_table_engine,
+        node=None,
 ):
     """Outline to create MySQL to CLickHouse replicated table."""
     if node is None:
@@ -17,9 +17,9 @@ def create_replicated_tables(
     name = name
 
     with Given(
-        f"I create different MySQL to ClickHouse replicated tables with "
-        f"ClickHouse table creation method {self.context.env} "
-        f"and ClickHouse table engine {clickhouse_table_engine}"
+            f"I create different MySQL to ClickHouse replicated tables with "
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
     ):
         tables_names = define(
             "List of replicated tables for test",
@@ -48,9 +48,9 @@ def add_change_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -58,17 +58,17 @@ def add_change_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE ADD COLUMN, CHANGE COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, CHANGE COLUMN x x2 varchar(255) NULL"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and changed column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and changed column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -90,9 +90,9 @@ def change_add_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -100,18 +100,18 @@ def change_add_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE CHANGE COLUMN, ADD COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} CHANGE COLUMN x x2 varchar(255) NULL, ADD COLUMN new_col varchar(255) AFTER id"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and changed "
-                        f"column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and changed "
+                            f"column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -133,9 +133,9 @@ def add_modify_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -143,17 +143,17 @@ def add_modify_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE ADD COLUMN, MODIFY COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE ADD COLUMN, MODIFY COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, MODIFY COLUMN x varchar(255) NULL"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and modified column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and modified column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -175,9 +175,9 @@ def modify_add_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -185,18 +185,18 @@ def modify_add_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE MODIFY COLUMN, ADD COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE MODIFY COLUMN, ADD COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} MODIFY COLUMN x varchar(255) NULL, ADD COLUMN new_col varchar(255) AFTER id"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and modified "
-                        f"column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and modified "
+                            f"column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -218,9 +218,9 @@ def add_rename_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -228,17 +228,17 @@ def add_rename_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE ADD COLUMN, RENAME COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE ADD COLUMN, RENAME COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} ADD COLUMN new_col varchar(255) AFTER id, RENAME COLUMN x to x2"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and renamed column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and renamed column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -260,9 +260,9 @@ def rename_add_column(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
-            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
-            f"ClickHouse table creation method {self.context.env} "
-            f"and ClickHouse table engine {clickhouse_table_engine}"
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
         ):
             tables_names = define(
                 "List of different replicated tables with inserted data",
@@ -270,18 +270,18 @@ def rename_add_column(self, node=None):
             )
 
         for table_name in tables_names:
-            with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
-                if not table_name.endswith("_complex"):
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
                     with When(
-                        f"I perform `ALTER TABLE RENAME COLUMN, ADD COLUMN` on replicated table {table_name}"
+                            f"I perform `ALTER TABLE RENAME COLUMN, ADD COLUMN` on replicated table {table_name}"
                     ):
                         node.query(
                             f"ALTER TABLE {table_name} RENAME COLUMN x to x2, ADD COLUMN new_col varchar(255) AFTER id"
                         )
 
                     with Then(
-                        f"I check that Clickhouse replicated table {table_name} has the new column and renamed "
-                        f"column"
+                            f"I check that Clickhouse replicated table {table_name} has the new column and renamed "
+                            f"column"
                     ):
                         retry(
                             self.context.cluster.node("clickhouse").query,
@@ -291,6 +291,307 @@ def rename_add_column(self, node=None):
                             f"DESC test.{table_name} FORMAT CSV",
                             message='"new_col","String","","","","",""\n"x2"',
                         )
+
+
+@TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Multiple("1.0"))
+def multiple_add_column(self, node=None):
+    """Check that after multiple `ALTER TABLE ADD` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_names = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_names:
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                    with When(
+                            f"I perform multiple `ALTER TABLE ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col1 varchar(255) AFTER id, ADD COLUMN new_col2 varchar(255) AFTER id, ADD COLUMN new_col3 varchar(255) AFTER id"
+                        )
+
+                    with Then(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                                    ',"","",""\n"new_col1","Nullable(String)"',
+                        )
+
+
+@TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Multiple("1.0"))
+def multiple_modify_column(self, node=None):
+    """Check that after multiple `ALTER TABLE MODIFY` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_names = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_names:
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                    with When(
+                            f"I perform multiple `ALTER TABLE ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col1 varchar(255) AFTER id, ADD COLUMN new_col2 varchar(255) AFTER id, ADD COLUMN new_col3 varchar(255) AFTER id"
+                        )
+
+                    with And(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                                    ',"","",""\n"new_col1","Nullable(String)"',
+                        )
+
+                    with And(f"I perform multiple `ALTER TABLE MODIFY COLUMN` on replicated table {table_name}"):
+                        node.query(
+                            f"ALTER TABLE {table_name} MODIFY COLUMN new_col1 INT,"
+                            f" MODIFY COLUMN new_col2 INT,"
+                            f" MODIFY COLUMN new_col3 INT"
+                        )
+
+                    with Then(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns data types"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Int32","","","","",""\n"new_col2","Int32","",""'
+                                    ',"","",""\n"new_col1","Int32"',
+                        )
+
+
+@TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple("1.0"))
+def multiple_change_column(self, node=None):
+    """Check that after multiple `ALTER TABLE CHANGE` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_names = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_names:
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                    with When(
+                            f"I perform multiple `ALTER TABLE ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col1 varchar(255) AFTER id, ADD COLUMN new_col2 varchar(255) AFTER id, ADD COLUMN new_col3 varchar(255) AFTER id"
+                        )
+
+                    with And(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                                    ',"","",""\n"new_col1","Nullable(String)"',
+                        )
+
+                    with And(f"I perform multiple `ALTER TABLE CHANGE COLUMN` on replicated table {table_name}"):
+                        node.query(
+                            f"ALTER TABLE {table_name} CHANGE COLUMN new_col1 new_col11 INT,"
+                            f" CHANGE COLUMN new_col2 new_col22 INT,"
+                            f" CHANGE COLUMN new_col3 new_col33 INT"
+                        )
+
+                    with Then(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col33","Int32","","","","",""\n"new_col22","Int32","",""'
+                                    ',"","",""\n"new_col11","Int32"',
+                        )
+
+
+@TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename_Multiple("1.0"))
+def multiple_rename_column(self, node=None):
+    """Check that after multiple `ALTER TABLE RENAME` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_names = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_names:
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                    with When(
+                            f"I perform multiple `ALTER TABLE ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col1 varchar(255) AFTER id, ADD COLUMN new_col2 varchar(255) AFTER id, ADD COLUMN new_col3 varchar(255) AFTER id"
+                        )
+
+                    with And(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                                    ',"","",""\n"new_col1","Nullable(String)"',
+                        )
+
+                    with And(f"I perform multiple `ALTER TABLE RENAME COLUMN` on replicated table {table_name}"):
+                        node.query(
+                            f"ALTER TABLE {table_name} RENAME COLUMN new_col1 to new_col11,"
+                            f" RENAME COLUMN new_col2 to new_col22,"
+                            f" RENAME COLUMN new_col3 to new_col33"
+                        )
+
+                    with Then(
+                            f"I check that Clickhouse replicated table {table_name} has the new column names"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col33","Nullable(String)","","","","",""\n"new_col22","Nullable(String)","",""'
+                                    ',"","",""\n"new_col11","Nullable(String)"',
+                        )
+
+
+@TestFeature
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop_Multiple("1.0"))
+def multiple_drop_column(self, node=None):
+    """Check that after multiple `ALTER TABLE DROP` query MySQL and Clickhouse has the same columns."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    name = f"{getuid()}"
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+                f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+                f"ClickHouse table creation method {self.context.env} "
+                f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            tables_names = define(
+                "List of different replicated tables with inserted data",
+                create_replicated_tables(name=name, clickhouse_table_engine=clickhouse_table_engine),
+            )
+
+        for table_name in tables_names:
+            if not table_name.endswith("_complex"):
+                with Example(f"{table_name} {clickhouse_table_engine}", flags=TE):
+                    with When(
+                            f"I perform multiple `ALTER TABLE ADD COLUMN` on replicated table {table_name}"
+                    ):
+                        node.query(
+                            f"ALTER TABLE {table_name} ADD COLUMN new_col1 varchar(255) AFTER id, ADD COLUMN new_col2 varchar(255) AFTER id, ADD COLUMN new_col3 varchar(255) AFTER id"
+                        )
+
+                    with And(
+                            f"I check that Clickhouse replicated table {table_name} has the new columns"
+                    ):
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(
+                            f"DESC test.{table_name} FORMAT CSV",
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                                    ',"","",""\n"new_col1","Nullable(String)"',
+                        )
+
+                    with And(f"I perform multiple `ALTER TABLE DROP COLUMN` on replicated table {table_name}"):
+                        node.query(
+                            f"ALTER TABLE {table_name} DROP COLUMN new_col1,"
+                            f" DROP COLUMN new_col2,"
+                            f" DROP COLUMN new_col3"
+                        )
+
+                    with Then(
+                            f"I check that Clickhouse replicated table {table_name} has the same number of columns "
+                            f"as in MySQL table {table_name}"
+                    ):
+                        mysql_columns_number = node.query(columns_number.format(table_name=table_name)).output.strip()
+
+                        retry(
+                            self.context.cluster.node("clickhouse").query,
+                            timeout=100,
+                            delay=5,
+                        )(columns_number.format(table_name=table_name),
+                          message=mysql_columns_number[len("mysql: [Warning] Using a password on the command line "
+                                                           "interface can be insecure.\ncount(*)\n"):])
 
 
 @TestModule

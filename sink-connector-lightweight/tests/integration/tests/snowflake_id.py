@@ -56,7 +56,7 @@ def mysql_to_clickhouse_snowflake(
 
 @TestFeature
 @Name("snowflake id simple")
-def mysql_to_clickhouse(
+def snowflake_id_simple(
     self,
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
@@ -66,6 +66,89 @@ def mysql_to_clickhouse(
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             mysql_to_clickhouse_snowflake(
+                mysql_columns=mysql_columns,
+                clickhouse_columns=clickhouse_columns,
+                clickhouse_table_engine=clickhouse_table_engine,
+            )
+
+
+@TestOutline
+def mysql_to_clickhouse_snowflake_with_mysql_restart(
+    self,
+    mysql_columns,
+    clickhouse_table_engine,
+    clickhouse_columns=None,
+    mysql_restarts_number=3
+):
+    """Check MySQL to Clickhouse replicated table `_version` column receives increased snowflake values after MySQL restart."""
+
+    table_name = f"sanity_{getuid()}"
+
+    mysql = self.context.cluster.node("mysql-master")
+
+    with Given(f"I create MySql to CH replicated table", description=table_name):
+        create_mysql_to_clickhouse_replicated_table(
+            name=table_name,
+            mysql_columns=mysql_columns,
+            clickhouse_columns=clickhouse_columns,
+            clickhouse_table_engine=clickhouse_table_engine,
+        )
+
+    with When(f"I insert data in MySql table"):
+        self.context.cluster.node("mysql-master").query(f"INSERT INTO {table_name} values (1,777)")
+
+    for i in range(mysql_restarts_number):
+        with And(f"I make {mysql_restarts_number} MySQL's node restart and insert data in MySql table"):
+            self.context.cluster.node("mysql-master").restart()
+            retry(
+                self.context.cluster.node("mysql-master").query,
+                timeout=100,
+                delay=3,
+            )(
+                f"SHOW TABLES", message=f"{table_name}"
+            )
+
+            self.context.cluster.node(f"mysql-master").query(f"INSERT INTO {table_name} values ({i+2},2)")
+
+        with Then(
+                "I check that MySQL tables and Clickhouse replication tables have the same data"
+        ):
+            complex_check_creation_and_select(
+                table_name=table_name,
+                clickhouse_table_engine=clickhouse_table_engine,
+                statement="count(*)",
+                with_final=True,
+            )
+
+        with And(
+                "I check that Clickhouse replication tables have correct snowflake data"
+        ):
+            row_one_version = self.context.cluster.node("clickhouse").query(
+                f"SELECT _version FROM test.{table_name} WHERE id == {i}+1").output.strip()
+            row_two_version = self.context.cluster.node("clickhouse").query(
+                f"SELECT _version FROM test.{table_name} WHERE id == {i}+2").output.strip()
+
+            if int(row_one_version) > 0 and int(row_two_version) > 0:
+                assert (int(row_one_version) <= int(row_two_version))
+            else:
+                raise Error(
+                    "wrong data in version column"
+                )
+
+
+@TestFeature
+@Name("snowflake id simple restart")
+def snowflake_id_simple_restart(
+    self,
+    mysql_columns="MyData INT",
+    clickhouse_columns="MyData Int32",
+):
+    """Check MySQL to Clickhouse version column receives increased snowflake id after MySql restart
+    for all available methods."""
+
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Example({clickhouse_table_engine}, flags=TE):
+            mysql_to_clickhouse_snowflake_with_mysql_restart(
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
                 clickhouse_table_engine=clickhouse_table_engine,
