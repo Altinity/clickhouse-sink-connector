@@ -186,16 +186,6 @@ ALTER TABLE
 | ALTER COLUMN col_name ADD DROP DEFAULT                 | Not supported by grammar                                        |
 | ADD PRIMARY KEY                                        | Cannot modify primary key in CH                                 |
 
-###  Not supported:
-
-| MySQL                                                  | ClickHouse                                                      |
-|--------------------------------------------------------|-----------------------------------------------------------------|
-| ADD INDEX                                              | Secondary indexes in CH, what about type and index granularity? |
-| ADD CONSTRAINT  (CHECK)                                |                                                                 |
-| ADD CONSTRAINT                                         | Add constraint with Primary key(Not supported)                  |
-| DROP CONSTRAINT                                        | Add constraint with Primary key(Not supported)                  |
-
-
 
 ## TABLE operations
 | MySQL                                    | ClickHouse                          |
@@ -205,9 +195,22 @@ ALTER TABLE
 | DROP TABLE name_1                        |                                     |
 | DROP TABLE name_1, name_2                |                                     |
 | ALTER TABLE table_name to new_table_name | RENAME table_name to new_table_name |
+| CREATE TABLE PARTITION BY KEY(col1)      | PARTITION BY col1                   |
+| CREATE TABLE PARTITION BY RANGE(col1,col2, col3) | PARTITION BY col1, col2, col3|
+
 
 ## DATABASE operations
 | MySQL           | ClickHouse |
 |-----------------|------------|
 | CREATE DATABASE |            |
 | USE DATABASE    |            |
+
+
+###  Not supported:
+
+| MySQL                                                  | ClickHouse                                                      |
+|--------------------------------------------------------|-----------------------------------------------------------------|
+| ADD INDEX                                              | Secondary indexes in CH, what about type and index granularity? |
+| ADD CONSTRAINT  (CHECK)                                |                                                                 |
+| ADD CONSTRAINT                                         | Add constraint with Primary key(Not supported)                  |
+| DROP CONSTRAINT                                        | Add constraint with Primary key(Not supported)                  |
