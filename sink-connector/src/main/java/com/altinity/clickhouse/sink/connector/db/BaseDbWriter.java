@@ -90,5 +90,17 @@ public class BaseDbWriter {
         }
         return result;
     }
+
+    public String executeQuery(String sql) throws SQLException {
+        String result = null;
+        ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
+        if(rs != null) {
+            while(rs.next()) {
+                result = rs.getString(1);
+            }
+        }
+
+        return result;
+    }
 }
 

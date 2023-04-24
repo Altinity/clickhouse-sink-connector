@@ -10,6 +10,41 @@ public class MySqlDDLParserListenerImplTest {
 
     private static final Logger log = LoggerFactory.getLogger(MySqlDDLParserListenerImplTest.class);
 
+
+    @Test
+    public void testCreateTableWithPartition() {
+        String createQuery = "CREATE TABLE members (\n" +
+                "    firstname VARCHAR(25) NOT NULL,\n" +
+                "    lastname VARCHAR(25) NOT NULL,\n" +
+                "    username VARCHAR(16) NOT NULL,\n" +
+                "    email VARCHAR(35),\n" +
+                "    joined DATE NOT NULL\n" +
+                ")\n" +
+                "PARTITION BY KEY(joined)\n" +
+                "PARTITIONS 6;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE members(firstname String,lastname String,username String,email Nullable(String),joined Date32,`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  joined ORDER BY tuple()"));
+        log.info("Create table " + clickHouseQuery);
+    }
+    @Test
+    public void testCreateTableAutoIncrement() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+    }
+
+    @Test
+    public void testCreateTableLike() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+    }
     @Test
     public void testCreateTable() {
         StringBuffer clickHouseQuery = new StringBuffer();

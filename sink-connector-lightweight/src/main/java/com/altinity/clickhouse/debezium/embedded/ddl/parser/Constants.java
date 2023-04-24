@@ -2,6 +2,13 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 public class Constants {
 
+    public static final String PARTITION_BY = " PARTITION BY ";
+    public static final String ORDER_BY = " ORDER BY ";
+    public static final String ORDER_BY_TUPLE = " ORDER BY tuple()";
+
+    public static final String LIKE = "LIKE";
+
+    public static final String AS = "AS";
     public static final String ALTER_TABLE = "ALTER TABLE %s";
 
     public static final String ALTER_RENAME_TABLE = "RENAME TABLE %s TO %s";

@@ -199,6 +199,7 @@ ALTER TABLE
 | CREATE TABLE PARTITION BY RANGE(col1,col2, col3) | PARTITION BY col1, col2, col3|
 
 
+
 ## DATABASE operations
 | MySQL           | ClickHouse |
 |-----------------|------------|
