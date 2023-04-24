@@ -12,10 +12,10 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.result.InsertOneResult;
 import org.bson.Document;
 import org.bson.types.ObjectId;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.MongoDBContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
@@ -41,8 +41,9 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
 //            .withEnv("MONGO_INITDB_ROOT_PASSWORD", "project")
             .withEnv("MONGO_INITDB_DATABASE", "project")
             .withCopyFileToContainer(MountableFile.forClasspathResource("mongo-init.js"),
-                    "/docker-entrypoint-initdb.d/mongo-init.js");
-           // .waitingFor(Wait.forLogMessage("(?i).*waiting for connections.*", 2))
+                    "/docker-entrypoint-initdb.d/mongo-init.js")
+            .waitingFor(Wait.forLogMessage("(?i).*Waiting for connections*.*", 1));
+    // .waitingFor(Wait.forLogMessage("(?i).*waiting for connections.*", 2))
            // .withStartupTimeout(Duration.ofSeconds(10));
 
 //            .withInitScript("init_postgres.sql")
@@ -53,7 +54,7 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
 //            .withCommand("postgres -c wal_level=logical");
 
     @Test
-    @Disabled
+    //@Disabled
     public void testDataTypesDB() throws Exception {
 
 
