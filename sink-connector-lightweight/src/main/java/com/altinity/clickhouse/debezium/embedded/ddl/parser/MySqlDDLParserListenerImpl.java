@@ -284,7 +284,8 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     @Override
     public void enterColumnCreateTable(MySqlParser.ColumnCreateTableContext columnCreateTableContext) {
         StringBuilder orderByColumns = new StringBuilder();
-        parseCreateTable(columnCreateTableContext, orderByColumns);
+        StringBuilder partitionByColumn = new StringBuilder();
+        parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
         //this.query.append(" Engine=")
         this.query.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
         this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
@@ -292,15 +293,19 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
         this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
 
+        if(partitionByColumn.length() > 0) {
+            this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
+        }
         if(orderByColumns.length() == 0) {
-        this.query.append(" ORDER BY tuple()");
+        this.query.append(Constants.ORDER_BY_TUPLE);
         } else {
-            this.query.append(" ORDER BY ").append(orderByColumns.toString());
+            this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
         }
 
     }
 
-    private void parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns) {
+    private void parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
+                                  StringBuilder partitionByColumns) {
         List<ParseTree> pt = ctx.children;
 
         String modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
@@ -366,13 +371,20 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                         }
                     }
                 }
+            } else if(tree instanceof MySqlParser.PartitionDefinitionsContext) {
+                for(ParseTree partitionTree: ((MySqlParser.PartitionDefinitionsContext) tree).children) {
+                    if(partitionTree instanceof MySqlParser.PartitionFunctionKeyContext) {
+                        for(ParseTree partitionKeyTree: ((MySqlParser.PartitionFunctionKeyContext) partitionTree).children) {
+                            if(partitionKeyTree instanceof MySqlParser.UidListContext) {
+                                String partitionColumn = partitionKeyTree.getText();
+                                partitionByColumns.append(partitionColumn);
+                            }
+                        }
+
+                    }
+                }
             }
         }
-//        if(',' == this.query.charAt(this.query.length() - 1)) {
-//            this.query.deleteCharAt(this.query.length() - 1);
-//        }
-
-        // this.query.append(")");
     }
 
     /**

@@ -119,18 +119,18 @@ INSERT INTO protocol_test VALUES ('1778430', '12041969', 'Henry VII stocks Skin 
 INSERT INTO protocol_test VALUES ('1778431', '1228695', 'Mary I silver Visiting  6041 Caesar Street cameras judge', '1970-11-07T02:49:21.977Z');
 INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Peterson Pte. Ltd 2577 Limebank Circle span religious', '1975-02-02T01:13:06.152Z');
 
-
-CREATE TABLE test
-(
-  id bigserial NOT NULL,
-  consultation_id int8 NOT NULL,
-  recomendation text NULL,
-date1 timestamp with time zone NOT NULL DEFAULT now(),
-date2 timestamp(0) with time zone NOT NULL DEFAULT now(),
-date3 timestamp with time zone NOT NULL DEFAULT '2023-04-21 21:43:11.965283+03',
-date4 timestamp(0) with time zone NOT NULL DEFAULT '2023-04-21 21:43:32+03',
-date5 timestamp without time zone NOT NULL DEFAULT now(),
-CONSTRAINT protocol_pkey PRIMARY KEY (id)
-);
-
+--
+--CREATE TABLE test
+--(
+--  id bigserial NOT NULL,
+--  consultation_id int8 NOT NULL,
+--  recomendation text NULL,
+--date1 timestamp with time zone NOT NULL DEFAULT now(),
+--date2 timestamp(0) with time zone NOT NULL DEFAULT now(),
+--date3 timestamp with time zone NOT NULL DEFAULT '2023-04-21 21:43:11.965283+03',
+--date4 timestamp(0) with time zone NOT NULL DEFAULT '2023-04-21 21:43:32+03',
+--date5 timestamp without time zone NOT NULL DEFAULT now(),
+--CONSTRAINT protocol_pkey PRIMARY KEY (id)
+--);
+--
 

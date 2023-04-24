@@ -70,6 +70,16 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
 
             conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, col3 int)").execute();
 
+            conn.prepareStatement("CREATE TABLE members (\n" +
+                            "    firstname VARCHAR(25) NOT NULL,\n" +
+                            "    lastname VARCHAR(25) NOT NULL,\n" +
+                            "    username VARCHAR(16) NOT NULL,\n" +
+                            "    email VARCHAR(35),\n" +
+                            "    joined DATE NOT NULL\n" +
+                            ")\n" +
+                            "PARTITION BY KEY(joined)\n" +
+                            "PARTITIONS 6;").execute();
+
             conn.prepareStatement("create table copied_table like new_table").execute();
             Thread.sleep(10000);
 
@@ -87,6 +97,24 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
             Assert.assertTrue(addTestColumns.size() == 5);
             Assert.assertTrue(copied_table.size() == 5);
 
+
+            // Validate table created with partitions.
+            String chResult = writer.executeQuery("show create table members");
+
+            Assert.assertTrue(chResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
+                    "(\n" +
+                    "    `firstname` String,\n" +
+                    "    `lastname` String,\n" +
+                    "    `username` String,\n" +
+                    "    `email` Nullable(String),\n" +
+                    "    `joined` Date32,\n" +
+                    "    `_sign` Int8,\n" +
+                    "    `_version` UInt64\n" +
+                    ")\n" +
+                    "ENGINE = ReplacingMergeTree(_version)\n" +
+                    "PARTITION BY joined\n" +
+                    "ORDER BY tuple()\n" +
+                    "SETTINGS index_granularity = 8192"));
             if(engine.get() != null) {
                 engine.get().stop();
             }
