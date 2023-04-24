@@ -17,7 +17,6 @@
     "snapshot.locking.mode": "minimal",
     "snapshot.delay.ms": 10000,
     "include.schema.changes":"true",
-
     "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
     "database.history.kafka.topic": "${KAFKA_TOPIC}",
 

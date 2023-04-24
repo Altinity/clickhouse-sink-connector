@@ -247,7 +247,24 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterCopyCreateTable(MySqlParser.CopyCreateTableContext copyCreateTableContext) {
+        log.info("Copy create table");
+        ListIterator<ParseTree> it = copyCreateTableContext.children.listIterator();
 
+        String originalTableName = "";
+        String newTableName = "";
+
+
+        while(it.hasNext()) {
+            ParseTree tree = it.next();
+            if(tree instanceof MySqlParser.TableNameContext) {
+                originalTableName = tree.getText();
+                if(it.next().getText().equalsIgnoreCase(Constants.LIKE)) {
+                    newTableName = it.next().getText();
+                }
+            }
+        }
+        this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
+                .append(Constants.AS).append(" ").append(newTableName);
     }
 
     @Override

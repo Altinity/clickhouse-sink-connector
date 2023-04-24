@@ -11,6 +11,23 @@ public class MySqlDDLParserListenerImplTest {
     private static final Logger log = LoggerFactory.getLogger(MySqlDDLParserListenerImplTest.class);
 
     @Test
+    public void testCreateTableAutoIncrement() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+    }
+
+    @Test
+    public void testCreateTableLike() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+    }
+    @Test
     public void testCreateTable() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "create table if not exists ship_class(id int, class_name varchar(100), tonange decimal(10,2), max_length decimal(10,2), start_build year, end_build year(4), max_guns_size int)";

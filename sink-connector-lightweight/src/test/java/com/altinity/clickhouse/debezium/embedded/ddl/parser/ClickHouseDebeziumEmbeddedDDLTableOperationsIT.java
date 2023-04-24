@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
@@ -12,6 +13,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -62,18 +64,28 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
             Connection conn = connectToMySQL();
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
-            conn.prepareStatement("ALTER TABLE ship_class_new2 to ship_class_new3").execute();
+            conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
 
-            conn.prepareStatement("ALTER TABLE ship_class_new2 to ship_class_new3").execute();
+            //conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
 
             conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, col3 int)").execute();
+
+            conn.prepareStatement("create table copied_table like new_table").execute();
             Thread.sleep(10000);
 
 
             BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 
-            conn.prepareStatement("create table new_table_copy like new_table");
+            conn.prepareStatement("create table new_table_copy like new_table").execute();
+
+            Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class_new3");
+            Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test_new");
+            Map<String, String> copied_table = writer.getColumnsDataTypesForTable("copied_table");
+
+            Assert.assertTrue(shipClassColumns.size() == 9);
+            Assert.assertTrue(addTestColumns.size() == 5);
+            Assert.assertTrue(copied_table.size() == 5);
 
             if(engine.get() != null) {
                 engine.get().stop();

@@ -198,13 +198,16 @@ ALTER TABLE
 
 
 ## TABLE operations
-| MySQL                                    | ClickHouse                          |
-|------------------------------------------|-------------------------------------|
-| RENAME TABLE name_1 to name_2            |                                     |
-| TRUNCATE TABLE                           |                                     |
-| DROP TABLE name_1                        |                                     |
-| DROP TABLE name_1, name_2                |                                     |
-| ALTER TABLE table_name to new_table_name | RENAME table_name to new_table_name |
+| MySQL                                         | ClickHouse                          |
+|-----------------------------------------------|-------------------------------------|
+| RENAME TABLE name_1 to name_2                 |                                     |
+| TRUNCATE TABLE                                |                                     |
+| DROP TABLE name_1                             |                                     |
+| DROP TABLE name_1, name_2                     |                                     |
+| ALTER TABLE table_name RENAME  new_table_name | RENAME table_name to new_table_name |
+| CREATE TABLE                                  |                                     |
+| CREATE TABLE new_table like old_table         | CREATE TABLE new_table as old_table |
+
 
 ## DATABASE operations
 | MySQL           | ClickHouse |
