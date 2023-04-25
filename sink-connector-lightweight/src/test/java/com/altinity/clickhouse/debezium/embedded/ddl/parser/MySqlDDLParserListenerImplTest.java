@@ -12,7 +12,17 @@ public class MySqlDDLParserListenerImplTest {
 
 
     @Test
-    public void testCreateTableWithPartition() {
+    public void testCreateTableWithRangeByColumnsPartition() {
+        String createQuery = "CREATE TABLE rcx ( a INT, b INT, c CHAR(3), d INT) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'), PARTITION p1 VALUES LESS THAN (10,20,'mmm'), " +
+                "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  a,d,c ORDER BY tuple()"));
+        log.info("Create table " + clickHouseQuery);
+    }
+    @Test
+    public void testCreateTableWithKeyPartition() {
         String createQuery = "CREATE TABLE members (\n" +
                 "    firstname VARCHAR(25) NOT NULL,\n" +
                 "    lastname VARCHAR(25) NOT NULL,\n" +

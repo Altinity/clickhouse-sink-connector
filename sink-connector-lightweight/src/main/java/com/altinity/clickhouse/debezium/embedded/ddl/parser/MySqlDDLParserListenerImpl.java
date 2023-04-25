@@ -381,6 +381,13 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                             }
                         }
 
+                    } else if(partitionTree instanceof MySqlParser.PartitionFunctionRangeContext) {
+                        for(ParseTree partitionFunctionRangeTree: ((MySqlParser.PartitionFunctionRangeContext) partitionTree).children) {
+                            if(partitionFunctionRangeTree instanceof MySqlParser.UidListContext) {
+                                partitionByColumns.append("(").append(partitionFunctionRangeTree.getText()).append(")");
+                            }
+                        }
+
                     }
                 }
             }

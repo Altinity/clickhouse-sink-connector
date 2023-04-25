@@ -81,6 +81,8 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
                             "PARTITIONS 6;").execute();
 
             conn.prepareStatement("create table copied_table like new_table").execute();
+
+            conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
             Thread.sleep(10000);
 
 
@@ -99,9 +101,9 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
 
 
             // Validate table created with partitions.
-            String chResult = writer.executeQuery("show create table members");
+            String membersResult = writer.executeQuery("show create table members");
 
-            Assert.assertTrue(chResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
+            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                     "(\n" +
                     "    `firstname` String,\n" +
                     "    `lastname` String,\n" +
@@ -113,6 +115,22 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
                     ")\n" +
                     "ENGINE = ReplacingMergeTree(_version)\n" +
                     "PARTITION BY joined\n" +
+                    "ORDER BY tuple()\n" +
+                    "SETTINGS index_granularity = 8192"));
+
+            String rcxResult = writer.executeQuery("show create table rcx");
+
+            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
+                    "(\n" +
+                    "    `a` Int32,\n" +
+                    "    `b` Nullable(Int32),\n" +
+                    "    `c` String,\n" +
+                    "    `d` Int32,\n" +
+                    "    `_sign` Int8,\n" +
+                    "    `_version` UInt64\n" +
+                    ")\n" +
+                    "ENGINE = ReplacingMergeTree(_version)\n" +
+                    "PARTITION BY (a, d, c)\n" +
                     "ORDER BY tuple()\n" +
                     "SETTINGS index_granularity = 8192"));
             if(engine.get() != null) {
