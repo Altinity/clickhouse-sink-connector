@@ -9,7 +9,6 @@ public class DebeziumConnectorCallback implements ConnectorCallback {
     private static final Logger log = LoggerFactory.getLogger(DebeziumConnectorCallback.class);
 
     public DebeziumConnectorCallback() {
-        log.info("DebeziumConnectorCallback constructor");
     }
 
     @Override

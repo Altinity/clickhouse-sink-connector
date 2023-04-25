@@ -71,7 +71,7 @@ services:
         - label:disable
 
   debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest
+    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     #    build:
 #      context: ../
     restart: "no"
