@@ -205,7 +205,7 @@ public class DebeziumChangeEventCapture {
                                     }
                                 }
                             }
-                            log.info("Completion callback");
+                            log.debug("Completion callback");
                         }
                     }).build();
             engine.run();
@@ -231,7 +231,6 @@ public class DebeziumChangeEventCapture {
 
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
-        trySomething(Configuration.from(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 

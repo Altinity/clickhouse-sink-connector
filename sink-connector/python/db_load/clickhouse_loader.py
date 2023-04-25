@@ -396,7 +396,7 @@ def load_data(args, timezone, schema_map, dry_run = False):
         
     clickhouse_host = args.clickhouse_host
     ch_schema = args.clickhouse_database
-    password='DhL9KuN]]:~jT>'
+
     schema_file = args.dump_dir + '/*-schema.sql.gz'
     for files in glob.glob(schema_file):
         (schema, table_name) = parse_schema_path(files)

@@ -162,7 +162,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterCreateDatabase(MySqlParser.CreateDatabaseContext createDatabaseContext) {
-        log.info("Create database");
         for (ParseTree tree : createDatabaseContext.children) {
             if (tree instanceof MySqlParser.UidContext) {
                 this.query.append(String.format(Constants.CREATE_DATABASE, tree.getText()));
@@ -247,7 +246,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterCopyCreateTable(MySqlParser.CopyCreateTableContext copyCreateTableContext) {
-        log.info("Copy create table");
         ListIterator<ParseTree> it = copyCreateTableContext.children.listIterator();
 
         String originalTableName = "";
@@ -337,7 +335,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                                 // Null Column and DimensionDataType are children of ColumnDefinition
                                 for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
-                                        System.out.println("COL DEF" + colDefinitionChildTree.getText());
                                         if (colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL))
                                             isNullColumn = false;
                                     } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
@@ -378,6 +375,13 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                             if(partitionKeyTree instanceof MySqlParser.UidListContext) {
                                 String partitionColumn = partitionKeyTree.getText();
                                 partitionByColumns.append(partitionColumn);
+                            }
+                        }
+
+                    } else if(partitionTree instanceof MySqlParser.PartitionFunctionRangeContext) {
+                        for(ParseTree partitionFunctionRangeTree: ((MySqlParser.PartitionFunctionRangeContext) partitionTree).children) {
+                            if(partitionFunctionRangeTree instanceof MySqlParser.UidListContext) {
+                                partitionByColumns.append("(").append(partitionFunctionRangeTree.getText()).append(")");
                             }
                         }
 
@@ -1774,7 +1778,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                     // Change column comes in this format ALTER TABLE change column oldcol newcol.
                     ParseTree newColumnChild = it.next();
                     newColumnName = newColumnChild.getText();
-                    log.info("NEW COLUMN NAME" + newColumnName);
                 }
             } else if (columnChild instanceof MySqlParser.ColumnDefinitionContext) {
 
@@ -2016,10 +2019,8 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         this.query.append(" ");
         for (ParseTree tree : alterByAddCheckTableConstraintContext.children) {
             if (tree instanceof MySqlParser.PredicateExpressionContext) {
-                log.info("Predicate: " + tree.getText());
                 this.query.append(tree.getText());
             } else if (tree instanceof MySqlParser.UidContext) {
-                log.info("Constraint name" + tree.getText());
                 this.query.append(tree.getText()).append(" ");
             } else if (tree instanceof TerminalNodeImpl) {
                 this.query.append(tree.getText()).append(" ");
@@ -2029,7 +2030,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitAlterByAddCheckTableConstraint(MySqlParser.AlterByAddCheckTableConstraintContext alterByAddCheckTableConstraintContext) {
-        log.info("Exit check table constraint");
     }
 
 //    @Override
@@ -2064,12 +2064,11 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterAlterByChangeColumn(MySqlParser.AlterByChangeColumnContext alterByChangeColumnContext) {
-        log.info("Change column Enter");
+
     }
 
     @Override
     public void exitAlterByChangeColumn(MySqlParser.AlterByChangeColumnContext alterByChangeColumnContext) {
-        log.info("Change column Exit");
     }
 
     @Override
@@ -2104,7 +2103,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterAlterByDropColumn(MySqlParser.AlterByDropColumnContext alterByDropColumnContext) {
-        log.info("DROP COLUMN");
         this.query.append(" ");
         for (ParseTree tree : alterByDropColumnContext.children) {
             if (tree instanceof MySqlParser.UidContext) {
@@ -2605,7 +2603,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterRenameTable(MySqlParser.RenameTableContext renameTableContext) {
-        log.info("Rename table enter");
         this.query.append(Constants.RENAME_TABLE).append(" ");
         String originalTableName = null;
         String newTableName = null;
@@ -2633,7 +2630,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitRenameTable(MySqlParser.RenameTableContext renameTableContext) {
-        log.info("Rename table exit");
     }
 
     @Override
@@ -2648,7 +2644,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
-        log.info("enter TRUNCATE TABLE");
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
                 this.query.append(String.format(Constants.TRUNCATE_TABLE, child.getText()));
@@ -2658,7 +2653,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
-        log.info("enter TRUNCATE TABLE");
     }
 
     @Override

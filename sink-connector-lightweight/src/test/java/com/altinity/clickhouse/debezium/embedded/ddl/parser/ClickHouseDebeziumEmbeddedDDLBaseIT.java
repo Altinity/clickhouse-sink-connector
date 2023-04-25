@@ -94,7 +94,7 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
         //String tempOffsetPath = "/tmp/2/offsets" + System.currentTimeMillis() + ".dat";
         Path tmpFilePath = Files.createTempFile("offsets", ".dat");
         Files.deleteIfExists(tmpFilePath);
-        defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toString());
+        defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
         defaultProps.setProperty("offset.flush.interval.ms", "60000");
 
         defaultProps.setProperty("auto.create.tables", "true");

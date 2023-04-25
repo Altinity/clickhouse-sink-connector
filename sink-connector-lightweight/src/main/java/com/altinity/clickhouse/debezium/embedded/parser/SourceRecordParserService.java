@@ -89,7 +89,6 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                 if(afterSection instanceof Struct) {
                     afterStruct = (Struct) afterSection;
                 } else if(afterSection instanceof String) {
-                    log.info("String data received");
                     JSONParser parser = new JSONParser();
                     Object obj = null;
                     try {
