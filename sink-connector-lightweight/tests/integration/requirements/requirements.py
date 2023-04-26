@@ -721,6 +721,262 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter = Requirement(
     num='4.9.1'
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddIndex = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ADD INDEX` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.3.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddKey = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ADD Key` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.4.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddFullText = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ADD FULLTEXT` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.5.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddSpecial = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ADD SPECIAL` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.6.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropCheck = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `DROP CHECK` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.7.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropDefault = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `DROP DEFAULT` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.8.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Check = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER CHECK` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.9.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Constraint = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER CONSTRAINT` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.10.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Index = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER INDEX` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.11.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_CharacterSet = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER CHARACTER SET` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.12.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_ConvertToCharacterSet = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER CONVERT TO CHARACTER SET` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.13.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Algorithm = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER ALGORITHM` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.14.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Force = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER FORCE` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.15.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Lock = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER LOCK` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.16.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Unlock = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER UNLOCK` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.17.1'
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Validation = Requirement(
+    name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        '[Altinity Sink Connector] SHALL support `ALTER VALIDATION` query from [MySQL] to [CLickHouse].\n'
+        '\n'
+    ),
+    link=None,
+    level=4,
+    num='4.9.18.1'
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add = Requirement(
     name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add',
     version='1.0',
@@ -734,7 +990,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add = Requireme
     ),
     link=None,
     level=5,
-    num='4.9.3.1.1'
+    num='4.9.19.1.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_NullNotNull = Requirement(
@@ -750,7 +1006,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_NullNotNull
     ),
     link=None,
     level=5,
-    num='4.9.3.1.2'
+    num='4.9.19.1.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Default = Requirement(
@@ -767,7 +1023,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Default = R
     ),
     link=None,
     level=5,
-    num='4.9.3.1.3'
+    num='4.9.19.1.3'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_FirstAfter = Requirement(
@@ -783,7 +1039,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_FirstAfter 
     ),
     link=None,
     level=5,
-    num='4.9.3.1.4'
+    num='4.9.19.1.4'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Multiple = Requirement(
@@ -801,7 +1057,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Multiple = 
     ),
     link=None,
     level=5,
-    num='4.9.3.1.5'
+    num='4.9.19.1.5'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify = Requirement(
@@ -818,7 +1074,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify = Requir
     ),
     link=None,
     level=5,
-    num='4.9.3.2.1'
+    num='4.9.19.2.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_NullNotNull = Requirement(
@@ -834,7 +1090,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_NullNotN
     ),
     link=None,
     level=5,
-    num='4.9.3.2.2'
+    num='4.9.19.2.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Default = Requirement(
@@ -850,7 +1106,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Default 
     ),
     link=None,
     level=5,
-    num='4.9.3.2.3'
+    num='4.9.19.2.3'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_FirstAfter = Requirement(
@@ -866,7 +1122,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_FirstAft
     ),
     link=None,
     level=5,
-    num='4.9.3.2.4'
+    num='4.9.19.2.4'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Multiple = Requirement(
@@ -882,7 +1138,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Multiple
     ),
     link=None,
     level=5,
-    num='4.9.3.2.5'
+    num='4.9.19.2.5'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_NullNotNullOldNew = Requirement(
@@ -898,7 +1154,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_NullNotN
     ),
     link=None,
     level=5,
-    num='4.9.3.3.1'
+    num='4.9.19.3.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_FirstAfter = Requirement(
@@ -914,7 +1170,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_FirstAft
     ),
     link=None,
     level=5,
-    num='4.9.3.3.2'
+    num='4.9.19.3.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple = Requirement(
@@ -930,7 +1186,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple
     ),
     link=None,
     level=5,
-    num='4.9.3.3.3'
+    num='4.9.19.3.3'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop = Requirement(
@@ -946,7 +1202,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop = Requirem
     ),
     link=None,
     level=5,
-    num='4.9.3.4.1'
+    num='4.9.19.4.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop_Multiple = Requirement(
@@ -962,7 +1218,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop_Multiple =
     ),
     link=None,
     level=5,
-    num='4.9.3.4.2'
+    num='4.9.19.4.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename = Requirement(
@@ -978,7 +1234,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename = Requir
     ),
     link=None,
     level=5,
-    num='4.9.3.5.1'
+    num='4.9.19.5.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename_Multiple = Requirement(
@@ -994,7 +1250,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename_Multiple
     ),
     link=None,
     level=5,
-    num='4.9.3.5.2'
+    num='4.9.19.5.2'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddConstraint = Requirement(
@@ -1010,7 +1266,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddConstraint = Require
     ),
     link=None,
     level=4,
-    num='4.9.4.1'
+    num='4.9.20.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropConstraint = Requirement(
@@ -1026,7 +1282,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropConstraint = Requir
     ),
     link=None,
     level=4,
-    num='4.9.5.1'
+    num='4.9.21.1'
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No = Requirement(
@@ -1375,33 +1631,65 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name='Alter', level=2, num='4.9'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter', level=3, num='4.9.1'),
         Heading(name='Test `ALTER` Feature Diagram', level=3, num='4.9.2'),
-        Heading(name='Columns', level=3, num='4.9.3'),
-        Heading(name='Add', level=4, num='4.9.3.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add', level=5, num='4.9.3.1.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull', level=5, num='4.9.3.1.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default', level=5, num='4.9.3.1.3'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter', level=5, num='4.9.3.1.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple', level=5, num='4.9.3.1.5'),
-        Heading(name='Modify', level=4, num='4.9.3.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify', level=5, num='4.9.3.2.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull', level=5, num='4.9.3.2.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default', level=5, num='4.9.3.2.3'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter', level=5, num='4.9.3.2.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple', level=5, num='4.9.3.2.5'),
-        Heading(name='Change', level=4, num='4.9.3.3'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew', level=5, num='4.9.3.3.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter', level=5, num='4.9.3.3.2'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple', level=5, num='4.9.3.3.3'),
-        Heading(name='Drop', level=4, num='4.9.3.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop', level=5, num='4.9.3.4.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple', level=5, num='4.9.3.4.2'),
-        Heading(name='Rename', level=4, num='4.9.3.5'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename', level=5, num='4.9.3.5.1'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple', level=5, num='4.9.3.5.2'),
-        Heading(name='Add Constraint', level=3, num='4.9.4'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint', level=4, num='4.9.4.1'),
-        Heading(name='Drop Constraint', level=3, num='4.9.5'),
-        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint', level=4, num='4.9.5.1'),
+        Heading(name='Add Index', level=3, num='4.9.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex', level=4, num='4.9.3.1'),
+        Heading(name='Add Key', level=3, num='4.9.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey', level=4, num='4.9.4.1'),
+        Heading(name='Add FullText', level=3, num='4.9.5'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText', level=4, num='4.9.5.1'),
+        Heading(name='Add Special', level=3, num='4.9.6'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial', level=4, num='4.9.6.1'),
+        Heading(name='Drop Check', level=3, num='4.9.7'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck', level=4, num='4.9.7.1'),
+        Heading(name='Drop Default', level=3, num='4.9.8'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault', level=4, num='4.9.8.1'),
+        Heading(name='Check', level=3, num='4.9.9'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check', level=4, num='4.9.9.1'),
+        Heading(name='Constraint', level=3, num='4.9.10'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint', level=4, num='4.9.10.1'),
+        Heading(name='Index', level=3, num='4.9.11'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index', level=4, num='4.9.11.1'),
+        Heading(name='Character Set', level=3, num='4.9.12'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet', level=4, num='4.9.12.1'),
+        Heading(name='Convert To Character Set', level=3, num='4.9.13'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet', level=4, num='4.9.13.1'),
+        Heading(name='Algorithm', level=3, num='4.9.14'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm', level=4, num='4.9.14.1'),
+        Heading(name='Force', level=3, num='4.9.15'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force', level=4, num='4.9.15.1'),
+        Heading(name='Lock', level=3, num='4.9.16'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock', level=4, num='4.9.16.1'),
+        Heading(name='Unlock', level=3, num='4.9.17'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock', level=4, num='4.9.17.1'),
+        Heading(name='Validation', level=3, num='4.9.18'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation', level=4, num='4.9.18.1'),
+        Heading(name='Columns', level=3, num='4.9.19'),
+        Heading(name='Add', level=4, num='4.9.19.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add', level=5, num='4.9.19.1.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull', level=5, num='4.9.19.1.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default', level=5, num='4.9.19.1.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter', level=5, num='4.9.19.1.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple', level=5, num='4.9.19.1.5'),
+        Heading(name='Modify', level=4, num='4.9.19.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify', level=5, num='4.9.19.2.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull', level=5, num='4.9.19.2.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default', level=5, num='4.9.19.2.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter', level=5, num='4.9.19.2.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple', level=5, num='4.9.19.2.5'),
+        Heading(name='Change', level=4, num='4.9.19.3'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew', level=5, num='4.9.19.3.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter', level=5, num='4.9.19.3.2'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple', level=5, num='4.9.19.3.3'),
+        Heading(name='Drop', level=4, num='4.9.19.4'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop', level=5, num='4.9.19.4.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple', level=5, num='4.9.19.4.2'),
+        Heading(name='Rename', level=4, num='4.9.19.5'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename', level=5, num='4.9.19.5.1'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple', level=5, num='4.9.19.5.2'),
+        Heading(name='Add Constraint', level=3, num='4.9.20'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint', level=4, num='4.9.20.1'),
+        Heading(name='Drop Constraint', level=3, num='4.9.21'),
+        Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint', level=4, num='4.9.21.1'),
         Heading(name='Primary Key', level=2, num='4.10'),
         Heading(name='No Primary Key', level=3, num='4.10.1'),
         Heading(name='RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No', level=4, num='4.10.1.1'),
@@ -1468,6 +1756,22 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoDrop,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddIndex,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddKey,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddFullText,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddSpecial,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropCheck,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropDefault,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Check,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Constraint,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Index,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_CharacterSet,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_ConvertToCharacterSet,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Algorithm,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Force,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Lock,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Unlock,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Validation,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_NullNotNull,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Default,
@@ -1581,33 +1885,65 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
   * 4.9 [Alter](#alter)
     * 4.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter](#rqsrs-030clickhousemysqltoclickhousereplicationalter)
     * 4.9.2 [Test `ALTER` Feature Diagram](#test-alter-feature-diagram)
-    * 4.9.3 [Columns](#columns)
-      * 4.9.3.1 [Add](#add)
-        * 4.9.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadd)
-        * 4.9.3.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddnullnotnull)
-        * 4.9.3.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadddefault)
-        * 4.9.3.1.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddfirstafter)
-        * 4.9.3.1.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddmultiple)
-      * 4.9.3.2 [Modify](#modify)
-        * 4.9.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodify)
-        * 4.9.3.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifynullnotnull)
-        * 4.9.3.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifydefault)
-        * 4.9.3.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifyfirstafter)
-        * 4.9.3.2.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifymultiple)
-      * 4.9.3.3 [Change](#change)
-        * 4.9.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangenullnotnulloldnew)
-        * 4.9.3.3.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangefirstafter)
-        * 4.9.3.3.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangemultiple)
-      * 4.9.3.4 [Drop](#drop)
-        * 4.9.3.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdrop)
-        * 4.9.3.4.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdropmultiple)
-      * 4.9.3.5 [Rename](#rename)
-        * 4.9.3.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrename)
-        * 4.9.3.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrenamemultiple)
-    * 4.9.4 [Add Constraint](#add-constraint)
-      * 4.9.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddconstraint)
-    * 4.9.5 [Drop Constraint](#drop-constraint)
-      * 4.9.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropconstraint)
+    * 4.9.3 [Add Index](#add-index)
+      * 4.9.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddindex)
+    * 4.9.4 [Add Key](#add-key)
+      * 4.9.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddkey)
+    * 4.9.5 [Add FullText](#add-fulltext)
+      * 4.9.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddfulltext)
+    * 4.9.6 [Add Special](#add-special)
+      * 4.9.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddspecial)
+    * 4.9.7 [Drop Check](#drop-check)
+      * 4.9.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropcheck)
+    * 4.9.8 [Drop Default](#drop-default)
+      * 4.9.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropdefault)
+    * 4.9.9 [Check](#check)
+      * 4.9.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check](#rqsrs-030clickhousemysqltoclickhousereplicationaltercheck)
+    * 4.9.10 [Constraint](#constraint)
+      * 4.9.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterconstraint)
+    * 4.9.11 [Index](#index)
+      * 4.9.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index](#rqsrs-030clickhousemysqltoclickhousereplicationalterindex)
+    * 4.9.12 [Character Set](#character-set)
+      * 4.9.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationaltercharacterset)
+    * 4.9.13 [Convert To Character Set](#convert-to-character-set)
+      * 4.9.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationalterconverttocharacterset)
+    * 4.9.14 [Algorithm](#algorithm)
+      * 4.9.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm](#rqsrs-030clickhousemysqltoclickhousereplicationalteralgorithm)
+    * 4.9.15 [Force](#force)
+      * 4.9.15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force](#rqsrs-030clickhousemysqltoclickhousereplicationalterforce)
+    * 4.9.16 [Lock](#lock)
+      * 4.9.16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock](#rqsrs-030clickhousemysqltoclickhousereplicationalterlock)
+    * 4.9.17 [Unlock](#unlock)
+      * 4.9.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock](#rqsrs-030clickhousemysqltoclickhousereplicationalterunlock)
+    * 4.9.18 [Validation](#validation)
+      * 4.9.18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation](#rqsrs-030clickhousemysqltoclickhousereplicationaltervalidation)
+    * 4.9.19 [Columns](#columns)
+      * 4.9.19.1 [Add](#add)
+        * 4.9.19.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadd)
+        * 4.9.19.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddnullnotnull)
+        * 4.9.19.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadddefault)
+        * 4.9.19.1.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddfirstafter)
+        * 4.9.19.1.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddmultiple)
+      * 4.9.19.2 [Modify](#modify)
+        * 4.9.19.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodify)
+        * 4.9.19.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifynullnotnull)
+        * 4.9.19.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifydefault)
+        * 4.9.19.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifyfirstafter)
+        * 4.9.19.2.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifymultiple)
+      * 4.9.19.3 [Change](#change)
+        * 4.9.19.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangenullnotnulloldnew)
+        * 4.9.19.3.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangefirstafter)
+        * 4.9.19.3.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangemultiple)
+      * 4.9.19.4 [Drop](#drop)
+        * 4.9.19.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdrop)
+        * 4.9.19.4.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdropmultiple)
+      * 4.9.19.5 [Rename](#rename)
+        * 4.9.19.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrename)
+        * 4.9.19.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrenamemultiple)
+    * 4.9.20 [Add Constraint](#add-constraint)
+      * 4.9.20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddconstraint)
+    * 4.9.21 [Drop Constraint](#drop-constraint)
+      * 4.9.21.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropconstraint)
   * 4.10 [Primary Key](#primary-key)
     * 4.10.1 [No Primary Key](#no-primary-key)
       * 4.10.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeyno)
@@ -2284,6 +2620,118 @@ flowchart TB;
 
   end
 ```
+
+#### Add Index
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ADD INDEX` query from [MySQL] to [CLickHouse].
+
+#### Add Key
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ADD Key` query from [MySQL] to [CLickHouse].
+
+#### Add FullText
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ADD FULLTEXT` query from [MySQL] to [CLickHouse].
+
+#### Add Special
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ADD SPECIAL` query from [MySQL] to [CLickHouse].
+
+#### Drop Check
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `DROP CHECK` query from [MySQL] to [CLickHouse].
+
+#### Drop Default
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `DROP DEFAULT` query from [MySQL] to [CLickHouse].
+
+#### Check
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER CHECK` query from [MySQL] to [CLickHouse].
+
+#### Constraint
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER CONSTRAINT` query from [MySQL] to [CLickHouse].
+
+#### Index
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER INDEX` query from [MySQL] to [CLickHouse].
+
+#### Character Set
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER CHARACTER SET` query from [MySQL] to [CLickHouse].
+
+#### Convert To Character Set
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER CONVERT TO CHARACTER SET` query from [MySQL] to [CLickHouse].
+
+#### Algorithm
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER ALGORITHM` query from [MySQL] to [CLickHouse].
+
+#### Force
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER FORCE` query from [MySQL] to [CLickHouse].
+
+#### Lock
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER LOCK` query from [MySQL] to [CLickHouse].
+
+#### Unlock
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER UNLOCK` query from [MySQL] to [CLickHouse].
+
+#### Validation
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation
+version: 1.0
+
+[Altinity Sink Connector] SHALL support `ALTER VALIDATION` query from [MySQL] to [CLickHouse].
 
 #### Columns
 
