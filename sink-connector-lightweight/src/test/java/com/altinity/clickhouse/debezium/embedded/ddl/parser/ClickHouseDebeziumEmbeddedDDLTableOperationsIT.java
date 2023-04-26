@@ -133,6 +133,9 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
                     "PARTITION BY (a, d, c)\n" +
                     "ORDER BY tuple()\n" +
                     "SETTINGS index_granularity = 8192"));
+
+            new com.altinity.clickhouse.sink.connector.db.DBMetadata().getTableEngine(writer.getConnection(), "employees", "rmt_test");
+
             if(engine.get() != null) {
                 engine.get().stop();
             }
