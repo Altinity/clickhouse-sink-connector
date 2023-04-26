@@ -811,6 +811,82 @@ flowchart TB;
   end
 ```
 
+#### Test multiple `ALTER` Feature Diagram
+
+```mermaid
+flowchart TB;
+
+  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
+  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
+  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
+  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
+  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
+  
+  subgraph O["`ALTER` Test Feature Diagram"]
+  D-->C-->E-->B
+
+  1D---2D
+  1C---2C---3C
+  1E---2E---3E---4E
+  5B---6B---7B
+  8B---9B---10B---11B---12B---13B
+  14B---15B---16B---17B---18B---19B
+  1F---2F---3F---4F
+  
+  
+  
+    
+    subgraph D["Engines"]
+        1D["with table Engine"]:::yellow
+        2D["without table Engine"]:::yellow
+    end
+    
+    subgraph C["Different primary keys"]
+        1C["simple primary key"]:::blue
+        2C["composite primary key"]:::blue
+        3C["no primary key"]:::blue
+    end
+    
+    subgraph E["Table parts"]
+        1E["Keys"]:::blue
+        2E["Columns"]:::blue
+        3E["Values"]:::blue
+        4E["Indexes"]:::blue
+    end
+    
+    subgraph B["Different `ALTER` cases"]
+        5B["MODIFY COLUMN data_type"]:::green
+        6B["MODIFY COLUMN data_type NULL/NOT NULL"]:::green
+        7B["MODIFY COLUMN data_type DEFAULT"]:::green
+        8B["MODIFY COLUMN FIRST, AFTER"]:::green
+        9B["CHANGE COLUMN old_name new_name datatype NULL/NOT NULL"]:::green
+        10B["CHANGE COLUMN FIRST, AFTER"]:::green
+        11B["RENAME COLUMN col1 to col2"]:::green
+        12B["DROP COLUMN"]:::green
+        13B["ALTER COLUMN col_name ADD DEFAULT"]:::red
+        14B["ALTER COLUMN col_name ADD DROP DEFAULT"]:::red
+        15B["ADD PRIMARY KEY"]:::red
+        16B["ADD INDEX"]:::red
+        17B["ADD CONSTRAINT (CHECK)"]:::yellow
+        18B["ADD CONSTRAINT"]:::red
+        19B["DROP CONSTRAINT"]:::red
+        
+    end
+    
+    subgraph F["ADD COLUMN"]
+        1F["ADD COLUMN"]:::green
+        2F["ADD COLUMN NULL/NOT NULL"]:::green
+        3F["ADD COLUMN DEFAULT"]:::green
+        4F["ADD COLUMN FIRST, AFTER"]:::green
+        
+    end
+    
+
+    
+
+  end
+```
+
 #### Add Index
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex
