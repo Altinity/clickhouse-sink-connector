@@ -11,6 +11,34 @@ Single executable and lightweight.
 ##### Supports DDL in MySQL.
 
 ### Release
+##### Command line.
+Download the JAR file from the releases.
+
+Update the yaml configuration file.(mysql_config.yaml)
+```
+database.hostname: "localhost"
+database.port: "3306"
+database.user: "root"
+database.password: "root"
+database.include.list: sbtest
+#table.include.list=sbtest1
+clickhouse.server.url: "localhost"
+clickhouse.server.user: "root"
+clickhouse.server.pass: "root"
+clickhouse.server.port: "8123"
+clickhouse.server.database: "test"
+database.allowPublicKeyRetrieval: "true"
+snapshot.mode: "schema_only"
+connector.class: "io.debezium.connector.mysql.MySqlConnector"
+
+```
+
+Start the application.
+`java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
+
+
+
+##### Docker
 Images are published in Gitlab.
 
 `registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
