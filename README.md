@@ -10,8 +10,8 @@ New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without add
 Single executable and lightweight.
 ##### Supports DDL in MySQL.
 
-### Release
-##### Command line.
+### Usage
+##### From Command line.
 Download the JAR file from the releases.
 
 Update the yaml configuration file.(mysql_config.yaml)
