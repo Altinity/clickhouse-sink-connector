@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
+import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
@@ -40,21 +42,40 @@ public class ClickHouseDebeziumEmbeddedApplication {
         }
         Injector injector = Guice.createInjector(new AppInjector());
 
+        Properties props = new Properties();
+        if(args.length > 0) {
+            log.info(String.format("****** CONFIGURATION FILE: %s ********", args[0]));
+
+            try {
+                Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+
+                props.putAll(defaultProperties);
+                Properties fileProps = new ConfigLoader().loadFromFile(args[0]);
+                props.putAll(fileProps);
+            } catch(Exception e) {
+                log.error("Error parsing configuration file, USAGE: java -jar <jar_file> <yaml_config_file>");
+                System.exit(-1);
+            }
+        } else {
+
+            props = injector.getInstance(ConfigurationService.class).parse();
+        }
+
         ClickHouseDebeziumEmbeddedApplication csg = new ClickHouseDebeziumEmbeddedApplication();
         csg.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(ConfigurationService.class),
-                injector.getInstance(DDLParserService.class));
+                injector.getInstance(DDLParserService.class), props);
+
     }
 
 
     public void start(DebeziumRecordParserService recordParserService,
                       ConfigurationService configurationService,
-                      DDLParserService ddlParserService) throws Exception {
+                      DDLParserService ddlParserService, Properties props) throws Exception {
         // Define the configuration for the Debezium Engine with MySQL connector...
-        log.debug("Loading properties");
+       // log.debug("Loading properties");
         //final Properties props = new ConfigLoader().load();
 
-        Properties props = configurationService.parse();
 
         DebeziumChangeEventCapture eventCapture = new DebeziumChangeEventCapture();
         eventCapture.setup(props, recordParserService, ddlParserService);
