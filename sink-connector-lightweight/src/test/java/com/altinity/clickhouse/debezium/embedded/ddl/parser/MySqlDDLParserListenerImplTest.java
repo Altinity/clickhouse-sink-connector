@@ -2,8 +2,12 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class MySqlDDLParserListenerImplTest {
@@ -18,7 +22,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  a,d,c ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  (a,d,c) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -228,15 +232,7 @@ public class MySqlDDLParserListenerImplTest {
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String) \n" +
                 "ALTER TABLE contacts RENAME COLUMN last_name to new_name"));
-        //
-//        StringBuffer clickHouseQuery2 = new StringBuffer();
-//        String alterDBModifyColumn = "ALTER TABLE contacts\n" +
-//                "  MODIFY last_name varchar(55) NULL\n" +
-//                "    AFTER contact_type,\n" +
-//                "  MODIFY first_name varchar(30) NOT NULL;";
-//        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
-//        mySQLDDLParserService2.parseSql(alterDBModifyColumn, "contacts", clickHouseQuery2);
-//        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)  AFTER contact_type, MODIFY COLUMN first_name String"));
+
     }
 
     @Test
@@ -490,6 +486,38 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE test_table to test_table_new"));
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "ALTER TABLE test_table rename to test_table_new, false",
+            "drop table if exists table1, true",
+            "drop database db1, true",
+            "drop database db2 if exists, true",
+            "truncate table table1, true",
+            "create database test_ddl, false",
+            "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1, ALTER TABLE add_test RENAME COLUMN stocks to options, false"
+    })
+    public void checkIfDropOrTruncate(String sql, boolean expectedResult) {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean();
+        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
+        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery, isDropOrTruncate);
+        Assert.assertTrue(isDropOrTruncate.get() == expectedResult);
+
+    }
+
+//    @Test
+//    public void deleteData() {
+//        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
+//        StringBuffer clickHouseQuery = new StringBuffer();
+//
+//        AtomicBoolean isDropOrTruncate = new AtomicBoolean();
+//        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
+//        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery, isDropOrTruncate);
+//
+//        System.out.println("Clickhouse query" + clickHouseQuery);
+//
+//    }
 
 //    @Test
 //    public void testDropDatabase() {

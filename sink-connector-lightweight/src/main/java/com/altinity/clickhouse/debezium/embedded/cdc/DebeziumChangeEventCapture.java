@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
@@ -130,8 +131,7 @@ public class DebeziumChangeEventCapture {
                 String DDL = (String) struct.get("ddl");
                 log.info("Source DB DDL: " + DDL);
 
-                String disableDDLProperty = props.getProperty("disable.ddl");
-                if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
+                if(checkIfDDLNeedsToBeIgnored(DDL, props, sr)) {
                     log.debug("Ignoring DDL");
                     return;
                 }
@@ -141,6 +141,7 @@ public class DebeziumChangeEventCapture {
                     log.info("***** DDL received, Flush all existing records");
                     this.executor.shutdown();
                     this.executor.awaitTermination(60, TimeUnit.SECONDS);
+
 
                     performDDLOperation(DDL, config);
                     this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
@@ -167,6 +168,36 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Exception processing record", e);
         }
+    }
+
+    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr) {
+
+        String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
+        if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
+            log.debug("Ignoring DDL");
+            return true;
+        }
+
+        boolean isSnapshotDDL = false;
+        if(sr.sourceOffset() != null) {
+            if(sr.sourceOffset().containsKey("snapshot")) {
+                isSnapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
+            }
+        }
+
+        String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
+        boolean enableSnapshotDDLPropertyFlag = false;
+        if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true" )) {
+            enableSnapshotDDLPropertyFlag = true;
+        }
+
+        if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == true) {
+            // User wants to execute snapshot DDL
+            return false;
+        } else {
+            return true;
+        }
+
     }
 
     public static int MAX_RETRIES = 25;
