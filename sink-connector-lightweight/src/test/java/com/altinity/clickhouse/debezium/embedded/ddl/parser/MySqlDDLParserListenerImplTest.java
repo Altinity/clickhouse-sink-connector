@@ -22,7 +22,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  a,d,c ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  (a,d,c) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
