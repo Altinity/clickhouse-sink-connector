@@ -1,9 +1,9 @@
+[![License](http://img.shields.io/:license-apache%202.0-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
 [![Tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml)
-<p align="center">
-   <a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
-       <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
-   </a>
-</p>
+[![Build, Unit tests, Push Docker image.](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/unit_test_docker_image.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/unit_test_docker_image.yml)
+<a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
+  <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
+</a>
 
 # Altinity Replicator for ClickHouse (Lightweight version)
 New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
