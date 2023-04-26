@@ -26,4 +26,16 @@ CREATE TABLE public.protocol_test
 `_version` UInt64
 )
 ENGINE = ReplacingMergeTree(_version)
+ORDER BY id;
+
+CREATE TABLE employees.rmt_test
+(
+  `id` Int64,
+  `consultation_id` Int64,
+  `recomendation` Nullable(String),
+  `create_date` DateTime64(6),
+  `is_deleted` UInt8,
+  `_version` UInt64
+)
+ENGINE = ReplacingMergeTree(_version, is_deleted)
 ORDER BY id
