@@ -10,8 +10,8 @@ New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without add
 Single executable and lightweight.
 ##### Supports DDL in MySQL.
 
-### Release
-##### Command line.
+### Usage
+##### From Command line.
 Download the JAR file from the releases.
 
 Update the yaml configuration file.(mysql_config.yaml)
@@ -30,14 +30,34 @@ clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
 snapshot.mode: "schema_only"
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
-offset.storage.file.filename: /tmp/offsets.dat
-database.history.file.filename: /tmp/dbhistory.dat
-schema.history.internal.file.filename: /tmp/schemahistory2.dat
+offset.storage.file.filename: /data/offsets.dat
+database.history.file.filename: /data/dbhistory.dat
+schema.history.internal.file.filename: /data/schemahistory2.dat
 ```
 
 Start the application.
 `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
 
+#### Configuration
+ Configuration                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| database.hostname                     | Source Database HostName                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| database.port                         | Source Database Port number                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| database.user                         | Source Database Username                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| database.password                     | Source Database Password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| database.include.list                 | List of databases to be included in replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| table.include.list                    | List of tables to be included in replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| clickhouse.server.url                 | ClickHouse URL                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| clickhouse.server.user                | ClickHouse username                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| clickhouse.server.pass                | ClickHouse password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| clickhouse.server.port                | ClickHouse port                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| clickhouse.server.database            | ClickHouse destination database                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| database.allowPublicKeyRetrieval      | MySQL specific: true/false                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| snapshot.mode                         | "initial" -> Data that already exists in source database will be replicated. "schema_only" -> Replicate data that is added/modified after the connector is started. MySQL: https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-property-snapshot-mode PostgreSQL: https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-property-snapshot-mode MongoDB: initial, never. https://debezium.io/documentation/reference/stable/connectors/mongodb.html |
+| connector.class                       | MySQL -> "io.debezium.connector.mysql.MySqlConnector" PostgreSQL ->  Mongo ->                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| offset.storage.file.filename          | Offset storage file(This stores the offsets of the source database) MySQL: mysql binlog file and position, gtid set. Make sure this file is durable and its not persisted in temp directories.                                                                                                                                                                                                                                                                                                                   |
+| database.history.file.filename        | Database History: Make sure this file is durable and its not persisted in temp directories.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| schema.history.internal.file.filename | Schema History: Make sure this file is durable and its not persisted in temp directories.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 
 ##### Docker
@@ -45,7 +65,8 @@ Images are published in Gitlab.
 
 `registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
 
-[Setup instructions](sink-connector-lightweight/README.md)
+[Docker Setup instructions](sink-connector-lightweight/README.md)
+
 ![](doc/img/kafka_replication_tool.jpg)
 
 # Altinity Sink Connector for ClickHouse
