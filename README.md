@@ -30,9 +30,9 @@ clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
 snapshot.mode: "schema_only"
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
-offset.storage.file.filename: /tmp/offsets.dat
-database.history.file.filename: /tmp/dbhistory.dat
-schema.history.internal.file.filename: /tmp/schemahistory2.dat
+offset.storage.file.filename: /data/offsets.dat
+database.history.file.filename: /data/dbhistory.dat
+schema.history.internal.file.filename: /data/schemahistory2.dat
 ```
 
 Start the application.
