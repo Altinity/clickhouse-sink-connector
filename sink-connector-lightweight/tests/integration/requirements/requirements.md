@@ -822,8 +822,9 @@ flowchart TB;
   classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
   classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
   
-  subgraph O["`ALTER` Test Feature Diagram"]
+  subgraph O["multiple `ALTER` Test Feature Diagram"]
   D-->C-->E-->B
+  C-->F
 
   1D---2D
   1C---2C---3C
