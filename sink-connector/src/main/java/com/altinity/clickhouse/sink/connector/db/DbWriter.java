@@ -26,7 +26,12 @@ import org.slf4j.LoggerFactory;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -52,7 +57,16 @@ public class DbWriter extends BaseDbWriter {
     private String versionColumn = null;
 
     // Delete column for ReplacingMergeTree
-    private final String replacingMergeTreeDeleteColumn;
+    private String replacingMergeTreeDeleteColumn = null;
+
+    /**
+     * IMPORTANT: The logic to identify the new replacing mergetree
+     * table which lets you specify the is_deleted column in
+     * the CREATE TABLE DEFINITION and ClickHouse
+     * will delete the rows where the is_deleted column is set to 1.
+     */
+    private boolean replacingMergeTreeWithIsDeletedColumn = false;
+
 
     public DbWriter(
             String hostName,
@@ -115,14 +129,24 @@ public class DbWriter extends BaseDbWriter {
             }
 
             if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-                this.versionColumn = response.getRight();
-            } else if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                String rmtColumns = response.getRight();
+                if(rmtColumns != null && rmtColumns.contains(",")) {
+                    // New RMT, with version and deleted column.
+                    String[] rmtColumnArray = rmtColumns.split(",");
+                    this.versionColumn = rmtColumnArray[0].trim();
+                    this.replacingMergeTreeDeleteColumn = rmtColumnArray[1].trim();
+                    replacingMergeTreeWithIsDeletedColumn = true;
+                } else {
+                    this.versionColumn = response.getRight();
+                    this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
+                }
+
+            } else if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(com.altinity.clickhouse.sink.connector.db.DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                 this.signColumn = response.getRight();
             }
         } catch(Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
-        this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
     }
 
     public boolean wasTableMetaDataRetrieved() {
@@ -388,12 +412,8 @@ public class DbWriter extends BaseDbWriter {
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();
 
-//        BlockMetaData bmd = new BlockMetaData();
-//        HashMap<Integer, MutablePair<Long, Long>> partitionToOffsetMap = new HashMap<Integer, MutablePair<Long, Long>>();
-
         if (records.isEmpty()) {
             log.debug("No Records to process");
-//            bmd.setPartitionToOffsetMap(partitionToOffsetMap);
             return partitionToOffsetMap;
         }
 
@@ -401,7 +421,6 @@ public class DbWriter extends BaseDbWriter {
         synchronized (records) {
             partitionToOffsetMap = groupQueryWithRecords(records, queryToRecordsMap);
         }
-        //addToPreparedStatementBatch(queryToRecordsMap);
         return partitionToOffsetMap;
     }
 
@@ -439,15 +458,6 @@ public class DbWriter extends BaseDbWriter {
                         truncatedRecords.add(record);
                         continue;
                     }
-                    //List<Field> fields = record.getStruct().schema().fields();
-
-//                    if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
-//                        ps.addBatch(String.format("TRUNCATE TABLE %s", this.tableName));
-//                        continue;
-//                    }
-                    //ToDO:
-                    //insertPreparedStatement(ps, fields, record);
-
 
                     if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(), true);
@@ -462,12 +472,7 @@ public class DbWriter extends BaseDbWriter {
                         log.error("INVALID CDC RECORD STATE");
                     }
 
-
-                    // Append parameters to the query
-
-
                     ps.addBatch();
-                    //records.remove(record);
                 }
 
 
@@ -509,14 +514,6 @@ public class DbWriter extends BaseDbWriter {
         return bmd;
     }
 
-
-
-    public void insertTopicOffsetMetadata(Map<TopicPartition, Long> topicPartitionToOffsetMap) {
-
-//        try (PreparedStatement ps = this.conn.prepareStatement(insertQuery)) {
-//
-//        }
-    }
     /**
      * Case-insensitive
      *
@@ -663,9 +660,15 @@ public class DbWriter extends BaseDbWriter {
             if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
                 if(columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn)) {
                     if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                        if(replacingMergeTreeWithIsDeletedColumn)
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        else
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
                     } else {
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        if(replacingMergeTreeWithIsDeletedColumn)
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
+                        else
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
                     }
                 }
             }
@@ -682,6 +685,4 @@ public class DbWriter extends BaseDbWriter {
             }
         }
     }
-
-
 }

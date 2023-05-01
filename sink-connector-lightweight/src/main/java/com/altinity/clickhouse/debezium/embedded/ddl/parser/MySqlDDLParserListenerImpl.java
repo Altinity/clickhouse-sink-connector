@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -285,11 +286,19 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         StringBuilder partitionByColumn = new StringBuilder();
         parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
         //this.query.append(" Engine=")
-        this.query.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
-        this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
-        this.query.append(")");
+        if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
+            this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
+            this.query.append("`").append(IS_DELETED_COLUMN).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+        } else {
+            this.query.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
+            this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
+        }
 
-        this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+        this.query.append(")");
+        if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
+            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(IS_DELETED_COLUMN).append(")");
+        } else
+            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
 
         if(partitionByColumn.length() > 0) {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
@@ -306,8 +315,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                                   StringBuilder partitionByColumns) {
         List<ParseTree> pt = ctx.children;
 
-        String modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
-        String defaultModifier = null;
 
         this.query.append(Constants.CREATE_TABLE).append(" ");
         for (ParseTree tree : pt) {

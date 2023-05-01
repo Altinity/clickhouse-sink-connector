@@ -9,6 +9,8 @@ import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Singleton
 public class MySQLDDLParserService implements DDLParserService {
+    private static final Logger log = LoggerFactory.getLogger(MySQLDDLParserService.class);
+
 
     @Override
     public String parseSql(String sql, String tableName, StringBuffer parsedQuery) {
@@ -77,6 +81,22 @@ public class MySQLDDLParserService implements DDLParserService {
         List<Token> tokensList = tokens.getTokens();
 
         if(tokensList.stream().anyMatch(x -> x.getType() == MySqlParser.DROP || x.getType() == MySqlParser.TRUNCATE)) {
+            result = true;
+        }
+
+        return result;
+    }
+
+    /**
+     * Function to check if the DDL query is a CREATE TABLE or DATABASE query.
+     * @param tokens
+     * @return
+     */
+    public boolean isCreateStatement(CommonTokenStream tokens) {
+        boolean result = false;
+        List<Token> tokensList = tokens.getTokens();
+
+        if(tokensList.stream().anyMatch(x -> x.getType() == MySqlParser.CREATE)) {
             result = true;
         }
 

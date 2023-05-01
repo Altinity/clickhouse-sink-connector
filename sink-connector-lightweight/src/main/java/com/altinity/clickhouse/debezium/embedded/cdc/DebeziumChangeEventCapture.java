@@ -34,6 +34,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Setup Debezium engine with the configuration passed by the user
@@ -52,19 +53,38 @@ public class DebeziumChangeEventCapture {
     private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
 
 
+    private BaseDbWriter writer = null;
+
+    static public boolean isNewReplacingMergeTreeEngine = true;
+
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
-    private void performDDLOperation(String DDL,  ClickHouseSinkConnectorConfig config) {
+    private void performDDLOperation(String DDL,  Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
-        StringBuffer clickHouseQuery = new StringBuffer();
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery);
-        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config);
+        if(writer == null) {
+            writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                    dbCredentials.getPassword(), config);
+            try {
+                String clickHouseVersion = writer.getClickHouseVersion();
+                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+            } catch(Exception e) {
+                log.error("Error retrieving version");
+            }
+        }
+        StringBuffer clickHouseQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+
+        if(checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
+            log.debug("Ignoring DDL");
+            return;
+        }
 
         long currentTime = System.currentTimeMillis();
         boolean ddlProcessingResult = true;
@@ -131,10 +151,7 @@ public class DebeziumChangeEventCapture {
                 String DDL = (String) struct.get("ddl");
                 log.info("Source DB DDL: " + DDL);
 
-                if(checkIfDDLNeedsToBeIgnored(DDL, props, sr)) {
-                    log.debug("Ignoring DDL");
-                    return;
-                }
+
                 if (DDL != null && DDL.isEmpty() == false)
                 //&& ((DDL.toUpperCase().contains("ALTER TABLE") || DDL.toUpperCase().contains("RENAME TABLE"))))
                 {
@@ -143,7 +160,7 @@ public class DebeziumChangeEventCapture {
                     this.executor.awaitTermination(60, TimeUnit.SECONDS);
 
 
-                    performDDLOperation(DDL, config);
+                    performDDLOperation(DDL, props, sr, config);
                     this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
 
                     this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
@@ -170,7 +187,13 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr) {
+    /***
+     * Function that checks if the DDL needs to be ignored.
+     * @param props Properties (passed by user)
+     * @param sr
+     * @return
+     */
+    private boolean checkIfDDLNeedsToBeIgnored(Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
 
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
@@ -191,7 +214,10 @@ public class DebeziumChangeEventCapture {
             enableSnapshotDDLPropertyFlag = true;
         }
 
-        if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == true) {
+        if(isDropOrTruncate.get()== false) {
+            return false;
+        }
+        else if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == true) {
             // User wants to execute snapshot DDL
             return false;
         } else {
