@@ -110,10 +110,10 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
                     "    `username` String,\n" +
                     "    `email` Nullable(String),\n" +
                     "    `joined` Date32,\n" +
-                    "    `_sign` Int8,\n" +
-                    "    `_version` UInt64\n" +
+                    "    `_version` UInt64,\n" +
+                    "    `is_deleted` UInt8\n" +
                     ")\n" +
-                    "ENGINE = ReplacingMergeTree(_version)\n" +
+                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
                     "PARTITION BY joined\n" +
                     "ORDER BY tuple()\n" +
                     "SETTINGS index_granularity = 8192"));
@@ -126,10 +126,10 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT extends ClickHouseDe
                     "    `b` Nullable(Int32),\n" +
                     "    `c` String,\n" +
                     "    `d` Int32,\n" +
-                    "    `_sign` Int8,\n" +
-                    "    `_version` UInt64\n" +
+                    "    `_version` UInt64,\n" +
+                    "    `is_deleted` UInt8\n" +
                     ")\n" +
-                    "ENGINE = ReplacingMergeTree(_version)\n" +
+                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
                     "PARTITION BY (a, d, c)\n" +
                     "ORDER BY tuple()\n" +
                     "SETTINGS index_granularity = 8192"));
