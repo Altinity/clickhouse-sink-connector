@@ -22,7 +22,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  (a,d,c) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -39,7 +39,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE members(firstname String,lastname String,username String,email Nullable(String),joined Date32,`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) PARTITION BY  joined ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE members(firstname String,lastname String,username String,email Nullable(String),joined Date32,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -66,7 +66,7 @@ public class MySqlDDLParserListenerImplTest {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -77,7 +77,7 @@ public class MySqlDDLParserListenerImplTest {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2),max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2),max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -89,7 +89,7 @@ public class MySqlDDLParserListenerImplTest {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createDBQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists 730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY (id)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists 730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -108,7 +108,7 @@ public class MySqlDDLParserListenerImplTest {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `salaries`(`emp_no` Int32,`salary` Int32,`from_date` Date32,`to_date` Date32,`_sign` Int8,`_version` UInt64) Engine=ReplacingMergeTree(_version) ORDER BY (`emp_no`,`from_date`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `salaries`(`emp_no` Int32,`salary` Int32,`from_date` Date32,`to_date` Date32,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`emp_no`,`from_date`)"));
         log.info("Create table query" + clickHouseQuery.toString());
     }
 
