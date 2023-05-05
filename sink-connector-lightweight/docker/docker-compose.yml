@@ -37,7 +37,7 @@ services:
       - "8123:8123"
       - "9000:9000"
     environment:
-      - CLICKHOUSE_USER=ch_user
+      - CLICKHOUSE_USER=root
       - CLICKHOUSE_PASSWORD=root
       - CLICKHOUSE_DB=test
       - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0

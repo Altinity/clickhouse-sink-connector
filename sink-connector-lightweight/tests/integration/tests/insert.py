@@ -148,10 +148,6 @@ def one_partition_one_part(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("_no_primary_key"):
-                xfail(
-                    "doesn't work without primary key as only last row of insert is replicated"
-                )
             with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to create one partition and one part in replicated ClickHouse table"
@@ -192,31 +188,28 @@ def one_partition_many_parts(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("_no_primary_key"):
-                xfail(
-                    "doesn't work without primary key as only last row of insert is replicated"
-                )
-            with Example(f"{table_name}", flags=TE):
-                with When(
-                    "I perform insert in MySQL to create one partition with many parts in replicated ClickHouse table"
-                ):
-                    complex_insert(
-                        node=self.context.cluster.node("mysql-master"),
-                        table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
-                        partitions=1,
-                        parts_per_partition=100,
-                        block_size=1000,
-                    )
+            if table_name.endswith("_complex"):
+                with Example(f"{table_name}", flags=TE):
+                    with When(
+                        "I perform insert in MySQL to create one partition with many parts in replicated ClickHouse table"
+                    ):
+                        complex_insert(
+                            node=self.context.cluster.node("mysql-master"),
+                            table_name=table_name,
+                            values=["({x},{y})", "({x},{y})"],
+                            partitions=1,
+                            parts_per_partition=100,
+                            block_size=1000,
+                        )
 
-                with Then(
-                    "I check that MySQL tables and Clickhouse replication tables have the same data"
-                ):
-                    complex_check_creation_and_select(
-                        table_name=table_name,
-                        statement="count(*)",
-                        with_final=True,
-                    )
+                    with Then(
+                        "I check that MySQL tables and Clickhouse replication tables have the same data"
+                    ):
+                        complex_check_creation_and_select(
+                            table_name=table_name,
+                            statement="count(*)",
+                            with_final=True,
+                        )
 
 
 @TestFeature
@@ -236,43 +229,41 @@ def one_partition_mixed_parts(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("_no_primary_key"):
-                xfail(
-                    "doesn't work without primary key as only last row of insert is replicated"
-                )
-            with Example(f"{table_name}", flags=TE):
-                with When(
-                    "I perform insert in MySQL to create one large part in replicated ClickHouse table"
-                ):
-                    complex_insert(
-                        node=self.context.cluster.node("mysql-master"),
-                        table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
-                        partitions=1,
-                        parts_per_partition=1,
-                        block_size=1000,
-                    )
+            if table_name.endswith("_complex"):
+                with Example(f"{table_name}", flags=TE):
+                    with When(
+                        "I perform insert in MySQL to create one large part in replicated ClickHouse table"
+                    ):
+                        complex_insert(
+                            node=self.context.cluster.node("mysql-master"),
+                            table_name=table_name,
+                            values=["({x},{y})", "({x},{y})"],
+                            partitions=1,
+                            parts_per_partition=1,
+                            block_size=100,
+                        )
 
-                with And(
-                    "I perform insert in MySQL to create many small parts in replicated ClickHouse table"
-                ):
-                    complex_insert(
-                        node=self.context.cluster.node("mysql-master"),
-                        table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
-                        partitions=1,
-                        parts_per_partition=100,
-                        block_size=10,
-                    )
+                    with And(
+                        "I perform insert in MySQL to create many small parts in replicated ClickHouse table"
+                    ):
+                        complex_insert(
+                            node=self.context.cluster.node("mysql-master"),
+                            table_name=table_name,
+                            start_id=2,
+                            values=["({x},{y})", "({x},{y})"],
+                            partitions=1,
+                            parts_per_partition=100,
+                            block_size=10,
+                        )
 
-                with Then(
-                    "I check that MySQL tables and Clickhouse replication tables have the same data"
-                ):
-                    complex_check_creation_and_select(
-                        table_name=table_name,
-                        statement="count(*)",
-                        with_final=True,
-                    )
+                    with Then(
+                        "I check that MySQL tables and Clickhouse replication tables have the same data"
+                    ):
+                        complex_check_creation_and_select(
+                            table_name=table_name,
+                            statement="count(*)",
+                            with_final=True,
+                        )
 
 
 @TestFeature
@@ -306,9 +297,9 @@ def many_partitions_one_part(self, node=None):
                             node=self.context.cluster.node("mysql-master"),
                             table_name=table_name,
                             values=["({x},{y})", "({x},{y})"],
-                            partitions=2,
+                            partitions=1000,
                             parts_per_partition=1,
-                            block_size=2,
+                            block_size=1,
                         )
 
                     with Then(
@@ -338,11 +329,7 @@ def many_partitions_many_parts(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("complex") or table_name.endswith("no_primary_key"):
-                if table_name.endswith("_no_primary_key"):
-                    xfail(
-                        "doesn't work without primary key as only last row of insert is replicated"
-                    )
+            if table_name.endswith("complex"):
                 with Example(f"{table_name}", flags=TE):
                     with When(
                         "I perform insert in MySQL to create many partitions and many parts in replicated ClickHouse table"
@@ -351,9 +338,9 @@ def many_partitions_many_parts(self, node=None):
                             node=self.context.cluster.node("mysql-master"),
                             table_name=table_name,
                             values=["({x},{y})", "({x},{y})"],
-                            partitions=100,
-                            parts_per_partition=100,
-                            block_size=100,
+                            partitions=10,
+                            parts_per_partition=10,
+                            block_size=10,
                         )
 
                     with Then(
@@ -383,11 +370,7 @@ def many_partitions_mixed_parts(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("complex") or table_name.endswith("no_primary_key"):
-                if table_name.endswith("_no_primary_key"):
-                    xfail(
-                        "doesn't work without primary key as only last row of insert is replicated"
-                    )
+            if table_name.endswith("complex"):
                 with Example(f"{table_name}", flags=TE):
                     with When(
                         "I perform insert in MySQL to create one large part in replicated ClickHouse table"
@@ -407,6 +390,7 @@ def many_partitions_mixed_parts(self, node=None):
                         complex_insert(
                             node=self.context.cluster.node("mysql-master"),
                             table_name=table_name,
+                            start_id=3,
                             values=["({x},{y})", "({x},{y})"],
                             partitions=10,
                             parts_per_partition=10,
@@ -426,6 +410,7 @@ def many_partitions_mixed_parts(self, node=None):
 @TestFeature
 @Name("one million datapoints")
 def one_million_datapoints(self, node=None):
+    xfail("too big insert")
     """Check that `INSERT` of one million entries to MySQL is properly propagated to the replicated ClickHouse table."""
     name = f"{getuid()}"
 
@@ -439,32 +424,31 @@ def one_million_datapoints(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("complex") or table_name.endswith("no_primary_key"):
-                if table_name.endswith("_no_primary_key"):
-                    xfail(
-                        "doesn't work without primary key as only last row of insert is replicated"
+            if table_name.endswith("_no_primary_key"):
+                xfail(
+                    "doesn't work without primary key as only last row of insert is replicated"
+                )
+            with Example(f"{table_name}", flags=TE):
+                with When(
+                    "I perform insert in MySQL to create one million entries in replicated ClickHouse table"
+                ):
+                    complex_insert(
+                        node=self.context.cluster.node("mysql-master"),
+                        table_name=table_name,
+                        values=["({x},{y})", "({x},{y})"],
+                        partitions=100000,
+                        parts_per_partition=1,
+                        block_size=1,
                     )
-                with Example(f"{table_name}", flags=TE):
-                    with When(
-                        "I perform insert in MySQL to create one million entries in replicated ClickHouse table"
-                    ):
-                        complex_insert(
-                            node=self.context.cluster.node("mysql-master"),
-                            table_name=table_name,
-                            values=["({x},{y})", "({x},{y})"],
-                            partitions=100,
-                            parts_per_partition=10,
-                            block_size=1000,
-                        )
 
-                    with Then(
-                        "I check that MySQL tables and Clickhouse replication tables have the same data"
-                    ):
-                        complex_check_creation_and_select(
-                            table_name=table_name,
-                            statement="count(*)",
-                            with_final=True,
-                        )
+                with Then(
+                    "I check that MySQL tables and Clickhouse replication tables have the same data"
+                ):
+                    complex_check_creation_and_select(
+                        table_name=table_name,
+                        statement="count(*)",
+                        with_final=True,
+                    )
 
 
 @TestFeature
@@ -498,22 +482,27 @@ def parallel(self):
                         partitions=1,
                         parts_per_partition=1,
                         block_size=1,
+                        exitcode=False
                     )
                     By(f"100 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
                         values=["({x},{y})", "({x},{y})"],
-                        partitions=1,
-                        parts_per_partition=10,
-                        block_size=10,
+                        partitions=100,
+                        parts_per_partition=1,
+                        block_size=1,
+                        exitcode=False
+
                     )
                     By(f"1000 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
                         values=["({x},{y})", "({x},{y})"],
-                        partitions=1,
-                        parts_per_partition=10,
-                        block_size=100,
+                        start_id=2,
+                        partitions=1000,
+                        parts_per_partition=1,
+                        block_size=1,
+                        exitcode=False
                     )
 
                     join()

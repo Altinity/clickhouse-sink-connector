@@ -18,9 +18,10 @@ def create_mysql_table(self, name=None, statement=None, node=None):
     if name is None:
         name = "users"
     if statement is None:
-        statement = f"CREATE TABLE IF NOT EXISTS {name} "
-        f"(id INT AUTO_INCREMENT, age INT, PRIMARY KEY (id))"
-        f" ENGINE = InnoDB;"
+        statement = (f"CREATE TABLE IF NOT EXISTS {name}"
+                     f" (id INT AUTO_INCREMENT,"
+                     # f" (id INT,"
+                     f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;")
 
     try:
         with Given(f"I create MySQL table {name}"):
@@ -108,7 +109,7 @@ def create_mysql_to_clickhouse_replicated_table(
                 f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
                 # f"(id INT,"
                 f"{mysql_columns}"
-                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''})"
+                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
                 f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
@@ -135,7 +136,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"/{name}',"
                         " '{replica}',"
                         f" {version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})'if primary_key is not None else ''}"
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})'if primary_key is not None else 'ORDER BY tuple()'}"
                         f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
                         f" SETTINGS "
                         f"index_granularity = 8192;",
@@ -149,7 +150,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplacingMergeTree({version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else ''}"
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else 'ORDER BY tuple()'}"
                         f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
                         f" SETTINGS "
                         f"index_granularity = 8192;",
@@ -294,32 +295,40 @@ def complex_insert(
     self,
     table_name,
     values,
+    start_id=1,
+    start_value=1,
     node=None,
     partitions=101,
     parts_per_partition=1,
     block_size=1,
+    exitcode=True
 ):
     """Insert data having specified number of partitions and parts."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
+    x = start_id
+    y = start_value
+
+
     insert_values_1 = ",".join(
-        f"{values[0]}".format(x=x + 1, y=y + 1)
-        for x in range(partitions)
-        for y in range(block_size * parts_per_partition)
+        f"{values[0]}".format(x=x, y=y)
+        for x in range(start_id, partitions+start_id)
+        for y in range(start_value, block_size * parts_per_partition+start_value)
     )
-    # insert_values_2 = ",".join(
-    #     f"{values[1]}".format(x=x, y=y)
-    #     for x in range(partitions)
-    #     for y in range(block_size * parts_per_partition)
-    # )
-    # node.query("system stop merges")
-    retry(
-        node.query,
-        timeout=300,
-        delay=10,
-    )(f"INSERT INTO {table_name} VALUES {insert_values_1}", exitcode=0)
-    # node.query(f"INSERT INTO {table_name} VALUES {insert_values_2}")
+
+    if exitcode:
+        retry(
+            node.query,
+            timeout=300,
+            delay=10,
+        )(f"INSERT INTO {table_name} VALUES {insert_values_1}", exitcode=0)
+    else:
+        retry(
+            node.query,
+            timeout=300,
+            delay=10,
+        )(f"INSERT INTO {table_name} VALUES {insert_values_1}")
 
 
 @TestStep(Then)

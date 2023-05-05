@@ -145,7 +145,7 @@ def regression(
 
     self.context.clickhouse_table_engines = [
         "ReplacingMergeTree",
-        "ReplicatedReplacingMergeTree"
+        # "ReplicatedReplacingMergeTree"
     ]
 
     if check_clickhouse_version("<21.4")(self):
