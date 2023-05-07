@@ -29,7 +29,7 @@ A Sample docker-compose is provided , it starts the docker container \
 ```
 cd sink-connector-lightweight
 cd docker
-docker-compose up
+./start-docker-compose.sh
 ```
 
 ###  Getting Started (PostgreSQL)
