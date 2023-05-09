@@ -20,7 +20,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
-import static java.lang.Class.forName;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -227,6 +227,34 @@ public class DebeziumChangeEventCapture {
 
     }
 
+    /**
+     * Function to create database for Debezium storage.
+     * @param config
+     */
+    private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
+        try {
+            DBCredentials dbCredentials = parseDBConfiguration(config);
+            if (writer == null) {
+                writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                        dbCredentials.getPassword(), config);
+            }
+
+            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+            if(tableName.contains(".")) {
+                String[] dbTableNameArray = tableName.split("\\.");
+                if(dbTableNameArray.length >= 2) {
+                    String dbName = dbTableNameArray[0];
+                    String createDbQuery = String.format("create database if not exists %s", dbName);
+                    log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
+                    writer.executeQuery(createDbQuery);
+                }
+            }
+
+        } catch(Exception e) {
+            log.error("Error creating Debezium storage database", e);
+        }
+    }
     public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
@@ -235,6 +263,9 @@ public class DebeziumChangeEventCapture {
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config) throws IOException, ClassNotFoundException {
 
+        createDatabaseForDebeziumStorage(config, props);
+        // This is required for Debezium JDBC storage to identify the clickhouse driver.
+        // when it's bundled as a shaded JAR.
         Class chDriver = Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
         // Create the engine with this configuration ...
         try {

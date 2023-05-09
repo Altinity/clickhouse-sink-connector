@@ -1,10 +1,10 @@
-database.hostname: "mysql-master"
+database.hostname: "localhost"
 database.port: "3306"
 database.user: "root"
 database.password: "root"
 database.include.list: sbtest
 #table.include.list=sbtest1
-clickhouse.server.url: "clickhouse"
+clickhouse.server.url: "localhost"
 clickhouse.server.user: "root"
 clickhouse.server.pass: "root"
 clickhouse.server.port: "8123"
@@ -14,7 +14,7 @@ snapshot.mode: "schema_only"
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
-offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123"
 offset.storage.jdbc.user: "root"
 offset.storage.jdbc.password: "root"
 offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
@@ -31,7 +31,7 @@ ORDER BY id
 SETTINGS index_granularity = 8198"
 offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://localhost:8123"
 schema.history.internal.jdbc.user: "root"
 schema.history.internal.jdbc.password: "root"
 schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
