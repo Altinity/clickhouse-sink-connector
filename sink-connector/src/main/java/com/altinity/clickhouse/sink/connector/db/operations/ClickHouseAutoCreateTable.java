@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
-import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;

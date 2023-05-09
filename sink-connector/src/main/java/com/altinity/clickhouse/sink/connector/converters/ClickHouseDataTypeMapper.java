@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.clickhouse.client.ClickHouseDataType;
-import com.clickhouse.client.data.ClickHouseDoubleValue;
+import com.clickhouse.data.ClickHouseDataType;
+import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
 import io.debezium.data.Enum;

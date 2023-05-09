@@ -20,6 +20,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
+import static java.lang.Class.forName;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -232,7 +233,9 @@ public class DebeziumChangeEventCapture {
     public int numRetries = 0;
 
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) throws IOException {
+                                          ClickHouseSinkConnectorConfig config) throws IOException, ClassNotFoundException {
+
+        Class chDriver = Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
@@ -257,7 +260,7 @@ public class DebeziumChangeEventCapture {
                                     }
                                     try {
                                         setupDebeziumEventCapture(props, debeziumRecordParserService, config);
-                                    } catch (IOException e) {
+                                    } catch (IOException | ClassNotFoundException e) {
                                         throw new RuntimeException(e);
                                     }
                                 }
@@ -284,7 +287,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) throws IOException {
+                      DDLParserService ddlParserService) throws IOException, ClassNotFoundException {
 
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));

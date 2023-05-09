@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
-import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;

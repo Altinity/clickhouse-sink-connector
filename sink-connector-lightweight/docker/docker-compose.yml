@@ -77,14 +77,16 @@ services:
     restart: "no"
     ports:
       - "8083:8083"
+      - "5005:5005"
 #    depends_on:
 #      - mysql-master
-    env_file:
-      - docker.env
+#    env_file:
+#      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
+      - ./config.yml:/config.yml
 
 
   ### MONITORING ####

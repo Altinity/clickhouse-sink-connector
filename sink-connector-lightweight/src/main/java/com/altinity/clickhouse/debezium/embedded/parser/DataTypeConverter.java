@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.parser;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
-import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.antlr.DataTypeResolver;
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.connector.mysql.MySqlValueConverters;
