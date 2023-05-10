@@ -37,4 +37,4 @@ schema.history.internal.jdbc.password: "root"
 schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
-schema.history.internal.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"

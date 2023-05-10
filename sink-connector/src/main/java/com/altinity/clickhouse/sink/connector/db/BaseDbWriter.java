@@ -16,6 +16,12 @@ public class BaseDbWriter {
 
     protected ClickHouseConnection conn;
 
+    private String hostName;
+    private Integer port;
+    private String database;
+    private String userName;
+    private String password;
+
     private static final Logger log = LoggerFactory.getLogger(BaseDbWriter.class);
 
     public BaseDbWriter(
@@ -26,6 +32,12 @@ public class BaseDbWriter {
             String password,
             ClickHouseSinkConnectorConfig config
     ) {
+
+        this.hostName = hostName;
+        this.port = port;
+        this.database = database;
+        this.userName = userName;
+        this.password = password;
 
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
@@ -99,6 +111,10 @@ public class BaseDbWriter {
      */
     public String executeQuery(String sql) throws SQLException {
         String result = null;
+        if(this.conn == null) {
+            String connectionUrl = getConnectionString(hostName, port, database);
+            this.createConnection(connectionUrl, "Agent_1", userName, password);
+        }
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         if(rs != null) {
             while(rs.next()) {
