@@ -18,10 +18,12 @@ def create_mysql_table(self, name=None, statement=None, node=None):
     if name is None:
         name = "users"
     if statement is None:
-        statement = (f"CREATE TABLE IF NOT EXISTS {name}"
-                     f" (id INT AUTO_INCREMENT,"
-                     # f" (id INT,"
-                     f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;")
+        statement = (
+            f"CREATE TABLE IF NOT EXISTS {name}"
+            f" (id INT AUTO_INCREMENT,"
+            # f" (id INT,"
+            f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
+        )
 
     try:
         with Given(f"I create MySQL table {name}"):
@@ -103,16 +105,6 @@ def create_mysql_to_clickhouse_replicated_table(
         clickhouse_node = self.context.cluster.node("clickhouse")
 
     try:
-        with Given(f"I create MySQL table", description=name):
-            mysql_node.query(
-                f"CREATE TABLE IF NOT EXISTS {name} "
-                f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
-                # f"(id INT,"
-                f"{mysql_columns}"
-                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
-                f"{' ENGINE = InnoDB;' if engine else ''}",
-            )
-
         if self.context.env.endswith("auto"):
             if clickhouse_table_engine == "ReplacingMergeTree":
                 pass
@@ -123,7 +115,7 @@ def create_mysql_to_clickhouse_replicated_table(
 
         elif self.context.env.endswith("manual"):
             if clickhouse_table_engine == "ReplicatedReplacingMergeTree":
-                with And(
+                with Given(
                     f"I create ReplicatedReplacingMergeTree as a replication table",
                     description=name,
                 ):
@@ -142,7 +134,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"index_granularity = 8192;",
                     )
             elif clickhouse_table_engine == "ReplacingMergeTree":
-                with And(
+                with Given(
                     f"I create ClickHouse table as replication table to MySQL test.{name}"
                 ):
                     clickhouse_node.query(
@@ -164,6 +156,15 @@ def create_mysql_to_clickhouse_replicated_table(
         else:
             raise NotImplementedError(
                 f"table creation method '{self.context.env}' not supported"
+            )
+
+        with Given(f"I create MySQL table", description=name):
+            mysql_node.query(
+                f"CREATE TABLE IF NOT EXISTS {name} "
+                f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
+                f"{mysql_columns}"
+                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
+                f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
         yield
@@ -301,7 +302,7 @@ def complex_insert(
     partitions=101,
     parts_per_partition=1,
     block_size=1,
-    exitcode=True
+    exitcode=True,
 ):
     """Insert data having specified number of partitions and parts."""
     if node is None:
@@ -310,11 +311,10 @@ def complex_insert(
     x = start_id
     y = start_value
 
-
     insert_values_1 = ",".join(
         f"{values[0]}".format(x=x, y=y)
-        for x in range(start_id, partitions+start_id)
-        for y in range(start_value, block_size * parts_per_partition+start_value)
+        for x in range(start_id, partitions + start_id)
+        for y in range(start_value, block_size * parts_per_partition + start_value)
     )
 
     if exitcode:

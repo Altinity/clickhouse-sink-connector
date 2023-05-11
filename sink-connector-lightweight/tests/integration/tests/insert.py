@@ -482,7 +482,7 @@ def parallel(self):
                         partitions=1,
                         parts_per_partition=1,
                         block_size=1,
-                        exitcode=False
+                        exitcode=False,
                     )
                     By(f"100 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
@@ -491,8 +491,7 @@ def parallel(self):
                         partitions=100,
                         parts_per_partition=1,
                         block_size=1,
-                        exitcode=False
-
+                        exitcode=False,
                     )
                     By(f"1000 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
@@ -502,7 +501,7 @@ def parallel(self):
                         partitions=1000,
                         parts_per_partition=1,
                         block_size=1,
-                        exitcode=False
+                        exitcode=False,
                     )
 
                     join()

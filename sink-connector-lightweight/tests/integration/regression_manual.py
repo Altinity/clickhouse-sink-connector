@@ -77,6 +77,9 @@ xfails = {
     "insert/parallel": [
         (Fail, "different results in MySQL and Clickhouse")
     ],
+    "types/enum": [
+        (Fail, "doesn't replicate data")
+    ],
 }
 xflags = {}
 

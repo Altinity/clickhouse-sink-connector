@@ -90,6 +90,9 @@ xfails = {
     "insert/parallel/*_no_primary_key": [
         (Fail, "doesn't work without primary key as only last row of insert is replicated")
     ],
+    "types/enum": [
+        (Fail, "doesn't create table")
+    ],
 
 }
 xflags = {}
@@ -186,7 +189,8 @@ def regression(
         "virtual_columns",
         "partition_limits",
         "columns_inconsistency",
-        "snowflake_id"
+        "snowflake_id",
+        "offset"
 
     ]
     for module in modules:

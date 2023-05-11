@@ -26,18 +26,22 @@ services:
 
   debezium:
     hostname: debezium
-    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:2023-04-25
+    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:2023-05-10
 
     restart: "no"
     expose:
       - "8083"
       - "1976"
-    depends_on:
-      - mysql-master
-    env_file:
-      - docker.env
+      - "5005"
+#    depends_on:
+#      - mysql-master
+#    env_file:
+#      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+#      - ./data:/data
+      - ./config.yml:/config.yml
 
   zookeeper:
     extends:
