@@ -29,6 +29,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 6
+    networks:
+      - default
+      - timecamp
 
   clickhouse:
     # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
@@ -53,6 +56,9 @@ services:
     depends_on:
       zookeeper:
         condition: service_healthy
+    networks:
+      - default
+      - timecamp
 
   zookeeper:
       image: zookeeper:3.6.2
@@ -69,6 +75,9 @@ services:
         start_period: 2s
       security_opt:
         - label:disable
+      networks:
+        - default
+        - timecamp
 
   debezium-embedded:
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
@@ -83,6 +92,9 @@ services:
       - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - timecamp
 
 
   ### MONITORING ####
@@ -94,6 +106,9 @@ services:
       - "9090:9090"
     volumes:
       - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+    networks:
+      - default
+      - timecamp
 
   grafana:
     build:
@@ -114,4 +129,13 @@ services:
       - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
     depends_on:
       - prometheus
+    networks:
+      - default
+      - timecamp
     ## END OF MONITORING ###
+
+networks:
+  default:
+    driver: bridge
+  timecamp:
+    external: true
