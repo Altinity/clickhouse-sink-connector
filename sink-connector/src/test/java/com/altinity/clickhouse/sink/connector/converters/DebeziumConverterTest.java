@@ -3,7 +3,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
-import com.clickhouse.client.data.ClickHouseArrayValue;
+import com.clickhouse.data.value.ClickHouseArrayValue;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.junit.Assert;

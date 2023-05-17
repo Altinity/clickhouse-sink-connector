@@ -2,7 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
-import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.Json;
 import org.apache.kafka.connect.data.Decimal;

@@ -1,12 +1,12 @@
 package com.altinity.clickhouse.sink.connector.metadata;
 
-import com.clickhouse.client.data.BinaryStreamUtils;
+import com.clickhouse.data.format.BinaryStreamUtils;
 
 import java.time.Instant;
 import java.time.ZoneId;
 
-import static com.clickhouse.client.data.BinaryStreamUtils.DATETIME64_MAX;
-import static com.clickhouse.client.data.BinaryStreamUtils.DATETIME64_MIN;
+import static com.clickhouse.data.format.BinaryStreamUtils.DATETIME64_MAX;
+import static com.clickhouse.data.format.BinaryStreamUtils.DATETIME64_MIN;
 import static java.time.Instant.*;
 
 public class DataTypeRange
