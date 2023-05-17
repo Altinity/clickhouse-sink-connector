@@ -144,6 +144,7 @@ def stop_start(self, services):
 @TestSuite
 def debezium_stop_start(self):
     """Check replication with debezium unavailable."""
+
     nodes_list = ["debezium"]
 
     Scenario(f"{nodes_list} unavailable", test=stop_start, flags=TE)(

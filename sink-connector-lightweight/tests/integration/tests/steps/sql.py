@@ -162,6 +162,7 @@ def create_mysql_to_clickhouse_replicated_table(
             mysql_node.query(
                 f"CREATE TABLE IF NOT EXISTS {name} "
                 f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
+                # f"(id INT ,"
                 f"{mysql_columns}"
                 f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
                 f"{' ENGINE = InnoDB;' if engine else ''}",
