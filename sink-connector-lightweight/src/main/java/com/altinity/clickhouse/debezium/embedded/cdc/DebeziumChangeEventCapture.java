@@ -83,8 +83,10 @@ public class DebeziumChangeEventCapture {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
         if(checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
-            log.debug("Ignoring DDL");
+            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
+        } else {
+            log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         }
 
         long currentTime = System.currentTimeMillis();
@@ -150,7 +152,7 @@ public class DebeziumChangeEventCapture {
                     .orElse(null);
             if (matchingDDLField != null) {
                 String DDL = (String) struct.get("ddl");
-                log.info("Source DB DDL: " + DDL);
+                //log.info("Source DB DDL: " + DDL);
 
 
                 if (DDL != null && DDL.isEmpty() == false)
@@ -188,6 +190,17 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    private boolean isSnapshotDDL(SourceRecord sr) {
+        boolean snapshotDDL = false;
+
+        if(sr.sourceOffset() != null) {
+            if (sr.sourceOffset().containsKey("snapshot")) {
+                snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
+            }
+        }
+
+        return snapshotDDL;
+    }
     /***
      * Function that checks if the DDL needs to be ignored.
      * @param props Properties (passed by user)
@@ -202,12 +215,7 @@ public class DebeziumChangeEventCapture {
             return true;
         }
 
-        boolean isSnapshotDDL = false;
-        if(sr.sourceOffset() != null) {
-            if(sr.sourceOffset().containsKey("snapshot")) {
-                isSnapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
-            }
-        }
+        boolean isSnapshotDDL = isSnapshotDDL(sr);
 
         String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
         boolean enableSnapshotDDLPropertyFlag = false;
@@ -215,14 +223,14 @@ public class DebeziumChangeEventCapture {
             enableSnapshotDDLPropertyFlag = true;
         }
 
-        if(isDropOrTruncate.get()== false) {
-            return false;
-        }
-        else if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == true) {
-            // User wants to execute snapshot DDL
-            return false;
-        } else {
+//        if(isDropOrTruncate.get()== false) {
+//            return false;
+//        }
+        if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == false) {
+            // User wants to ignore snapshot
             return true;
+        } else {
+            return false;
         }
 
     }

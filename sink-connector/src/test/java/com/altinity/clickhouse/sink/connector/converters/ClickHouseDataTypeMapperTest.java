@@ -1,8 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.client.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.time.Date;
 import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
