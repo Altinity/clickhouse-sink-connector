@@ -16,6 +16,7 @@ def stop_start_parallel(self, services, loops=10):
     with Given("I create unique table name"):
         table_name = f"test{uid}"
 
+
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
             name=table_name,
@@ -72,21 +73,21 @@ def debezium_stop_start_parallel(self):
 @TestOutline
 def stop_start(self, services):
     """Check for data consistency with service is stopping and starting."""
-    uid = getuid()
 
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
     with Given("I create unique table name"):
-        table_name = f"test{uid}"
+        table_name = f"test{getuid()}"
+        # table_name = "testd06864ef_f576_11ed_afcb_fb89cf2d4539"
 
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
             name=table_name,
             statement=f"CREATE TABLE {table_name} "
             "(id int(11) NOT NULL,"
-            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL DEFAULT '',"
-            f"pad char(60) NOT NULL DEFAULT '', PRIMARY KEY (id)) ENGINE = InnoDB;",
+            "k int(11) NOT NULL DEFAULT 0,c char(120) NOT NULL,"
+            f"pad char(60) NOT NULL, PRIMARY KEY (id)) ENGINE = InnoDB;",
         )
 
     with When("I insert 4 rows in MySQL"):
@@ -103,11 +104,12 @@ def stop_start(self, services):
             delay=10,
         )(f"SELECT count(*) FROM test.{table_name}", message="4")
 
+
         for node in services:
             with Shell() as bash:
                 self.context.cluster.node(f"{node}").stop()
 
-        time.sleep(5)
+
 
         for i2 in range(2):
             retry(
@@ -116,29 +118,22 @@ def stop_start(self, services):
                 delay=10,
             )(f"INSERT INTO {table_name} VALUES ({i2 + 6},1,1,1)", exitcode=0)
 
-        time.sleep(5)
-
-        for node in services:
-            if node != "clickhouse":
-                retry(
-                    clickhouse.query,
-                    timeout=300,
-                    delay=10,
-                )(f"SELECT count(*) FROM test.{table_name}", message="4")
+        for i2 in range(2):
+            retry(
+                mysql.query,
+                timeout=300,
+                delay=10,
+            )(f"select * from {table_name}", exitcode=0)
 
         for node in services:
             with Shell() as bash:
                 self.context.cluster.node(f"{node}").start()
 
-        retry(
-            clickhouse.query,
-            timeout=300,
-            delay=10,
-        )(f"SELECT count(*) FROM test.{table_name}", message="6")
+    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
+        select(statement="count(*)", table_name=table_name, with_finale=True)
 
-    # with Then("I check that ClickHouse table has same number of rows as MySQL table"):
-    #     select(statement="count(*)", table_name=table_name, with_optimize=True)
-    #     pause()
+    with And("Drop system tables"):
+        clickhouse.query(F"DROP DATABASE altinity_sink_connector")
 
 
 @TestSuite

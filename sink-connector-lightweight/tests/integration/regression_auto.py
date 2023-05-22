@@ -165,10 +165,11 @@ def regression(
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
 
-    self.context.node = cluster.node("clickhouse1")
+    self.context.node = cluster.node("clickhouse")
 
     with And("I create test database in ClickHouse"):
         create_database(name="test")
+        pause()
 
     modules = [
         "sanity",
@@ -190,7 +191,8 @@ def regression(
         "partition_limits",
         "columns_inconsistency",
         "snowflake_id",
-        "offset"
+        "offset",
+        "databases"
 
     ]
     for module in modules:

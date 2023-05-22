@@ -24,6 +24,7 @@ def mysql_to_clickhouse_connection(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
+
     with When(f"I insert data in MySql table"):
         complex_insert(
             node=mysql,
@@ -53,7 +54,6 @@ def mysql_to_clickhouse(
     clickhouse_columns="MyData Int32",
 ):
     """Basic check MySQL to Clickhouse connection by small and simple data insert with all availabe methods and tables."""
-    pause()
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):

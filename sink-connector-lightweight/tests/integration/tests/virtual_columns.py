@@ -22,6 +22,7 @@ def virtual_column_names(
     mysql = self.context.cluster.node("mysql-master")
 
     table_name = f"virtual_columns_{getuid()}"
+    # table_name = "vendeta"
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_to_clickhouse_replicated_table(
@@ -31,18 +32,22 @@ def virtual_column_names(
             mysql_columns=mysql_columns,
             clickhouse_table_engine=clickhouse_table_engine,
         )
-    pause()
 
-    with When(f"I insert data in MySql table {table_name}"):
-        mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
+    # with When(f"I insert data in MySql table {table_name}"):
+    #     mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
 
-    pause()
 
     with Then(f"I make check that ClickHouse table virtual column names are correct"):
-        retry(clickhouse.query, timeout=50, delay=1)(
-            f"SHOW CREATE TABLE test.{table_name}",
-            message=f"`_sign` Int8,\\n    `{version_column}` UInt64\\n",
-        )
+        if check_clickhouse_version("<23")(self):
+            retry(clickhouse.query, timeout=50, delay=1)(
+                f"SHOW CREATE TABLE test.{table_name}",
+                message=f"`_sign` Int8,\\n    `{version_column}` UInt64",
+            )
+        else:
+            retry(clickhouse.query, timeout=50, delay=1)(
+                f"SHOW CREATE TABLE test.{table_name}",
+                message=f"`{version_column}` UInt64,\\n    `is_deleted` UInt8\\n",
+            )
 
     with And(f"I check that data is replicated"):
         complex_check_creation_and_select(

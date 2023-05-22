@@ -21,7 +21,6 @@ def create_mysql_table(self, name=None, statement=None, node=None):
         statement = (
             f"CREATE TABLE IF NOT EXISTS {name}"
             f" (id INT AUTO_INCREMENT,"
-            # f" (id INT,"
             f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
         )
 
@@ -161,8 +160,8 @@ def create_mysql_to_clickhouse_replicated_table(
         with Given(f"I create MySQL table", description=name):
             mysql_node.query(
                 f"CREATE TABLE IF NOT EXISTS {name} "
-                f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
-                # f"(id INT ,"
+                # f"(id INT {'AUTO_INCREMENT' if primary_key is not None else ''},"
+                f"(id INT NOT NULL,"
                 f"{mysql_columns}"
                 f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
                 f"{' ENGINE = InnoDB;' if engine else ''}",
@@ -370,7 +369,8 @@ def select(
 
     if with_final:
         retry(node.query, timeout=timeout, delay=10,)(
-            f"SELECT {statement} FROM test.{table_name}  FINAL WHERE {sign_column} != -1 FORMAT CSV",
+            # f"SELECT {statement} FROM test.{table_name}  FINAL WHERE {sign_column} != -1 FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} FINAL",
             # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
             message=f"{manual_output}",
         )

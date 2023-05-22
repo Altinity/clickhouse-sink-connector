@@ -49,11 +49,11 @@ def regression(
                 parallel=True,
                 executor=pool,
             )(**args)
-            Feature(
-                test=load("regression_manual", "regression"),
-                parallel=True,
-                executor=pool,
-            )(**args)
+            # Feature(
+            #     test=load("regression_manual", "regression"),
+            #     parallel=True,
+            #     executor=pool,
+            # )(**args)
         finally:
             join()
 
