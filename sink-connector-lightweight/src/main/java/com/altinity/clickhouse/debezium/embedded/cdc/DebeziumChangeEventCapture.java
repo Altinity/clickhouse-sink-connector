@@ -20,6 +20,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -82,8 +83,10 @@ public class DebeziumChangeEventCapture {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
         if(checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
-            log.debug("Ignoring DDL");
+            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
+        } else {
+            log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         }
 
         long currentTime = System.currentTimeMillis();
@@ -149,7 +152,7 @@ public class DebeziumChangeEventCapture {
                     .orElse(null);
             if (matchingDDLField != null) {
                 String DDL = (String) struct.get("ddl");
-                log.info("Source DB DDL: " + DDL);
+                //log.info("Source DB DDL: " + DDL);
 
 
                 if (DDL != null && DDL.isEmpty() == false)
@@ -187,6 +190,17 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    private boolean isSnapshotDDL(SourceRecord sr) {
+        boolean snapshotDDL = false;
+
+        if(sr.sourceOffset() != null) {
+            if (sr.sourceOffset().containsKey("snapshot")) {
+                snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
+            }
+        }
+
+        return snapshotDDL;
+    }
     /***
      * Function that checks if the DDL needs to be ignored.
      * @param props Properties (passed by user)
@@ -201,12 +215,7 @@ public class DebeziumChangeEventCapture {
             return true;
         }
 
-        boolean isSnapshotDDL = false;
-        if(sr.sourceOffset() != null) {
-            if(sr.sourceOffset().containsKey("snapshot")) {
-                isSnapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
-            }
-        }
+        boolean isSnapshotDDL = isSnapshotDDL(sr);
 
         String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
         boolean enableSnapshotDDLPropertyFlag = false;
@@ -214,25 +223,58 @@ public class DebeziumChangeEventCapture {
             enableSnapshotDDLPropertyFlag = true;
         }
 
-        if(isDropOrTruncate.get()== false) {
-            return false;
-        }
-        else if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == true) {
-            // User wants to execute snapshot DDL
-            return false;
-        } else {
+//        if(isDropOrTruncate.get()== false) {
+//            return false;
+//        }
+        if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == false) {
+            // User wants to ignore snapshot
             return true;
+        } else {
+            return false;
         }
 
     }
 
+    /**
+     * Function to create database for Debezium storage.
+     * @param config
+     */
+    private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
+        try {
+            DBCredentials dbCredentials = parseDBConfiguration(config);
+            if (writer == null) {
+                writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                        dbCredentials.getPassword(), config);
+            }
+
+            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+            if(tableName.contains(".")) {
+                String[] dbTableNameArray = tableName.split("\\.");
+                if(dbTableNameArray.length >= 2) {
+                    String dbName = dbTableNameArray[0];
+                    String createDbQuery = String.format("create database if not exists %s", dbName);
+                    log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
+                    writer.executeQuery(createDbQuery);
+                }
+            }
+
+        } catch(Exception e) {
+            log.error("Error creating Debezium storage database", e);
+        }
+    }
     public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
     public int numRetries = 0;
 
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) throws IOException {
+                                          ClickHouseSinkConnectorConfig config) throws IOException, ClassNotFoundException {
+
+        createDatabaseForDebeziumStorage(config, props);
+        // This is required for Debezium JDBC storage to identify the clickhouse driver.
+        // when it's bundled as a shaded JAR.
+        Class chDriver = Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
@@ -257,7 +299,7 @@ public class DebeziumChangeEventCapture {
                                     }
                                     try {
                                         setupDebeziumEventCapture(props, debeziumRecordParserService, config);
-                                    } catch (IOException e) {
+                                    } catch (IOException | ClassNotFoundException e) {
                                         throw new RuntimeException(e);
                                     }
                                 }
@@ -284,7 +326,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) throws IOException {
+                      DDLParserService ddlParserService) throws IOException, ClassNotFoundException {
 
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));

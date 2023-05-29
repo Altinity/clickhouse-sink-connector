@@ -71,20 +71,26 @@ services:
         - label:disable
 
   debezium-embedded:
+    #build:
+    #  context: ..
+    #  dockerfile: Dockerfile
+    #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     #    build:
 #      context: ../
     restart: "no"
     ports:
       - "8083:8083"
+      - "5005:5005"
 #    depends_on:
 #      - mysql-master
-    env_file:
-      - docker.env
+#    env_file:
+#      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/data
+      #- ./data:/data
+      - ./config.yml:/config.yml
 
 
   ### MONITORING ####

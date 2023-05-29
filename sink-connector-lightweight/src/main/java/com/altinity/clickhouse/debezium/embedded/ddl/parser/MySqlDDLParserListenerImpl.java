@@ -409,9 +409,12 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
         String chDataType = null;
         if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
-            precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
-            scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
-
+            try {
+                precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
+                scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
+            } catch(Exception e) {
+                log.error("Error parsing precision, scale");
+            }
         }
 
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();

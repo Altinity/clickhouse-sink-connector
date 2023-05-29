@@ -16,6 +16,27 @@ public class MySqlDDLParserListenerImplTest {
 
 
     @Test
+    public void testCreateTableWithEnum() {
+        String createQuery = "CREATE TABLE employees_predated (\n" +
+                "    emp_no      INT             NOT NULL,\n" +
+                "    birth_date  DATE            NOT NULL,\n" +
+                "    first_name  VARCHAR(14)     NOT NULL,\n" +
+                "    last_name   VARCHAR(16)     NOT NULL,\n" +
+                "    gender      ENUM ('M','F')  NOT NULL,\n" +
+                "    hire_date   DATE            NOT NULL,\n" +
+                "    PRIMARY KEY (emp_no)\n" +
+                ")  PARTITION BY RANGE (emp_no) (\n" +
+                "    PARTITION p1 VALUES LESS THAN (1000),\n" +
+                "    PARTITION p2 VALUES LESS THAN MAXVALUE\n" +
+                "  );";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees_predated(emp_no Int32,birth_date Date32,first_name String,last_name String,gender String,hire_date Date32,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (emp_no)"));
+        log.info("Create table " + clickHouseQuery);
+    }
+    @Test
     public void testCreateTableWithRangeByColumnsPartition() {
         String createQuery = "CREATE TABLE rcx ( a INT, b INT, c CHAR(3), d INT) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'), PARTITION p1 VALUES LESS THAN (10,20,'mmm'), " +
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
