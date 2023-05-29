@@ -33,11 +33,6 @@ public class ClickHouseBatchRunnable implements Runnable {
     private final ClickHouseSinkConnectorConfig config;
 
 
-    //private Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap;
-
-    private long lastFlushTimeInMs = 0;
-
-
     /**
      * Data structures with state
      */
@@ -46,6 +41,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     // Map of topic name to CLickHouseConnection instance(DbWriter)
     private Map<String, DbWriter> topicToDbWriterMap;
+
 
     // Map of topic name to buffered records.
     Map<String, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> topicToRecordsMap;
@@ -132,28 +128,12 @@ public class ClickHouseBatchRunnable implements Runnable {
     public DbWriter getDbWriterForTable(String topicName, String tableName, ClickHouseStruct record) {
         DbWriter writer = null;
 
-
-        // Check if DB instance exists for the current topic
-        // or else create a new one.
-//        if (this.topicToDbWriterMap.containsKey(topicName)) {
-//            writer = this.topicToDbWriterMap.get(topicName);
-//        } else {
-            writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
+        writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
                     this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record);
-            this.topicToDbWriterMap.put(topicName, writer);
-//        }
-//
+        this.topicToDbWriterMap.put(topicName, writer);
         return writer;
     }
-//
-//    UUID blockUuid = UUID.randomUUID();
-//
-//    // Initialize Timer to track time taken to transform and insert to Clickhouse.
-//    Timer timer = Metrics.timer("Bulk Insert: " + blockUuid + " Size:" + numRecords);
-//    Timer.Context context = timer.time();
-//
-//    Map<TopicPartition, Long> partitionToOffsetMap;
 
     /**
      * Function to process records
@@ -201,12 +181,6 @@ public class ClickHouseBatchRunnable implements Runnable {
                 log.error("Error persisting offsets to CH", e);
             }
         }
-        //context.stop();
-
-//                Metrics.updateSinkRecordsCounter(blockUuid.toString(), taskId, topicName, tableName,
-//                        bmd.getPartitionToOffsetMap(), numRecords, bmd.getMinSourceLag(),
-//                        bmd.getMaxSourceLag(), bmd.getMinConsumerLag(), bmd.getMaxConsumerLag());
-
     }
 
     /**
@@ -221,8 +195,6 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         boolean result = false;
 
-        long currentTime = System.currentTimeMillis();
-
         writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
 
         try {
@@ -231,31 +203,6 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("****** Error updating Metrics ******");
         }
         result = true;
-//
-//        // Step 2: Check if the buffer can be flushed
-//        // One if the max buffer size is reached
-//        // or if the Buffer flush timeout is reached.
-//        if (diffInMs > bufferFlushTimeout) {
-//            // Time to flush.
-//            log.info(String.format("*** TIME EXCEEDED %s to FLUSH", bufferFlushTimeout));
-//            writer.addToPreparedStatementBatch(queryToRecordsMap);
-//            lastFlushTimeInMs = currentTime;
-//            result = true;
-//        } else {
-//            long totalSize = 0;
-//            for (Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>
-//                    mutablePairListEntry : queryToRecordsMap.entrySet()) {
-//                totalSize += mutablePairListEntry.getValue().size();
-//            }
-//            long minRecordsToFlush = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS);
-//
-//            if (totalSize >= minRecordsToFlush) {
-//                log.info("**** MAX RECORDS EXCEEDED to FLUSH:" + "Total Records: " + totalSize);
-//                writer.addToPreparedStatementBatch(queryToRecordsMap);
-//                lastFlushTimeInMs = currentTime;
-//                result = true;
-//            }
-//        }
 
         return result;
     }

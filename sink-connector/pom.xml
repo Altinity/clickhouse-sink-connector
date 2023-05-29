@@ -414,7 +414,12 @@
             <version>3.12.0</version>
         </dependency>
 
-
+        <!-- VERSION COMPARE LIBRARY -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-artifact</artifactId>
+            <version>3.9.1</version>
+        </dependency>
         <!--JDBC driver for building connection with Clickhouse-->
         <!-- <dependency>
             <groupId>ru.yandex.clickhouse</groupId>
@@ -540,6 +545,12 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>clickhouse</artifactId>
             <version>1.17.6</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>5.9.2</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

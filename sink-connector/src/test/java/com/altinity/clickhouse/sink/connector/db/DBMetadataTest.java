@@ -1,16 +1,15 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
-import org.apache.commons.lang3.tuple.MutablePair;
 import org.junit.Assert;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import org.apache.commons.lang3.tuple.MutablePair;
 import java.sql.SQLException;
 import java.util.HashMap;
 
@@ -96,4 +95,19 @@ public class DBMetadataTest {
 
 
     }
+
+    @ParameterizedTest
+    @CsvSource({
+            "23.2, true",
+            "23.1, false",
+            "23.2.1, true",
+            "23.1.1, false",
+            "23.0.1, false",
+            "23.3, true",
+            "33.1, true"
+    })
+    public void testIsRMTVersionSupported(String clickhouseVersion, boolean result) throws SQLException {
+        Assert.assertTrue(new DBMetadata().checkIfNewReplacingMergeTree(clickhouseVersion) == result);
+    }
+
 }

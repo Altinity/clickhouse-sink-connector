@@ -1,16 +1,16 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 public class DBMetadata {
 
@@ -132,6 +132,7 @@ public class DBMetadata {
     public static final String COLLAPSING_MERGE_TREE_SIGN_PREFIX = "CollapsingMergeTree(";
     public static final String REPLACING_MERGE_TREE_VER_PREFIX = "ReplacingMergeTree(";
 
+    public static final String REPLACING_MERGE_TREE_VERSION_WITH_IS_DELETED = "23.2";
     public static final String REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX = "ReplicatedReplacingMergeTree(";
     /**
      * Function to extract the sign column for CollapsingMergeTree
@@ -230,6 +231,27 @@ public class DBMetadata {
             result.left = TABLE_ENGINE.MERGE_TREE;
         } else {
             result.left = TABLE_ENGINE.DEFAULT;
+        }
+
+        return result;
+    }
+
+
+    /**
+     * Function to check if Replacing mergetree is supported
+     * based on ClickHouse version.
+     * @return true, if RMT is supported, false otherwise
+     * @throws SQLException
+     */
+    public boolean checkIfNewReplacingMergeTree(String currentClickHouseVersion) throws SQLException {
+
+        boolean result = true;
+
+        DefaultArtifactVersion supportedVersion = new DefaultArtifactVersion(REPLACING_MERGE_TREE_VERSION_WITH_IS_DELETED);
+        DefaultArtifactVersion currentVersion = new DefaultArtifactVersion(currentClickHouseVersion);
+
+        if (currentVersion.compareTo(supportedVersion) < 0) {
+            result = false;
         }
 
         return result;

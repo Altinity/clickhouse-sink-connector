@@ -83,6 +83,8 @@ services:
       - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/data
 
 
   ### MONITORING ####

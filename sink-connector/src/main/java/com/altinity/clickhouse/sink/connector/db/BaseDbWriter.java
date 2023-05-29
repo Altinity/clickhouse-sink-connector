@@ -91,6 +91,12 @@ public class BaseDbWriter {
         return result;
     }
 
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
     public String executeQuery(String sql) throws SQLException {
         String result = null;
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
@@ -101,6 +107,15 @@ public class BaseDbWriter {
         }
 
         return result;
+    }
+
+    /**
+     * Function to get the clickhouse version.
+     * @return version as string.
+     * @throws SQLException
+     */
+    public String getClickHouseVersion() throws SQLException {
+        return this.executeQuery("SELECT VERSION()");
     }
 }
 

@@ -9,6 +9,10 @@ public class ClickHouseDbConstants {
 
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
+
+    public static final String IS_DELETED_COLUMN = "is_deleted";
+    public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
+
     public static final String SIGN_COLUMN = "_sign";
     public static final String SIGN_COLUMN_DATA_TYPE = "Int8";
 
