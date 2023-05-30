@@ -62,8 +62,15 @@ enable.snapshot.ddl: "false"
 
 ```
 
-Start the application.
+### Start the application.
 `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
+
+##### Docker
+Images are published in Gitlab.
+
+`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
+
+[Docker Setup instructions](sink-connector-lightweight/README.md)
 
 #### Configuration
  Configuration                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -89,12 +96,6 @@ Start the application.
 | database.allowPublicKeyRetrieval      | **Optional**, MySQL specific: true/false                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 
-##### Docker
-Images are published in Gitlab.
-
-`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
-
-[Docker Setup instructions](sink-connector-lightweight/README.md)
 
 ![](doc/img/kafka_replication_tool.jpg)
 
