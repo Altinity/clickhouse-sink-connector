@@ -127,6 +127,17 @@ docker-compose up
 cd docker
 docker-compose -f docker-compose-postgres.yml up
 ```
+=======
+### Start the application.
+`java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
+
+##### Docker
+Images are published in Gitlab.
+
+`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
+
+[Docker Setup instructions](sink-connector-lightweight/README.md)
+
 #### Configuration
  Configuration                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -151,12 +162,6 @@ docker-compose -f docker-compose-postgres.yml up
 | database.allowPublicKeyRetrieval      | **Optional**, MySQL specific: true/false                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 
-##### Docker
-Images are published in Gitlab.
-
-`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
-
-[Docker Setup instructions](sink-connector-lightweight/README.md)
 
 ![](doc/img/kafka_replication_tool.jpg)
 
