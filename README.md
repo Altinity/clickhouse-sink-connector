@@ -119,13 +119,13 @@ enable.snapshot.ddl: "false"
 
 **MySQL**
 ```
-cd docker
+cd sink-connector-lightweight/docker
 docker-compose up
 ```
 
 **PostgreSQL**
 ```
-cd docker
+cd sink-connector-lightweight/docker
 docker-compose -f docker-compose-postgres.yml up
 ```
 ##### Docker
