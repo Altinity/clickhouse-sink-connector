@@ -110,11 +110,12 @@ enable.snapshot.ddl: "false"
 ```
 
 ## Command Line(JAR)
-Start the application.
 
 `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>`
 
 ### Docker compose
+
+`export SINK_LIGHTWEIGHT_VERSION=latest`
 
 **MySQL**
 ```
@@ -127,10 +128,6 @@ docker-compose up
 cd docker
 docker-compose -f docker-compose-postgres.yml up
 ```
-=======
-### Start the application.
-`java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
-
 ##### Docker
 Images are published in Gitlab.
 
