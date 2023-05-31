@@ -13,6 +13,7 @@ Single executable and lightweight.
 ### Usage
 ##### From Command line.
 Download the JAR file from the releases.
+https://github.com/Altinity/clickhouse-sink-connector/releases
 
 ### MySQL Configuration (docker/config.yaml)
 ```
@@ -110,6 +111,7 @@ enable.snapshot.ddl: "false"
 ```
 
 ## Command Line(JAR)
+https://github.com/Altinity/clickhouse-sink-connector/releases
 
 `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>`
 
