@@ -77,3 +77,6 @@ services:
       - docker_postgres.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      #- ./data:/data
+      - ./config_postgres.yml:/config.yml
