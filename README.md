@@ -6,6 +6,8 @@
 </a>
 
 # Altinity Replicator for ClickHouse (Lightweight version)
+![](doc/img/kafka_replication_tool.jpg)
+
 New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
 Single executable and lightweight.
 ##### Supports DDL in MySQL.
@@ -162,7 +164,7 @@ Images are published in Gitlab.
 
 
 
-![](doc/img/kafka_replication_tool.jpg)
+
 
 # Altinity Sink Connector for ClickHouse
 
