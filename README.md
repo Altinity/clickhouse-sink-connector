@@ -20,7 +20,8 @@ https://github.com/Altinity/clickhouse-sink-connector/releases
 2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`.
 3.  Update MySQL databases to be replicated: `database.include.list`.
 4.  Add table filters: `table.include.list`.
-5.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
+5.  Set 'snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to 'schema_only` to replicate schema and only the records that are modified after the connector is started.
+6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
 
 ### MySQL Configuration (docker/config.yaml)
 ```
