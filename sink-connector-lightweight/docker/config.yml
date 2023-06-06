@@ -1,11 +1,15 @@
 name: "altinity_sink_connector"
+#### MySQL information
 database.hostname: "mysql-master"
 database.port: "3306"
 database.user: "root"
 database.password: "root"
 database.server.name: "ER54"
+### MySQL Database(to be replicated)
 database.include.list: sbtest
+### MySQL Table filter
 #table.include.list=sbtest1
+### ClickHouse information
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
 clickhouse.server.pass: "root"

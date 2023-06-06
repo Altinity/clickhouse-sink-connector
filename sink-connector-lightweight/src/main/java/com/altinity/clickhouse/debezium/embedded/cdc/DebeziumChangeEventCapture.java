@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ClickHouseBatchProcessingThread;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
@@ -20,6 +21,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
+import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -29,13 +31,18 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 /**
  * Setup Debezium engine with the configuration passed by the user
@@ -46,7 +53,12 @@ public class DebeziumChangeEventCapture {
 
     private static final Logger log = LoggerFactory.getLogger(DebeziumChangeEventCapture.class);
 
-    private ClickHouseBatchExecutor executor;
+//    private ClickHouseBatchExecutor executor;
+
+    private ThreadPoolExecutor executor;
+
+    private final BlockingQueue<Runnable> sinkRecordsQueue = new LinkedBlockingQueue<>();
+
 
     private ClickHouseBatchRunnable runnable;
 
@@ -119,6 +131,24 @@ public class DebeziumChangeEventCapture {
         Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
     }
 
+    /**
+     * Function to process batch of sink records.
+     * @param props
+     * @param records
+     * @param debeziumRecordParserService
+     * @param config
+     */
+    private void processBatch(Properties props, List<ChangeEvent<SourceRecord, SourceRecord>> records,
+                                          DebeziumRecordParserService debeziumRecordParserService,
+                                          ClickHouseSinkConnectorConfig config) {
+
+        List<ClickHouseStruct> chStructs = records.stream().map(record -> processEveryChangeRecord(props, record,
+                        debeziumRecordParserService, config))
+                .collect(Collectors.toList());
+        this.executor.execute(new ClickHouseBatchProcessingThread(chStructs));
+
+
+    }
 
     /**
      * Function to process every change event record
@@ -126,9 +156,10 @@ public class DebeziumChangeEventCapture {
      *
      * @param record ChangeEvent Record
      */
-    private void processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
+    private ClickHouseStruct processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
                                           DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config) {
+        ClickHouseStruct chStruct = null;
         try {
 
             SourceRecord sr = record.value();
@@ -144,7 +175,7 @@ public class DebeziumChangeEventCapture {
 
             List<Field> schemaFields = struct.schema().fields();
             if (schemaFields == null) {
-                return;
+                return null;
             }
             Field matchingDDLField = schemaFields.stream()
                     .filter(f -> "DDL".equalsIgnoreCase(f.name()))
@@ -164,13 +195,18 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
-
-                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+                    int maxThreadPoolSize  = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+                    this.executor = new ThreadPoolExecutor(maxThreadPoolSize, maxThreadPoolSize, 30,
+                            TimeUnit.SECONDS, sinkRecordsQueue,
+                            new ThreadPoolExecutor.CallerRunsPolicy());
+//                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
+//                    for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
+//                        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+//                    }
                 }
 
             } else {
-                ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
+                chStruct = debeziumRecordParserService.parse(sr);
 
                 ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
                 if (chStruct != null) {
@@ -178,7 +214,7 @@ public class DebeziumChangeEventCapture {
                 }
                 synchronized (this.records) {
                     if (chStruct != null) {
-                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
+                        //addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
                     }
                 }
             }
@@ -188,6 +224,8 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Exception processing record", e);
         }
+
+        return chStruct;
     }
 
     private boolean isSnapshotDDL(SourceRecord sr) {
@@ -279,10 +317,23 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
-            changeEventBuilder.notifying(record -> {
-                processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
+                @Override
+                public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> records,
+                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer) throws InterruptedException {
 
+                    //for(ChangeEvent<SourceRecord, SourceRecord> record : records) {
+                    processBatch(props, records, debeziumRecordParserService, config);
+                    //}
+                    for (ChangeEvent<SourceRecord, SourceRecord> record : records) {
+                        committer.markProcessed(record);
+                    }
+                }
             });
+//            changeEventBuilder.notifying(record -> {
+//                processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+//
+//            });
             this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
@@ -364,10 +415,16 @@ public class DebeziumChangeEventCapture {
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
         // Setup separate thread to read messages from shared buffer.
         this.records = new ConcurrentHashMap<>();
-        this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
-        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+//        this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
+//        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
+//        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+
+        int maxThreadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+        this.executor = new ThreadPoolExecutor(maxThreadPoolSize, maxThreadPoolSize, 30,
+                TimeUnit.SECONDS, sinkRecordsQueue,
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
+
 
     /**
      * Function to write the transformed
@@ -377,17 +434,19 @@ public class DebeziumChangeEventCapture {
      * @param chs
      */
     private void addRecordsToSharedBuffer(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs;
 
-        if (this.records.containsKey(topicName)) {
-            structs = this.records.get(topicName);
-        } else {
-            structs = new ConcurrentLinkedQueue<>();
-        }
-        structs.add(chs);
-        synchronized (this.records) {
-            this.records.put(topicName, structs);
-        }
+
+        //      ConcurrentLinkedQueue<ClickHouseStruct> structs;
+
+//        if (this.records.containsKey(topicName)) {
+//            structs = this.records.get(topicName);
+//        } else {
+//            structs = new ConcurrentLinkedQueue<>();
+//        }
+//        structs.add(chs);
+//        synchronized (this.records) {
+//            this.records.put(topicName, structs);
+//        }
     }
 
     // db.items.insert({_id:ObjectId(), uuid:ObjectId(), price:22, name:"New record"});
