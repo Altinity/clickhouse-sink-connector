@@ -2,6 +2,7 @@
 
 ![arch](img/sink_connector_cli.drawio.png)
 
+The CLI application will translate the CLI commands to REST payload messages.
 
 
 ## Operations
@@ -12,3 +13,6 @@
 4. **change_replication_source**, CLI application will send the gtid, binlog file, and binlog position to the server to change the replication source
  Server will update the table with this information will restart the debezium event loop.
 5. **show replica status** Return the information from the **replica_status** table.
+
+## API
+
