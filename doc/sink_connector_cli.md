@@ -4,6 +4,10 @@
 
 The CLI application will translate the CLI commands to REST payload messages.
 
+Option in sink connector lightweight to not start automatically unless
+the user specifies the **start_replica** flag.(skip-replica-start) in the yaml file.
+This will give users option to set the binlog status/position, gtid
+**change_replication_source** before starting the replication.
 
 ## Operations
 
