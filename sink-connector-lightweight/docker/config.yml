@@ -46,3 +46,4 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
 enable.snapshot.ddl: "false"
+thread.pool.size: 100

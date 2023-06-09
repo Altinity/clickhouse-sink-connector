@@ -27,6 +27,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -253,8 +254,8 @@ public class DbWriter extends BaseDbWriter {
      * @param records
      * @return
      */
-    public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
-                                                                        Map<MutablePair<String, Map<String, Integer>>,
+    public Map<TopicPartition, Long> groupQueryWithRecords(Collection<ClickHouseStruct> records,
+                                                           Map<MutablePair<String, Map<String, Integer>>,
                                                                                 List<ClickHouseStruct>> queryToRecordsMap) {
 
 
@@ -274,11 +275,11 @@ public class DbWriter extends BaseDbWriter {
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
 
+            if(record == null) {
+                continue;
+            }
             updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
 
-            // Identify the min and max offsets of the bulk
-            // that's inserted.
-            int recordPartition = record.getKafkaPartition();
 
             boolean enableSchemaEvolution = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString());
 

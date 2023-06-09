@@ -145,7 +145,7 @@ public class DebeziumChangeEventCapture {
         List<ClickHouseStruct> chStructs = records.stream().map(record -> processEveryChangeRecord(props, record,
                         debeziumRecordParserService, config))
                 .collect(Collectors.toList());
-        this.executor.execute(new ClickHouseBatchProcessingThread(chStructs));
+        this.executor.execute(new ClickHouseBatchProcessingThread(chStructs, config));
 
 
     }
@@ -196,7 +196,7 @@ public class DebeziumChangeEventCapture {
 
                     performDDLOperation(DDL, props, sr, config);
                     int maxThreadPoolSize  = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
-                    this.executor = new ThreadPoolExecutor(maxThreadPoolSize, maxThreadPoolSize, 30,
+                    this.executor = new ThreadPoolExecutor(100, 100, 30,
                             TimeUnit.SECONDS, sinkRecordsQueue,
                             new ThreadPoolExecutor.CallerRunsPolicy());
 //                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
@@ -420,7 +420,8 @@ public class DebeziumChangeEventCapture {
 //        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
 
         int maxThreadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
-        this.executor = new ThreadPoolExecutor(maxThreadPoolSize, maxThreadPoolSize, 30,
+        log.info("Setting up thread pool with size:" + maxThreadPoolSize);
+        this.executor = new ThreadPoolExecutor(100, 100, 30,
                 TimeUnit.SECONDS, sinkRecordsQueue,
                 new ThreadPoolExecutor.CallerRunsPolicy());
     }
