@@ -131,7 +131,12 @@ https://github.com/Altinity/clickhouse-sink-connector/releases
 **MySQL**
 ```
 cd sink-connector-lightweight/docker
-docker-compose up
+docker-compose -f docker-compose-mysql.yml up
+```
+**MySQL (Connect to external MySQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-mysql-standalone.yml up
 ```
 
 **PostgreSQL**
@@ -139,6 +144,13 @@ docker-compose up
 cd sink-connector-lightweight/docker
 docker-compose -f docker-compose-postgres.yml up
 ```
+
+**PostgreSQL(Connect to external PostgreSQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-postgres-standalone.yml up
+```
+
 ##### Docker
 Images are published in Gitlab.
 
