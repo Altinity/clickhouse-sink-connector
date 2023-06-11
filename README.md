@@ -17,7 +17,8 @@ Single executable and lightweight.
 Download the JAR file from the releases.
 https://github.com/Altinity/clickhouse-sink-connector/releases
 1.  Update **MySQL information** in config.yaml: `database.hostname`, `database.port`, `database.user` and `database.password`.
-2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`.
+2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`. 
+Also Update **ClickHouse information** for the following fields that are used to store the offset information- `offset.storage.jdbc.url`, `offset.storage.jdbc.user`, `offset.storage.jdbc.password`, `schema.history.internal.jdbc.url`, `schema.history.internal.jdbc.user`, and `schema.history.internal.jdbc.password`.
 3.  Update MySQL databases to be replicated: `database.include.list`.
 4.  Add table filters: `table.include.list`.
 5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
