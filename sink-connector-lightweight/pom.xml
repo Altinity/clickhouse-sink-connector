@@ -45,6 +45,13 @@
             <version>5.1.0</version>
         </dependency>
 
+        <!-- REST API SERVER -->
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>5.5.0</version>
+        </dependency>
+
         <!-- QUARKUS DEPENDENCIES -->
         <!-- <dependency>
             <groupId>io.quarkus</groupId>

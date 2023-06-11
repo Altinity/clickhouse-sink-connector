@@ -8,6 +8,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import io.javalin.Javalin;
 import org.apache.log4j.ConsoleAppender;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
@@ -61,10 +62,19 @@ public class ClickHouseDebeziumEmbeddedApplication {
             props = injector.getInstance(ConfigurationService.class).parse();
         }
 
+        try {
+            Javalin app = Javalin.create().start(7000);
+            app.get("/", ctx -> ctx.result("Hello World"));
+        } catch(Exception e) {
+            log.error("Error starting REST API server", e);
+        }
+
         ClickHouseDebeziumEmbeddedApplication csg = new ClickHouseDebeziumEmbeddedApplication();
         csg.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(ConfigurationService.class),
                 injector.getInstance(DDLParserService.class), props);
+
+
 
     }
 
