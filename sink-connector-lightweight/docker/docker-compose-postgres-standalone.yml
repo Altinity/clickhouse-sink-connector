@@ -1,19 +1,25 @@
 services:
-  postgres:
-    image: debezium/postgres:15-alpine
-    restart: always
+  debezium-embedded:
+    #build:
+    #  context: ..
+    #  dockerfile: Dockerfile
+    #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    #    build:
+    #      context: ../
+    restart: "no"
     ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_PASSWORD=root
-      - POSTGRES_USER=root
-      - POSTGRES_DB=public
+      - "8083:8083"
+      - "5005:5005"
+    #    depends_on:
+    #      - mysql-master
+    #    env_file:
+    #      - docker.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ../sql/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql
-    command:
-      - "postgres"
-      - "-c"
-      - "wal_level=logical"
+      #- ./data:/data
+      - ./config_postgres.yml:/config.yml
 
   ### MONITORING ####
   prometheus:
