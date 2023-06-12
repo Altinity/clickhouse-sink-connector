@@ -12,4 +12,4 @@ fi
 ./stop-docker-compose.sh
 # Altinity sink images are tagged daily with this tag yyyy-mm-dd(2022-07-19)
 
-docker-compose up  --remove-orphans --force-recreate --renew-anon-volumes
+docker-compose -f docker-compose-mysql.yml up --remove-orphans --force-recreate --renew-anon-volumes
