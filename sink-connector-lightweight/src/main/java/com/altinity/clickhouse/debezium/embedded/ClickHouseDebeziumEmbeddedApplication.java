@@ -57,8 +57,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
                 System.exit(-1);
             }
         } else {
-
             props = injector.getInstance(ConfigurationService.class).parse();
+            log.error("Error parsing configuration file, USAGE: java -jar <jar_file> <yaml_config_file>");
+            System.exit(-1);
         }
 
         ClickHouseDebeziumEmbeddedApplication csg = new ClickHouseDebeziumEmbeddedApplication();

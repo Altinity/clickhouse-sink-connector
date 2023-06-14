@@ -190,7 +190,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param queryToRecordsMap
      * @return
      */
-    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
+    protected boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
             List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd) throws SQLException {
 
         boolean result = false;
