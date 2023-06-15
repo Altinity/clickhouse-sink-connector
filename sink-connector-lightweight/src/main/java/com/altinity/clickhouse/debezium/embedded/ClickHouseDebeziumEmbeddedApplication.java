@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
@@ -22,6 +23,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseDebeziumEmbeddedApplication.class);
 
+    private static ClickHouseDebeziumEmbeddedApplication embeddedApplication;
+
+    private static DebeziumChangeEventCapture debeziumChangeEventCapture;
     /**
      * Main Entry for the application
      * @param args arguments
@@ -62,17 +66,45 @@ public class ClickHouseDebeziumEmbeddedApplication {
             props = injector.getInstance(ConfigurationService.class).parse();
         }
 
+
+
         try {
             Javalin app = Javalin.create().start(7000);
-            app.get("/", ctx -> ctx.result("Hello World"));
+            app.get("/", ctx -> {
+                ctx.result("Hello World");
+            });
+            app.get("/stop", ctx -> {
+                debeziumChangeEventCapture.stop();
+            });
+            Properties finalProps1 = props;
+            app.get("/status", ctx -> {
+                ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+
+                ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
+
+            });
+
+            Properties finalProps = props;
+            app.get("/start", ctx -> {
+                debeziumChangeEventCapture.setup(finalProps,
+                        injector.getInstance(DebeziumRecordParserService.class),
+                        injector.getInstance(DDLParserService.class));
+            });
+
+            app.get("/updateBinLogStatus", ctx -> {
+                debeziumChangeEventCapture.updateDebeziumStorageStatus()
+            });
         } catch(Exception e) {
             log.error("Error starting REST API server", e);
         }
 
-        ClickHouseDebeziumEmbeddedApplication csg = new ClickHouseDebeziumEmbeddedApplication();
-        csg.start(injector.getInstance(DebeziumRecordParserService.class),
+        embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+        embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(ConfigurationService.class),
                 injector.getInstance(DDLParserService.class), props);
+
+
+
 
 
 
@@ -87,8 +119,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
         //final Properties props = new ConfigLoader().load();
 
 
-        DebeziumChangeEventCapture eventCapture = new DebeziumChangeEventCapture();
-        eventCapture.setup(props, recordParserService, ddlParserService);
+        debeziumChangeEventCapture = new DebeziumChangeEventCapture();
+        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService);
 
     }
 
@@ -98,8 +130,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
         // Define the configuration for the Debezium Engine with MySQL connector...
         log.debug("Loading properties");
 
-        DebeziumChangeEventCapture eventCapture = new DebeziumChangeEventCapture();
-        eventCapture.setup(props, recordParserService, ddlParserService);
+        debeziumChangeEventCapture = new DebeziumChangeEventCapture();
+        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService);
 
     }
 }

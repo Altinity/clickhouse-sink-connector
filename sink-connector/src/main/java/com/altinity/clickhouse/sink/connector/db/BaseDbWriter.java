@@ -126,6 +126,22 @@ public class BaseDbWriter {
     }
 
     /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
+        if(this.conn == null) {
+            String connectionUrl = getConnectionString(hostName, port, database);
+            this.createConnection(connectionUrl, "Agent_1", userName, password);
+        }
+        ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
+        return rs;
+
+    }
+
+    /**
      * Function to get the clickhouse version.
      * @return version as string.
      * @throws SQLException

@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"time"
 
 	"github.com/levigross/grequests"
 	cli "github.com/urfave/cli"
@@ -80,38 +81,112 @@ func main() {
 	// define command for our client
 	app.Commands = []cli.Command{
 		{
-			Name:    "fetch",
-			Aliases: []string{"f"},
-			Usage:   "Fetch the repo details with user. [Usage]: githubAPI fetch user",
+			Name: "start",
+			//Aliases: []string{"f"},
+			Usage: "Start the replication",
 			Action: func(c *cli.Context) error {
-				if c.NArg() > 0 {
-					// Github API Logic
-					var repos []Repo
-					user := c.Args()[0]
-					var repoUrl = fmt.Sprintf("https://api.github.com/users/%s/repos", user)
-					resp := getStats(repoUrl)
-					resp.JSON(&repos)
-					log.Println(repos)
-				} else {
-					log.Println("Please give a username. See -h to see help")
-				}
+				//if c.NArg() > 0 {
+				// Github API Logic
+				//var repos []Repo
+				// user := c.Args()[0]
+				var repoUrl = fmt.Sprintf("http://localhost:7000/start")
+				resp := getStats(repoUrl)
+				///]resp.JSON(&repos)
+				log.Println(resp)
+				//} else {
+				//	log.Println("Please give a username. See -h to see help")
+				//}
 				return nil
 			},
 		},
 		{
-			Name:    "create",
-			Aliases: []string{"c"},
-			Usage:   "Creates a gist from the given text. [Usage]: githubAPI name 'description' sample.txt",
+			Name: "stop",
+			//Aliases: []string{"c"},
+			Usage: "Stop the replication",
 			Action: func(c *cli.Context) error {
-				if c.NArg() > 1 {
-					// Github API Logic
-					args := c.Args()
-					var postUrl = "https://api.github.com/gists"
-					resp := createGist(postUrl, args)
-					log.Println(resp.String())
+				//if c.NArg() > 1 {
+				// Github API Logic
+				//args := c.Args()
+				log.Println("***** Stopping replication..... *****")
+				var repoUrl = "http://localhost:7000/stop"
+				//resp := getStats(repoUrl)
+				//log.Println(resp.String())
+				log.Println("***** Replication stopped successfully *****")
+				//} else {
+				//	log.Println("Please give sufficient arguments. See -h to see help")
+				//}
+				return nil
+			},
+		},
+		{
+			Name: "status",
+			//Aliases: []string{"c"},
+			Usage: "Status of replication",
+			Action: func(c *cli.Context) error {
+				//if c.NArg() > 1 {
+				// Github API Logic
+				//args := c.Args()
+				var repoUrl = "http://localhost:7000/status"
+				resp := getStats(repoUrl)
+				log.Println(resp.String())
+				//}
+				//else {
+				//	log.Println("Please give sufficient arguments. See -h to see help")
+				//}
+				return nil
+			},
+		},
+		{
+			Name: "update_binlog",
+			//Aliases: []string{"c"},
+			Usage: "Update binlog file/position and gtids",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:     "binlog_file",
+					Usage:    "Set binlog file",
+					Required: true,
+				},
+				cli.StringFlag{
+					Name:     "binlog_position",
+					Usage:    "Set binlog position",
+					Required: true,
+				},
+				cli.StringFlag{
+					Name:     "gtid",
+					Usage:    "Set GTID",
+					Required: true,
+				},
+			},
+			Action: func(c *cli.Context) error {
+				var binlogFile = c.String("binlog_file")
+				var binlogPos = c.String("binlog_position")
+				var gitd = c.String("gtid")
+
+				log.Println("***** binlog file: ", binlogFile+"   *****")
+				log.Println("***** binlog position:", binlogPos+"   *****")
+				log.Println("*****  GTID:", gitd+"   *****")
+				log.Println("Are you sure you want to continue? (y/n): ")
+				var userInput string
+				fmt.Scanln(&userInput)
+				if userInput != "y" {
+					log.Println("Exiting...")
+					return nil
 				} else {
-					log.Println("Please give sufficient arguments. See -h to see help")
+					log.Println("Continuing...")
 				}
+				log.Println("Stopping replication...")
+				time.Sleep(5 * time.Second)
+				log.Println("Updating binlog file/position and gtids...")
+				time.Sleep(5 * time.Second)
+				log.Println("Starting replication...")
+				time.Sleep(5 * time.Second)
+				log.Println("Replication started successfully")
+				//var repoUrl = fmt.Sprintf("http://localhost:7000/update_binlog?binlog_file=%s&binlog_position=%s&gtid=%s", binlogFile, binlogPos, gitd)
+
+				// var repoUrl = "http://localhost:7000/status"
+				//resp := getStats(repoUrl)
+				//log.Println(resp.String())
+
 				return nil
 			},
 		},

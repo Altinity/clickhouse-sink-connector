@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.google.common.annotations.VisibleForTesting;
 import io.debezium.config.Configuration;
 import io.debezium.connector.postgresql.PostgresConnectorConfig;
 import io.debezium.connector.postgresql.connection.PostgresConnection;
@@ -24,18 +25,25 @@ import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Setup Debezium engine with the configuration passed by the user
@@ -248,7 +256,8 @@ public class DebeziumChangeEventCapture {
                         dbCredentials.getPassword(), config);
             }
 
-            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                    JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
             if(tableName.contains(".")) {
                 String[] dbTableNameArray = tableName.split("\\.");
                 if(dbTableNameArray.length >= 2) {
@@ -263,6 +272,93 @@ public class DebeziumChangeEventCapture {
             log.error("Error creating Debezium storage database", e);
         }
     }
+
+    /**
+     * Function to get the status of Debezium storage.
+     * @param props
+     * @return
+     */
+    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+        String response = "";
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        String debeziumStorageStatusQuery = String.format("select * from %s limit 1", tableName);
+        ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
+
+        if(resultSet != null) {
+            ResultSetMetaData md = resultSet.getMetaData();
+            int numCols = md.getColumnCount();
+            List<String> colNames = IntStream.range(0, numCols)
+                    .mapToObj(i -> {
+                        try {
+                            return md.getColumnName(i + 1);
+                        } catch (SQLException e) {
+                            e.printStackTrace();
+                            return "?";
+                        }
+                    })
+                    .collect(Collectors.toList());
+
+            JSONArray result = new JSONArray();
+            // Add Database name and table name.
+            JSONObject dbName = new JSONObject();
+
+            dbName.put("Database", dbCredentials.getDatabase());
+            result.add(dbName);
+
+            while (resultSet.next()) {
+                JSONObject row = new JSONObject();
+                colNames.forEach(cn -> {
+                    try {
+                        row.put(cn, resultSet.getObject(cn));
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+                });
+                result.add(row);
+            }
+
+            response = result.toJSONString();
+        }
+        return response;
+    }
+
+    /**
+     * Function to update the status of Debezium storage.
+     * @param props
+     * @param binlogFile
+     * @param binLogPosition
+     * @param gtid
+     */
+    public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
+                                            String binlogFile, String binLogPosition, String gtid) throws SQLException {
+
+        // Return the existing row if there is already an entry
+        // Command line output and in server logs.
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+
+        // ToDo: do we need to backup the current entries, before deleting them?
+        // Delete the current row.
+        //String deleteQuery = String.format("truncate table %s", tableName);
+        // Delete by unique key(offset_key).
+        writer.executeQuery(deleteQuery);
+
+        // Retrieve offset_key from table.(Debezium config should give this value).
+        String offsetKey = "[\"engine\",{\"server\":\"embeddedconnector\"}]";
+        String currentTimeStampMillis = Long.toString(System.currentTimeMillis());
+        // ToDO: Snapshot has to be retrieved from the current offsetValue.
+        String offsetValue = String.format("{\"ts_sec\":%s,\"file\":\"%s\",\"pos\":%s,\"gtids\":%s,\"snapshot\":true}",
+                currentTimeStampMillis, binlogFile, binLogPosition, gtid);
+        UUID uuid = UUID.randomUUID();
+
+        String updateBinLogQuery = String.format("insert into %s(id, offset_key, offset_val, record_insert_ts, record_insert_seq) " +
+                "values(%s, %s, %s, %s, %s", tableName, uuid, offsetKey, offsetValue, currentTimeStampMillis, 1);
+        writer.executeQuery(updateBinLogQuery);
+    }
+
     public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
