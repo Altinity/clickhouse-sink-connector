@@ -344,7 +344,7 @@ public class DebeziumChangeEventCapture {
         // Delete the current row.
         //String deleteQuery = String.format("truncate table %s", tableName);
         // Delete by unique key(offset_key).
-        writer.executeQuery(deleteQuery);
+        //writer.executeQuery(deleteQuery);
 
         // Retrieve offset_key from table.(Debezium config should give this value).
         String offsetKey = "[\"engine\",{\"server\":\"embeddedconnector\"}]";

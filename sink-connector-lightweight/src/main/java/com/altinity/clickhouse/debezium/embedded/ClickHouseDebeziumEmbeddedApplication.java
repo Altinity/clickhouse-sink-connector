@@ -91,9 +91,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         injector.getInstance(DDLParserService.class));
             });
 
-            app.get("/updateBinLogStatus", ctx -> {
-                debeziumChangeEventCapture.updateDebeziumStorageStatus()
-            });
+            // app.get("/updateBinLogStatus", ctx -> {
+                //debeziumChangeEventCapture.updateDebeziumStorageStatus()
+            //});
         } catch(Exception e) {
             log.error("Error starting REST API server", e);
         }
