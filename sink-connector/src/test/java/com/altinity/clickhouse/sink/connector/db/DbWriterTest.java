@@ -107,6 +107,9 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
+        Assert.assertTrue(columnDataTypesMap.size() == 20)
+
+        ;
     }
 
     @Test
