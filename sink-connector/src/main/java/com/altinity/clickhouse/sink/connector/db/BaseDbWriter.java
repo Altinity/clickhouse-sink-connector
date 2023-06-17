@@ -18,7 +18,7 @@ public class BaseDbWriter {
 
     private String hostName;
     private Integer port;
-    private String database;
+    protected String database;
     private String userName;
     private String password;
 
@@ -85,7 +85,7 @@ public class BaseDbWriter {
             }
 
             ResultSet columns = this.conn.getMetaData().getColumns(null, null,
-                    tableName, null);
+                    this.database + tableName, null);
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
