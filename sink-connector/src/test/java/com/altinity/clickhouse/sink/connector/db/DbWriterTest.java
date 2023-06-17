@@ -45,7 +45,7 @@ public class DbWriterTest {
         clickHouseContainer.start();
         String hostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "employees";
         String userName = "default";
         String password = "";
         String tableName = "employees";
@@ -97,7 +97,7 @@ public class DbWriterTest {
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "employees";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";

@@ -84,8 +84,8 @@ public class BaseDbWriter {
                 return result;
             }
 
-            ResultSet columns = this.conn.getMetaData().getColumns(null, null,
-                    this.database + tableName, null);
+            ResultSet columns = this.conn.getMetaData().getColumns(null, this.database,
+                     tableName, null);
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
