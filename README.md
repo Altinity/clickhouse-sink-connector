@@ -78,7 +78,7 @@ database.port: "5432"
 database.user: "root"
 database.password: "root"
 database.server.name: "ER54"
-database.include.list: sbtest
+schema.include.list: public
 plugin.name: "pgoutput"
 table.include.list: "public.tm"
 clickhouse.server.url: "clickhouse"
@@ -87,7 +87,7 @@ clickhouse.server.pass: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "schema_only"
+snapshot.mode: "initial"
 offset.flush.interval.ms: 5000
 connector.class: "io.debezium.connector.postgresql.PostgresConnector"
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
@@ -116,7 +116,9 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "false"
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
+database.dbname: "public"
 ```
 
 ## Command Line(JAR)
