@@ -136,3 +136,15 @@ CREATE TABLE employees.employees
 ENGINE = ReplacingMergeTree(_version_employees)
 PRIMARY KEY emp_no
 ORDER BY emp_no;
+
+CREATE database employees2;
+
+CREATE TABLE employees2.employees
+(
+  `emp1` Int32,
+  `_version_employees` UInt64
+
+)
+ENGINE = ReplacingMergeTree(_version_employees)
+PRIMARY KEY emp1
+ORDER BY emp1;

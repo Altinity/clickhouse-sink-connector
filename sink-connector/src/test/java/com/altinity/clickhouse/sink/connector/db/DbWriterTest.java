@@ -45,7 +45,7 @@ public class DbWriterTest {
         clickHouseContainer.start();
         String hostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "employees";
         String userName = "default";
         String password = "";
         String tableName = "employees";
@@ -97,7 +97,7 @@ public class DbWriterTest {
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "employees";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
@@ -107,6 +107,16 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
+        Assert.assertTrue(columnDataTypesMap.size() == 20);
+
+        String database2 = "employees2";
+        DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
+
+        Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
+        Assert.assertTrue(columnDataTypesMap2.size() == 2);
+
     }
 
     @Test
