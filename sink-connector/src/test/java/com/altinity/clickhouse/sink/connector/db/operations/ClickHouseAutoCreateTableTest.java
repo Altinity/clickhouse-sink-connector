@@ -132,7 +132,8 @@ public class ClickHouseAutoCreateTableTest {
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
         System.out.println("QUERY" + query);
-        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()"));
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+        //Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY (customerName)"));
     }
 
     @Test
@@ -182,6 +183,29 @@ public class ClickHouseAutoCreateTableTest {
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }
+    }
+
+    @Test
+    public void testIsPrimaryKeyColumnPresent()    {
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+        primaryKeys.add("id");
+
+        ArrayList<String> primaryKeys2 = new ArrayList<>();
+        primaryKeys2.add("customerName2");
+        primaryKeys2.add("id2");
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+
+        Map<String, String> columnToDataTypesMap = new HashMap<>();
+        columnToDataTypesMap.put("customerName", ClickHouseDataType.String.name());
+        columnToDataTypesMap.put("occupation", ClickHouseDataType.String.name());
+        columnToDataTypesMap.put("quantity", ClickHouseDataType.Int32.name());
+        columnToDataTypesMap.put("amount_1", ClickHouseDataType.Float32.name());
+        columnToDataTypesMap.put("id", ClickHouseDataType.Int8.name());
+
+        Assert.assertTrue(act.isPrimaryKeyColumnPresent(primaryKeys, columnToDataTypesMap));
+        Assert.assertFalse(act.isPrimaryKeyColumnPresent(primaryKeys2, columnToDataTypesMap));
     }
 
 }
