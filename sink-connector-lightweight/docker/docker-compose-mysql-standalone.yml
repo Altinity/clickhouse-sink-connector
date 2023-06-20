@@ -19,7 +19,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       #- ./data:/data
-      - ./config_postgres.yml:/config.yml
+      - ./config.yml:/config.yml
 
   ### MONITORING ####
   prometheus:
@@ -39,7 +39,7 @@ services:
     #container_name: grafana
     #image: grafana/grafana
     restart: "no"
-      #volumes:
+    #volumes:
     #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"

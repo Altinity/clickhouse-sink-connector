@@ -43,6 +43,7 @@ public class DbWriter extends BaseDbWriter {
     private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
 
     private final String tableName;
+
     // Map of column names to data types.
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 

@@ -17,7 +17,8 @@ Single executable and lightweight.
 Download the JAR file from the releases.
 https://github.com/Altinity/clickhouse-sink-connector/releases
 1.  Update **MySQL information** in config.yaml: `database.hostname`, `database.port`, `database.user` and `database.password`.
-2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`.
+2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`. 
+Also Update **ClickHouse information** for the following fields that are used to store the offset information- `offset.storage.jdbc.url`, `offset.storage.jdbc.user`, `offset.storage.jdbc.password`, `schema.history.internal.jdbc.url`, `schema.history.internal.jdbc.user`, and `schema.history.internal.jdbc.password`.
 3.  Update MySQL databases to be replicated: `database.include.list`.
 4.  Add table filters: `table.include.list`.
 5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
@@ -77,7 +78,7 @@ database.port: "5432"
 database.user: "root"
 database.password: "root"
 database.server.name: "ER54"
-database.include.list: sbtest
+schema.include.list: public
 plugin.name: "pgoutput"
 table.include.list: "public.tm"
 clickhouse.server.url: "clickhouse"
@@ -86,7 +87,7 @@ clickhouse.server.pass: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "schema_only"
+snapshot.mode: "initial"
 offset.flush.interval.ms: 5000
 connector.class: "io.debezium.connector.postgresql.PostgresConnector"
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
@@ -115,7 +116,9 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "false"
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
+database.dbname: "public"
 ```
 
 ## Command Line(JAR)
@@ -130,7 +133,12 @@ https://github.com/Altinity/clickhouse-sink-connector/releases
 **MySQL**
 ```
 cd sink-connector-lightweight/docker
-docker-compose up
+docker-compose -f docker-compose-mysql.yml up
+```
+**MySQL (Connect to external MySQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-mysql-standalone.yml up
 ```
 
 **PostgreSQL**
@@ -138,6 +146,13 @@ docker-compose up
 cd sink-connector-lightweight/docker
 docker-compose -f docker-compose-postgres.yml up
 ```
+
+**PostgreSQL(Connect to external PostgreSQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-postgres-standalone.yml up
+```
+
 ##### Docker
 Images are published in Gitlab.
 
