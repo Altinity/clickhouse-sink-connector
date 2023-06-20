@@ -71,6 +71,7 @@ services:
     restart: "no"
     ports:
       - "8083:8083"
+      - "5005:5005"
     depends_on:
       - clickhouse 
     env_file:

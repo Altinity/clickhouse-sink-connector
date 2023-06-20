@@ -80,7 +80,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         createTableSyntax.append(" ");
 
-        if(primaryKey != null && columnToDataTypesMap.containsKey(primaryKey)) {
+        if(primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
             createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
             createTableSyntax.append(") ");
@@ -93,5 +93,15 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
        return createTableSyntax.toString();
+    }
+
+    private boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,Map<String, String>  columnToDataTypesMap) {
+
+        for(String primaryKey: primaryKeys) {
+            if(!columnToDataTypesMap.containsKey(primaryKey)) {
+                return false;
+            }
+        }
+        return true;
     }
 }
