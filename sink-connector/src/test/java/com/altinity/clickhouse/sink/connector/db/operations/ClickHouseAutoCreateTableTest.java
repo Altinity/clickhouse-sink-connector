@@ -184,4 +184,27 @@ public class ClickHouseAutoCreateTableTest {
         }
     }
 
+    @Test
+    public void testIsPrimaryKeyColumnPresent()    {
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+        primaryKeys.add("id");
+
+        ArrayList<String> primaryKeys2 = new ArrayList<>();
+        primaryKeys2.add("customerName2");
+        primaryKeys2.add("id2");
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+
+        Map<String, String> columnToDataTypesMap = new HashMap<String, String>();
+        columnToDataTypesMap.put("customerName", ClickHouseDataType.String.name());
+        columnToDataTypesMap.put("occupation", ClickHouseDataType.String.name());
+        columnToDataTypesMap.put("quantity", ClickHouseDataType.Int32.name());
+        columnToDataTypesMap.put("amount_1", ClickHouseDataType.Float32.name());
+        columnToDataTypesMap.put("id", ClickHouseDataType.Int8.name());
+
+        Assert.assertTrue(act.isPrimaryKeyColumnPresent(primaryKeys, columnToDataTypesMap));
+        Assert.assertFalse(act.isPrimaryKeyColumnPresent(primaryKeys2, columnToDataTypesMap));
+    }
+
 }

@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,7 +96,8 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
        return createTableSyntax.toString();
     }
 
-    private boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,Map<String, String>  columnToDataTypesMap) {
+    @VisibleForTesting
+    boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys, Map<String, String> columnToDataTypesMap) {
 
         for(String primaryKey: primaryKeys) {
             if(!columnToDataTypesMap.containsKey(primaryKey)) {
