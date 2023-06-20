@@ -1,4 +1,4 @@
-#name: my_connector
+name: my_connector
 database.hostname: "mysql-master"
 database.port: "3306"
 database.user: "root"

@@ -21,6 +21,7 @@ def databases_tables(
 
     table_name = f"databases_{getuid()}"
 
+
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_to_clickhouse_replicated_table(
             version_column=version_column,
@@ -30,7 +31,7 @@ def databases_tables(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with And(f"I create another database and table with the same name {table_name} in it"):
+    with And(f"I create another database in Clickhouse and table with the same name {table_name} in it"):
         clickhouse_node = self.context.cluster.node("clickhouse")
 
         create_database(name="test2")
@@ -48,7 +49,6 @@ def databases_tables(
         mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
         mysql.query(f"INSERT INTO {table_name} VALUES (2, '2018-09-08 17:51:05.777')")
         mysql.query(f"INSERT INTO {table_name} VALUES (3, '2018-09-08 17:51:05.777')")
-    pause()
 
     with Then(f"I check that data is replicated to the correct table"):
         complex_check_creation_and_select(
@@ -62,7 +62,7 @@ def databases_tables(
 @TestFeature
 def tables_in_different_databases(self):
     """Check correctness replication when we have two tables with the same name in different databases."""
-    xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/247")
+    # xfail("https://github.com/Altinity/clickhouse-sink-connector/issues/247")
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         if self.context.env.endswith("auto"):

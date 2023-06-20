@@ -2,7 +2,7 @@
 
 import os
 import sys
-
+import time
 
 from testflows.core import *
 
@@ -169,7 +169,7 @@ def regression(
 
     with And("I create test database in ClickHouse"):
         create_database(name="test")
-        pause()
+        time.sleep(30)
 
     modules = [
         "sanity",
