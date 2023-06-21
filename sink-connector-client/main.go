@@ -35,6 +35,12 @@ type Gist struct {
 	Files       map[string]File `json:"files"`
 }
 
+type UpdateBinLog struct {
+	File     string `json:"binlog_file"`
+	Position string `json:"binlog_position"`
+	Gtid     string `json:"gtid"`
+}
+
 // Fetches the repos for the given Github users
 func getStats(url string) *grequests.Response {
 	resp, err := grequests.Get(url, requestOptions)
@@ -109,8 +115,8 @@ func main() {
 				//args := c.Args()
 				log.Println("***** Stopping replication..... *****")
 				var repoUrl = "http://localhost:7000/stop"
-				//resp := getStats(repoUrl)
-				//log.Println(resp.String())
+				resp := getStats(repoUrl)
+				log.Println(resp.String())
 				log.Println("***** Replication stopped successfully *****")
 				//} else {
 				//	log.Println("Please give sufficient arguments. See -h to see help")
@@ -160,11 +166,11 @@ func main() {
 			Action: func(c *cli.Context) error {
 				var binlogFile = c.String("binlog_file")
 				var binlogPos = c.String("binlog_position")
-				var gitd = c.String("gtid")
+				var gtid = c.String("gtid")
 
 				log.Println("***** binlog file: ", binlogFile+"   *****")
 				log.Println("***** binlog position:", binlogPos+"   *****")
-				log.Println("*****  GTID:", gitd+"   *****")
+				log.Println("*****  GTID:", gtid+"   *****")
 				log.Println("Are you sure you want to continue? (y/n): ")
 				var userInput string
 				fmt.Scanln(&userInput)
@@ -175,19 +181,41 @@ func main() {
 					log.Println("Continuing...")
 				}
 				log.Println("Stopping replication...")
+				var stopUrl = "http://localhost:7000/stop"
+				resp := getStats(stopUrl)
 				time.Sleep(5 * time.Second)
 				log.Println("Updating binlog file/position and gtids...")
-				time.Sleep(5 * time.Second)
+
 				log.Println("Starting replication...")
 				time.Sleep(5 * time.Second)
 				log.Println("Replication started successfully")
+				var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid}
+				var postBody, _ = json.Marshal(updateBinLogBody)
+				var requestOptions_copy = requestOptions
+				// Add data to JSON field
+				requestOptions_copy.JSON = string(postBody)
+				// make a Post request to Github
+				var url = "http://localhost:7000/binlog"
+				resp, err := grequests.Post(url, requestOptions_copy)
+				log.Println(resp.String())
+				if err != nil {
+					log.Println(err)
+					log.Println("Create request failed for Github API")
+				}
+				time.Sleep(10 * time.Second)
+				var startUrl = "http://localhost:7000/start"
+				resp1 := getStats(startUrl)
+				log.Println(resp1.String())
+				return nil
+				//return resp
+
 				//var repoUrl = fmt.Sprintf("http://localhost:7000/update_binlog?binlog_file=%s&binlog_position=%s&gtid=%s", binlogFile, binlogPos, gitd)
 
 				// var repoUrl = "http://localhost:7000/status"
 				//resp := getStats(repoUrl)
 				//log.Println(resp.String())
 
-				return nil
+				//return nil
 			},
 		},
 	}

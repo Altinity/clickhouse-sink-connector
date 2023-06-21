@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mvn install -DskipTests=true
+mvn clean install -DskipTests=true
 today_date=$(date +%F)
 
 docker login registry.gitlab.com

@@ -14,6 +14,8 @@ import org.apache.log4j.ConsoleAppender;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.PatternLayout;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,6 +84,18 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
                 ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
 
+            });
+
+            app.post("/binlog", ctx -> {
+                String body = ctx.body();
+                JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
+                String binlogFile = (String) jsonObject.get("binlog_file");
+                String binlogPosition = (String) jsonObject.get("binlog_position");
+                String gtid = (String) jsonObject.get("gtid");
+                ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+
+                debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition, gtid);
+                log.info("Received update-binlog request: " + body);
             });
 
             Properties finalProps = props;

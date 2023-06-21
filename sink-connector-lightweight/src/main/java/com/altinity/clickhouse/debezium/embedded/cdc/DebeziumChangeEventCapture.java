@@ -9,11 +9,14 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Maps;
 import io.debezium.config.Configuration;
 import io.debezium.connector.postgresql.PostgresConnectorConfig;
 import io.debezium.connector.postgresql.connection.PostgresConnection;
@@ -26,6 +29,7 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
+import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +39,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -197,6 +202,11 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    @VisibleForTesting
+    void setWriter(BaseDbWriter writer) {
+        this.writer = writer;
+    }
+
     private boolean isSnapshotDDL(SourceRecord sr) {
         boolean snapshotDDL = false;
 
@@ -324,6 +334,7 @@ public class DebeziumChangeEventCapture {
         return response;
     }
 
+
     /**
      * Function to update the status of Debezium storage.
      * @param props
@@ -332,30 +343,26 @@ public class DebeziumChangeEventCapture {
      * @param gtid
      */
     public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String binlogFile, String binLogPosition, String gtid) throws SQLException {
+                                            String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
 
-        // Return the existing row if there is already an entry
-        // Command line output and in server logs.
+
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        DBCredentials dbCredentials = parseDBConfiguration(config);
 
-        // ToDo: do we need to backup the current entries, before deleting them?
-        // Delete the current row.
-        //String deleteQuery = String.format("truncate table %s", tableName);
-        // Delete by unique key(offset_key).
-        //writer.executeQuery(deleteQuery);
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
 
-        // Retrieve offset_key from table.(Debezium config should give this value).
-        String offsetKey = "[\"engine\",{\"server\":\"embeddedconnector\"}]";
-        String currentTimeStampMillis = Long.toString(System.currentTimeMillis());
-        // ToDO: Snapshot has to be retrieved from the current offsetValue.
-        String offsetValue = String.format("{\"ts_sec\":%s,\"file\":\"%s\",\"pos\":%s,\"gtids\":%s,\"snapshot\":true}",
-                currentTimeStampMillis, binlogFile, binLogPosition, gtid);
-        UUID uuid = UUID.randomUUID();
+        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
+        String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
+                binlogFile, binLogPosition, gtid);
 
-        String updateBinLogQuery = String.format("insert into %s(id, offset_key, offset_val, record_insert_ts, record_insert_seq) " +
-                "values(%s, %s, %s, %s, %s", tableName, uuid, offsetKey, offsetValue, currentTimeStampMillis, 1);
-        writer.executeQuery(updateBinLogQuery);
+        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
+        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+                System.currentTimeMillis());
+
     }
 
     public static int MAX_RETRIES = 25;
@@ -437,9 +444,10 @@ public class DebeziumChangeEventCapture {
         if(this.engine != null) {
             this.engine.close();
         }
+        Metrics.stop();
     }
 
-    private DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
+    DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
         DBCredentials dbCredentials = new DBCredentials();
 
         dbCredentials.setHostName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString()));

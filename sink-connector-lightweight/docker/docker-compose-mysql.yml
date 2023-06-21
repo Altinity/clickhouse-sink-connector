@@ -82,6 +82,7 @@ services:
     ports:
       - "8083:8083"
       - "5005:5005"
+      - "7000:7000"
 #    depends_on:
 #      - mysql-master
 #    env_file:
