@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -75,7 +76,12 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
         try {
-            Javalin app = Javalin.create().start(7000);
+            String cliPort = props.getProperty(SinkConnectorLightWeightConfig.CLI_PORT);
+            if(cliPort == null || cliPort.isEmpty()) {
+                cliPort = "7000";
+            }
+
+            Javalin app = Javalin.create().start(Integer.parseInt(cliPort));
             app.get("/", ctx -> {
                 ctx.result("Hello World");
             });
