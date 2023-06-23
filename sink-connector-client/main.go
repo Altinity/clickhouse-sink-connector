@@ -3,37 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"github.com/levigross/grequests"
+	cli "github.com/urfave/cli"
 	"log"
 	"os"
 	"time"
-
-	"github.com/levigross/grequests"
-	cli "github.com/urfave/cli"
 )
 
-var GITHUB_TOKEN = os.Getenv("GITHUB_TOKEN")
-var requestOptions = &grequests.RequestOptions{Auth: []string{GITHUB_TOKEN, "x-oauth-basic"}}
-
-// Struct for holding response of repositories fetch API
-type Repo struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	FullName string `json:"full_name"`
-	Forks    int    `json:"forks"`
-	Private  bool   `json:"private"`
-}
-
-// Structs for modelling JSON body in create Gist
-type File struct {
-	Content string `json:"content"`
-}
-
-type Gist struct {
-	Description string          `json:"description"`
-	Public      bool            `json:"public"`
-	Files       map[string]File `json:"files"`
-}
+var requestOptions = &grequests.RequestOptions{}
 
 type UpdateBinLog struct {
 	File     string `json:"binlog_file"`
@@ -41,8 +18,21 @@ type UpdateBinLog struct {
 	Gtid     string `json:"gtid"`
 }
 
+const (
+	START_REPLICATION_COMMAND = "start_replica"
+	STOP_REPLICATION_COMAND   = "stop_replica"
+	STATUS_COMMAND            = "show_replica_status"
+	UPDATE_BINLOG_COMMAND     = "update_binlog"
+)
+const (
+	START_REPLICATION = "start"
+	STOP_REPLICATION  = "stop"
+	STATUS            = "status"
+	UPDATE_BINLOG     = "binlog"
+)
+
 // Fetches the repos for the given Github users
-func getStats(url string) *grequests.Response {
+func getHTTPCall(url string) *grequests.Response {
 	resp, err := grequests.Get(url, requestOptions)
 	// you can modify the request by passing an optional RequestOptions struct
 	if err != nil {
@@ -51,100 +41,89 @@ func getStats(url string) *grequests.Response {
 	return resp
 }
 
-// Reads the files provided and creates Gist on github
-func createGist(url string, args []string) *grequests.Response {
-	// get first teo arguments
-	description := args[0]
-	// remaining arguments are file names with path
-	var fileContents = make(map[string]File)
-	for i := 1; i < len(args); i++ {
-		dat, err := ioutil.ReadFile(args[i])
-		if err != nil {
-			log.Println("Please check the filenames. Absolute path (or) same directory are allowed")
-			return nil
-		}
-		var file File
-		file.Content = string(dat)
-		fileContents[args[i]] = file
+/**
+Function to get server url based on the parameters passed
+*/
+func getServerUrl(action string, c *cli.Context) string {
+
+	var scheme = "http://"
+	var hostname = "localhost"
+	var port = "7000"
+	if c.GlobalString("host") != "" {
+		hostname = c.GlobalString("host")
 	}
-	var gist = Gist{Description: description, Public: true, Files: fileContents}
-	var postBody, _ = json.Marshal(gist)
-	var requestOptions_copy = requestOptions
-	// Add data to JSON field
-	requestOptions_copy.JSON = string(postBody)
-	// make a Post request to Github
-	resp, err := grequests.Post(url, requestOptions_copy)
-	if err != nil {
-		log.Println("Create request failed for Github API")
+	if c.GlobalString("port") != "" {
+		port = c.GlobalString("port")
 	}
-	return resp
+	if c.GlobalBool("secure") {
+		scheme = "https://"
+	}
+
+	var serverUrl = scheme + hostname + ":" + port + "/" + action
+
+	return serverUrl
 }
 
 func main() {
 	app := cli.NewApp()
 	app.Name = "Sink Connector Lightweight CLI"
 	app.Usage = "CLI for Sink Connector Lightweight, operations to get status, start/stop replication and set binlog/gtid position"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:     "host",
+			Usage:    "Host server address of sink connector",
+			Required: false,
+		},
+		cli.StringFlag{
+			Name:     "port",
+			Usage:    "Port of sink connector",
+			Required: false,
+		},
+		cli.BoolFlag{
+			Name:     "secure",
+			Usage:    "If true, then use https, else http",
+			Required: false,
+		},
+	}
+
 	// define command for our client
 	app.Commands = []cli.Command{
+
 		{
-			Name: "start",
-			//Aliases: []string{"f"},
+			Name:  START_REPLICATION_COMMAND,
 			Usage: "Start the replication",
 			Action: func(c *cli.Context) error {
-				//if c.NArg() > 0 {
-				// Github API Logic
-				//var repos []Repo
-				// user := c.Args()[0]
-				var repoUrl = fmt.Sprintf("http://localhost:7000/start")
-				resp := getStats(repoUrl)
-				///]resp.JSON(&repos)
+				var serverUrl = getServerUrl(START_REPLICATION, c)
+				resp := getHTTPCall(serverUrl)
 				log.Println(resp)
-				//} else {
-				//	log.Println("Please give a username. See -h to see help")
-				//}
 				return nil
 			},
 		},
 		{
-			Name: "stop",
-			//Aliases: []string{"c"},
+			Name:  STOP_REPLICATION_COMAND,
 			Usage: "Stop the replication",
 			Action: func(c *cli.Context) error {
-				//if c.NArg() > 1 {
-				// Github API Logic
-				//args := c.Args()
 				log.Println("***** Stopping replication..... *****")
-				var repoUrl = "http://localhost:7000/stop"
-				resp := getStats(repoUrl)
+				var serverUrl = getServerUrl(STOP_REPLICATION, c)
+				resp := getHTTPCall(serverUrl)
 				log.Println(resp.String())
 				log.Println("***** Replication stopped successfully *****")
-				//} else {
-				//	log.Println("Please give sufficient arguments. See -h to see help")
-				//}
 				return nil
 			},
 		},
 		{
-			Name: "status",
+			Name: STATUS_COMMAND,
 			//Aliases: []string{"c"},
 			Usage: "Status of replication",
 			Action: func(c *cli.Context) error {
-				//if c.NArg() > 1 {
-				// Github API Logic
-				//args := c.Args()
-				var repoUrl = "http://localhost:7000/status"
-				resp := getStats(repoUrl)
+				var serverUrl = getServerUrl(STATUS, c)
+				resp := getHTTPCall(serverUrl)
 				log.Println(resp.String())
-				//}
-				//else {
-				//	log.Println("Please give sufficient arguments. See -h to see help")
-				//}
 				return nil
 			},
 		},
 		{
-			Name: "update_binlog",
-			//Aliases: []string{"c"},
+			Name:  UPDATE_BINLOG_COMMAND,
 			Usage: "Update binlog file/position and gtids",
 			Flags: []cli.Flag{
 				cli.StringFlag{
@@ -164,62 +143,63 @@ func main() {
 				},
 			},
 			Action: func(c *cli.Context) error {
-				var binlogFile = c.String("binlog_file")
-				var binlogPos = c.String("binlog_position")
-				var gtid = c.String("gtid")
-
-				log.Println("***** binlog file: ", binlogFile+"   *****")
-				log.Println("***** binlog position:", binlogPos+"   *****")
-				log.Println("*****  GTID:", gtid+"   *****")
-				log.Println("Are you sure you want to continue? (y/n): ")
-				var userInput string
-				fmt.Scanln(&userInput)
-				if userInput != "y" {
-					log.Println("Exiting...")
-					return nil
-				} else {
-					log.Println("Continuing...")
-				}
-				log.Println("Stopping replication...")
-				var stopUrl = "http://localhost:7000/stop"
-				resp := getStats(stopUrl)
-				time.Sleep(5 * time.Second)
-				log.Println("Updating binlog file/position and gtids...")
-
-				log.Println("Starting replication...")
-				time.Sleep(5 * time.Second)
-				log.Println("Replication started successfully")
-				var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid}
-				var postBody, _ = json.Marshal(updateBinLogBody)
-				var requestOptions_copy = requestOptions
-				// Add data to JSON field
-				requestOptions_copy.JSON = string(postBody)
-				// make a Post request to Github
-				var url = "http://localhost:7000/binlog"
-				resp, err := grequests.Post(url, requestOptions_copy)
-				log.Println(resp.String())
-				if err != nil {
-					log.Println(err)
-					log.Println("Create request failed for Github API")
-				}
-				time.Sleep(10 * time.Second)
-				var startUrl = "http://localhost:7000/start"
-				resp1 := getStats(startUrl)
-				log.Println(resp1.String())
+				handleUpdateBinLogAction(c)
 				return nil
-				//return resp
-
-				//var repoUrl = fmt.Sprintf("http://localhost:7000/update_binlog?binlog_file=%s&binlog_position=%s&gtid=%s", binlogFile, binlogPos, gitd)
-
-				// var repoUrl = "http://localhost:7000/status"
-				//resp := getStats(repoUrl)
-				//log.Println(resp.String())
-
-				//return nil
 			},
 		},
 	}
 
 	app.Version = "1.0"
 	app.Run(os.Args)
+}
+
+/**
+Function to handle update binlog action
+which is used to set binlog file/position and gtids
+*/
+func handleUpdateBinLogAction(c *cli.Context) bool {
+	var binlogFile = c.String("binlog_file")
+	var binlogPos = c.String("binlog_position")
+	var gtid = c.String("gtid")
+
+	log.Println("***** binlog file: ", binlogFile+"   *****")
+	log.Println("***** binlog position:", binlogPos+"   *****")
+	log.Println("*****  GTID:", gtid+"   *****")
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Scanln(&userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
+	} else {
+		log.Println("Continuing...")
+	}
+
+	// Step1: Stop replication
+	log.Println("Stopping replication...")
+	var stopUrl = getServerUrl(STOP_REPLICATION, c)
+	resp := getHTTPCall(stopUrl)
+	time.Sleep(5 * time.Second)
+
+	// Step2: Update binlog position
+	log.Println("Updating binlog file/position and gtids...")
+	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid}
+	var postBody, _ = json.Marshal(updateBinLogBody)
+	var requestOptions_copy = requestOptions
+	// Add data to JSON field
+	requestOptions_copy.JSON = string(postBody)
+	var serverUrl = getServerUrl(UPDATE_BINLOG, c)
+	resp, err := grequests.Post(serverUrl, requestOptions_copy)
+	log.Println(resp.String())
+	if err != nil {
+		log.Println(err)
+		log.Println("Create request failed for Github API")
+	}
+
+	// Step3: Start replication
+	time.Sleep(10 * time.Second)
+	var startUrl = getServerUrl(START_REPLICATION, c)
+	resp1 := getHTTPCall(startUrl)
+	log.Println(resp1.String())
+	return true
 }

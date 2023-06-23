@@ -19,7 +19,11 @@ import org.json.simple.parser.JSONParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.xml.transform.Result;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class ClickHouseDebeziumEmbeddedApplication {
 
@@ -100,9 +104,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             Properties finalProps = props;
             app.get("/start", ctx -> {
-                debeziumChangeEventCapture.setup(finalProps,
-                        injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class));
+
+                CompletableFuture<String> cf = startDebeziumEventLoop(injector, finalProps);
+                ctx.result("Started Debezium Event Loop");
             });
 
             // app.get("/updateBinLogStatus", ctx -> {
@@ -122,6 +126,24 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
 
+    }
+
+    public static CompletableFuture<String> startDebeziumEventLoop(Injector injector, Properties props) throws InterruptedException {
+        CompletableFuture<String> cf = new CompletableFuture<>();
+
+        Executors.newCachedThreadPool().submit(() -> {
+            debeziumChangeEventCapture.stop();
+
+            Thread.sleep(500);
+            embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+
+            embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
+                    injector.getInstance(ConfigurationService.class),
+                    injector.getInstance(DDLParserService.class), props);
+            return null;
+        });
+
+        return cf;
     }
 
 
