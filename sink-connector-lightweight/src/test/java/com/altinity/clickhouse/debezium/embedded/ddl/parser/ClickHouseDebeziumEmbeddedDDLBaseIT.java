@@ -85,7 +85,7 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
 
         defaultProps.setProperty("snapshot.mode", "initial");
         defaultProps.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-
+        defaultProps.setProperty("name", "sink-connector-1");
         defaultProps.setProperty("include.schema.change", "true");
         defaultProps.setProperty("include.schema.comments", "true");
 
@@ -97,6 +97,7 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
         defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
         defaultProps.setProperty("offset.flush.interval.ms", "60000");
 
+        defaultProps.setProperty("offset.storage.offset.storage.jdbc.offset.table.name", "altinity_sink_connector.replica_source_info");
         defaultProps.setProperty("auto.create.tables", "true");
         defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));

@@ -1,4 +1,4 @@
-name: "altinity_sink_connector"
+name: "company-1"
 database.hostname: "mysql-master"
 database.port: "3306"
 database.user: "root"
