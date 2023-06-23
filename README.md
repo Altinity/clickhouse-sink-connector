@@ -160,6 +160,37 @@ Images are published in Gitlab.
 
 [Docker Setup instructions](sink-connector-lightweight/README.md)
 
+##### CLI tool (To start/stop replication and set binlog status and gtid) - Start replication from a specific binlog position or gtid
+Download the `sink-connector-client` from the latest releases.
+```
+ ./sink-connector-client 
+NAME:
+   Sink Connector Lightweight CLI - CLI for Sink Connector Lightweight, operations to get status, start/stop replication and set binlog/gtid position
+
+USAGE:
+   sink-connector-client [global options] command [command options] [arguments...]
+
+VERSION:
+   1.0
+
+COMMANDS:
+   start_replica        Start the replication
+   stop_replica         Stop the replication
+   show_replica_status  Status of replication
+   update_binlog        Update binlog file/position and gtids
+   help, h              Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --host value   Host server address of sink connector
+   --port value   Port of sink connector
+   --secure       If true, then use https, else http
+   --help, -h     show help
+   --version, -v  print the version
+
+
+```
+
+
 #### Configuration
  Configuration                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
