@@ -68,7 +68,7 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "false"
+enable.snapshot.ddl: "true"
 
 ```
 ### PostgreSQL Config(docker/config_postgres.yml)
