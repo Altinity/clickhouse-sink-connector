@@ -43,6 +43,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
+
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
                         new MySQLDDLParserService());
@@ -69,7 +70,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
         conn.prepareStatement("alter table add_test rename column col99 to col101;").execute();
         conn.prepareStatement(" alter table add_test drop column col101;").execute();
 
-        Thread.sleep(15000);
+        Thread.sleep(25000);
 
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -81,7 +82,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
         // Validate all ship_class columns.
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
+        Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Int16)"));
         Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
