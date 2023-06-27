@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -9,6 +10,7 @@ import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -62,6 +64,12 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
 
             clickHouseContainer = new ClickHouseContainer(clickHouseServerVersion)
             .withInitScript("init_clickhouse.sql")
+//                    .withEnv("CLICKHOUSE_USER", "root")
+//                    .withEnv("CLICKHOUSE_PASSWORD", "root")
+//                    .withEnv("CLICKHOUSE_DB", "test")
+//                    .withClasspathResourceMapping("users.xml",
+//                            "/etc/clickhouse-server/users.xml",
+//                            BindMode.READ_ONLY)
             .withExposedPorts(8123);
 
             clickHouseContainer.start();
@@ -72,12 +80,18 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
             executorService.execute(() -> {
                 try {
 
-                    Properties props = getDebeziumProperties();
-                    props.setProperty("database.include.list", "datatypes");
-                    props.setProperty("clickhouse.server.database", "datatypes");
-
+                    Properties props = new ConfigLoader().load("config.yml");
+                    //Properties props = getDebeziumProperties();
+                    props.setProperty("database.hostname", mySqlContainer.getHost());
+                    props.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
+                    props.setProperty("database.include.list", "employees");
+                    props.setProperty("clickhouse.server.database", "employees");
+                    props.setProperty("offset.storage.jdbc.url", clickHouseContainer.getJdbcUrl());
+                    props.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+                    props.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+                    props.setProperty("schema.history.internal.jdbc.url", clickHouseContainer.getJdbcUrl());
                     engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                    engine.get().setup(props, new SourceRecordParserService(),
                             new MySQLDDLParserService());
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -239,12 +253,12 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
         defaultProps.setProperty("include.schema.change", "true");
         defaultProps.setProperty("include.schema.comments", "true");
 
-        defaultProps.setProperty("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
+       // defaultProps.setProperty("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
         defaultProps.setProperty("provide.transaction.metadata", "true");
         //String tempOffsetPath = "/tmp/2/offsets" + System.currentTimeMillis() + ".dat";
         Path tmpFilePath = Files.createTempFile("offsets", ".dat");
         Files.deleteIfExists(tmpFilePath);
-        defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
+        //defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
         defaultProps.setProperty("offset.flush.interval.ms", "60000");
 
         defaultProps.setProperty("auto.create.tables", "true");

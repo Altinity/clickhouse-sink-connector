@@ -14,13 +14,19 @@ public class ConfigLoader {
         InputStream fis = this.getClass()
                 .getClassLoader()
                 .getResourceAsStream(resourceFileName);
+
         Map<String, Object> yamlFile = new Yaml().load(fis);
 
 
         final Properties props = new Properties();
 
         for (Map.Entry<String, Object> entry : yamlFile.entrySet()) {
-            props.setProperty(entry.getKey(), (String) entry.getValue());
+            if(entry.getValue() instanceof Integer) {
+                props.setProperty(entry.getKey(), Integer.toString((Integer) entry.getValue()));
+            } else {
+                String value = (String) entry.getValue();
+                props.setProperty(entry.getKey(), value.replace("\"", ""));
+            }
         }
 
         return props;
@@ -36,7 +42,8 @@ public class ConfigLoader {
             if(entry.getValue() instanceof Integer) {
                 props.setProperty(entry.getKey(), Integer.toString((Integer) entry.getValue()));
             } else {
-                props.setProperty(entry.getKey(), (String) entry.getValue());
+                String value = (String) entry.getValue();
+                props.setProperty(entry.getKey(), value.replace("\"", ""));
             }
         }
 

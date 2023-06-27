@@ -76,42 +76,6 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
     protected Properties getDebeziumProperties() throws Exception {
 
         // Start the debezium embedded application.
-//        Properties defaultProps = (new EnvironmentConfigurationService()).parse();
-//        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-//        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-//        defaultProps.setProperty("database.user", "root");
-//        defaultProps.setProperty("database.password", "adminpass");
-//
-//        defaultProps.setProperty("database.include.list", "employees");
-//        defaultProps.setProperty("snapshot.mode", "initial");
-//
-//
-//        defaultProps.setProperty("snapshot.mode", "initial");
-//        defaultProps.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-//        defaultProps.setProperty("name", "sink-connector-1");
-//        defaultProps.setProperty("include.schema.change", "true");
-//        defaultProps.setProperty("include.schema.comments", "true");
-//
-//        defaultProps.setProperty("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
-//        defaultProps.setProperty("provide.transaction.metadata", "true");
-//        //String tempOffsetPath = "/tmp/2/offsets" + System.currentTimeMillis() + ".dat";
-//        Path tmpFilePath = Files.createTempFile("offsets", ".dat");
-//        Files.deleteIfExists(tmpFilePath);
-//        defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
-//        defaultProps.setProperty("offset.flush.interval.ms", "60000");
-//
-//        defaultProps.setProperty("offset.storage.offset.storage.jdbc.offset.table.name", "altinity_sink_connector.replica_source_info");
-//        defaultProps.setProperty("auto.create.tables", "true");
-//        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-//        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-//        defaultProps.setProperty("clickhouse.server.user", "default");
-//        defaultProps.setProperty("clickhouse.server.pass", "");
-//        defaultProps.setProperty("clickhouse.server.database", "employees");
-//        defaultProps.setProperty("replacingmergetree.delete.column", "_sign");
-//        defaultProps.setProperty("metrics.port", "8088");
-//        defaultProps.setProperty("thread.pool.size", "1");
-//        defaultProps.setProperty("database.allowPublicKeyRetrieval", "true");
-//        defaultProps.setProperty("metrics.enable", "false");
 
         Properties defaultProps = new Properties();
         Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
@@ -139,5 +103,6 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
 
 
         return defaultProps;
+
     }
 }
