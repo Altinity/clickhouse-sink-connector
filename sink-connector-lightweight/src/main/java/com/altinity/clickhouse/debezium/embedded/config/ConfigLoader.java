@@ -10,10 +10,11 @@ import java.util.Properties;
 
 public class ConfigLoader {
 
-    public Properties load(String fileName) {
+    public Properties load(String resourceFileName) {
         InputStream fis = this.getClass()
                 .getClassLoader()
-                .getResourceAsStream(fileName);
+                .getResourceAsStream(resourceFileName);
+
         Map<String, Object> yamlFile = new Yaml().load(fis);
 
 

@@ -1,21 +1,19 @@
-name: clickhouse-connector-test
+name: "company-1"
 database.hostname: "mysql-master"
 database.port: "3306"
 database.user: "root"
-database.password: "adminpass"
+database.password: "root"
 database.server.name: "ER54"
-topic.prefix: "altinity_sink_connector"
-database.server.id: "1"
-database.include.list: sbtest
+database.include.list: employees
 #table.include.list=sbtest1
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "default"
-clickhouse.server.pass: ""
+clickhouse.server.pass: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "schema_only"
-offset.flush.interval.ms: 5000
+snapshot.mode: "initial"
+offset.flush.interval.ms: "5000"
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
@@ -43,4 +41,5 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "false"
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
