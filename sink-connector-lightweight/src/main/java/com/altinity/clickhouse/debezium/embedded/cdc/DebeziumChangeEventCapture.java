@@ -83,7 +83,8 @@ public class DebeziumChangeEventCapture {
                     dbCredentials.getPassword(), config);
             try {
                 String clickHouseVersion = writer.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                        .checkIfNewReplacingMergeTree(clickHouseVersion);
             } catch(Exception e) {
                 log.error("Error retrieving version");
             }
@@ -176,9 +177,13 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
+                    int threadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+                    this.executor = new ClickHouseBatchExecutor(threadPoolSize);
 
-                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+                    for(int i = 0; i < threadPoolSize; i++) {
+                        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(
+                                ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+                    }
                 }
 
             } else {
@@ -270,7 +275,7 @@ public class DebeziumChangeEventCapture {
             if(tableName.contains(".")) {
                 String[] dbTableNameArray = tableName.split("\\.");
                 if(dbTableNameArray.length >= 2) {
-                    String dbName = dbTableNameArray[0];
+                    String dbName = dbTableNameArray[0].replace("\"", "");
                     String createDbQuery = String.format("create database if not exists %s", dbName);
                     log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
                     writer.executeQuery(createDbQuery);

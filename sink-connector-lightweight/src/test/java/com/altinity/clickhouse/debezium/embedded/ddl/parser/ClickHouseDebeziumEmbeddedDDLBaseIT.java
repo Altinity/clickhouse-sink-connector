@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.AfterEach;
@@ -72,7 +73,30 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
 
     protected Properties getDebeziumProperties() throws Exception {
 
+        Properties props = new ConfigLoader().load("config.yml");
+        //Properties props = getDebeziumProperties();
+        props.setProperty("database.hostname", mySqlContainer.getHost());
+        props.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
+        props.setProperty("database.include.list", "employees");
+        props.setProperty("clickhouse.server.database", "employees");
+        props.setProperty("offset.storage.jdbc.url", clickHouseContainer.getJdbcUrl());
+        props.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+        props.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+        props.setProperty("schema.history.internal.jdbc.url", clickHouseContainer.getJdbcUrl());
+        props.setProperty("snapshot.mode", "initial");
+
+//        Properties fileProps = new ConfigLoader().load("config.yml");
+//        fileProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+//        fileProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+//        fileProps.setProperty("database.password", "adminpass");
+//
+//        fileProps.setProperty("database.hostname", mySqlContainer.getHost());
+//        fileProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
+
+        return props;
+
         // Start the debezium embedded application.
+
         Properties defaultProps = (new EnvironmentConfigurationService()).parse();
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
@@ -111,5 +135,6 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
         defaultProps.setProperty("metrics.enable", "false");
 
         return defaultProps;
+
     }
 }
