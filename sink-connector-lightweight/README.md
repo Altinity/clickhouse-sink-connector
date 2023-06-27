@@ -1,35 +1,65 @@
-### Altinity Replicator for ClickHosue
-### Getting started (MySQL)
-Currently the configuration is passed to the application as environment variables. \
-`(sink-connector-lightweight/docker/docker.env)`
+### Docker compose
 
-**Configuration**
+### Getting started
+Configuration(yaml) file mounted as volume
 ```
-export database.hostname="mysql-master"
-export database.port="3306"
-export database.user="root"
-export database.password="root"
-export database.include.list=sbtest
-export clickhouse.server.url="clickhouse"
-export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
-export clickhouse.server.port="8123"
-#export table.include.list=sbtest1
-export database.allowPublicKeyRetrieval"="true"
-export snapshot.mode="schema_only"
-export connector.class="io.debezium.connector.mysql.MySqlConnector"
-export clickhouse.server.database="test"
-export auto.create.tables=true
-export replacingmergetree.delete.column="_sign"
-export metrics.port=8083
+      - ./config.yml:/config.yml
 ```
-After the environment variables are set, start the docker container
+
+**Configuration(MySQL)**
+```
+database.hostname: "mysql-master"
+database.port: "3306"
+database.user: "root"
+database.password: "root"
+database.server.name: "ER54"
+database.include.list: sbtest
+#table.include.list=sbtest1
+clickhouse.server.url: "clickhouse"
+clickhouse.server.user: "root"
+clickhouse.server.pass: "root"
+clickhouse.server.port: "8123"
+clickhouse.server.database: "test"
+database.allowPublicKeyRetrieval: "true"
+snapshot.mode: "schema_only"
+offset.flush.interval.ms: 5000
+connector.class: "io.debezium.connector.mysql.MySqlConnector"
+offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+offset.storage.jdbc.user: "root"
+offset.storage.jdbc.password: "root"
+offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+(
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64,
+    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY id
+SETTINGS index_granularity = 8198"
+offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+schema.history.internal.jdbc.user: "root"
+schema.history.internal.jdbc.password: "root"
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+enable.snapshot.ddl: "false"
+
+```
+Start the docker container
 A Sample docker-compose is provided , it starts the docker container \
 `registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
 ```
 cd sink-connector-lightweight
 cd docker
-docker-compose up
+./start-docker-compose.sh
 ```
 
 ###  Getting Started (PostgreSQL)

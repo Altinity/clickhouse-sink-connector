@@ -13,4 +13,6 @@ public class SinkConnectorLightWeightConfig {
     // Enable execution of snapshot ddl.
     public static final String ENABLE_SNAPSHOT_DDL = "enable.snapshot.ddl";
 
+    public static final String CLI_PORT = "cli.port";
+
 }

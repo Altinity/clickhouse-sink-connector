@@ -6,6 +6,8 @@
 </a>
 
 # Altinity Replicator for ClickHouse (Lightweight version)
+![](doc/img/kafka_replication_tool.jpg)
+
 New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
 Single executable and lightweight.
 ##### Supports DDL in MySQL.
@@ -13,30 +15,181 @@ Single executable and lightweight.
 ### Usage
 ##### From Command line.
 Download the JAR file from the releases.
+https://github.com/Altinity/clickhouse-sink-connector/releases
+1.  Update **MySQL information** in config.yaml: `database.hostname`, `database.port`, `database.user` and `database.password`.
+2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`. 
+Also Update **ClickHouse information** for the following fields that are used to store the offset information- `offset.storage.jdbc.url`, `offset.storage.jdbc.user`, `offset.storage.jdbc.password`, `schema.history.internal.jdbc.url`, `schema.history.internal.jdbc.user`, and `schema.history.internal.jdbc.password`.
+3.  Update MySQL databases to be replicated: `database.include.list`.
+4.  Add table filters: `table.include.list`.
+5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
+6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
 
-Update the yaml configuration file.(mysql_config.yaml)
+### MySQL Configuration (docker/config.yaml)
 ```
-database.hostname: "localhost"
+database.hostname: "mysql-master"
 database.port: "3306"
 database.user: "root"
 database.password: "root"
+database.server.name: "ER54"
 database.include.list: sbtest
 #table.include.list=sbtest1
-clickhouse.server.url: "localhost"
+clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
 clickhouse.server.pass: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
 snapshot.mode: "schema_only"
+offset.flush.interval.ms: 5000
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
-offset.storage.file.filename: /data/offsets.dat
-database.history.file.filename: /data/dbhistory.dat
-schema.history.internal.file.filename: /data/schemahistory2.dat
+offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+offset.storage.jdbc.user: "root"
+offset.storage.jdbc.password: "root"
+offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+(
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64,
+    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY id
+SETTINGS index_granularity = 8198"
+offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+schema.history.internal.jdbc.user: "root"
+schema.history.internal.jdbc.password: "root"
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+enable.snapshot.ddl: "true"
+
+```
+### PostgreSQL Config(docker/config_postgres.yml)
+```
+database.hostname: "postgres"
+database.port: "5432"
+database.user: "root"
+database.password: "root"
+database.server.name: "ER54"
+schema.include.list: public
+plugin.name: "pgoutput"
+table.include.list: "public.tm"
+clickhouse.server.url: "clickhouse"
+clickhouse.server.user: "root"
+clickhouse.server.pass: "root"
+clickhouse.server.port: "8123"
+clickhouse.server.database: "test"
+database.allowPublicKeyRetrieval: "true"
+snapshot.mode: "initial"
+offset.flush.interval.ms: 5000
+connector.class: "io.debezium.connector.postgresql.PostgresConnector"
+offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+offset.storage.jdbc.user: "root"
+offset.storage.jdbc.password: "root"
+offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+(
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64,
+    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY id
+SETTINGS index_granularity = 8198"
+offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+schema.history.internal.jdbc.user: "root"
+schema.history.internal.jdbc.password: "root"
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
+database.dbname: "public"
 ```
 
-Start the application.
-`java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar mysql_config.yaml`
+## Command Line(JAR)
+https://github.com/Altinity/clickhouse-sink-connector/releases
+
+`java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>`
+
+### Docker compose
+
+`export SINK_LIGHTWEIGHT_VERSION=latest`
+
+**MySQL**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-mysql.yml up
+```
+**MySQL (Connect to external MySQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-mysql-standalone.yml up
+```
+
+**PostgreSQL**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-postgres.yml up
+```
+
+**PostgreSQL(Connect to external PostgreSQL and ClickHouse configuration)**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-postgres-standalone.yml up
+```
+
+##### Docker
+Images are published in Gitlab.
+
+`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
+
+[Docker Setup instructions](sink-connector-lightweight/README.md)
+
+##### CLI tool (To start/stop replication and set binlog status and gtid) - Start replication from a specific binlog position or gtid
+Download the `sink-connector-client` from the latest releases.
+```
+ ./sink-connector-client 
+NAME:
+   Sink Connector Lightweight CLI - CLI for Sink Connector Lightweight, operations to get status, start/stop replication and set binlog/gtid position
+
+USAGE:
+   sink-connector-client [global options] command [command options] [arguments...]
+
+VERSION:
+   1.0
+
+COMMANDS:
+   start_replica        Start the replication
+   stop_replica         Stop the replication
+   show_replica_status  Status of replication
+   update_binlog        Update binlog file/position and gtids
+   help, h              Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --host value   Host server address of sink connector
+   --port value   Port of sink connector
+   --secure       If true, then use https, else http
+   --help, -h     show help
+   --version, -v  print the version
+
+
+```
+
 
 #### Configuration
  Configuration                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -62,14 +215,8 @@ Start the application.
 | database.allowPublicKeyRetrieval      | **Optional**, MySQL specific: true/false                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 
-##### Docker
-Images are published in Gitlab.
 
-`registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest`
 
-[Docker Setup instructions](sink-connector-lightweight/README.md)
-
-![](doc/img/kafka_replication_tool.jpg)
 
 # Altinity Sink Connector for ClickHouse
 

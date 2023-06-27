@@ -33,7 +33,7 @@ services:
   clickhouse:
     # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
     container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:23.3.4
     restart: "no"
     ports:
       - "8123:8123"
@@ -82,7 +82,8 @@ services:
     ports:
       - "8083:8083"
       - "5005:5005"
-#    depends_on:
+      - "7000:7000"
+    #    depends_on:
 #      - mysql-master
 #    env_file:
 #      - docker.env

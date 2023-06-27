@@ -3,7 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
-public class ClickHouseAlterTableTest extends ClickHouseAutoCreateTableTest {
+public class ClickHouseAlterTableTest extends com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTableTest {
 
     @Test
     public void createAlterTableSyntaxTest() {

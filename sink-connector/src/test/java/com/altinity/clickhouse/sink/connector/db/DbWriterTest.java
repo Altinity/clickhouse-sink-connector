@@ -43,15 +43,15 @@ public class DbWriterTest {
     public static void init() {
 
         clickHouseContainer.start();
-        String hostName = "remoteClickHouse";
-        Integer port = 8123;
-        String database = "default";
+        String hostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "employees";
         String userName = "default";
         String password = "";
         String tableName = "employees";
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
-        writer = new DbWriter(hostName, port, tableName, database, userName, password, config, null);
+        writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
 
     }
 
@@ -97,7 +97,7 @@ public class DbWriterTest {
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "employees";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
@@ -107,6 +107,16 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
+        Assert.assertTrue(columnDataTypesMap.size() == 20);
+
+        String database2 = "employees2";
+        DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
+
+        Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
+        Assert.assertTrue(columnDataTypesMap2.size() == 2);
+
     }
 
     @Test
@@ -121,11 +131,19 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result.getRight().equalsIgnoreCase("_version"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "products");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
+        Assert.assertTrue(result_test.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
+        Assert.assertTrue(result_test.getRight().equalsIgnoreCase("_version22"));
+
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_employees = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "employees", "employees");
+        Assert.assertTrue(result_employees.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
+        Assert.assertTrue(result_employees.getRight().equalsIgnoreCase("_version_employees"));
+
+        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
         Assert.assertTrue(resultProducts.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
         Assert.assertTrue(resultProducts.getRight().equalsIgnoreCase("sign"));
     }

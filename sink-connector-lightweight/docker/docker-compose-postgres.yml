@@ -65,15 +65,19 @@ services:
       - label:disable
 
   debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:2023-04-19
+    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     #    build:
     #      context: ../
     restart: "no"
     ports:
       - "8083:8083"
+      - "5005:5005"
     depends_on:
       - clickhouse 
     env_file:
       - docker_postgres.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      #- ./data:/data
+      - ./config_postgres.yml:/config.yml

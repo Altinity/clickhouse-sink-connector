@@ -79,3 +79,72 @@ CREATE TABLE products(
 ENGINE = CollapsingMergeTree(sign)
 PRIMARY KEY productCode
 order by productCode;
+
+
+CREATE TABLE test.employees
+(
+  `emp_no` Int32,
+  `birth_date` Date32,
+  `first_name` String,
+  `last_name` String,
+  `gender` String,
+  `hire_date` Date32,
+  `_offset` Nullable(UInt64),
+`_key` Nullable(String),
+`_topic` Nullable(String),
+`_partition` Nullable(UInt64),
+`_timestamp` Nullable(DateTime),
+`_timestamp_ms` Nullable(DateTime64(3)),
+`_ts_ms` Nullable(DateTime64(3)),
+`_server_id` Nullable(Int32),
+`_gtid` Nullable(Int32),
+`_binlog_file` Nullable(String),
+`_binlog_pos` Nullable(Int32),
+`_binlog_row` Nullable(Int32),
+`_server_thread` Nullable(Int32),
+`_version22` UInt64
+)
+ENGINE = ReplacingMergeTree(_version22)
+PRIMARY KEY emp_no
+ORDER BY emp_no;
+
+
+CREATE DATABASE employees;
+CREATE TABLE employees.employees
+(
+  `emp_no` Int32,
+  `birth_date` Date32,
+  `first_name` String,
+  `last_name` String,
+  `gender` String,
+  `hire_date` Date32,
+  `_offset` Nullable(UInt64),
+`_key` Nullable(String),
+`_topic` Nullable(String),
+`_partition` Nullable(UInt64),
+`_timestamp` Nullable(DateTime),
+`_timestamp_ms` Nullable(DateTime64(3)),
+`_ts_ms` Nullable(DateTime64(3)),
+`_server_id` Nullable(Int32),
+`_gtid` Nullable(Int32),
+`_binlog_file` Nullable(String),
+`_binlog_pos` Nullable(Int32),
+`_binlog_row` Nullable(Int32),
+`_server_thread` Nullable(Int32),
+`_version_employees` UInt64
+)
+ENGINE = ReplacingMergeTree(_version_employees)
+PRIMARY KEY emp_no
+ORDER BY emp_no;
+
+CREATE database employees2;
+
+CREATE TABLE employees2.employees
+(
+  `emp1` Int32,
+  `_version_employees` UInt64
+
+)
+ENGINE = ReplacingMergeTree(_version_employees)
+PRIMARY KEY emp1
+ORDER BY emp1;

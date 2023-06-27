@@ -50,7 +50,7 @@ public class DBMetadata {
         result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
 
         if(result.left == null) {
-            result = getTableEngineUsingShowTable(conn, tableName);
+            result = getTableEngineUsingShowTable(conn, databaseName, tableName);
         }
 
         return result;
@@ -93,7 +93,8 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(ClickHouseConnection conn, String tableName) {
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(ClickHouseConnection conn, String databaseName,
+                                                                          String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
         try {
@@ -102,7 +103,7 @@ public class DBMetadata {
                 return new MutablePair<>(null, null);
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s", tableName);
+                String showSchemaQuery = String.format("show create table %s.%s", databaseName, tableName);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs != null && rs.next()) {
                     String response =  rs.getString(1);

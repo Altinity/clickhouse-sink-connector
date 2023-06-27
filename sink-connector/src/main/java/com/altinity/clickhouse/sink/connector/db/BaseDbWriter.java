@@ -18,7 +18,7 @@ public class BaseDbWriter {
 
     private String hostName;
     private Integer port;
-    private String database;
+    protected String database;
     private String userName;
     private String password;
 
@@ -84,8 +84,8 @@ public class BaseDbWriter {
                 return result;
             }
 
-            ResultSet columns = this.conn.getMetaData().getColumns(null, null,
-                    tableName, null);
+            ResultSet columns = this.conn.getMetaData().getColumns(null, this.database,
+                     tableName, null);
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
@@ -123,6 +123,22 @@ public class BaseDbWriter {
         }
 
         return result;
+    }
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
+        if(this.conn == null) {
+            String connectionUrl = getConnectionString(hostName, port, database);
+            this.createConnection(connectionUrl, "Agent_1", userName, password);
+        }
+        ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
+        return rs;
+
     }
 
     /**
