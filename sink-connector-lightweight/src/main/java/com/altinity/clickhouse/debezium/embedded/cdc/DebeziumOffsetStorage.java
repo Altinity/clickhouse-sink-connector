@@ -1,9 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.fasterxml.jackson.databind.annotation.JsonAppend;
+
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -16,6 +14,18 @@ import java.util.Properties;
 import java.util.UUID;
 
 public class DebeziumOffsetStorage {
+
+    // MySQL parameters
+    public static final String BINLOG_POS = "binlog_pos";
+    public static final String BINLOG_FILE = "binlog_file";
+
+    public static final String GTID = "gtid";
+
+    // PostgreSQL parameters
+    public static final String LSN_PROCESSED = "lsn_proc";
+    public static final String LSN = "lsn";
+
+
 
     public String getOffsetKey(Properties props) {
         String connectorName = props.getProperty("name");
@@ -67,6 +77,27 @@ public class DebeziumOffsetStorage {
         if(gtids != null) {
             jsonObject.put("gtids", gtids);
         }
+
+        return jsonObject.toJSONString();
+    }
+
+    /**
+     *  ┌─id───────────────────────────────────┬─offset_key────────────────────────────────────┬─offset_val──────────────────────────────────────────────────────────────────────────────────────────────────────────────┬────record_insert_ts─┬─record_insert_seq─┐
+     * │ 03750062-c862-48c5-9f37-451c0d33511b │ ["\"engine\"",{"server":"embeddedconnector"}] │ {"transaction_id":null,"lsn_proc":27485360,"messageType":"UPDATE","lsn":27485360,"txId":743,"ts_usec":1687876724804733} │ 2023-06-27 14:38:45 │                 1 │
+     * └──────────────────────────────────────┴───────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────┴───────────────────┘
+     *
+     * @param record
+     * @return
+     * @throws ParseException
+     */
+    public String updateLsnInformation(String record, String lsn) throws ParseException {
+        JSONObject jsonObject = new JSONObject();
+        if(record != null || !record.isEmpty()) {
+            jsonObject = (JSONObject) new JSONParser().parse(record);
+        }
+
+        jsonObject.put(LSN_PROCESSED, lsn);
+        jsonObject.put(LSN, lsn);
 
         return jsonObject.toJSONString();
     }

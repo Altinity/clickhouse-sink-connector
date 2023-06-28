@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
@@ -20,11 +21,9 @@ import org.json.simple.parser.JSONParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.xml.transform.Result;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 public class ClickHouseDebeziumEmbeddedApplication {
 
@@ -33,6 +32,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
     private static ClickHouseDebeziumEmbeddedApplication embeddedApplication;
 
     private static DebeziumChangeEventCapture debeziumChangeEventCapture;
+
+
+
     /**
      * Main Entry for the application
      * @param args arguments
@@ -99,12 +101,23 @@ public class ClickHouseDebeziumEmbeddedApplication {
             app.post("/binlog", ctx -> {
                 String body = ctx.body();
                 JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-                String binlogFile = (String) jsonObject.get("binlog_file");
-                String binlogPosition = (String) jsonObject.get("binlog_position");
-                String gtid = (String) jsonObject.get("gtid");
+                String binlogFile = (String) jsonObject.get(BINLOG_FILE);
+                String binlogPosition = (String) jsonObject.get(BINLOG_POS);
+                String gtid = (String) jsonObject.get(GTID);
                 ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
 
                 debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition, gtid);
+                log.info("Received update-binlog request: " + body);
+            });
+
+            app.post("/lsn", ctx -> {
+                String body = ctx.body();
+                JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
+                String lsn = (String) jsonObject.get(LSN);
+
+                ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+
+                debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, lsn);
                 log.info("Received update-binlog request: " + body);
             });
 

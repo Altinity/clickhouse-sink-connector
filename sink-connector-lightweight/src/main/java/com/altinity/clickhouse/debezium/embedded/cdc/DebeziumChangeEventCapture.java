@@ -9,14 +9,12 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Maps;
 import io.debezium.config.Configuration;
 import io.debezium.connector.postgresql.PostgresConnectorConfig;
 import io.debezium.connector.postgresql.connection.PostgresConnection;
@@ -39,9 +37,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -363,6 +359,37 @@ public class DebeziumChangeEventCapture {
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
         String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
                 binlogFile, binLogPosition, gtid);
+
+        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
+        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+                System.currentTimeMillis());
+
+    }
+
+    /**
+     * Function to update the status of Debezium storage (LSN).
+     * @param config
+     * @param props
+     * @param lsn
+     * @throws SQLException
+     * @throws ParseException
+     */
+    public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
+                                            String lsn) throws SQLException, ParseException {
+
+
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+
+        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
+        String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
+                lsn);
 
         new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
         new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
