@@ -49,6 +49,11 @@ INSERT INTO altinity_sink_connector.replica_source_info (id,offset_key,offset_va
 INSERT INTO altinity_sink_connector.replica_source_info (id,offset_key,offset_val,record_insert_ts,record_insert_seq) VALUES
 ('f15e5c94-4338-409b-b3ed-5044fa20e38e','["company-1",{"server":"embeddedconnector"}]','{"transaction_id":null,"ts_sec":1687278006,"file":"mysql-bin.000003","pos":1156385,"gtids":"30fd82c7-0f86-11ee-9e3b-0242c0a86002:1-2442","row":1,"server_id":266,"event":2}','2023-06-20 16:20:07',3);
 
+-- PostgreSQL
+--INSERT INTO altinity_sink_connector.replica_source_info
+--(id, offset_key, offset_val, record_insert_ts, record_insert_seq)
+--VALUES('03750062-c862-48c5-9f37-451c0d33511b', '["\"engine\"",{"server":"embeddedconnector"}]', '{"transaction_id":null,"lsn_proc":27485360,"messageType":"UPDATE","lsn":27485360,"txId":743,"ts_usec":1687876724804733}', 2023-06-27 14:38:45.000, 1);
+
 --CREATE TABLE employees.rmt_test
 --(
 --  `id` Int64,
