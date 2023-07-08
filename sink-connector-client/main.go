@@ -18,17 +18,23 @@ type UpdateBinLog struct {
 	Gtid     string `json:"gtid"`
 }
 
+type UpdateLsn struct {
+	Lsn string `json:"lsn"`
+}
+
 const (
 	START_REPLICATION_COMMAND = "start_replica"
 	STOP_REPLICATION_COMAND   = "stop_replica"
 	STATUS_COMMAND            = "show_replica_status"
 	UPDATE_BINLOG_COMMAND     = "update_binlog"
+	UPDATE_LSN_COMMAND        = "lsn"
 )
 const (
 	START_REPLICATION = "start"
 	STOP_REPLICATION  = "stop"
 	STATUS            = "status"
 	UPDATE_BINLOG     = "binlog"
+	UPDATE_LSN        = "lsn"
 )
 
 // Fetches the repos for the given Github users
@@ -147,10 +153,67 @@ func main() {
 				return nil
 			},
 		},
+		{
+			Name:  UPDATE_LSN_COMMAND,
+			Usage: "Update lsn(For postgreSQL)",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:     "lsn",
+					Usage:    "Set LSN position(For PostgreSQL)",
+					Required: true,
+				},
+			},
+			Action: func(c *cli.Context) error {
+				handleUpdateLsn(c)
+				return nil
+			},
+		},
 	}
 
 	app.Version = "1.0"
 	app.Run(os.Args)
+}
+
+func handleUpdateLsn(c *cli.Context) bool {
+	var lsnPosition = c.String("lsn")
+	log.Println("***** lsn position:", lsnPosition+"   *****")
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Scanln(&userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
+	} else {
+		log.Println("Continuing...")
+	}
+
+	// Step1: Stop replication
+	log.Println("Stopping replication...")
+	var stopUrl = getServerUrl(STOP_REPLICATION, c)
+	resp := getHTTPCall(stopUrl)
+	time.Sleep(5 * time.Second)
+
+	// Step2: Update binlog position
+	log.Println("Updating lsn position..")
+	var updateLsnBody = UpdateLsn{Lsn: lsnPosition}
+	var postBody, _ = json.Marshal(updateLsnBody)
+	var requestOptions_copy = requestOptions
+	// Add data to JSON field
+	requestOptions_copy.JSON = string(postBody)
+	var serverUrl = getServerUrl(UPDATE_LSN, c)
+	resp, err := grequests.Post(serverUrl, requestOptions_copy)
+	log.Println(resp.String())
+	if err != nil {
+		log.Println(err)
+		log.Println("Create request failed for Github API")
+	}
+
+	// Step3: Start replication
+	time.Sleep(10 * time.Second)
+	var startUrl = getServerUrl(START_REPLICATION, c)
+	resp1 := getHTTPCall(startUrl)
+	log.Println(resp1.String())
+	return true
 }
 
 /**
