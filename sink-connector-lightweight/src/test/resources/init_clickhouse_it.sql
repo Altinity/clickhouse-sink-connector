@@ -1,3 +1,8 @@
+--CREATE USER 'ch_user' IDENTIFIED WITH plaintext_password BY 'root';
+--SET allow_introspection_functions=1;
+--GRANT ALL ON . TO 'ch_user' WITH GRANT OPTION
+
+
 CREATE database datatypes;
 CREATE database employees;
 CREATE database public;

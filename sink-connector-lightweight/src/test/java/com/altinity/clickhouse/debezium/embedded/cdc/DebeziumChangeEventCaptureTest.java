@@ -19,9 +19,9 @@ public class DebeziumChangeEventCaptureTest {
     public void testUpdateLsn() throws ParseException {
         String record = "{\"transaction_id\":null,\"lsn_proc\":27485360,\"messageType\":\"UPDATE\",\"lsn\":27485360,\"txId\":743,\"ts_usec\":1687876724804733}";
 
-        String updatedRecord = new DebeziumOffsetStorage().updateLsnInformation(record, "1232323");
+        String updatedRecord = new DebeziumOffsetStorage().updateLsnInformation(record, 1232323L);
 
-        assertTrue(updatedRecord.equalsIgnoreCase("{\"transaction_id\":null,\"lsn_proc\":\"1232323\",\"messageType\":\"UPDATE\",\"lsn\":\"1232323\",\"txId\":743,\"ts_usec\":1687876724804733}"));
+        assertTrue(updatedRecord.equalsIgnoreCase("{\"transaction_id\":null,\"lsn_proc\":1232323,\"messageType\":\"UPDATE\",\"lsn\":1232323,\"txId\":743,\"ts_usec\":1687876724804733}"));
     }
 
 }

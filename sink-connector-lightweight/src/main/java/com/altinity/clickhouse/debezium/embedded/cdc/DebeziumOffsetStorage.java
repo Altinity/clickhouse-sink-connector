@@ -90,7 +90,7 @@ public class DebeziumOffsetStorage {
      * @return
      * @throws ParseException
      */
-    public String updateLsnInformation(String record, String lsn) throws ParseException {
+    public String updateLsnInformation(String record, long lsn) throws ParseException {
         JSONObject jsonObject = new JSONObject();
         if(record != null || !record.isEmpty()) {
             jsonObject = (JSONObject) new JSONParser().parse(record);

@@ -52,7 +52,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
             }
         });
 
-        Thread.sleep(10000);
+        Thread.sleep(10000);//
 
         Connection conn = connectToMySQL();
         // alter table ship_class change column class_name class_name_new int;
