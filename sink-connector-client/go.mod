@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/levigross/grequests v0.0.0-20221222020224-9eee758d18d5
 	github.com/stretchr/testify v1.8.2
+	github.com/tidwall/pretty v1.2.1
 	github.com/urfave/cli v1.22.13
 )
 

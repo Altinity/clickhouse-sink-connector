@@ -66,6 +66,16 @@ public class DebeziumChangeEventCapture {
 
     static public boolean isNewReplacingMergeTreeEngine = true;
 
+    private long replicationLag = 0;
+
+    private boolean isReplicationRunning = false;
+
+    private String binLogFile = "";
+
+    private String binLogPosition = "";
+
+    private String gtid = "";
+
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
     private void performDDLOperation(String DDL,  Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
@@ -180,7 +190,14 @@ public class DebeziumChangeEventCapture {
 
             } else {
                 ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
-
+                try {
+                    this.replicationLag = chStruct.getReplicationLag();
+                    this.binLogFile = chStruct.getFile();
+                    this.binLogPosition = String.valueOf(chStruct.getPos());
+                    this.gtid = String.valueOf(chStruct.getGtid());
+                } catch(Exception e) {
+                    log.error("Error retrieving status metrics");
+                }
                 ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
                 if (chStruct != null) {
                     queue.add(chStruct);
@@ -308,6 +325,13 @@ public class DebeziumChangeEventCapture {
                     .collect(Collectors.toList());
 
             JSONArray result = new JSONArray();
+            JSONObject replicationLag = new JSONObject();
+            replicationLag.put("Seconds_Behind_Source", this.replicationLag/1000);
+            result.add(replicationLag);
+
+            JSONObject replicationRunning = new JSONObject();
+            replicationRunning.put("Replica_Running", this.isReplicationRunning);
+            result.add(replicationRunning);
             // Add Database name and table name.
             JSONObject dbName = new JSONObject();
 
@@ -436,7 +460,22 @@ public class DebeziumChangeEventCapture {
                             }
                             log.debug("Completion callback");
                         }
-                    }).build();
+
+                    }).using(
+                            new DebeziumEngine.ConnectorCallback() {
+                                @Override
+                                public void connectorStarted() {
+                                    isReplicationRunning = true;
+                                    log.debug("Connector started");
+                                }
+
+                                @Override
+                                public void connectorStopped() {
+                                    isReplicationRunning = false;
+                                    log.debug("Connector stopped");
+                                }
+                            }
+                    ).build();
             engine.run();
 
         } catch (Exception e) {
@@ -473,6 +512,18 @@ public class DebeziumChangeEventCapture {
             this.engine.close();
         }
         Metrics.stop();
+    }
+
+    public long getReplicationLag() {
+        return this.replicationLag;
+    }
+
+    public long getReplicationLagInSecs() {
+        return this.replicationLag / 1000;
+    }
+
+    public boolean isReplicationRunning() {
+        return this.isReplicationRunning;
     }
 
     DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
@@ -520,6 +571,7 @@ public class DebeziumChangeEventCapture {
             this.records.put(topicName, structs);
         }
     }
+
 
     // db.items.insert({_id:ObjectId(), uuid:ObjectId(), price:22, name:"New record"});
     private void trySomething(Configuration config){

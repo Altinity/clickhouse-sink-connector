@@ -12,6 +12,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
+import io.javalin.http.HttpStatus;
 import org.apache.log4j.ConsoleAppender;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
@@ -99,6 +100,10 @@ public class ClickHouseDebeziumEmbeddedApplication {
             });
 
             app.post("/binlog", ctx -> {
+                if(debeziumChangeEventCapture.isReplicationRunning()) {
+                    ctx.status(HttpStatus.BAD_REQUEST);
+                    return;
+                }
                 String body = ctx.body();
                 JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
                 String binlogFile = (String) jsonObject.get(BINLOG_FILE);

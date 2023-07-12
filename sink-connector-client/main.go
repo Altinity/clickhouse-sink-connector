@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/levigross/grequests"
+	"github.com/tidwall/pretty"
 	cli "github.com/urfave/cli"
 	"log"
 	"os"
@@ -26,7 +27,7 @@ const (
 	START_REPLICATION_COMMAND = "start_replica"
 	STOP_REPLICATION_COMAND   = "stop_replica"
 	STATUS_COMMAND            = "show_replica_status"
-	UPDATE_BINLOG_COMMAND     = "update_binlog"
+	UPDATE_BINLOG_COMMAND     = "change_replication_source"
 	UPDATE_LSN_COMMAND        = "lsn"
 )
 const (
@@ -124,7 +125,9 @@ func main() {
 			Action: func(c *cli.Context) error {
 				var serverUrl = getServerUrl(STATUS, c)
 				resp := getHTTPCall(serverUrl)
-				log.Println(resp.String())
+
+				//var j, _ = json.MarshalIndent(resp, "", "    ")
+				fmt.Println(string(pretty.Pretty([]byte(resp.String()))))
 				return nil
 			},
 		},
@@ -135,20 +138,45 @@ func main() {
 				cli.StringFlag{
 					Name:     "binlog_file",
 					Usage:    "Set binlog file",
-					Required: true,
+					Required: false,
 				},
 				cli.StringFlag{
 					Name:     "binlog_position",
 					Usage:    "Set binlog position",
-					Required: true,
+					Required: false,
 				},
 				cli.StringFlag{
 					Name:     "gtid",
 					Usage:    "Set GTID",
-					Required: true,
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_host",
+					Usage:    "Source Hostname",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_port",
+					Usage:    "Source Port",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_username",
+					Usage:    "Source Username",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_password",
+					Usage:    "Source Password",
+					Required: false,
 				},
 			},
 			Action: func(c *cli.Context) error {
+
 				handleUpdateBinLogAction(c)
 				return nil
 			},
@@ -225,6 +253,14 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	var binlogPos = c.String("binlog_position")
 	var gtid = c.String("gtid")
 
+	if gtid == "" {
+		// If gtid is empty, then a valid binlog file and position
+		// needs to be passed.
+		if binlogPos == "" || binlogFile == "" {
+			log.Println(" ****** A Valid binlog position/file or GTID set is required")
+			return false
+		}
+	}
 	log.Println("***** binlog file: ", binlogFile+"   *****")
 	log.Println("***** binlog position:", binlogPos+"   *****")
 	log.Println("*****  GTID:", gtid+"   *****")
@@ -238,11 +274,11 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 		log.Println("Continuing...")
 	}
 
-	// Step1: Stop replication
-	log.Println("Stopping replication...")
-	var stopUrl = getServerUrl(STOP_REPLICATION, c)
-	resp := getHTTPCall(stopUrl)
-	time.Sleep(5 * time.Second)
+	//// Step1: Stop replication
+	//log.Println("Stopping replication...")
+	//var stopUrl = getServerUrl(STOP_REPLICATION, c)
+	//resp := getHTTPCall(stopUrl)
+	//time.Sleep(5 * time.Second)
 
 	// Step2: Update binlog position
 	log.Println("Updating binlog file/position and gtids...")
@@ -253,16 +289,23 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	requestOptions_copy.JSON = string(postBody)
 	var serverUrl = getServerUrl(UPDATE_BINLOG, c)
 	resp, err := grequests.Post(serverUrl, requestOptions_copy)
+	if resp.StatusCode == 400 {
+		log.Println("***** Error: Replication is running, please stop it first ******")
+		log.Println("***** Use stop_replica command to stop replication ******")
+		log.Println("***** After change_replication_source is successful, use start_replica to start replication *******")
+		return false
+	}
+
 	log.Println(resp.String())
 	if err != nil {
 		log.Println(err)
-		log.Println("Create request failed for Github API")
+		log.Println("Create request failed")
 	}
-
-	// Step3: Start replication
-	time.Sleep(10 * time.Second)
-	var startUrl = getServerUrl(START_REPLICATION, c)
-	resp1 := getHTTPCall(startUrl)
-	log.Println(resp1.String())
+	//
+	//// Step3: Start replication
+	//time.Sleep(10 * time.Second)
+	//var startUrl = getServerUrl(START_REPLICATION, c)
+	//resp1 := getHTTPCall(startUrl)
+	//log.Println(resp1.String())
 	return true
 }
