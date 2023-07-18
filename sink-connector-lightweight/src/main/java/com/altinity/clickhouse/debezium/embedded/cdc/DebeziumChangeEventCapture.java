@@ -364,7 +364,9 @@ public class DebeziumChangeEventCapture {
      * @param gtid
      */
     public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
+                                            String binlogFile, String binLogPosition, String gtid,
+                                            String sourceHost, String sourcePort, String sourceUsername,
+                                            String sourcePassword) throws SQLException, ParseException {
 
 
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +

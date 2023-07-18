@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
+import org.apache.kafka.common.protocol.types.Field;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -24,6 +25,12 @@ public class DebeziumOffsetStorage {
     // PostgreSQL parameters
     public static final String LSN_PROCESSED = "lsn_proc";
     public static final String LSN = "lsn";
+
+    // Source Host
+    public static final String SOURCE_HOST = "source_host";
+    public static final String SOURCE_PORT = "source_port";
+    public static final String SOURCE_USER = "source_user";
+    public static final String SOURCE_PASSWORD = "source_password";
 
 
 
@@ -72,9 +79,15 @@ public class DebeziumOffsetStorage {
             jsonObject.put("transaction_id", null);
         }
 
-        jsonObject.put("file", binLogFile);
-        jsonObject.put("pos", binLogPosition);
-        if(gtids != null) {
+        if(binLogFile != null && !binLogFile.isEmpty()) {
+            jsonObject.put("file", binLogFile);
+        }
+
+        if(binLogPosition != null && !binLogPosition.isEmpty()) {
+            jsonObject.put("pos", binLogPosition);
+        }
+
+        if(gtids != null && !gtids.isEmpty()) {
             jsonObject.put("gtids", gtids);
         }
 

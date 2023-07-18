@@ -11,6 +11,7 @@ import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserServ
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import io.debezium.engine.DebeziumEngine;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.apache.log4j.ConsoleAppender;
@@ -35,6 +36,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
     private static DebeziumChangeEventCapture debeziumChangeEventCapture;
 
 
+    private static Properties userProperties = new Properties();
 
     /**
      * Main Entry for the application
@@ -109,9 +111,37 @@ public class ClickHouseDebeziumEmbeddedApplication {
                 String binlogFile = (String) jsonObject.get(BINLOG_FILE);
                 String binlogPosition = (String) jsonObject.get(BINLOG_POS);
                 String gtid = (String) jsonObject.get(GTID);
+
+                String sourceHost = (String) jsonObject.get(SOURCE_HOST);
+                String sourcePort = (String) jsonObject.get(SOURCE_PORT);
+                String sourceUser = (String) jsonObject.get(SOURCE_USER);
+                String sourcePassword = (String) jsonObject.get(SOURCE_PASSWORD);
+
                 ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
 
-                debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition, gtid);
+                if(sourceHost != null && !sourceHost.isEmpty()) {
+                    userProperties.setProperty("database.hostname", sourceHost);
+                }
+
+                if(sourcePort != null && !sourcePort.isEmpty()) {
+                    userProperties.setProperty("database.port", sourcePort);
+               }
+
+                if(sourceUser != null && !sourceUser.isEmpty()) {
+                    userProperties.setProperty("database.user", sourceUser);
+                }
+
+                if(sourcePassword != null && !sourcePassword.isEmpty()) {
+                    userProperties.setProperty("database.password", sourcePassword);
+                }
+
+                if(userProperties.size() > 0) {
+                    log.info("User Overridden properties: " + userProperties);
+
+                }
+
+                debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
+                        gtid, sourceHost, sourcePort, sourceUser, sourcePassword);
                 log.info("Received update-binlog request: " + body);
             });
 
@@ -128,7 +158,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             Properties finalProps = props;
             app.get("/start", ctx -> {
-
+                finalProps.putAll(userProperties);
                 CompletableFuture<String> cf = startDebeziumEventLoop(injector, finalProps);
                 ctx.result("Started Debezium Event Loop");
             });
@@ -142,14 +172,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
         embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                injector.getInstance(ConfigurationService.class),
                 injector.getInstance(DDLParserService.class), props);
-
-
-
-
-
-
     }
 
     public static CompletableFuture<String> startDebeziumEventLoop(Injector injector, Properties props) throws InterruptedException {
@@ -162,7 +185,6 @@ public class ClickHouseDebeziumEmbeddedApplication {
             embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 
             embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                    injector.getInstance(ConfigurationService.class),
                     injector.getInstance(DDLParserService.class), props);
             return null;
         });
@@ -172,7 +194,6 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
     public void start(DebeziumRecordParserService recordParserService,
-                      ConfigurationService configurationService,
                       DDLParserService ddlParserService, Properties props) throws Exception {
         // Define the configuration for the Debezium Engine with MySQL connector...
        // log.debug("Loading properties");

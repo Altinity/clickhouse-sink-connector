@@ -14,9 +14,13 @@ import (
 var requestOptions = &grequests.RequestOptions{}
 
 type UpdateBinLog struct {
-	File     string `json:"binlog_file"`
-	Position string `json:"binlog_position"`
-	Gtid     string `json:"gtid"`
+	File           string `json:"binlog_file"`
+	Position       string `json:"binlog_position"`
+	Gtid           string `json:"gtid"`
+	SourceHost     string `json:"source_host"`
+	SourcePort     string `json:"source_port"`
+	SourceUser     string `json:"source_user"`
+	SourcePassword string `json:"source_password"`
 }
 
 type UpdateLsn struct {
@@ -252,14 +256,23 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	var binlogFile = c.String("binlog_file")
 	var binlogPos = c.String("binlog_position")
 	var gtid = c.String("gtid")
+	var sourceHost = c.String("source_host")
+	var sourcePort = c.String("source_port")
+	var sourceUsername = c.String("source_username")
+	var sourcePassword = c.String("source_password")
 
 	if gtid == "" {
 		// If gtid is empty, then a valid binlog file and position
 		// needs to be passed.
-		if binlogPos == "" || binlogFile == "" {
-			log.Println(" ****** A Valid binlog position/file or GTID set is required")
-			return false
-		}
+		//if binlogPos == "" || binlogFile == "" {
+		//	log.Println(" ****** A Valid binlog position/file or GTID set is required")
+		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
+		//	return false
+		//} else if sourceHost == "" || sourcePort == "" || sourceUsername == "" || sourcePassword == "" {
+		//	log.Println(" ****** A Valid source host/port/username/password is required")
+		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
+		//	return false
+		//}
 	}
 	log.Println("***** binlog file: ", binlogFile+"   *****")
 	log.Println("***** binlog position:", binlogPos+"   *****")
@@ -282,7 +295,7 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 
 	// Step2: Update binlog position
 	log.Println("Updating binlog file/position and gtids...")
-	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid}
+	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid, SourceHost: sourceHost, SourcePort: sourcePort, SourceUser: sourceUsername, SourcePassword: sourcePassword}
 	var postBody, _ = json.Marshal(updateBinLogBody)
 	var requestOptions_copy = requestOptions
 	// Add data to JSON field
