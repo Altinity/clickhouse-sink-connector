@@ -277,6 +277,11 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	log.Println("***** binlog file: ", binlogFile+"   *****")
 	log.Println("***** binlog position:", binlogPos+"   *****")
 	log.Println("*****  GTID:", gtid+"   *****")
+	log.Println("*****  Source Host:", sourceHost+"   *****")
+	log.Println("*****  Source Port:", sourcePort+"   *****")
+	log.Println("*****  Source Username:", sourceUsername+"   *****")
+	log.Println("*****  Source Password:", sourcePassword+"   *****")
+
 	log.Println("Are you sure you want to continue? (y/n): ")
 	var userInput string
 	fmt.Scanln(&userInput)

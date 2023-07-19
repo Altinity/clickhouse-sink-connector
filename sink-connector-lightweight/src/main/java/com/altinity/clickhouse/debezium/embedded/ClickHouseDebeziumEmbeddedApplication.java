@@ -160,7 +160,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             app.get("/start", ctx -> {
                 finalProps.putAll(userProperties);
                 CompletableFuture<String> cf = startDebeziumEventLoop(injector, finalProps);
-                ctx.result("Started Debezium Event Loop");
+                ctx.result("Started Replication....");
             });
 
             // app.get("/updateBinLogStatus", ctx -> {
