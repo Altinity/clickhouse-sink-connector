@@ -9,14 +9,12 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Maps;
 import io.debezium.config.Configuration;
 import io.debezium.connector.postgresql.PostgresConnectorConfig;
 import io.debezium.connector.postgresql.connection.PostgresConnection;
@@ -39,9 +37,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -69,6 +65,16 @@ public class DebeziumChangeEventCapture {
     private BaseDbWriter writer = null;
 
     static public boolean isNewReplacingMergeTreeEngine = true;
+
+    private long replicationLag = 0;
+
+    private boolean isReplicationRunning = false;
+
+    private String binLogFile = "";
+
+    private String binLogPosition = "";
+
+    private String gtid = "";
 
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
@@ -177,18 +183,21 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    int threadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
-                    this.executor = new ClickHouseBatchExecutor(threadPoolSize);
+                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
 
-                    for(int i = 0; i < threadPoolSize; i++) {
-                        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(
-                                ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
-                    }
+                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
                 ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
-
+                try {
+                    this.replicationLag = chStruct.getReplicationLag();
+                    this.binLogFile = chStruct.getFile();
+                    this.binLogPosition = String.valueOf(chStruct.getPos());
+                    this.gtid = String.valueOf(chStruct.getGtid());
+                } catch(Exception e) {
+                    log.error("Error retrieving status metrics");
+                }
                 ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
                 if (chStruct != null) {
                     queue.add(chStruct);
@@ -316,6 +325,13 @@ public class DebeziumChangeEventCapture {
                     .collect(Collectors.toList());
 
             JSONArray result = new JSONArray();
+            JSONObject replicationLag = new JSONObject();
+            replicationLag.put("Seconds_Behind_Source", this.replicationLag/1000);
+            result.add(replicationLag);
+
+            JSONObject replicationRunning = new JSONObject();
+            replicationRunning.put("Replica_Running", this.isReplicationRunning);
+            result.add(replicationRunning);
             // Add Database name and table name.
             JSONObject dbName = new JSONObject();
 
@@ -348,7 +364,9 @@ public class DebeziumChangeEventCapture {
      * @param gtid
      */
     public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
+                                            String binlogFile, String binLogPosition, String gtid,
+                                            String sourceHost, String sourcePort, String sourceUsername,
+                                            String sourcePassword) throws SQLException, ParseException {
 
 
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
@@ -363,6 +381,37 @@ public class DebeziumChangeEventCapture {
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
         String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
                 binlogFile, binLogPosition, gtid);
+
+        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
+        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+                System.currentTimeMillis());
+
+    }
+
+    /**
+     * Function to update the status of Debezium storage (LSN).
+     * @param config
+     * @param props
+     * @param lsn
+     * @throws SQLException
+     * @throws ParseException
+     */
+    public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
+                                            String lsn) throws SQLException, ParseException {
+
+
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+
+        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
+        String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
+                Long.parseLong(lsn));
 
         new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
         new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
@@ -413,7 +462,22 @@ public class DebeziumChangeEventCapture {
                             }
                             log.debug("Completion callback");
                         }
-                    }).build();
+
+                    }).using(
+                            new DebeziumEngine.ConnectorCallback() {
+                                @Override
+                                public void connectorStarted() {
+                                    isReplicationRunning = true;
+                                    log.debug("Connector started");
+                                }
+
+                                @Override
+                                public void connectorStopped() {
+                                    isReplicationRunning = false;
+                                    log.debug("Connector stopped");
+                                }
+                            }
+                    ).build();
             engine.run();
 
         } catch (Exception e) {
@@ -450,6 +514,18 @@ public class DebeziumChangeEventCapture {
             this.engine.close();
         }
         Metrics.stop();
+    }
+
+    public long getReplicationLag() {
+        return this.replicationLag;
+    }
+
+    public long getReplicationLagInSecs() {
+        return this.replicationLag / 1000;
+    }
+
+    public boolean isReplicationRunning() {
+        return this.isReplicationRunning;
     }
 
     DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
@@ -497,6 +573,7 @@ public class DebeziumChangeEventCapture {
             this.records.put(topicName, structs);
         }
     }
+
 
     // db.items.insert({_id:ObjectId(), uuid:ObjectId(), price:22, name:"New record"});
     private void trySomething(Configuration config){
