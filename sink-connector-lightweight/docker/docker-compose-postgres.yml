@@ -44,25 +44,6 @@ services:
     volumes:
       #- ../sql/init_ch.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-
-  zookeeper:
-    image: zookeeper:3.6.2
-    expose:
-      - "2181"
-    environment:
-      ZOO_TICK_TIME: 500
-      ZOO_MY_ID: 1
-    healthcheck:
-      test: echo stat | nc localhost 2181
-      interval: 3s
-      timeout: 2s
-      retries: 5
-      start_period: 2s
-    security_opt:
-      - label:disable
 
   debezium-embedded:
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
@@ -82,3 +63,34 @@ services:
     volumes:
       #- ./data:/data
       - ./config_postgres.yml:/config.yml
+
+  ### MONITORING ####
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus:2.36.0
+    restart: "no"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+
+  grafana:
+    build:
+      context: ./config/grafana
+      args:
+        GRAFANA_VERSION: latest
+    #container_name: grafana
+    #image: grafana/grafana
+    restart: "no"
+      #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    environment:
+      - DS_PROMETHEUS=prometheus
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    depends_on:
+      - prometheus
+    ## END OF MONITORING ###
