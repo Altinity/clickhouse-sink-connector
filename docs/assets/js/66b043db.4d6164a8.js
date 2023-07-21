@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkclickhouse_sink_connector=self.webpackChunkclickhouse_sink_connector||[]).push([[4263],{5093:c=>{c.exports=JSON.parse('{"label":"facebook","permalink":"/clickhouse-sink-connector/blog/tags/facebook","allTagsPath":"/clickhouse-sink-connector/blog/tags","count":1}')}}]);
