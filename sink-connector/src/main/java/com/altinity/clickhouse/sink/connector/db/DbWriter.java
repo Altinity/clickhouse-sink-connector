@@ -659,7 +659,8 @@ public class DbWriter extends BaseDbWriter {
             }
             // Sign column to mark deletes in ReplacingMergeTree
             if(this.replacingMergeTreeDeleteColumn != null && this.columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
-                if(columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn)) {
+                if(columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
+                        this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString()) == false) {
                     if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                         if(replacingMergeTreeWithIsDeletedColumn)
                             ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
