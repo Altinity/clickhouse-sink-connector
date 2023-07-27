@@ -8,7 +8,7 @@
 # Altinity Replicator for ClickHouse (Lightweight version)
 ![](doc/img/kafka_replication_tool.jpg)
 
-New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
+New tool to replicate data from MySQL, PostgreSQL, MariaDB, SQL Server and Mongo without additional dependencies.
 Single executable and lightweight.
 ##### Supports DDL in MySQL.
 
@@ -121,6 +121,61 @@ auto.create.tables: "true"
 database.dbname: "public"
 ```
 
+```
+### SQL Server Config(sink-connector-lightweight/docker/config_sql_server.yml)
+```
+```
+name: "debezium-embedded-sql-server"
+database.hostname: "sql-server-db"
+database.port: "1433"
+database.user: "sa"
+database.password: "Root1234$$"
+database.names: "Prime"
+table.include.list: "MyTable"
+clickhouse.server.url: "clickhouse"
+clickhouse.server.user: "root"
+clickhouse.server.pass: "root"
+clickhouse.server.port: "8123"
+clickhouse.server.database: "test"
+database.allowPublicKeyRetrieval: "true"
+snapshot.mode: "initial"
+offset.flush.interval.ms: 5000
+connector.class: "io.debezium.connector.sqlserver.SqlServerConnector"
+offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+offset.storage.jdbc.user: "root"
+offset.storage.jdbc.password: "root"
+offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+(
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64,
+    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY id
+SETTINGS index_granularity = 8198"
+offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+schema.history.internal.jdbc.user: "root"
+schema.history.internal.jdbc.password: "root"
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
+database.dbname: "public"
+database.ssl.truststore: "${project.basedir}/src/test/resources/ssl"
+database.ssl.truststore.password: "debezium"
+database.trustServerCertificate: "true"
+
+```
+
 ## Command Line(JAR)
 https://github.com/Altinity/clickhouse-sink-connector/releases
 
@@ -151,6 +206,12 @@ docker-compose -f docker-compose-postgres.yml up
 ```
 cd sink-connector-lightweight/docker
 docker-compose -f docker-compose-postgres-standalone.yml up
+```
+
+**SQL Server**
+```
+cd sink-connector-lightweight/docker
+docker-compose -f docker-compose-sql-server.yml up
 ```
 
 ##### Docker
