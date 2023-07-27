@@ -146,6 +146,7 @@ docker-compose -f docker-compose-mysql-standalone.yml up
 cd sink-connector-lightweight/docker
 docker-compose -f docker-compose-postgres.yml up
 ```
+https://altinity.com/blog/replicating-data-from-postgresql-to-clickhouse-with-the-altinity-sink-connector
 
 **PostgreSQL(Connect to external PostgreSQL and ClickHouse configuration)**
 ```
