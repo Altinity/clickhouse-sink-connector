@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/levigross/grequests"
+	"github.com/tidwall/pretty"
 	cli "github.com/urfave/cli"
 	"log"
 	"os"
@@ -13,22 +14,32 @@ import (
 var requestOptions = &grequests.RequestOptions{}
 
 type UpdateBinLog struct {
-	File     string `json:"binlog_file"`
-	Position string `json:"binlog_position"`
-	Gtid     string `json:"gtid"`
+	File           string `json:"binlog_file"`
+	Position       string `json:"binlog_position"`
+	Gtid           string `json:"gtid"`
+	SourceHost     string `json:"source_host"`
+	SourcePort     string `json:"source_port"`
+	SourceUser     string `json:"source_user"`
+	SourcePassword string `json:"source_password"`
+}
+
+type UpdateLsn struct {
+	Lsn string `json:"lsn"`
 }
 
 const (
 	START_REPLICATION_COMMAND = "start_replica"
 	STOP_REPLICATION_COMAND   = "stop_replica"
 	STATUS_COMMAND            = "show_replica_status"
-	UPDATE_BINLOG_COMMAND     = "update_binlog"
+	UPDATE_BINLOG_COMMAND     = "change_replication_source"
+	UPDATE_LSN_COMMAND        = "lsn"
 )
 const (
 	START_REPLICATION = "start"
 	STOP_REPLICATION  = "stop"
 	STATUS            = "status"
 	UPDATE_BINLOG     = "binlog"
+	UPDATE_LSN        = "lsn"
 )
 
 // Fetches the repos for the given Github users
@@ -118,7 +129,9 @@ func main() {
 			Action: func(c *cli.Context) error {
 				var serverUrl = getServerUrl(STATUS, c)
 				resp := getHTTPCall(serverUrl)
-				log.Println(resp.String())
+
+				//var j, _ = json.MarshalIndent(resp, "", "    ")
+				fmt.Println(string(pretty.Pretty([]byte(resp.String()))))
 				return nil
 			},
 		},
@@ -129,21 +142,61 @@ func main() {
 				cli.StringFlag{
 					Name:     "binlog_file",
 					Usage:    "Set binlog file",
-					Required: true,
+					Required: false,
 				},
 				cli.StringFlag{
 					Name:     "binlog_position",
 					Usage:    "Set binlog position",
-					Required: true,
+					Required: false,
 				},
 				cli.StringFlag{
 					Name:     "gtid",
 					Usage:    "Set GTID",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_host",
+					Usage:    "Source Hostname",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_port",
+					Usage:    "Source Port",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_username",
+					Usage:    "Source Username",
+					Required: false,
+				},
+
+				cli.StringFlag{
+					Name:     "source_password",
+					Usage:    "Source Password",
+					Required: false,
+				},
+			},
+			Action: func(c *cli.Context) error {
+
+				handleUpdateBinLogAction(c)
+				return nil
+			},
+		},
+		{
+			Name:  UPDATE_LSN_COMMAND,
+			Usage: "Update lsn(For postgreSQL)",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:     "lsn",
+					Usage:    "Set LSN position(For PostgreSQL)",
 					Required: true,
 				},
 			},
 			Action: func(c *cli.Context) error {
-				handleUpdateBinLogAction(c)
+				handleUpdateLsn(c)
 				return nil
 			},
 		},
@@ -153,18 +206,9 @@ func main() {
 	app.Run(os.Args)
 }
 
-/**
-Function to handle update binlog action
-which is used to set binlog file/position and gtids
-*/
-func handleUpdateBinLogAction(c *cli.Context) bool {
-	var binlogFile = c.String("binlog_file")
-	var binlogPos = c.String("binlog_position")
-	var gtid = c.String("gtid")
-
-	log.Println("***** binlog file: ", binlogFile+"   *****")
-	log.Println("***** binlog position:", binlogPos+"   *****")
-	log.Println("*****  GTID:", gtid+"   *****")
+func handleUpdateLsn(c *cli.Context) bool {
+	var lsnPosition = c.String("lsn")
+	log.Println("***** lsn position:", lsnPosition+"   *****")
 	log.Println("Are you sure you want to continue? (y/n): ")
 	var userInput string
 	fmt.Scanln(&userInput)
@@ -182,13 +226,13 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	time.Sleep(5 * time.Second)
 
 	// Step2: Update binlog position
-	log.Println("Updating binlog file/position and gtids...")
-	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid}
-	var postBody, _ = json.Marshal(updateBinLogBody)
+	log.Println("Updating lsn position..")
+	var updateLsnBody = UpdateLsn{Lsn: lsnPosition}
+	var postBody, _ = json.Marshal(updateLsnBody)
 	var requestOptions_copy = requestOptions
 	// Add data to JSON field
 	requestOptions_copy.JSON = string(postBody)
-	var serverUrl = getServerUrl(UPDATE_BINLOG, c)
+	var serverUrl = getServerUrl(UPDATE_LSN, c)
 	resp, err := grequests.Post(serverUrl, requestOptions_copy)
 	log.Println(resp.String())
 	if err != nil {
@@ -201,5 +245,85 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	var startUrl = getServerUrl(START_REPLICATION, c)
 	resp1 := getHTTPCall(startUrl)
 	log.Println(resp1.String())
+	return true
+}
+
+/**
+Function to handle update binlog action
+which is used to set binlog file/position and gtids
+*/
+func handleUpdateBinLogAction(c *cli.Context) bool {
+	var binlogFile = c.String("binlog_file")
+	var binlogPos = c.String("binlog_position")
+	var gtid = c.String("gtid")
+	var sourceHost = c.String("source_host")
+	var sourcePort = c.String("source_port")
+	var sourceUsername = c.String("source_username")
+	var sourcePassword = c.String("source_password")
+
+	if gtid == "" {
+		// If gtid is empty, then a valid binlog file and position
+		// needs to be passed.
+		//if binlogPos == "" || binlogFile == "" {
+		//	log.Println(" ****** A Valid binlog position/file or GTID set is required")
+		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
+		//	return false
+		//} else if sourceHost == "" || sourcePort == "" || sourceUsername == "" || sourcePassword == "" {
+		//	log.Println(" ****** A Valid source host/port/username/password is required")
+		//	cli.ShowCommandHelp(c, UPDATE_BINLOG_COMMAND)
+		//	return false
+		//}
+	}
+	log.Println("***** binlog file: ", binlogFile+"   *****")
+	log.Println("***** binlog position:", binlogPos+"   *****")
+	log.Println("*****  GTID:", gtid+"   *****")
+	log.Println("*****  Source Host:", sourceHost+"   *****")
+	log.Println("*****  Source Port:", sourcePort+"   *****")
+	log.Println("*****  Source Username:", sourceUsername+"   *****")
+	log.Println("*****  Source Password:", sourcePassword+"   *****")
+
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Scanln(&userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
+	} else {
+		log.Println("Continuing...")
+	}
+
+	//// Step1: Stop replication
+	//log.Println("Stopping replication...")
+	//var stopUrl = getServerUrl(STOP_REPLICATION, c)
+	//resp := getHTTPCall(stopUrl)
+	//time.Sleep(5 * time.Second)
+
+	// Step2: Update binlog position
+	log.Println("Updating binlog file/position and gtids...")
+	var updateBinLogBody = UpdateBinLog{File: binlogFile, Position: binlogPos, Gtid: gtid, SourceHost: sourceHost, SourcePort: sourcePort, SourceUser: sourceUsername, SourcePassword: sourcePassword}
+	var postBody, _ = json.Marshal(updateBinLogBody)
+	var requestOptions_copy = requestOptions
+	// Add data to JSON field
+	requestOptions_copy.JSON = string(postBody)
+	var serverUrl = getServerUrl(UPDATE_BINLOG, c)
+	resp, err := grequests.Post(serverUrl, requestOptions_copy)
+	if resp.StatusCode == 400 {
+		log.Println("***** Error: Replication is running, please stop it first ******")
+		log.Println("***** Use stop_replica command to stop replication ******")
+		log.Println("***** After change_replication_source is successful, use start_replica to start replication *******")
+		return false
+	}
+
+	log.Println(resp.String())
+	if err != nil {
+		log.Println(err)
+		log.Println("Create request failed")
+	}
+	//
+	//// Step3: Start replication
+	//time.Sleep(10 * time.Second)
+	//var startUrl = getServerUrl(START_REPLICATION, c)
+	//resp1 := getHTTPCall(startUrl)
+	//log.Println(resp1.String())
 	return true
 }

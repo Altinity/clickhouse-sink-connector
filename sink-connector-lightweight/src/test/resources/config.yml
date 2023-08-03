@@ -8,7 +8,7 @@ database.include.list: employees
 #table.include.list=sbtest1
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "default"
-clickhouse.server.pass: "root"
+clickhouse.server.pass: ""
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"

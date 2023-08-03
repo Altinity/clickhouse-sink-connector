@@ -353,7 +353,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString())
-
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If true, Deletes are ignored are not persisted to ClickHouse.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())
                 // ToDo: Add JVM Proxy
                 ;
     }

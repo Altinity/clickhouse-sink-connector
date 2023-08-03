@@ -231,6 +231,12 @@ public class ClickHouseStruct {
         }
     }
 
+    public long getReplicationLag() {
+        if(this.getTs_ms() > 0) {
+            return System.currentTimeMillis() - this.getTs_ms();
+        }
+        return 0;
+    }
     @Override
     public String toString() {
         return new StringBuffer()

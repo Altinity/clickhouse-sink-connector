@@ -1,3 +1,4 @@
+name: "debezium-embedded-postgres"
 database.hostname: "postgres"
 database.port: "5432"
 database.user: "root"

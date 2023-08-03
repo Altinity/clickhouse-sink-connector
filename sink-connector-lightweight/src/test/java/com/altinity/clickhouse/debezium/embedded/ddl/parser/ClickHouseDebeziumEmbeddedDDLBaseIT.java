@@ -2,20 +2,19 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
-import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.SelinuxContext;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.shaded.com.fasterxml.jackson.databind.annotation.JsonAppend;
 import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.utility.MountableFile;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -26,10 +25,20 @@ public class ClickHouseDebeziumEmbeddedDDLBaseIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer
+            ("clickhouse/clickhouse-server:latest")
             .withInitScript("init_clickhouse_it.sql")
             .withExposedPorts(8123);
+            //.withClasspathResourceMapping("users.xml", "/etc/clickhouse-server/users.xml", BindMode.READ_WRITE,
+            //        SelinuxContext.SHARED) ;
+            //.withEnv("CLICKHOUSE_USER", "default")
+            //.withEnv("CLICKHOUSE_PASSWORD", "root")
+            //.withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "0 ");
+//            .withFileSystemBind("src/test/resources/users.xml",
+//                    "/etc/clickhouse-server/users.xml", BindMode.READ_WRITE);
 
+    //        .withCopyFileToContainer(MountableFile.forClasspathResource("users.xml"),
+      //              "/etc/clickhouse-server/users.xml");
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
