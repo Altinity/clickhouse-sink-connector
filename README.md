@@ -9,7 +9,7 @@ Note: Two projects are combined in this repository.
 1) #### Altinity Replicator for ClickHouse (Lightweight version) - Single Binary to replicate data from MySQL/PostgreSQL/MongoDB to ClickHouse.
    - Docker Image - `registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest` 
    -  Java JAR file(Download from releases) - https://github.com/Altinity/clickhouse-sink-connector/releases/download/release_0.6.0/clickhouse-sink-connector-lightweight-1.0-SNAPSHOT.jar
-   - `sink-connector-client` - Tool to check status of replication, start/stop replication.
+   - `sink-connector-client` - Tool to check status of replication, start/stop replication. https://github.com/Altinity/clickhouse-sink-connector/releases/download/release_0.6.0/sink-connector-client
    -  `Grafana dashboard` - sink-connector-lightweight/docker/config/grafana/config/
 2) #### Altinity Sink Connector for ClickHouse   - Kafka Connect Sink connector - Requires Kafka, Debezium source connector and Schema Registry.
    - Docker Image (https://hub.docker.com/r/altinity/clickhouse-sink-connector/tags) , Java JAR file(Download from releases)
