@@ -11,7 +11,7 @@ Note: Two projects are combined in this repository.
    - `sink-connector-client` - Tool to check status of replication, start/stop replication.
    -  `Grafana dashboard` - sink-connector-lightweight/docker/config/grafana/config/
 2) #### Altinity Sink Connector for ClickHouse   - Kafka Connect Sink connector - Requires Kafka, Debezium source connector and Schema Registry.
-   - Docker Image, Java JAR file(Download from releases)
+   - Docker Image (https://hub.docker.com/r/altinity/clickhouse-sink-connector/tags) , Java JAR file(Download from releases)
 
 # #### Altinity Replicator for ClickHouse (Lightweight version)
 ![](doc/img/kafka_replication_tool.jpg)
