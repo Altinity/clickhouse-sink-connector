@@ -14,7 +14,7 @@ Note: Two projects are combined in this repository.
 2) #### Altinity Sink Connector for ClickHouse   - Kafka Connect Sink connector - Requires Kafka, Debezium source connector and Schema Registry.
    - Docker Image (https://hub.docker.com/r/altinity/clickhouse-sink-connector/tags) , Java JAR file(Download from releases)
 
-# #### Altinity Replicator for ClickHouse (Lightweight version)
+# Altinity Replicator for ClickHouse (Lightweight version)
 ![](doc/img/kafka_replication_tool.jpg)
 
 New tool to replicate data from MySQL, PostgreSQL, MariaDB and Mongo without additional dependencies.
