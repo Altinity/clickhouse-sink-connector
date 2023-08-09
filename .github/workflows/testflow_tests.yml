@@ -7,7 +7,7 @@ on:
     branches: [ main , develop]
 
 env:
-  SINK_CONNECTOR_VERSION: "2023-02-07"
+  SINK_CONNECTOR_VERSION: "2023-08-07"
 
 jobs:
   testflows:
@@ -17,57 +17,57 @@ jobs:
       - uses: actions/checkout@v2
       
       - name: Install docker-compose
-#        working-directory: sink-connector/tests/integration
+        working-directory: sink-connector/tests/integration
         run: pip3 install docker-compose==1.29.2
       
       - name: Install testflows
-#        working-directory: sink-connector/tests/integration
+        working-directory: sink-connector/tests/integration
         run: pip3 install testflows
 
       - name: Install awscli
-#        working-directory: sink-connector/tests/integration
+        working-directory: sink-connector/tests/integration
         run: pip3 install awscli
 
       - name: Get current date
         id: date
         run: echo "date=$(date +'%Y-%m-%d_%H%M%S')" >> $GITHUB_OUTPUT
 
-#      - name: Add ~./local/bin to the PATH
-#        if: always()
-#        working-directory: sink-connector/tests/integration
-#        run: echo ~/.local/bin >> $GITHUB_PATH
-#
-#      - name: Run testflows tests
-#        working-directory: sink-connector/tests/integration
-#        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
-#
-#      - name: Create tfs results report
-#        if: always()
-#        working-directory: sink-connector/tests/integration/logs
-#        run: cat raw.log | tfs report results | tfs document convert > report.html
-#
-#      - name: Create tfs coverage report
-#        if: always()
-#        working-directory: sink-connector/tests/integration/logs
-#        run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
-#
-#      - name: Upload artifacts to Altinity Test Reports S3 bucket
-#        if: always()
-#        working-directory: sink-connector/tests/integration/logs
-#        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}/ --recursive --exclude "*" --include "*.log" --include "*.html"
-#        env:
-#          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#          AWS_DEFAULT_REGION: 'eu-west-2'
-#
-#      - uses: actions/upload-artifact@v3
-#        if: always()
-#        with:
-#          name: testflows-artifacts-${{ steps.date.outputs.date }}
-#          path: |
-#            sink-connector/tests/integration/logs/*.log
-#          if-no-files-found: error
-#          retention-days: 60
+      - name: Add ~./local/bin to the PATH
+        if: always()
+        working-directory: sink-connector/tests/integration
+        run: echo ~/.local/bin >> $GITHUB_PATH
+
+      - name: Run testflows tests
+        working-directory: sink-connector/tests/integration
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+
+      - name: Create tfs results report
+        if: always()
+        working-directory: sink-connector/tests/integration/logs
+        run: cat raw.log | tfs report results | tfs document convert > report.html
+
+      - name: Create tfs coverage report
+        if: always()
+        working-directory: sink-connector/tests/integration/logs
+        run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
+
+      - name: Upload artifacts to Altinity Test Reports S3 bucket
+        if: always()
+        working-directory: sink-connector/tests/integration/logs
+        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_sink/ --recursive --exclude "*" --include "*.log" --include "*.html"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'eu-west-2'
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: testflows-artifacts-${{ steps.date.outputs.date }}
+          path: |
+            sink-connector/tests/integration/logs/*.log
+          if-no-files-found: error
+          retention-days: 60
 
 
 
