@@ -1,4 +1,4 @@
-name: TestFlows Tests
+name: TestFlows Tests Lightweight
 
 on:
   push:
@@ -10,8 +10,8 @@ env:
   SINK_CONNECTOR_VERSION: "latest"
 
 jobs:
-  testflows:
-    runs-on: [self-hosted, style-checker, on-demand, type-cpx51, image-x86-app-docker-ce]
+  testflows_lightweight:
+    runs-on: [self-hosted, on-demand, linux, x64]
 
     steps:
       - uses: actions/checkout@v2
