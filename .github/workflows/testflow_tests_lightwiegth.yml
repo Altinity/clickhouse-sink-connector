@@ -17,15 +17,15 @@ jobs:
       - uses: actions/checkout@v2
       
       - name: Install docker-compose
-        working-directory: tests/integration
+#        working-directory: tests/integration
         run: pip3 install docker-compose==1.29.2
       
       - name: Install testflows
-        working-directory: tests/integration
+#        working-directory: tests/integration
         run: pip3 install testflows
 
       - name: Install awscli
-        working-directory: tests/integration
+#        working-directory: tests/integration
         run: pip3 install awscli
 
       - name: Get current date
