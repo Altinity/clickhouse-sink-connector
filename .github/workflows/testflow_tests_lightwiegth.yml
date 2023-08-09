@@ -11,8 +11,7 @@ env:
 
 jobs:
   testflows:
-#    runs-on: [self-hosted, linux, x64]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, style-checker, on-demand, type-cpx51, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2
