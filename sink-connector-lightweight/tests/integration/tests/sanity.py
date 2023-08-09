@@ -24,7 +24,6 @@ def mysql_to_clickhouse_connection(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-
     with When(f"I insert data in MySql table"):
         complex_insert(
             node=mysql,
