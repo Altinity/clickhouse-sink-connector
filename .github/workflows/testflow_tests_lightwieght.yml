@@ -39,7 +39,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: sink-connector-lightweight/tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/mysql to clickhouse replication auto/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:23.2 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/mysql to clickhouse replication auto/sanity/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:23.2 --test-to-end --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
       - name: Create tfs results report
         if: always()
