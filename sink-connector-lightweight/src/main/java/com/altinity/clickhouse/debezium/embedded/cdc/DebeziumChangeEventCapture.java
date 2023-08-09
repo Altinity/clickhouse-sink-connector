@@ -87,14 +87,16 @@ public class DebeziumChangeEventCapture {
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config);
-            try {
-                String clickHouseVersion = writer.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
-                        .checkIfNewReplacingMergeTree(clickHouseVersion);
-            } catch(Exception e) {
-                log.error("Error retrieving version");
-            }
         }
+
+        try {
+            String clickHouseVersion = writer.getClickHouseVersion();
+            isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                    .checkIfNewReplacingMergeTree(clickHouseVersion);
+        } catch(Exception e) {
+            log.error("Error retrieving version");
+        }
+
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
