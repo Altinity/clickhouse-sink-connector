@@ -1,8 +1,8 @@
 name: Integration tests Sink connector lightweight
 
 on:
-#  push:
-#    branches: [ main, develop]
+  push:
+    branches: [ main, develop]
   pull_request:
     branches: [ main , develop]
 
