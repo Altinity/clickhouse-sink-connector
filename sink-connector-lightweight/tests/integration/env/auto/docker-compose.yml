@@ -26,7 +26,7 @@ services:
 
   debezium:
     hostname: debezium
-    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest
+    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:2023-08-11
     restart: "no"
     expose:
       - "8083"
