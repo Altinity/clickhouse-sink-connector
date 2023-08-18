@@ -51,7 +51,7 @@ def add_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -99,7 +99,7 @@ def add_column_not_null(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -144,7 +144,7 @@ def add_column_default(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -192,7 +192,7 @@ def add_column_first_after(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -244,7 +244,7 @@ def drop_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -308,7 +308,7 @@ def modify_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -353,7 +353,7 @@ def modify_column_null(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -401,7 +401,7 @@ def modify_column_not_null(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -446,7 +446,7 @@ def modify_column_default(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -510,7 +510,7 @@ def modify_column_first_after(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -576,7 +576,7 @@ def change_column_name_to_new_name_null(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -624,7 +624,7 @@ def change_column_name_to_new_name_not_null(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -670,7 +670,7 @@ def change_column_first_after(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -736,7 +736,7 @@ def rename_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -778,7 +778,7 @@ def alter_column_set_default(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -838,7 +838,7 @@ def alter_column_drop_default(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -909,7 +909,7 @@ def add_constraint(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -945,7 +945,7 @@ def drop_constraint(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"t{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(

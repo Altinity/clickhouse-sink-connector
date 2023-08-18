@@ -198,7 +198,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
         )
@@ -208,7 +208,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name + "_primary_key_complex",
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
             primary_key="id,x",
@@ -219,7 +219,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name + "_no_engine_complex",
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
             primary_key="id,x",
@@ -231,7 +231,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name + "_no_primary_key",
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
@@ -242,7 +242,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name + "_no_engine",
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
             engine=False,
@@ -253,7 +253,7 @@ def create_tables(self, table_name, clickhouse_table_engine):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name + "_no_engine_no_primary_key",
-            mysql_columns="x INT",
+            mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
