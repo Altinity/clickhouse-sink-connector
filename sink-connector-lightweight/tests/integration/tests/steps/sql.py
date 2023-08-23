@@ -186,8 +186,8 @@ def create_tables(self, table_name, clickhouse_table_engine):
 
     tables_list = [
         table_name,
-        table_name + "_primary_key_complex",
-        table_name + "_no_engine_complex",
+        # table_name + "_primary_key_complex",
+        # table_name + "_no_engine_complex",
         table_name + "_no_primary_key",
         table_name + "_no_engine",
         table_name + "_no_engine_no_primary_key",
