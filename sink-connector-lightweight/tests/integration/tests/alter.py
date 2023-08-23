@@ -11,6 +11,7 @@ def create_replicated_tables(
     node=None,
 ):
     """Outline to create MySQL to CLickHouse replicated table."""
+
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
