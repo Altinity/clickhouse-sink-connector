@@ -87,6 +87,8 @@ public class ClickHouseDataTypeMapper {
         // PostgreSQL UUID -> UUID
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Uuid.LOGICAL_NAME), ClickHouseDataType.UUID);
 
+        // Array -> Array
+        dataTypesMap.put(new MutablePair<>(Schema.Type.ARRAY, null), ClickHouseDataType.Array);
     }
 
     /**

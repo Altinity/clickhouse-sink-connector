@@ -40,6 +40,8 @@ public class ClickHouseDataTypeMapperTest {
         chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.INT32_SCHEMA.type(), Date.SCHEMA_NAME);
         Assert.assertTrue(chDataType.name().equalsIgnoreCase("Date32"));
 
+        chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.Type.ARRAY, null);
+        Assert.assertTrue(chDataType.name().equalsIgnoreCase("Array"));
 
     }
 
