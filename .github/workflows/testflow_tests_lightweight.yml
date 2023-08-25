@@ -15,6 +15,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+
+      - name: Runner env vars add
+        working-directory: sink-connector/tests/integration
+        run: export RUNNER_IP=$(hostname -I | cut -d ' ' -f 1) && export RUNNER_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$RUNNER_IP"
       
       - name: Install docker-compose
         working-directory: sink-connector-lightweight/tests/integration
