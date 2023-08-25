@@ -18,9 +18,9 @@ jobs:
 
       - name: Runner env vars add
         working-directory: sink-connector/tests/integration
-        run: echo &RUNNER_IP
+        run: echo "&{RUNNER_IP}"
         env:
-          RUNNER_IP: $(hostname -I | cut -d ' ' -f 1)
+          RUNNER_IP: test
 
 #      - name: Install docker-compose
 #        working-directory: sink-connector/tests/integration
