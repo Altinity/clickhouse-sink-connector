@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.data.ClickHouseDataType;
+import io.debezium.data.VariableScaleDecimal;
 import io.debezium.time.Date;
 import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
@@ -40,6 +41,8 @@ public class ClickHouseDataTypeMapperTest {
         chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.INT32_SCHEMA.type(), Date.SCHEMA_NAME);
         Assert.assertTrue(chDataType.name().equalsIgnoreCase("Date32"));
 
+        chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(Schema.Type.STRUCT, VariableScaleDecimal.LOGICAL_NAME);
+        Assert.assertTrue(chDataType.name().equalsIgnoreCase("Decimal"));
 
     }
 

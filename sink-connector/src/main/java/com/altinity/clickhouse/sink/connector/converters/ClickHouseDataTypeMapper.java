@@ -13,9 +13,11 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -87,6 +89,9 @@ public class ClickHouseDataTypeMapper {
         // PostgreSQL UUID -> UUID
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Uuid.LOGICAL_NAME), ClickHouseDataType.UUID);
 
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, VariableScaleDecimal.LOGICAL_NAME), ClickHouseDataType.Decimal);
+
+        dataTypesMap.put(new MutablePair<>(Schema.Type.ARRAY, Schema.Type.STRING.name()), ClickHouseDataType.Array);
     }
 
     /**
@@ -219,6 +224,21 @@ public class ClickHouseDataTypeMapper {
             } else {
                 ps.setString(index, "");
             }
+        } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)) {
+            if (value instanceof Struct) {
+                Struct decimalValue = (Struct) value;
+                Object scale = decimalValue.get("scale");
+                Object unscaledValueInBytes =  decimalValue.get("value");
+                BigDecimal bd = new BigDecimal(new BigInteger((byte[]) unscaledValueInBytes), (Integer) scale);
+                ps.setBigDecimal(index, bd);
+
+
+            } else {
+                ps.setBigDecimal(index, new BigDecimal(0));
+            }
+        } else if (type == Schema.Type.ARRAY) {
+            ClickHouseDataType dt = getClickHouseDataType(Schema.Type.valueOf(schemaName), null);
+            ps.setArray(index, ps.getConnection().createArrayOf(dt.name(), ((ArrayList) value).toArray()));
         }
         else {
             result = false;
