@@ -6,7 +6,7 @@ database.password: "root"
 database.server.name: "ER54"
 schema.include.list: public
 plugin.name: "pgoutput"
-table.include.list: "public.tm"
+table.include.list: "public.tm,public.tm2"
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
 clickhouse.server.pass: "root"

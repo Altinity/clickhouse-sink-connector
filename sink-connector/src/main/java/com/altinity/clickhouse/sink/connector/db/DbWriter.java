@@ -597,7 +597,9 @@ public class DbWriter extends BaseDbWriter {
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = struct.get(f);
-
+            if(type == Schema.Type.ARRAY) {
+                schemaName = f.schema().valueSchema().type().name();
+            }
             if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));

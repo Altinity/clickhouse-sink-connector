@@ -69,3 +69,10 @@ NULL,
 '2022-10-16 16:53:15.01957',
 'IDR'
 );
+
+CREATE TABLE public.tm2(buying_price numeric, selling_price bigint, schedule character varying(222),
+selling_date timestamp with time zone, response jsonb, items text[], prices int[]);
+
+insert into public.tm2 values(1222.22, 23232, 'sdsdsd', '2011-01-01 00:00:00', '{"key":"value"}', '{"text1", "text2"}', '{1,2,3}');
+
+-- CREATE TABLE public.tm2 (name text, pay_by_quarter integer[], schedule text[][]);

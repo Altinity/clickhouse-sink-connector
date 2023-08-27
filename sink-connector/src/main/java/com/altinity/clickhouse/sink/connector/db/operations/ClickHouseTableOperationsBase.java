@@ -44,6 +44,12 @@ public class ClickHouseTableOperationsBase {
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
 
+            if(type == Schema.Type.ARRAY) {
+                schemaName = f.schema().valueSchema().type().name();
+                ClickHouseDataType dt = mapper.getClickHouseDataType(f.schema().valueSchema().type(), null);
+                columnToDataTypesMap.put(colName, "Array(" + dt.name() + ")");
+                continue;
+            }
             // Input:
             ClickHouseDataType dataType = mapper.getClickHouseDataType(type, schemaName);
             if(dataType != null) {
