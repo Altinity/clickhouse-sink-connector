@@ -173,8 +173,8 @@ def regression(
 
     modules = [
         "sanity",
-        # "autocreate",
-        # "insert",
+        "autocreate",
+        "insert",
         # "update",
         # "delete",
         # "parallel",

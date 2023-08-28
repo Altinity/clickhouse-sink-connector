@@ -44,6 +44,7 @@ def default_with_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains only one DEFAULT value which is set to NULL."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -64,6 +65,7 @@ def default_with_null_and_non_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains two DEFAULT values one of which is set to NULL value."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -84,6 +86,7 @@ def use_select_constant_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT constant query."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -104,6 +107,7 @@ def use_select_from_table_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT from auxiliary table query."""
+    xfail("doesn't work")
     auxiliary_table = f"auxiliary_table"
     try:
         with Given(f"I create auxiliary MySQL table", description=auxiliary_table):

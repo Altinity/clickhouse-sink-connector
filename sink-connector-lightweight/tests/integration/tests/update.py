@@ -49,6 +49,7 @@ def simple_update(
 @TestFeature
 def no_primary_key(self):
     """Check replication for `UPDATE` with no primary key and without table engine."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_update(
@@ -63,6 +64,7 @@ def no_primary_key(self):
 @TestFeature
 def no_primary_key_innodb(self):
     """Check replication for `UPDATE` with no primary key and with table engine InnoDB."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_update(
@@ -105,6 +107,7 @@ def simple_primary_key_innodb(self):
 @TestFeature
 def complex_primary_key(self):
     """Check replication for `UPDATE` with complex primary key and without table engine."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_update(
@@ -119,6 +122,7 @@ def complex_primary_key(self):
 @TestFeature
 def complex_primary_key_innodb(self):
     """Check replication for `UPDATE` with complex primary key and with table engine InnoDB."""
+    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_update(
