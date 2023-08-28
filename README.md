@@ -34,6 +34,9 @@ Also Update **ClickHouse information** for the following fields that are used to
 6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
 
 ### MySQL Configuration (docker/config.yaml)
+For `https` servers, make sure the `clickhouse.server.url` includes `https`
+Also add `?ssl=true` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
+
 ```
 database.hostname: "mysql-master"
 database.port: "3306"
