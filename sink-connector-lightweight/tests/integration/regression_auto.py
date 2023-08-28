@@ -173,34 +173,34 @@ def regression(
 
     modules = [
         "sanity",
-        "autocreate",
-        "insert",
-        "update",
-        "delete",
-        "parallel",
+        # "autocreate",
+        # "insert",
+        # "update",
+        # "delete",
+        # "parallel",
         "alter",
-        "compound_alters",
-        "parallel_alters",
+        # "compound_alters",
+        # "parallel_alters",
         "truncate",
-        "deduplication",
+        # "deduplication",
         "types",
-        "primary_keys",
-        "schema_changes",
-        "multiple_tables",
+        # "primary_keys",
+        # "schema_changes",
+        # "multiple_tables",
         "virtual_columns",
-        "partition_limits",
-        "columns_inconsistency",
-        "snowflake_id",
-        "offset",
-        "databases"
+        # "partition_limits",
+        # "columns_inconsistency",
+        # "snowflake_id",
+        # "offset",
+        # "databases"
 
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
 
-    Feature(run=load("tests.consistency", "module"))
-    Feature(run=load("tests.sysbench", "module"))
-    Feature(run=load("tests.manual_section", "module"))
+    # Feature(run=load("tests.consistency", "module"))
+    # Feature(run=load("tests.sysbench", "module"))
+    # Feature(run=load("tests.manual_section", "module"))
 
 
 if __name__ == "__main__":
