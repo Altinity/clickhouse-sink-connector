@@ -107,7 +107,6 @@ def use_select_from_table_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT from auxiliary table query."""
-
     xfail("doesn't work")
     auxiliary_table = f"auxiliary_table"
     try:
