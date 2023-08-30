@@ -5,9 +5,16 @@ on:
     branches: [ main, develop]
   pull_request:
     branches: [ main , develop]
+  workflow_dispatch:
+    inputs:
+      sink_version:
+        description: "sink connector version"
+        required: true
+        type: string
+        default: 2023-08-11
 
 env:
-  SINK_CONNECTOR_VERSION: "2023-08-11"
+  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
 
 jobs:
   testflows_lightweight:
