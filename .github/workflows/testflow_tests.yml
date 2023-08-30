@@ -15,7 +15,7 @@ on:
 
 env:
 #  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
-  SINK_CONNECTOR_VERSION: "2023-08-07"
+  SINK_CONNECTOR_VERSION: "2023-08-28"
 
 jobs:
   testflows:
