@@ -26,7 +26,7 @@ jobs:
       - name: Runner ssh command
         working-directory: sink-connector/tests/integration
 #        run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
-        run: echo "${SINK_CONNECTOR_VERSION}"
+        run: echo "$SINK_CONNECTOR_VERSION"
 
 #      - name: Install docker-compose
 #        working-directory: sink-connector/tests/integration
