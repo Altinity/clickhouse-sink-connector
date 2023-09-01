@@ -669,6 +669,7 @@ def change_column_name_to_new_name_not_null(self, node=None):
 )
 def change_column_first_after(self, node=None):
     """Check that after `CHANGE COLUMN FIRST, AFTER` query MySQL and Clickhouse has the same columns."""
+
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
