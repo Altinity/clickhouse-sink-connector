@@ -1,0 +1,90 @@
+version: "3.4"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  sql-server-db:
+    container_name: sql-server-db
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    #command: sh -c ' chmod +x /tmp/entrypoint.sh; /tmp/./entrypoint.sh & /opt/mssql/bin/sqlservr;'
+    ports:
+      - "1433:1433"
+    environment:
+      MSSQL_SA_PASSWORD: "Root1234$$"
+      ACCEPT_EULA: "Y"
+    volumes:
+      - ./data_sqlserver:/tmp
+
+  clickhouse:
+    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
+    container_name: clickhouse
+    image: clickhouse/clickhouse-server:latest
+    restart: "no"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_USER=root
+      - CLICKHOUSE_PASSWORD=root
+      - CLICKHOUSE_DB=test
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0
+    ulimits:
+      nofile:
+        soft: "262144"
+        hard: "262144"
+    volumes:
+      #- ../sql/init_ch.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
+      -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
+
+  debezium-embedded:
+    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    #    build:
+    #      context: ../
+    restart: "no"
+    ports:
+      - "8083:8083"
+      - "5005:5005"
+      - "7000:7000"
+    depends_on:
+      - clickhouse
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      #- ./data:/data
+      - ./config_sql_server.yml:/config.yml
+
+  ### MONITORING ####
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus:2.36.0
+    restart: "no"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+
+  grafana:
+    build:
+      context: ./config/grafana
+      args:
+        GRAFANA_VERSION: latest
+    #container_name: grafana
+    #image: grafana/grafana
+    restart: "no"
+      #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    environment:
+      - DS_PROMETHEUS=prometheus
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    depends_on:
+      - prometheus
+    ## END OF MONITORING ###
