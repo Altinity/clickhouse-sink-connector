@@ -60,6 +60,10 @@ services:
       - docker_postgres.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      JAVA_OPTS: > 
+        -Xmx5G
+        -Xms128m
     volumes:
       #- ./data:/data
       - ./config_postgres.yml:/config.yml

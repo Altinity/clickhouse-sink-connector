@@ -14,7 +14,7 @@ spec:
     topics: {{ $sinkConnector.topics }}
     clickhouse.server.url: {{ $.Values.clickhouseSinkConnector.clickhouse.server.url }}
     clickhouse.server.user: {{ $.Values.clickhouseSinkConnector.clickhouse.server.user }}
-    clickhouse.server.pass: {{ $.Values.clickhouseSinkConnector.clickhouse.server.pass }}
+    clickhouse.server.password: {{ $.Values.clickhouseSinkConnector.clickhouse.server.password }}
     clickhouse.server.database: {{ $.Values.clickhouseSinkConnector.clickhouse.server.url }}
     clickhouse.server.port: {{ $.Values.clickhouseSinkConnector.clickhouse.server.port }}
     clickhouse.topic2table.map: "employees:employee"

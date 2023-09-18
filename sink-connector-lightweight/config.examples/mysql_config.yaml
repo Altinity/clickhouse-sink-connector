@@ -6,7 +6,7 @@ database.include.list: sbtest
 #table.include.list=sbtest1
 clickhouse.server.url: "localhost"
 clickhouse.server.user: "root"
-clickhouse.server.pass: "root"
+clickhouse.server.password: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"

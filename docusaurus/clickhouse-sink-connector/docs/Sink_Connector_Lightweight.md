@@ -16,7 +16,7 @@ Single executable and lightweight.
 Download the JAR file from the releases.
 https://github.com/Altinity/clickhouse-sink-connector/releases
 1.  Update **MySQL information** in config.yaml: `database.hostname`, `database.port`, `database.user` and `database.password`.
-2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.pass`, `clickhouse.server.port`. 
+2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.password`, `clickhouse.server.port`. 
 Also Update **ClickHouse information** for the following fields that are used to store the offset information- `offset.storage.jdbc.url`, `offset.storage.jdbc.user`, `offset.storage.jdbc.password`, `schema.history.internal.jdbc.url`, `schema.history.internal.jdbc.user`, and `schema.history.internal.jdbc.password`.
 3.  Update MySQL databases to be replicated: `database.include.list`.
 4.  Add table filters: `table.include.list`.
@@ -34,7 +34,7 @@ database.include.list: sbtest
 #table.include.list=sbtest1
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
-clickhouse.server.pass: "root"
+clickhouse.server.password: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
@@ -82,7 +82,7 @@ plugin.name: "pgoutput"
 table.include.list: "public.tm"
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
-clickhouse.server.pass: "root"
+clickhouse.server.password: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
@@ -196,7 +196,7 @@ GLOBAL OPTIONS:
 | table.include.list                    | List of tables to be included in replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | clickhouse.server.url                 | ClickHouse URL                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | clickhouse.server.user                | ClickHouse username                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| clickhouse.server.pass                | ClickHouse password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| clickhouse.server.password                | ClickHouse password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | clickhouse.server.port                | ClickHouse port                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | clickhouse.server.database            | ClickHouse destination database                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | snapshot.mode                         | "initial" -> Data that already exists in source database will be replicated. "schema_only" -> Replicate data that is added/modified after the connector is started.\<br/> MySQL: https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-property-snapshot-mode \ <br/>PostgreSQL: https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-property-snapshot-mode  <br/> MongoDB: initial, never. https://debezium.io/documentation/reference/stable/connectors/mongodb.html |
@@ -345,7 +345,7 @@ mvn install -DskipTests=true
 | topics                           | No        | The list of topics. topics or topics.regex has to be provided.                                                                                                        |
 | clickhouse.server.url            |           | ClickHouse Server URL                                                                                                                                                 |
 | clickhouse.server.user           |           | ClickHouse Server username                                                                                                                                            |
-| clickhouse.server.pass           |           | ClickHouse Server password                                                                                                                                            |
+| clickhouse.server.password           |           | ClickHouse Server password                                                                                                                                            |
 | clickhouse.server.database       |           | ClickHouse Database name                                                                                                                                              |
 | clickhouse.server.port           | 8123      | ClickHouse Server port                                                                                                                                                |
 | clickhouse.topic2table.map       | No        | Map of Kafka topics to table names, <topic_name1>:<table_name1>,<topic_name2>:<table_name2> This variable will override the default mapping of topics to table names. |

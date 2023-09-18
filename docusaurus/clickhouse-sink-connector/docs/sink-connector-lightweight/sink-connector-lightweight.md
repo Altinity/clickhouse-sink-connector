@@ -17,7 +17,7 @@ database.include.list: sbtest
 #table.include.list=sbtest1
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
-clickhouse.server.pass: "root"
+clickhouse.server.password: "root"
 clickhouse.server.port: "8123"
 clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
@@ -75,7 +75,7 @@ export database.password="root"
 export snapshot.mode="schema_only"
 export clickhouse.server.url="clickhouse"
 export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
+export clickhouse.server.password="root"
 export clickhouse.server.port="8123"
 export connector.class="io.debezium.connector.postgresql.PostgresConnector"
 export plugin.name="pgoutput"
@@ -116,7 +116,7 @@ export auto.create.tables="true"
 export clickhouse.server.url="clickhouse"
 export clickhouse.server.port="8123"
 export clickhouse.server.user="root"
-export clickhouse.server.pass="root"
+export clickhouse.server.password="root"
 export clickhouse.server.database="project"
 export replacingmergetree.delete.column="_sign"
 export metrics.port="8087"
@@ -167,7 +167,7 @@ Update the MySQL/PostgreSQL and ClickHouse configuration values
     value: "8123"
   - name: clickhouse.server.user
     value: "default"
-  - name: clickhouse.server.pass
+  - name: clickhouse.server.password
     value: "2"
   - name: clickhouse.server.database
     value: "public"

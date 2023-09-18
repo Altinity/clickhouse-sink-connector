@@ -27,7 +27,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "buffer.count.records": "${BUFFER_COUNT}",
     "clickhouse.server.url": "${CLICKHOUSE_HOST}",
     "clickhouse.server.user": "${CLICKHOUSE_USER}",
-    "clickhouse.server.pass": "${CLICKHOUSE_PASSWORD}",
+    "clickhouse.server.password": "${CLICKHOUSE_PASSWORD}",
     "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
     "clickhouse.server.port": ${CLICKHOUSE_PORT},
     "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
