@@ -182,17 +182,17 @@ def regression(
         "compound_alters",
         "parallel_alters",
         "truncate",
-        # "deduplication",
+        "deduplication",
         "types",
         # "primary_keys",
         # "schema_changes",
         # "multiple_tables",
         "virtual_columns",
         # "partition_limits",
-        # "columns_inconsistency",
-        # "snowflake_id",
+        "columns_inconsistency",
+        "snowflake_id",
         # "offset",
-        # "databases"
+        "databases"
 
     ]
     for module in modules:
