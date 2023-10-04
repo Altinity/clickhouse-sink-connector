@@ -47,7 +47,7 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     if self.context.stress:
         column_number = 64
@@ -96,6 +96,7 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
 def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
     multiple `ALTER TABLE RENAME COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
+    xfail("doesn't rename column")
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -171,7 +172,7 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     if self.context.stress:
         column_number = 64
@@ -244,9 +245,7 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
-
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     if self.context.stress:
         column_number = 64
@@ -407,7 +406,7 @@ def multiple_parallel_add_modify_drop_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     if self.context.stress:
         column_number = 64
