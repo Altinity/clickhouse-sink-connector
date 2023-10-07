@@ -124,7 +124,7 @@ env:
     value: "8123"
   - name: clickhouse.server.user
     value: "default"
-  - name: clickhouse.server.pass
+  - name: clickhouse.server.password
     value: "2"
   - name: clickhouse.server.database
     value: "public"

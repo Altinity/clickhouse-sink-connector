@@ -70,7 +70,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
         properties.put("clickhouse.server.url", "clickhouse");
         properties.put("clickhouse.server.port", "8123");
         properties.put("clickhouse.server.user", "default");
-        properties.put("clickhouse.server.pass", "");
+        properties.put("clickhouse.server.password", "");
         properties.put("clickhouse.server.database", "public");
         properties.put("replacingmergetree.delete.column", "_sign");
         properties.put("metrics.port", "8087");

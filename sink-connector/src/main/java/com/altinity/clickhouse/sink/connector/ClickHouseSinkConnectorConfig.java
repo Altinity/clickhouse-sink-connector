@@ -41,7 +41,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     }
 
     protected ClickHouseSinkConnectorConfig(ConfigDef config, Map<String, String> properties) {
-        super(config, properties);
+        super(config, properties, false);
     }
 
     /**
