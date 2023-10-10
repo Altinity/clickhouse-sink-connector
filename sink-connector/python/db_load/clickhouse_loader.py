@@ -204,8 +204,8 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     src = re.sub(r'', '', src)
     # adding virtual columns ver and sign
     src = re.sub(r'\) ENGINE',
-                 '  `_sign` Int8 DEFAULT 1,\n  `_version` UInt64 DEFAULT 0\n) ENGINE', src)
-    src = re.sub(r'ENGINE=InnoDB[^;]*', 'ENGINE = ReplacingMergeTree(_version) ' +
+                 '  `is_deleted` UInt8 DEFAULT 0,\n  `_version` UInt64 DEFAULT 0\n) ENGINE', src)
+    src = re.sub(r'ENGINE=InnoDB[^;]*', 'ENGINE = ReplacingMergeTree(_version, is_deleted) ' +
                  partitioning_options + ' ORDER BY ('+primary_key+') SETTINGS '+settings, src)
 
     lines = src.splitlines()
@@ -410,7 +410,7 @@ def load_data(args, timezone, schema_map, dry_run = False):
         for data_file in data_files:
             # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
             structure = columns.replace(","," Nullable(String),")+" Nullable(String)"
-            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
+            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --secure --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
             logging.info(cmd)
             (rc, result) = run_quick_command(cmd)
             logging.debug(result)
@@ -447,7 +447,7 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run = False):
                 # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
                 structure = columns.replace(
                     ",", " Nullable(String),")+" Nullable(String)"
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --secure --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
@@ -497,7 +497,7 @@ def main():
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
     parser.add_argument('--virtual_columns', help='virtual_columns',
-                        nargs='+', default=['`_sign`', '`_version`'])
+                        nargs='+', default=['`is_deleted`', '`_version`'])
     parser.add_argument('--mysqlshell', help='using a util.dumpSchemas', dest='mysqlshell',
                         action='store_true', default=False)
       
