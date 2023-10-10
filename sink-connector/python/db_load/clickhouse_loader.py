@@ -194,6 +194,8 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     # ClickHouse does not support constraints, indices, primary and unique keys
     src = re.sub(r'.*\bCONSTRAINT\b.*', '', src)
     src = re.sub(r'.*\bPRIMARY KEY\b.*\(.*', '', src)
+    # COMMENT is not supported
+    src = re.sub(r'\s*\bCOMMENT\b\s*\'(.*?)\'', '', src)
     # primary key on the column itself
     src = re.sub(r'\bPRIMARY KEY\b', '', src)
     src = re.sub(r'.*\bUNIQUE\b.*', '', src)
