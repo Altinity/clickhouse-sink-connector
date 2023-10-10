@@ -410,7 +410,7 @@ def load_data(args, timezone, schema_map, dry_run = False):
         for data_file in data_files:
             # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
             structure = columns.replace(","," Nullable(String),")+" Nullable(String)"
-            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --secure --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{password}' -mn """
+            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
             logging.info(cmd)
             (rc, result) = run_quick_command(cmd)
             logging.debug(result)
@@ -447,7 +447,7 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run = False):
                 # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
                 structure = columns.replace(
                     ",", " Nullable(String),")+" Nullable(String)"
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --secure --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{password}' -mn """
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{args.clickhouse_password}' -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
