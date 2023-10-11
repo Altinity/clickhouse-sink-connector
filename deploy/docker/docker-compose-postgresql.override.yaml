@@ -9,7 +9,7 @@ version: "2.3"
 services:
 
   postgres:
-    image: debezium/postgres
+    image: debezium/postgres:15-alpine
     restart: always
     ports:
       - "5432:5432"
@@ -23,63 +23,3 @@ services:
       - "postgres"
       - "-c"
       - "wal_level=logical"
-
-
-  schemaregistry:
-    container_name: schemaregistry
-    image: apicurio/apicurio-registry-mem:2.0.0.Final
-    #image: confluentinc/cp-schema-registry:latest
-    restart: "no"
-    ports:
-      - "8080:8080"
-    environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-    #    environment:
-    #      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092
-    #      - SCHEMA_REGISTRY_HOST_NAME=localhost
-    #      - SCHEMA_REGISTRY_LISTENERS=http://localhost:8081
-    #      - SCHEMA_REGISTRY_DEBUG=true
-
-    depends_on:
-      - kafka
-
-  debezium:
-    container_name: debezium
-    #image: debezium/connect:2.0
-    build:
-      context: ../../docker/debezium_jmx
-      args:
-        DEBEZIUM_VERSION: 1.9.5.Final
-        JMX_AGENT_VERSION: 0.15.0
-    restart: "no"
-    ports:
-      - "8083:8083"
-      - "1976:1976"
-
-    environment:
-      # Where to find Kafka broker
-      - BOOTSTRAP_SERVERS=kafka:9092
-      # Maps to rest.advertised.host.name
-      #- ADVERTISED_HOST_NAME=kafka
-      # Maps to rest.advertised.port
-      #- ADVERTISED_PORT=9092
-      - GROUP_ID=1
-      - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
-      - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
-      - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
-      - LOG_LEVEL=INFO
-      - ENABLE_APICURIO_CONVERTERS=true
-      - KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_KEY_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_KEY_CONVERTER_APICURIO.REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
-      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
-      - CONNECT_KEY_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
-      - CONNECT_VALUE_CONVERTER=io.apicurio.registry.utils.converter.AvroConverter
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_URL=http://schemaregistry:8080/apis/registry/v2
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_AUTO-REGISTER=true
-      - CONNECT_VALUE_CONVERTER_APICURIO_REGISTRY_FIND-LATEST=true
-      #- LOG_LEVEL=DEBUG
-    depends_on:
-      - kafka
-

@@ -4,7 +4,7 @@
 CONNECT_HOST="127.0.0.1"
 CONNECT_PORT="8083"
 # Name of this connector instance
-CONNECTOR_NAME="test-connector"
+CONNECTOR_NAME="debezium-connector"
 
 # URL of the connect instance
 CONNECT_URL="http://${CONNECT_HOST}:${CONNECT_PORT}"

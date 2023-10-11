@@ -1,0 +1,35 @@
+{{- range $clusterName := .Values.cluster }}
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  namespace: {{ $clusterName.namespace }}
+  name: {{ $clusterName.name }}
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: 3.1.0
+  replicas: 1
+  image: {{ $.Values.clickhouseSinkConnector.image }}
+  bootstrapServers: {{ $.Values.kafka.bootstrapServers }}
+
+  config:
+    group.id: 2
+
+    # -1 means it will use the default replication factor configured in the broker
+    config.storage.topic: {{ $.Values.clickhouseSinkConnector.config.storage.topic }}
+    config.storage.replication.factor: 1
+    config.storage.partitions: 1
+
+    offset.storage.topic: {{ $.Values.clickhouseSinkConnector.offset.storage.topic }}
+    offset.storage.replication.factor: 1
+    offset.storage.partitions: 1
+
+    status.storage.topic: {{ $.Values.clickhouseSinkConnector.status.storage.topic }}
+    status.storage.replication.factor: 1
+    status.storage.partitions: 1
+
+    key.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+---
+{{- end }}

@@ -201,9 +201,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT)
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE,
+                        Type.STRING,
+                        null,
+                        new ConfigDef.NonEmptyString(),
+                        Importance.HIGH,
+                        "ClickHouse table name",
+                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE)
+                .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA,
                         Type.BOOLEAN,
-                        "true",
+                        "false",
                         Importance.LOW,
                         "True, if the kafka metadata needs to be stored in Clickhouse tables, false otherwise",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -243,7 +254,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN,
                         Type.STRING,
-                        "false",
+                        "",
                         Importance.LOW,
                         "Column name to store the raw data(JSON form), only applicable if STORE_RAW_DATA is set to True",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -291,6 +302,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID,
+                        Type.BOOLEAN,
+                        true,
+                        Importance.HIGH,
+                        "If enabled, snowflake id will be used for version columns",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID)
                 .define(
                         ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE,
                         Type.STRING,

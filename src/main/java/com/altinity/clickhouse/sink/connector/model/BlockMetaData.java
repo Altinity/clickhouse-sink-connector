@@ -5,6 +5,7 @@ import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -53,7 +54,11 @@ public class BlockMetaData {
 
     @Getter
     @Setter
-    long binLogPosition = -1;
+    long binLogPosition = 0;
+
+    @Getter
+    @Setter
+    String binLogFile = "";
 
 
     @Getter
@@ -69,6 +74,20 @@ public class BlockMetaData {
     @Setter
     String topicName = null;
 
+    // The time when the block is persisted to clickhouse
+    // and binlog timestamp
+    @Getter
+    @Setter
+    Map<String, Long> sourceToCHLag = new HashMap();
+
+    @Getter
+    @Setter
+    Map<String, Long> debeziumToCHLag = new HashMap();
+
+
+    // Timestamp recorded when the block was written;
+    long blockInsertionTimestamp = System.currentTimeMillis();
+
     public void update(ClickHouseStruct record) {
 
         int gtId = record.getGtid();
@@ -77,19 +96,44 @@ public class BlockMetaData {
                 this.transactionId = gtId;
             }
         }
+
         if (record.getPos() != null && record.getPos() > binLogPosition) {
             this.binLogPosition = record.getPos();
+        }
+
+        if (record.getFile() != null) {
+            this.binLogFile = record.getFile();
         }
 
         if(record.getKafkaPartition() != null) {
             this.partition = record.getKafkaPartition();
         }
 
-        long offset = record.getKafkaOffset();
-
         if(record.getTopic() != null) {
             this.topicName = record.getTopic();
         }
+
+        long sourceDbLag = blockInsertionTimestamp - record.getTs_ms();
+        if(sourceToCHLag.containsKey(this.topicName)) {
+            long storedSourceLag = sourceToCHLag.get(this.topicName);
+            if(sourceDbLag > storedSourceLag) {
+                sourceToCHLag.put(this.topicName, sourceDbLag);
+            }
+        } else {
+            sourceToCHLag.put(this.topicName, sourceDbLag);
+        }
+
+        long debeziumLag = blockInsertionTimestamp - record.getDebezium_ts_ms();
+        if(debeziumToCHLag.containsKey(this.topicName)) {
+            long storedDebeziumLag = debeziumToCHLag.get(this.topicName);
+            if(debeziumLag > storedDebeziumLag) {
+                debeziumToCHLag.put(this.topicName, debeziumLag);
+            }
+        } else {
+            debeziumToCHLag.put(this.topicName, debeziumLag);
+        }
+
+        long offset = record.getKafkaOffset();
 
         if (partitionToOffsetMap.containsKey(this.topicName)) {
             MutablePair<Integer, Long> mp = partitionToOffsetMap.get(this.topicName);

@@ -21,6 +21,7 @@ Limitations :
 
 Example : assuming the world database was dumped with mysqlsh using this command ($HOME needs to be replaced with a constant) :
 
+MySQL Shell(JS version works better with Python)
 ```
 mysqlsh -uroot -proot -hlocalhost -e "util.dumpSchemas(['world'], '$HOME/dbdumps/world');"
 ```
@@ -49,6 +50,17 @@ python db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user ro
 2022-09-11 19:39:49,148 - INFO - ThreadPoolExecutor-0_0 - Checksum for table menagerie.pet = 3d19b8b13cf29b5192068278123c5059 count 9
 ```
 
+## Connecting to secure ClickHouse
+```
+python3 clickhouse_table_checksum.py --sign_column=sign --secure=True --clickhouse_port 9440 --clickhouse_host secure-host  --clickhouse_user user  --clickhouse_password password  --clickhouse_database das --tables_regex '^products' --exclude_columns=[sign,ver]
+```
+
+## Exclude columns
+```
+python3 clickhouse_table_checksum.py --sign_column=sign --secure=True --clickhouse_port 9440 --clickhouse_host secure-host --clickhouse_user user --clickhouse_password password --clickhouse_database das --tables_regex '^products' --exclude_columns=sign,ver --debug_output --debug
+
+
+```
 Compare all tables in database and diff the checksums
 
 ```
