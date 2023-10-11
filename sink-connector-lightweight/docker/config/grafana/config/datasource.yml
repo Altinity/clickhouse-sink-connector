@@ -1,0 +1,25 @@
+datasources:
+  - access: 'proxy'                       # make grafana perform the requests
+    editable: true                        # whether it should be editable
+    is_default: true                      # whether this should be the default DS
+    name: 'prometheus'                        # name of the datasource
+    org_id: 1                             # id of the organization to tie this datasource to
+    type: 'prometheus'                      # type of the data source
+    url: 'http://prometheus:9090'       # url of the prom instance
+    database: 'prometheus'
+    version: 1                            # well, versioning
+  -  name: Clickhouse
+     type: vertamedia-clickhouse-datasource
+     access: 'proxy'
+     url: http://clickhouse:8123
+     basicAuth: true
+     withCredentials: true
+     user: "ch_user"
+     database: ""
+     secureJsonData:
+      password: "root"
+      basicAuthPassword: "root"
+     isDefault: false
+     readOnly: false
+     editable: true
+     version: 1

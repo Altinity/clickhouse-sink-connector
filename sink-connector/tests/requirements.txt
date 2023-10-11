@@ -1,0 +1,6 @@
+clickhouse-driver==0.2.3
+docker-compose==1.29.2
+mysql-connector-python
+faker==13.3.5
+testcontainers
+testcontainers[clickhouse]

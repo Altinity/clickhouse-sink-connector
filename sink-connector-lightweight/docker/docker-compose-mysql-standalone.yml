@@ -1,0 +1,53 @@
+services:
+  debezium-embedded:
+    #build:
+    #  context: ..
+    #  dockerfile: Dockerfile
+    #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    #    build:
+    #      context: ../
+    restart: "no"
+    ports:
+      - "8083:8083"
+      - "5005:5005"
+    #    depends_on:
+    #      - mysql-master
+    #    env_file:
+    #      - docker.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      #- ./data:/data
+      - ./config.yml:/config.yml
+
+  ### MONITORING ####
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus:2.36.0
+    restart: "no"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+
+  grafana:
+    build:
+      context: ./config/grafana
+      args:
+        GRAFANA_VERSION: latest
+    #container_name: grafana
+    #image: grafana/grafana
+    restart: "no"
+    #volumes:
+    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    environment:
+      - DS_PROMETHEUS=prometheus
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    depends_on:
+      - prometheus
+    ## END OF MONITORING ###

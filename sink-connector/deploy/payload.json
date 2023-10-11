@@ -1,0 +1,35 @@
+{
+  "name": "test-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": 1,
+    "database.hostname": "postgres",
+    "database.port": 5432,
+    "database.user": "postgres_user",
+    "database.password": "postgres",
+    "database.server.id": 5432,
+    "database.server.name": "SERVER5432",
+    "database.dbname": "test",
+    "table.include.list": "public.Employee",
+    "plugin.name": "pgoutput",
+
+    "snapshot.mode": "initial_only",
+    "snapshot.locking.mode": "minimal",
+    "snapshot.delay.ms": 10000,
+    "include.schema.changes":"true",
+    "database.history.kafka.bootstrap.servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+    "database.history.kafka.topic": "${KAFKA_TOPIC}",
+
+    "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+
+    "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+    "key.converter.apicurio.registry.auto-register": "true",
+    "key.converter.apicurio.registry.find-latest": "true",
+
+    "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
+    "value.converter.apicurio.registry.auto-register": "true",
+    "value.converter.apicurio.registry.find-latest": "true"
+  }
+}
+

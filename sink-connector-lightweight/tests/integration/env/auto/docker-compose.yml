@@ -1,0 +1,142 @@
+version: "2.3"
+
+
+services:
+  mysql-master:
+    image: docker.io/bitnami/mysql:8.0
+    restart: "no"
+    expose:
+      - "3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+#     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+     - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
+    healthcheck:
+      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+
+  debezium:
+    hostname: debezium
+    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_CONNECTOR_VERSION}
+    restart: "no"
+    expose:
+      - "8083"
+      - "1976"
+      - "5005"
+#    depends_on:
+#      - mysql-master
+#    env_file:
+#      - docker.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/data
+      - ./config.yml:/config.yml
+
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
+
+
+  clickhouse:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse
+#    environment:
+#      - CLICKHOUSE_USER=1000
+#      - CLICKHOUSE_PASSWORD=1000
+#      - CLICKHOUSE_DB=test
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/etc/:/etc/clickhouse-server/"
+#      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse0/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+
+  bash-tools:
+    image: registry.gitlab.com/altinity-public/container-images/test/bash-tools:5.0
+    hostname: bash-tools
+    restart: "no"
+    entrypoint:
+      - /bin/sleep
+    command:
+      - infinity
+    volumes:
+      - ../../tests/manual_scripts:/manual_scripts
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
+
+  clickhouse1:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse1
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse1/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse1/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse2:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse2
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse2/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse2/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse3:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse3
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse3/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse3/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse3/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+
+  # dummy service which does nothing, but allows to postpone
+  # 'docker-compose up -d' till all dependecies will go healthy
+  all_services_ready:
+    image: hello-world
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      clickhouse1:
+        condition: service_healthy
+      clickhouse2:
+        condition: service_healthy
+      clickhouse3:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+

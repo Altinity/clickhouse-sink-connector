@@ -1,0 +1,1 @@
+Just folder for CI/CD logs :)

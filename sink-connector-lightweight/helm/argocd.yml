@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sink-connector-lightweight
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: clickhouse-debezium-embedded
+    repoURL: https://github.com/Altinity/clickhouse-sink-connector/new/develop/sink-connector-lightweight/helm
+    targetRevision: 1.16.1
+    helm:
+      releaseName: sink-connector-lightweight
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: kubeseal
