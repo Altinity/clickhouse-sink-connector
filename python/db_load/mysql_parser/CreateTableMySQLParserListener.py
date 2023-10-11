@@ -1,12 +1,12 @@
 from antlr4 import *
-from db_load.mysql_parser.MySQLParserListener import MySQLParserListener
-from db_load.mysql_parser.MySQLParser import MySQLParser
+from db_load.mysql_parser.MySqlParserListener import MySqlParserListener
+from db_load.mysql_parser.MySqlParser import MySqlParser
 from db_compare.mysql import is_binary_datatype
 import re
 import logging
 
 
-class CreateTableMySQLParserListener(MySQLParserListener):
+class CreateTableMySQLParserListener(MySqlParserListener):
     def __init__(self):
       self.buffer = ""
       self.columns = ""
@@ -29,22 +29,23 @@ class CreateTableMySQLParserListener(MySQLParserListener):
                              dataTypeText, flags=re.IGNORECASE)
         dataTypeText = re.sub("CHARSET.*", '', dataTypeText, re.IGNORECASE)
 
-        if dataType.DATE_SYMBOL():
+        if isinstance(dataTypeText, MySqlParser.SimpleDataTypeContext) and dataType.DATE():
           dataTypeText = 'Date32'
-        if dataType.DATETIME_SYMBOL() or dataType.TIMESTAMP_SYMBOL():
-          dataTypeText = 'DateTime64(0)'
-          if dataType.typeDatetimePrecision():
-            dataTypeText = 'DateTime64'+dataType.typeDatetimePrecision().getText()
+        if isinstance(dataTypeText, MySqlParser.DimensionDataTypeContext):
+          if dataType.DATETIME() or dataType.TIMESTAMP():
+            dataTypeText = 'DateTime64(0)'
+            if dataType.typeDatetimePrecision():
+              dataTypeText = 'DateTime64'+dataType.typeDatetimePrecision().getText()
 
-        if dataType.JSON_SYMBOL() or is_binary_datatype(dataTypeText):
+        if isinstance(dataTypeText, MySqlParser.ConvertedDataTypeContext) and dataType.JSON() or is_binary_datatype(dataTypeText):
            dataTypeText = 'String'
 
         return dataTypeText
 
 
-    def translateFieldDefinition(self, column_name, fieldDefinition):
+    def translateColumnDefinition(self, column_name, columnDefinition):
         column_buffer =''
-        dataType = fieldDefinition.dataType()
+        dataType = columnDefinition.dataType()
         dataTypeText = self.convertDataType(dataType)
         # data type
         column_buffer += ' ' + dataTypeText
@@ -52,17 +53,21 @@ class CreateTableMySQLParserListener(MySQLParserListener):
         # data type modifier (NULL / NOT NULL / PRIMARY KEY)
         notNull = False
         notSymbol = True
-        for child in fieldDefinition.getChildren():
-            if child.getRuleIndex() == MySQLParser.RULE_columnAttribute:
-              if child.NOT_SYMBOL() or child.nullLiteral():
-                text = self.extract_original_text(child)
-                column_buffer += " " + text
-                if child.NOT_SYMBOL():
-                  notSymbol = True
-                if child.nullLiteral() and notSymbol:
-                  notNull = True
+        for child in columnDefinition.getChildren():
+            if child.getRuleIndex() == MySqlParser.RULE_columnConstraint:
+              
+              if isinstance(child, MySqlParser.NullColumnConstraintContext):
+                nullNotNull = child.nullNotnull()
+                if nullNotNull:
+                  text = self.extract_original_text(child)
+                  column_buffer += " " + text
+                  if nullNotNull.NOT():
+                    notSymbol = True
+                  if nullNotNull.NULL_LITERAL() and notSymbol:
+                    notNull = True
+                    
 
-              if child.PRIMARY_SYMBOL():
+              if isinstance(child, MySqlParser.PrimaryKeyColumnConstraintContext) and child.PRIMARY():
                 self.primary_key = column_name
         # column without nullable info are default nullable in MySQL, while they are not null in ClickHouse
         if not notNull:
@@ -71,20 +76,20 @@ class CreateTableMySQLParserListener(MySQLParserListener):
         return (column_buffer, dataType)
 
 
-    def exitColumnDefinition(self, ctx):
+    def exitColumnDeclaration(self, ctx):
         column_text = self.extract_original_text(ctx)
 
         column_buffer = ""
-        column_name = ctx.columnName().getText()
+        column_name = ctx.fullColumnName().getText()
 
         column_buffer += column_name
 
         # columns have an identifier and a column definition
-        fieldDefinition = ctx.fieldDefinition()
+        columnDefinition = ctx.columnDefinition()
 
-        (fieldDefinition_buffer, dataType) = self.translateFieldDefinition(column_name, fieldDefinition)
+        (columnDefinition_buffer, dataType) = self.translateColumnDefinition(column_name, columnDefinition)
 
-        column_buffer += fieldDefinition_buffer
+        column_buffer += columnDefinition_buffer
 
         self.columns.append(column_buffer)
 
@@ -98,13 +103,13 @@ class CreateTableMySQLParserListener(MySQLParserListener):
       self.partition_keys = None
 
 
-    def exitTableConstraintDef(self, ctx):
-       if ctx.PRIMARY_SYMBOL():
-           text = self.extract_original_text(ctx.keyListVariants())
-           self.primary_key = text
+    def exitPrimaryKeyTableConstraint(self, ctx):
+      
+      text = self.extract_original_text(ctx.indexColumnNames())
+      self.primary_key = text
 
 
-    def enterCreateTable(self, ctx):
+    def enterColumnCreateTable(self, ctx):
       self.buffer = ""
 
 
@@ -116,7 +121,7 @@ class CreateTableMySQLParserListener(MySQLParserListener):
           self.partition_keys = text
 
 
-    def exitCreateTable(self, ctx):
+    def exitColumnCreateTable(self, ctx):
         tableName = self.extract_original_text(ctx.tableName())
         self.buffer = f"CREATE TABLE {tableName} ("
         self.columns.append("`_sign` Int8 DEFAULT 1")
@@ -141,7 +146,7 @@ class CreateTableMySQLParserListener(MySQLParserListener):
 
     def exitAlterList(self, ctx):
       for child in ctx.getChildren():
-        if isinstance(child,MySQLParser.AlterListItemContext) :
+        if isinstance(child,MySqlParser.AlterListItemContext) :
           alter = self.extract_original_text(child)
           
           if child.ADD_SYMBOL() and child.fieldDefinition():
@@ -188,30 +193,40 @@ class CreateTableMySQLParserListener(MySQLParserListener):
 
 
     def exitAlterTable(self, ctx):
-       tableName = self.extract_original_text(ctx.tableRef())
-       if len(self.alter_list):
-        self.buffer = f"ALTER TABLE {tableName}" 
-        for alter in self.alter_list:
-          self.buffer += ' ' + alter
-          if self.alter_list[-1] != alter:
-            self.buffer += ', '
-        self.buffer += ';' 
+      tableName = self.extract_original_text(ctx.tableName())
+      
+      for child in ctx.getChildren():
+        if isinstance(child,MySqlParser.AlterByRenameContext) :
+          if child.RENAME():
+              if child.uid():
+                rename = self.extract_original_text(child.uid())
+              if child.fullId():
+                rename = self.extract_original_text(child.fullId())
+              
+              self.buffer += f" rename table {tableName} to {rename}"
+               
+      #if len(self.alter_list):
+      #  self.buffer = f"ALTER TABLE {tableName}" 
+      #  for alter in self.alter_list:
+      #    self.buffer += ' ' + alter
+      #    if self.alter_list[-1] != alter:
+      #      self.buffer += ', '
+      #  self.buffer += ';' 
         
-       for rename in self.rename_list:
-        self.buffer += f" rename table {tableName} {rename}"
-        self.buffer += ';'
+       #for rename in self.rename_list:
+       # self.buffer += f" rename table {tableName} {rename}"
+       # self.buffer += ';'
 
-
-    def exitRenameTableStatement(self, ctx):
+    def exitRenameTable(self, ctx):
          # same syntax as CH
          self.buffer = self.extract_original_text(ctx)
 
 
-    def exitTruncateTableStatement(self, ctx):
+    def exitTruncateTable(self, ctx):
          # same syntax as CH
          self.buffer = self.extract_original_text(ctx)
 
 
-    def exitDropStatement(self, ctx):
+    def exitDropTable(self, ctx):
           # same syntax as CH
          self.buffer = self.extract_original_text(ctx)

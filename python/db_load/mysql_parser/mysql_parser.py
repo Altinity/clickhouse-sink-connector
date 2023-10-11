@@ -1,8 +1,8 @@
 import sys
 from antlr4 import *
 from antlr4.tree.Trees import Trees 
-from db_load.mysql_parser.MySQLLexer import MySQLLexer
-from db_load.mysql_parser.MySQLParser import MySQLParser
+from db_load.mysql_parser.MySqlLexer import MySqlLexer
+from db_load.mysql_parser.MySqlParser import MySqlParser
 from db_load.mysql_parser.CreateTableMySQLParserListener import CreateTableMySQLParserListener
 from antlr4.error.ErrorListener import ErrorListener
 import logging
@@ -20,11 +20,11 @@ class MyErrorListener( ErrorListener ):
 def convert_to_clickhouse_table_antlr(source):
     columns = []
     input_stream = InputStream(source)
-    lexer = MySQLLexer(input_stream)
+    lexer = MySqlLexer(input_stream)
     stream = CommonTokenStream(lexer)
-    parser = MySQLParser(stream)
+    parser = MySqlParser(stream)
     parser.addErrorListener( MyErrorListener() )
-    tree = parser.query()
+    tree = parser.sqlStatements()
     listener = CreateTableMySQLParserListener()
     walker = ParseTreeWalker()
     walker.walk(listener, tree) 
