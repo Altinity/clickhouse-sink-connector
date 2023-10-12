@@ -85,7 +85,7 @@ def clickhouse_execute_conn(conn, sql):
 def get_connection(args, database='default'):
 
     conn = clickhouse_connection(args.clickhouse_host, database=database,
-                                 user=args.clickhouse_user, password=args.clickhouse_password, port=8443)
+                                 user=args.clickhouse_user, password=args.clickhouse_password, port=args.clickhouse_port)
     return conn
 
 
@@ -153,7 +153,7 @@ def find_partitioning_options(source):
     return partitioning_options
 
 
-def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support):
+def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support):
     
     # do we have a table in the source
     
@@ -266,7 +266,7 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
     return (res, columns)
 
 
-def convert_to_clickhouse_table(user_name, table_name, source):
+def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support):
 
     # do we have a table in the source
     if not find_create_table(source):
@@ -277,10 +277,11 @@ def convert_to_clickhouse_table(user_name, table_name, source):
     src = re.sub(r'\/\*(.*?)\*\/;', '', src)
     src = re.sub(r'\/\*(.*?)\*\/', '', src)
     try:
-        return convert_to_clickhouse_table_antlr(src)
-    except:
-        logging.info("Using legacy regexp DDL converter")
-        return convert_to_clickhouse_table_regexp(user_name, table_name, source)
+        return convert_to_clickhouse_table_antlr(src, rmt_delete_support)
+    except Exception as ex:
+        logging.info(f"Use regexp DDL converter")
+        logging.info(f"{ex}")
+        return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support)
 
 
 def get_unix_timezone_from_mysql_timezone(timezone):
@@ -529,6 +530,8 @@ def main():
     parser.add_argument('--clickhouse_user', help='CH user', required=True)
     parser.add_argument('--clickhouse_password',
                         help='CH password', required=True)
+    parser.add_argument('--clickhouse_port', type=int, default=9000,
+                        help='ClickHouse port', required=False)
     parser.add_argument('--clickhouse_database',
                         help='Clickhouse database name', required=True)
     parser.add_argument('--mysql_source_database',

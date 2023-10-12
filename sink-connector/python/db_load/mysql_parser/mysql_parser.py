@@ -17,7 +17,7 @@ class MyErrorListener( ErrorListener ):
         raise Exception(f"Syntax error at line {line} column {column}")
 
 
-def convert_to_clickhouse_table_antlr(source):
+def convert_to_clickhouse_table_antlr(source, rmt_delete_support):
     columns = []
     input_stream = InputStream(source)
     lexer = MySqlLexer(input_stream)
@@ -25,7 +25,7 @@ def convert_to_clickhouse_table_antlr(source):
     parser = MySqlParser(stream)
     parser.addErrorListener( MyErrorListener() )
     tree = parser.sqlStatements()
-    listener = CreateTableMySQLParserListener()
+    listener = CreateTableMySQLParserListener(rmt_delete_support)
     walker = ParseTreeWalker()
     walker.walk(listener, tree) 
     logging.debug(Trees.toStringTree(tree, None, parser)) 

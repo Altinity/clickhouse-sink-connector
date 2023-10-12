@@ -7,13 +7,14 @@ import logging
 
 
 class CreateTableMySQLParserListener(MySqlParserListener):
-    def __init__(self):
+    def __init__(self, rmt_delete_support):
       self.buffer = ""
       self.columns = ""
       self.primary_key = ""
       self.columns_map = {}
       self.alter_list = []
       self.rename_list = []
+      self.rmt_delete_support = rmt_delete_support
 
 
     def extract_original_text(self, ctx):
@@ -126,6 +127,9 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         self.buffer = f"CREATE TABLE {tableName} ("
         self.columns.append("`_sign` Int8 DEFAULT 1")
         self.columns.append("`_version` UInt64 DEFAULT 0")
+        if self.rmt_delete_support:
+          self.columns.append("`is_deleted` UInt8 DEFAULT 0") 
+
         for column in self.columns:
           self.buffer += column
           if column != self.columns[-1]:
@@ -135,7 +139,11 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         partition_by = ""
         if self.partition_keys:
           partition_by = f"partition by {self.partition_keys}"
-        self.buffer += f") engine=ReplacingMergeTree(_version) {partition_by} order by " + \
+        rmt_params = "_version"
+        if self.rmt_delete_support:
+          rmt_params+=',is_deleted'
+
+        self.buffer += f") engine=ReplacingMergeTree({rmt_params}) {partition_by} order by " + \
             self.primary_key
         logging.info(self.buffer)
 
