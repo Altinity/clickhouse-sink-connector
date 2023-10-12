@@ -140,7 +140,7 @@ def find_create_table(source):
 
 def find_partitioning_options(source):
     # initial support for partitioning by range columns
-    pattern = r'PARTITION BY RANGE  COLUMNS\((.*?)\)'
+    pattern = r'PARTITION\s+BY\s+RANGE\s+COLUMNS\((.*?)\)'
     regex = re.compile(pattern, re.IGNORECASE)
     partitioning_keys = None
     for match in regex.finditer(source):
@@ -266,18 +266,19 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
     return (res, columns)
 
 
-def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support):
-
+def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support, use_regexp_parser):
     # do we have a table in the source
     if not find_create_table(source):
         return ('', [])
 
     src = source
-    # get rid of SQL comments to confuse ANTLR
-    src = re.sub(r'\/\*(.*?)\*\/;', '', src)
-    src = re.sub(r'\/\*(.*?)\*\/', '', src)
+    if use_regexp_parser:
+       return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support)
+    # the progressive grammar trims the comment
+    partition_options = find_partitioning_options(source)
+
     try:
-        return convert_to_clickhouse_table_antlr(src, rmt_delete_support)
+        return convert_to_clickhouse_table_antlr(src, rmt_delete_support, partition_options)
     except Exception as ex:
         logging.info(f"Use regexp DDL converter")
         logging.info(f"{ex}")
@@ -334,7 +335,7 @@ def load_schema(args, dry_run=False):
             with gzip.open(file, "r") as schema_file:
                 source = schema_file.read().decode('UTF-8')
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support)
+                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser)
                 logging.info(table_source)
                 timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -380,7 +381,7 @@ def load_schema_mysqlshell(args, dry_run=False):
             with open(file, "r") as schema_file:
                 source = schema_file.read()
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support)
+                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser)
                 logging.info(table_source)
                 # timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -546,6 +547,9 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--data_only', dest='data_only',
                         action='store_true', default=False)
+    parser.add_argument('--use_regexp_parser', 
+                        action='store_true', default=False)
+
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
     parser.add_argument('--virtual_columns', help='virtual_columns', nargs='+', default=['`_sign`', '`_version`', '`is_deleted`'])

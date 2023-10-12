@@ -7,7 +7,7 @@ import logging
 
 
 class CreateTableMySQLParserListener(MySqlParserListener):
-    def __init__(self, rmt_delete_support):
+    def __init__(self, rmt_delete_support, partition_options):
       self.buffer = ""
       self.columns = ""
       self.primary_key = ""
@@ -15,7 +15,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
       self.alter_list = []
       self.rename_list = []
       self.rmt_delete_support = rmt_delete_support
-
+      self.partition_options = partition_options
 
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
@@ -136,7 +136,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
             self.buffer += ','
           self.buffer += '\n'
 
-        partition_by = ""
+        partition_by = self.partition_options
         if self.partition_keys:
           partition_by = f"partition by {self.partition_keys}"
         rmt_params = "_version"
