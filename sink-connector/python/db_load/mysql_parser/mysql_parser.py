@@ -48,7 +48,7 @@ def main(argv):
     with open(argv[1], 'r') as file:
         source = file.read()
         logging.info(f"source = {source}")
-        (res, columns) = convert_to_clickhouse_table_antlr(source)
+        (res, columns) = convert_to_clickhouse_table_antlr(source,True)
         logging.info(f"target = {res}")
 
 if __name__ == '__main__':
