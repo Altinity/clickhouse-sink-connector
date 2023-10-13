@@ -59,7 +59,6 @@ def run_quick_command(cmd):
     logging.debug("return code = " + rc)
     if rc != "0":
         logging.error("command failed : terminating")
-        raise AssertionError
     return rc, stdout
 
 def clickhouse_connection(host, database='default', user='default', port=9000, password=''):
@@ -445,16 +444,14 @@ def load_data(args, timezone, schema_map, dry_run=False):
             # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
             structure = columns.replace(","," Nullable(String),")+" Nullable(String)"
             cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{password}' -mn """
-            logging.info(cmd)
-            (rc, result) = run_quick_command(cmd)
-            logging.debug(result)
-
+            execute_load(cmd)
 
 def execute_load(cmd):
     logging.info(cmd)
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
-
+    if rc != '0':
+        raise AssertionError("command "+cmd+ " failed")
 
 def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
 
