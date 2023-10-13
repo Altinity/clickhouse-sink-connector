@@ -93,16 +93,9 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         column_buffer += columnDefinition_buffer
 
         self.columns.append(column_buffer)
-
+        logging.info(str({'column_name': column_name, 'datatype': dataType}))
         self.columns_map.append({'column_name': column_name, 'datatype': dataType})
     
-
-    def enterTableName(self, ctx): 
-      self.columns = []
-      self.columns_map = []
-      self.primary_key = 'tuple()'
-      self.partition_keys = None
-
 
     def exitPrimaryKeyTableConstraint(self, ctx):
       
@@ -112,6 +105,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
 
     def enterColumnCreateTable(self, ctx):
       self.buffer = ""
+      self.columns = []
+      self.columns_map = []
+      self.primary_key = 'tuple()'
+      self.partition_keys = None
 
 
     def exitPartitionClause(self, ctx):
