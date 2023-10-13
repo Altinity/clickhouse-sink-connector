@@ -17,6 +17,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
       self.rmt_delete_support = rmt_delete_support
       self.partition_options = partition_options
 
+
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
         input_stream = token_source.inputStream
@@ -29,15 +30,17 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         dataTypeText = re.sub("CHARACTER SET.*", '',
                              dataTypeText, flags=re.IGNORECASE)
         dataTypeText = re.sub("CHARSET.*", '', dataTypeText, re.IGNORECASE)
-
-        if isinstance(dataTypeText, MySqlParser.SimpleDataTypeContext) and dataType.DATE():
+         
+        if isinstance(dataType, MySqlParser.SimpleDataTypeContext) and dataType.DATE():
           dataTypeText = 'Date32'
-        if isinstance(dataTypeText, MySqlParser.DimensionDataTypeContext):
+        if isinstance(dataType, MySqlParser.DimensionDataTypeContext):
           if dataType.DATETIME() or dataType.TIMESTAMP():
             dataTypeText = 'DateTime64(0)'
-            if dataType.typeDatetimePrecision():
-              dataTypeText = 'DateTime64'+dataType.typeDatetimePrecision().getText()
-
+            if dataType.lengthOneDimension():
+              dataTypeText = 'DateTime64'+dataType.lengthOneDimension().getText()
+          elif dataType.TIME():
+               dataTypeText = "String"
+ 
         if isinstance(dataTypeText, MySqlParser.ConvertedDataTypeContext) and dataType.JSON() or is_binary_datatype(dataTypeText):
            dataTypeText = 'String'
 
@@ -74,7 +77,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         if not notNull:
             column_buffer += " NULL"
 
-        return (column_buffer, dataType)
+        return (column_buffer, dataType, not notNull)
 
 
     def exitColumnDeclaration(self, ctx):
@@ -88,13 +91,15 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         # columns have an identifier and a column definition
         columnDefinition = ctx.columnDefinition()
 
-        (columnDefinition_buffer, dataType) = self.translateColumnDefinition(column_name, columnDefinition)
+        (columnDefinition_buffer, dataType, nullable) = self.translateColumnDefinition(column_name, columnDefinition)
 
         column_buffer += columnDefinition_buffer
 
         self.columns.append(column_buffer)
-        logging.info(str({'column_name': column_name, 'datatype': dataType}))
-        self.columns_map.append({'column_name': column_name, 'datatype': dataType})
+        dataTypeText = self.convertDataType(dataType) 
+        columnMap = {'column_name': column_name, 'datatype': dataTypeText, 'nullable': nullable}
+        logging.info(str(columnMap))
+        self.columns_map.append(columnMap)
     
 
     def exitPrimaryKeyTableConstraint(self, ctx):
