@@ -91,25 +91,25 @@ debezium:
 
 env:
   - name: database.hostname
-    value: "localhost"
+    value: "mysql"
   - name: database.port
     value: "3306"
   - name: database.user
     value: "root"
   - name: database.password
-    value: "adminpass"
+    value: "password"
   - name: database.server.name
     value: "ER54"
   - name: database.include.list
     value: "test"
   - name: clickhouse.server.url
-    value: "localhost"
+    value: "clickhouse"
   - name: clickhouse.server.port
     value: "8123"
   - name: clickhouse.server.user
-    value: "default"
+    value: "root"
   - name: clickhouse.server.pass
-    value: "2"
+    value: "secretsecret"
   - name: clickhouse.server.database
     value: "public"
   - name: database.allowPublicKeyRetrieval
@@ -129,7 +129,7 @@ env:
   - name: offset.storage.jdbc.user
     value: "root"
   - name: offset.storage.jdbc.password
-    value: "root"
+    value: "secretsecret"
   - name: offset.storage.offset.storage.jdbc.offset.table.ddl
     value: "CREATE TABLE if not exists %s
     (
@@ -152,7 +152,7 @@ env:
   - name: schema.history.internal.jdbc.user
     value: "root"
   - name: schema.history.internal.jdbc.password
-    value: "root"
+    value: "secretsecret"
   - name: schema.history.internal.jdbc.schema.history.table.ddl
     value: "CREATE TABLE if not exists %s
     (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
