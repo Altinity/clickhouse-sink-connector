@@ -1,4 +1,4 @@
-# Default values for clickhouse-debezium-embedded.
+# Default values for sink-connector-lightweight.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -8,7 +8,7 @@ image:
   repository: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "v1"
+  tag: "latest"
 
 imagePullSecrets: []
 nameOverride: ""

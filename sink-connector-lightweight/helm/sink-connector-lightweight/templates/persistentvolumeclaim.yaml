@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: task-pv-claim
+  name: task-pv-claim-sink-connector-lightweight
 spec:
   storageClassName: manual
   accessModes:

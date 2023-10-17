@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "clickhouse-debezium-embedded.fullname" . }}
+  name: {{ include "sink-connector-lightweight.fullname" . }}
   labels:
-    {{- include "clickhouse-debezium-embedded.labels" . | nindent 4 }}
+    {{- include "sink-connector-lightweight.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "clickhouse-debezium-embedded.selectorLabels" . | nindent 6 }}
+      {{- include "sink-connector-lightweight.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -18,12 +18,18 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "clickhouse-debezium-embedded.selectorLabels" . | nindent 8 }}
+        {{- include "sink-connector-lightweight.selectorLabels" . | nindent 8 }}
     spec:
       volumes:
         - name: task-pv-storage
           persistentVolumeClaim:
-            claimName: task-pv-claim
+            claimName: task-pv-claim-sink-connector-lightweight
+        - name: config-yml
+          configMap:
+            name: sink-connector-lightweight-config
+            items:
+              - key: config.yml
+                path: config.yml
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -50,6 +56,9 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            - name: config-yml
+              mountPath: /config.yml
+              subPath: config.yml
             - mountPath: {{ .Values.debezium.pod.mountPath }}
               name: task-pv-storage
       {{- with .Values.nodeSelector }}

@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "clickhouse-debezium-embedded.name" -}}
+{{- define "sink-connector-lightweight.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "clickhouse-debezium-embedded.fullname" -}}
+{{- define "sink-connector-lightweight.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -26,16 +26,16 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "clickhouse-debezium-embedded.chart" -}}
+{{- define "sink-connector-lightweight.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "clickhouse-debezium-embedded.labels" -}}
-helm.sh/chart: {{ include "clickhouse-debezium-embedded.chart" . }}
-{{ include "clickhouse-debezium-embedded.selectorLabels" . }}
+{{- define "sink-connector-lightweight.labels" -}}
+helm.sh/chart: {{ include "sink-connector-lightweight.chart" . }}
+{{ include "sink-connector-lightweight.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -45,17 +45,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "clickhouse-debezium-embedded.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "clickhouse-debezium-embedded.name" . }}
+{{- define "sink-connector-lightweight.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sink-connector-lightweight.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "clickhouse-debezium-embedded.serviceAccountName" -}}
+{{- define "sink-connector-lightweight.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "clickhouse-debezium-embedded.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "sink-connector-lightweight.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
