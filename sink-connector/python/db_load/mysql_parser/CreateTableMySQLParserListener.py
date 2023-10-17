@@ -127,10 +127,12 @@ class CreateTableMySQLParserListener(MySqlParserListener):
     def exitColumnCreateTable(self, ctx):
         tableName = self.extract_original_text(ctx.tableName())
         self.buffer = f"CREATE TABLE {tableName} ("
-        self.columns.append("`_sign` Int8 DEFAULT 1")
         self.columns.append("`_version` UInt64 DEFAULT 0")
+        # is_deleted and _sign are redundant, so exclusive in the schema 
         if self.rmt_delete_support:
           self.columns.append("`is_deleted` UInt8 DEFAULT 0") 
+        else:
+          self.columns.append("`_sign` Int8 DEFAULT 1") 
 
         for column in self.columns:
           self.buffer += column
