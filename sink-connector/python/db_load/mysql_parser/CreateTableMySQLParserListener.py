@@ -41,7 +41,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
           elif dataType.TIME():
                dataTypeText = "String"
  
-        if isinstance(dataTypeText, MySqlParser.ConvertedDataTypeContext) and dataType.JSON() or is_binary_datatype(dataTypeText):
+        if (isinstance(dataType, MySqlParser.SpatialDataTypeContext) and dataType.JSON()) or is_binary_datatype(dataTypeText):
            dataTypeText = 'String'
 
         return dataTypeText
