@@ -84,6 +84,9 @@ enable.snapshot.ddl: "true"
 
 ```
 ### PostgreSQL Config(docker/config_postgres.yml)
+For AWS RDS users, you might need to add heartbeat interval and query to avoid WAL logs constantly growing in size.
+https://stackoverflow.com/questions/76415644/postgresql-wal-log-limiting-rds
+https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-wal-disk-space
 ```
 database.hostname: "postgres"
 database.port: "5432"
