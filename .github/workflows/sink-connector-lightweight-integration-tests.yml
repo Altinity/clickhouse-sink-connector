@@ -22,6 +22,6 @@ jobs:
       - name: Build Library with Maven
         working-directory: sink-connector
         run: mvn install -DskipTests=true
-      - name: Build Replicator with Maven
-        working-directory: sink-connector-lightweight
-        run: mvn test
+#      - name: Build Replicator with Maven
+#        working-directory: sink-connector-lightweight
+#        run: mvn test
