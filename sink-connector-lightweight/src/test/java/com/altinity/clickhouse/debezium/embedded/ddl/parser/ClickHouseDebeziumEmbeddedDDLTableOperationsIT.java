@@ -265,7 +265,7 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
         defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
         defaultProps.setProperty("clickhouse.server.user", "default");
-        defaultProps.setProperty("clickhouse.server.pass", "");
+        defaultProps.setProperty("clickhouse.server.password", "");
         defaultProps.setProperty("clickhouse.server.database", "employees");
         defaultProps.setProperty("replacingmergetree.delete.column", "_sign");
         defaultProps.setProperty("metrics.port", "8088");

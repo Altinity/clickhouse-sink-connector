@@ -18,7 +18,7 @@ public class AppConfigurationTest {
     @SetEnvironmentVariable(key = "database.pass", value = "password")
     @SetEnvironmentVariable(key = "clickhouse.server.url", value = "localhost")
     @SetEnvironmentVariable(key = "clickhouse.server.user", value = "root")
-    @SetEnvironmentVariable(key = "clickhouse.server.pass", value = "root")
+    @SetEnvironmentVariable(key = "clickhouse.server.password", value = "root")
     @SetEnvironmentVariable(key = "clickhouse.server.port", value = "8123")
     @SetEnvironmentVariable(key = "snapshot.mode", value = "schema_only")
     public void testParseConfiguration() throws Exception {

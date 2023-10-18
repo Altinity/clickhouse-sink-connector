@@ -108,7 +108,7 @@ env:
     value: "8123"
   - name: clickhouse.server.user
     value: "root"
-  - name: clickhouse.server.pass
+  - name: clickhouse.server.password
     value: "secretsecret"
   - name: clickhouse.server.database
     value: "public"

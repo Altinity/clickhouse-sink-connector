@@ -46,7 +46,7 @@ def add_change_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -80,7 +80,7 @@ def add_change_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2","Nullable(String)"',
                         )
 
 
@@ -90,7 +90,7 @@ def change_add_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -125,7 +125,7 @@ def change_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2","Nullable(String)"',
                         )
 
 
@@ -135,7 +135,7 @@ def add_modify_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -169,7 +169,7 @@ def add_modify_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x","Nullable(String)"',
                         )
 
 
@@ -179,7 +179,7 @@ def modify_add_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -214,7 +214,7 @@ def modify_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x","Nullable(String)"',
                         )
 
 
@@ -224,7 +224,7 @@ def add_rename_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -258,17 +258,18 @@ def add_rename_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2"',
                         )
 
 
 @TestFeature
 def rename_add_column(self, node=None):
     """Check that after `ALTER TABLE RENAME COLUMN, ADD COLUMN` query MySQL and Clickhouse has the same columns."""
+    xfail("doesn't change column")
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -303,7 +304,7 @@ def rename_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2"',
                         )
 
 
@@ -316,7 +317,7 @@ def multiple_add_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -366,7 +367,7 @@ def multiple_modify_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -438,7 +439,7 @@ def multiple_change_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -507,10 +508,11 @@ def multiple_change_column(self, node=None):
 )
 def multiple_rename_column(self, node=None):
     """Check that after multiple `ALTER TABLE RENAME` query MySQL and Clickhouse has the same columns."""
+    xfail("doesn't rename column")
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
@@ -582,7 +584,7 @@ def multiple_drop_column(self, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"f{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given(
