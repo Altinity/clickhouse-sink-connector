@@ -1,4 +1,4 @@
-# Default values for clickhouse-debezium-embedded.
+# Default values for sink-connector-lightweight.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -8,7 +8,7 @@ image:
   repository: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "v1"
+  tag: "latest"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -91,52 +91,72 @@ debezium:
 
 env:
   - name: database.hostname
-    value: "localhost"
+    value: "mysql"
   - name: database.port
     value: "3306"
-  - name: database.dbname
-    value: "public"
   - name: database.user
     value: "root"
   - name: database.password
-    value: "adminpass"
-  - name: snapshot.mode
-    value: "initial"
-  - name: table.include.list
-    value: ""
-  - name: connector.class
-    value: "io.debezium.connector.mysql.MySqlConnector"
-  - name: plugin.name
-    value: "pgoutput"
-  - name: table.include.list
-    value: "public.tm"
-  - name: offset.storage
-    value: "org.apache.kafka.connect.storage.FileOffsetBackingStore"
-  - name: offset.storage.file.filename
-    value: "/usr/share/debezium/storage/offset_storage"
-  - name: offset.flush.interval.ms
-    value: "60000"
-  - name: auto.create.tables
-    value: "true"
+    value: "password"
+  - name: database.server.name
+    value: "ER54"
+  - name: database.include.list
+    value: "test"
   - name: clickhouse.server.url
-    value: "localhost"
+    value: "clickhouse"
   - name: clickhouse.server.port
     value: "8123"
   - name: clickhouse.server.user
-    value: "default"
+    value: "root"
   - name: clickhouse.server.password
-    value: "2"
+    value: "secretsecret"
   - name: clickhouse.server.database
     value: "public"
-  - name: replacingmergetree.delete.column
-    value: "_sign"
   - name: database.allowPublicKeyRetrieval
     value: "true"
-  - name: metrics.enable
-    value: "true"
-  - name: metrics.port
-    value: "8083"
-  - name: thread.pool.size
-    value: "20"
-  - name: disable.ddl
+  - name: snapshot.mode
+    value: "initial"
+  - name: offset.flush.interval.ms
+    value: "60000"
+  - name: connector.class
+    value: "io.debezium.connector.mysql.MySqlConnector"
+  - name: offset.storage
+    value: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+  - name: offset.storage.offset.storage.jdbc.offset.table.name
+    value: "altinity_sink_connector.replica_source_info"
+  - name: offset.storage.jdbc.url
+    value: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+  - name: offset.storage.jdbc.user
+    value: "root"
+  - name: offset.storage.jdbc.password
+    value: "secretsecret"
+  - name: offset.storage.offset.storage.jdbc.offset.table.ddl
+    value: "CREATE TABLE if not exists %s
+    (
+      `id` String,
+      `offset_key` String,
+      `offset_val` String,
+      `record_insert_ts` DateTime,
+      `record_insert_seq` UInt64,
+      `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+    )
+    ENGINE = ReplacingMergeTree(_version)
+    ORDER BY id
+    SETTINGS index_granularity = 8198"
+  - name: offset.storage.offset.storage.jdbc.offset.table.delete
+    value: "delete from %s where 1=1"
+  - name: schema.history.internal
+    value: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+  - name: schema.history.internal.jdbc.url
+    value: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+  - name: schema.history.internal.jdbc.user
+    value: "root"
+  - name: schema.history.internal.jdbc.password
+    value: "secretsecret"
+  - name: schema.history.internal.jdbc.schema.history.table.ddl
+    value: "CREATE TABLE if not exists %s
+    (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+  - name: schema.history.internal.jdbc.schema.history.table.name
+    value: "altinity_sink_connector.replicate_schema_history"
+  - name: enable.snapshot.ddl
     value: "true"
