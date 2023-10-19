@@ -81,7 +81,7 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
 enable.snapshot.ddl: "true"
-
+auto.create.tables: "true"
 ```
 ### PostgreSQL Config(docker/config_postgres.yml)
 For AWS RDS users, you might need to add heartbeat interval and query to avoid WAL logs constantly growing in size.
