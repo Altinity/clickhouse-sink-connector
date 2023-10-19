@@ -171,7 +171,7 @@ public class DebeziumChangeEventCapture {
                     .orElse(null);
             if (matchingDDLField != null) {
                 String DDL = (String) struct.get("ddl");
-                //log.info("Source DB DDL: " + DDL);
+                log.debug("Source DB DDL: " + DDL);
 
 
                 if (DDL != null && DDL.isEmpty() == false)
