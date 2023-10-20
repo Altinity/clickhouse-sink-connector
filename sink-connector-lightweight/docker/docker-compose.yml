@@ -113,8 +113,7 @@ services:
     #  dockerfile: Dockerfile
     #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
-    #    build:
-#      context: ../
+    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]   
     restart: "no"
     ports:
       - "8083:8083"
