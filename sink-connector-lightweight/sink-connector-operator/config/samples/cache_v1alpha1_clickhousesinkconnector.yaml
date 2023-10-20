@@ -1,0 +1,12 @@
+apiVersion: cache.altinity.com/v1alpha1
+kind: ClickHouseSinkConnector
+metadata:
+  labels:
+    app.kubernetes.io/name: clickhousesinkconnector
+    app.kubernetes.io/instance: clickhousesinkconnector-sample
+    app.kubernetes.io/part-of: sink-connector-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: sink-connector-operator
+  name: clickhousesinkconnector-sample
+spec:
+  # TODO(user): Add fields here
