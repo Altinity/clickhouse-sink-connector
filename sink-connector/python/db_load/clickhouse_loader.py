@@ -483,7 +483,7 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
                     logging.info(str(column))
                     if column['column_name'] in args.virtual_columns:
                         continue 
-                    column_name = column['column_name'].replace('`','')
+                    column_name = column['column_name'].replace('`','\\`')
                     if structure != "":
                             structure += ", "
                     structure +=" "+column_name + " "
