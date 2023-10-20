@@ -384,7 +384,7 @@ mvn install -DskipTests=true
 | replacingmergetree.delete.column | "sign"    | Column used as the sign column for ReplacingMergeTree.
 
 ## ClickHouse Loader(Load Data from MySQL to CH for Initial Load)
-[Clickhouse Loader](python/README.md) is a program that loads data dumped in MySQL into a CH database compatible the sink connector (ReplacingMergeTree with virtual columns _version and _sign)
+[Clickhouse Loader](sink-connector/python/README.md) is a program that loads data dumped in MySQL into a CH database compatible the sink connector (ReplacingMergeTree with virtual columns _version and _sign/is_deleted)
 
 
 ### Grafana Dashboard
