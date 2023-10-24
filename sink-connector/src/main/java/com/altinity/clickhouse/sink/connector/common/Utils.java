@@ -88,13 +88,9 @@ public class Utils {
     public static String getTableNameFromTopic(String topicName) {
         String tableName = null;
 
-
-            // topic names is of the following format.
-            // hostname.dbName.tableName
+            // get last element after deviding topicName by "." as tableName
             String[] splitName = topicName.split("\\.");
-            if(splitName.length == 3) {
-                tableName = splitName[2];
-            }
+            tableName = splitName[splitName.length - 1];
 
         return tableName;
     }
