@@ -153,7 +153,7 @@ def get_table_checksum_query(table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
     #excluded_columns = "'"+excluded_columns+"'"
-    #logging.info(f"Excluded columns, {excluded_columns}")
+    logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' and name not in ("+ excluded_columns_str +") order by position"
 
@@ -197,6 +197,8 @@ def get_table_checksum_query(table):
                 # requires this function : CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))
                 select += "format_decimal("+column_name + \
                     ","+str(numeric_scale)+")"
+            elif "DateTime64(0)" == data_type:
+                select += f"toString({column_name})"
             elif "DateTime" in data_type:
                 select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
             else:
@@ -255,7 +257,8 @@ def select_table_statements(table, query, select_query, order_by, external_colum
         where = args.where
 
     # skip deleted rows
-    where+= f" and {args.sign_column} > 0 "
+    if args.sign_column != '':
+      where+= f" and {args.sign_column} > 0 "
 
     sql = """ select
       count(*) as "cnt",
@@ -380,7 +383,7 @@ def main():
                         action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='*', default=['_sign,_version'])
+                        nargs='*', default=['_sign,_version,is_deleted'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
 
