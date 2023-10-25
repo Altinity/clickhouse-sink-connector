@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.SIGN_COLUMN;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -11,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 
 public class DBMetadata {
 
@@ -48,7 +51,6 @@ public class DBMetadata {
 
         MutablePair<TABLE_ENGINE, String> result;
         result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
-
         if(result.left == null) {
             result = getTableEngineUsingShowTable(conn, databaseName, tableName);
         }
@@ -142,7 +144,7 @@ public class DBMetadata {
      */
     public String getSignColumnForCollapsingMergeTree(String createDML) {
 
-        String signColumn = "sign";
+        String signColumn = SIGN_COLUMN;
 
         if(createDML.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
             signColumn = StringUtils.substringBetween(createDML, COLLAPSING_MERGE_TREE_SIGN_PREFIX, ")");
@@ -160,23 +162,25 @@ public class DBMetadata {
      */
     public String getVersionColumnForReplacingMergeTree(String createDML) {
 
-        String versionColumn = "ver";
+        String versionColumn = VERSION_COLUMN;
 
-        if(createDML.contains(TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())) {
-            String parameters = StringUtils.substringBetween(createDML, REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
-            if(parameters != null) {
+        if (createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            String parameters = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")");
+            if (parameters != null) {
                 String[] parameterArray = parameters.split(",");
-                if(parameterArray != null && parameterArray.length >= 3) {
-                    versionColumn = parameterArray[2].trim();
+                if (parameterArray != null && parameterArray.length > 2) {
+                    // if more than 2 params => it's replicated table
+                    ArrayList<String> rmtColumns = new ArrayList<>();
+                    // Start from third element, because first and second are {shard}, {replica}
+                    for (int i=2; i<parameterArray.length; i++) {
+                        rmtColumns.add(parameterArray[i].trim());
+                    }
+                    versionColumn = String.join(",", rmtColumns);
+                } else {
+                    versionColumn = String.join(",", parameterArray);
                 }
-            }
-        }
-        else if(createDML.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
-            if(createDML != null && createDML.indexOf("(") != -1 && createDML.indexOf(")") != -1) {
-                String subString = StringUtils.substringBetween(createDML, REPLACING_MERGE_TREE_VER_PREFIX, ")");
-                if(subString != null) {
-                    versionColumn = subString.trim();
-                }
+            } else {
+                log.error("Error: Could not retrieve params from ReplacingMergeTree");
             }
         } else {
             log.error("Error: Trying to retrieve ver from table that is not ReplacingMergeTree");
