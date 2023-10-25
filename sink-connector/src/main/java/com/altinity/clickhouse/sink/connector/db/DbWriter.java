@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -99,6 +100,7 @@ public class DbWriter extends BaseDbWriter {
             } catch(Exception e) {
                 log.error("Error creating Database", database);
             }
+            boolean newRmtSupport = metadata.checkIfNewReplacingMergeTree(this.getClickHouseVersion());
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
@@ -108,7 +110,7 @@ public class DbWriter extends BaseDbWriter {
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
                     log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
-                    ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+                    ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(this.config, newRmtSupport);
                     try {
                         Field[] fields = null;
                         if(record.getAfterStruct() != null) {
@@ -129,7 +131,7 @@ public class DbWriter extends BaseDbWriter {
                 }
             }
 
-            if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            if (this.engine != null && this.engine.getEngine().contains(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
                 String rmtColumns = response.getRight();
                 if(rmtColumns != null && rmtColumns.contains(",")) {
                     // New RMT, with version and deleted column.
@@ -140,6 +142,9 @@ public class DbWriter extends BaseDbWriter {
                 } else {
                     this.versionColumn = response.getRight();
                     this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
+                    if (this.replacingMergeTreeDeleteColumn == null) {
+                        this.replacingMergeTreeDeleteColumn = SIGN_COLUMN;
+                    }
                 }
 
             } else if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(com.altinity.clickhouse.sink.connector.db.DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
@@ -620,10 +625,10 @@ public class DbWriter extends BaseDbWriter {
 
         // Sign column.
         //String signColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SIGN_COLUMN);
-        if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() &&
-        this.signColumn != null)
-        if (this.columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
-            int signColumnIndex = columnNameToIndexMap.get(signColumn);
+        if(this.engine != null && this.engine.getEngine().contains(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine()) &&
+        this.signColumn != null) {
+        //if (this.columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
+            int signColumnIndex = columnNameToIndexMap.get(this.signColumn);
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                 ps.setInt(signColumnIndex, -1);
             } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())){
@@ -640,7 +645,7 @@ public class DbWriter extends BaseDbWriter {
 
         // Version column.
         //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
-        if(this.engine != null && this.engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && this.versionColumn != null) {
+        if(this.engine != null && this.engine.getEngine().contains(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()) && this.versionColumn != null) {
             if (this.columnNameToDataTypeMap.containsKey(versionColumn)) {
                 long currentTimeInMs = System.currentTimeMillis();
                 //if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation()))

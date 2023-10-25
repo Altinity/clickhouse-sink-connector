@@ -264,6 +264,18 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.NONE,
                     ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "Flag to control adding a is_deleted column to ReplacingMergeTree tables definition " +
+                        "when use an automatically tables creation. It influences on values, which will be " +
+                        "recorded for deleted rows. When this is TRUE column is set to -1, 1 (new rmt behavior) and 0, 1 otherwise."
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString(),
                         Type.BOOLEAN,
                         false,
@@ -283,6 +295,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, replicated tables are created in ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString(),
                         Type.BOOLEAN,
