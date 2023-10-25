@@ -113,7 +113,7 @@ public class ClickHouseAutoCreateTableTest {
 
     @Test
     public void getColumnNameToCHDataTypeMappingTest() {
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
         Field[] fields = createFields();
         Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields);
 
@@ -128,7 +128,7 @@ public class ClickHouseAutoCreateTableTest {
         ArrayList<String> primaryKeys = new ArrayList<>();
         primaryKeys.add("customerName");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
         System.out.println("QUERY" + query);
@@ -137,9 +137,37 @@ public class ClickHouseAutoCreateTableTest {
     }
 
     @Test
+    public void testCreateTableSyntaxReplacingMergeTreeDeleteColumn() {
+        Map<String, String> properties = new HashMap<String, String>();
+        properties.put(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "row_is_deleted");
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(properties, false);
+
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
+        System.out.println("QUERY" + query);
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`row_is_deleted` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+    }
+
+    @Test
+    public void testCreateTableSyntaxUseIsDeletedColumn() {
+        Map<String, String> properties = new HashMap<String, String>();
+        properties.put(ClickHouseSinkConnectorConfigVariables.USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN.toString(), "true");
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(properties, true);
+
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
+        System.out.println("QUERY" + query);
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`is_deleted` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version,is_deleted) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+    }
+
+    @Test
     public void testCreateTableEmptyPrimaryKey() {
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
 
         String query = act.createTableSyntax(null, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
@@ -152,7 +180,7 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys.add("customer_id");
         primaryKeys.add("customer_name");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
@@ -174,7 +202,7 @@ public class ClickHouseAutoCreateTableTest {
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
         ArrayList<String> primaryKeys = new ArrayList<>();
         primaryKeys.add("customerName");
 
@@ -195,7 +223,7 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys2.add("customerName2");
         primaryKeys2.add("id2");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(new HashMap<>(), false);
 
         Map<String, String> columnToDataTypesMap = new HashMap<>();
         columnToDataTypesMap.put("customerName", ClickHouseDataType.String.name());

@@ -90,26 +90,26 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
-        String DeleteColumnNameFinal = this.userDefinedDeleteColumnName;
-        String DeleteColumnTypeFinal = new String();
+        String deleteColumnNameFinal = this.userDefinedDeleteColumnName;
+        String deleteColumnTypeFinal = new String();
         // if want to use the is_deleted column behavior and it is supported
         if (this.supportsIsDeletedColumnRmt && this.useReplacingMergeTreeIsDeletedColumn) {
             // additional check for REPLACING_MERGE_TREE_DELETE_COLUMN parameter value
             // if it's null - set the default name from constant
-            if (DeleteColumnNameFinal == null) {
-                DeleteColumnNameFinal = IS_DELETED_COLUMN;
+            if (deleteColumnNameFinal == null) {
+                deleteColumnNameFinal = IS_DELETED_COLUMN;
             }
-            DeleteColumnTypeFinal = IS_DELETED_COLUMN_DATA_TYPE;
+            deleteColumnTypeFinal = IS_DELETED_COLUMN_DATA_TYPE;
         // else use the _sign column 
         } else {
             // also we can use REPLACING_MERGE_TREE_DELETE_COLUMN parameter value
             // for _sing column name
-            if (DeleteColumnNameFinal == null) {
-                DeleteColumnNameFinal = SIGN_COLUMN;
+            if (deleteColumnNameFinal == null) {
+                deleteColumnNameFinal = SIGN_COLUMN;
             }
-            DeleteColumnTypeFinal = SIGN_COLUMN_DATA_TYPE;
+            deleteColumnTypeFinal = SIGN_COLUMN_DATA_TYPE;
         }
-        createTableSyntax.append("`").append(DeleteColumnNameFinal).append("` ").append(DeleteColumnTypeFinal).append(", ");
+        createTableSyntax.append("`").append(deleteColumnNameFinal).append("` ").append(deleteColumnTypeFinal).append(", ");
         createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
@@ -123,7 +123,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append(replicatedEnginePrefix).append("ReplacingMergeTree(");
         createTableSyntax.append(VERSION_COLUMN);
         if (this.supportsIsDeletedColumnRmt && this.useReplacingMergeTreeIsDeletedColumn) {
-            createTableSyntax.append(", ").append(DeleteColumnNameFinal);
+            createTableSyntax.append(",").append(deleteColumnNameFinal);
         }
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
