@@ -167,33 +167,32 @@ public class DebeziumConverter {
                     "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
                     "yyyy-MM-dd'T'HH:mm:ss.SSZ",
                     "yyyy-MM-dd'T'HH:mm:ss.SZ",
-                    "yyyy-MM-dd'T'HH:mm:ssZ"
+                    "yyyy-MM-dd'T'HH:mm:ssZ",
+                    "yyyy-MM-dd'T'HH:mm:ss"
             };
 
             boolean parsingSuccesful = false;
+            ZonedDateTime parsedDT = null;
             for (String formatString : date_formats) {
                 try {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
-                    parsedDT = ZonedDateTime.parse((String) value, formatter);
+                    parsedDT = ZonedDateTime.parse((String) value, formatter.withZone(ZoneId.of("UTC")));
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {
-                    if (e.getMessage().contains("Invalid value for YearOfEra")) {
-                        // There is an exception when a recieved datetime has invalid year value e.g. MSSQL - "0000-01-01 00:00:00"
-                        // If this exception is raised set minimum DateTime
+                    if (e.getCause() != null) {
                         parsingSuccesful = true;
-                        setMinDate = true;
                         break;
                     }
-                    // Continue
                 }
             }
 
             if (parsingSuccesful) {
-                if (setMinDate) {
-                    Instant i = Instant.MIN;
+                Instant i;
+                if (parsedDT ==  null) {
+                    i = Instant.MIN;
                 } else {
-                    Instant i = parsedDT.withZoneSameInstant(ZoneId.of("UTC")).toInstant();
+                    i = parsedDT.toInstant();
                 }
                 //check date range
                 i = checkIfDateTimeExceedsSupportedRange(i, true);

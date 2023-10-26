@@ -127,6 +127,14 @@ public class DebeziumConverterTest {
         String formattedTimestamp3 = DebeziumConverter.ZonedTimestampConverter.convert("2038-01-19T03:14:07.99Z");
         Assert.assertTrue(formattedTimestamp3.equalsIgnoreCase("2038-01-19 03:14:07.990000"));
 
+        String formattedTimestamp4 = DebeziumConverter.ZonedTimestampConverter.convert("0000-00-01T00:00:00");
+        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("1925-01-01 00:00:00.000000"));
+
+        String formattedTimestamp5 = DebeziumConverter.ZonedTimestampConverter.convert("2023-10-20T22:44:15.123456+03:00");
+        Assert.assertTrue(formattedTimestamp5.equalsIgnoreCase("2023-10-20 19:44:15.123456"));
+
+        String formattedTimestamp6 = DebeziumConverter.ZonedTimestampConverter.convert("2022-12-25T04:00:00.7654321-0300");
+        Assert.assertTrue(formattedTimestamp6.equalsIgnoreCase("2022-12-25 07:00:00.765432"));
     }
 
     @Test
