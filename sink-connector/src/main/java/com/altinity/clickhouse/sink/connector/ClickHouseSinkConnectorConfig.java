@@ -255,7 +255,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                     ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString(),
                     Type.STRING,
-                    "sign",
+                    null,
                     Importance.LOW,
                     "Column thats used to store the sign value when the engine is ReplacingMergeTree, when a " +
                             "delete CDC record is received, this column is set to -1, 1 otherwise",
@@ -270,7 +270,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Importance.LOW,
                         "Flag to control adding a is_deleted column to ReplacingMergeTree tables definition " +
                         "when use an automatically tables creation. It influences on values, which will be " +
-                        "recorded for deleted rows. When this is TRUE column is set to -1, 1 (new rmt behavior) and 0, 1 otherwise."
+                        "recorded for deleted rows. When this is TRUE column is set to -1, 1 (new rmt behavior) and 0, 1 otherwise.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         1,
                         ConfigDef.Width.NONE,

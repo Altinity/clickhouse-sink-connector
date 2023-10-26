@@ -36,7 +36,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         this.config = config;
         this.userDefinedDeleteColumnName = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
         this.useReplacingMergeTreeIsDeletedColumn = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN.toString());
-        this.useReplication = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_REPLICATION.toString());
+        this.useReplication = this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
     }
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
@@ -109,7 +109,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             }
             deleteColumnTypeFinal = SIGN_COLUMN_DATA_TYPE;
         }
-        createTableSyntax.append("`").append(deleteColumnNameFinal).append("` ").append(deleteColumnTypeFinal).append(", ");
+        createTableSyntax.append("`").append(deleteColumnNameFinal).append("` ").append(deleteColumnTypeFinal).append(",");
         createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
