@@ -20,7 +20,7 @@ public class ClickHouseStructTest {
 
         Map<String, Object> metaData = new HashMap<String, Object>();
 
-        metaData.put("source", new Struct(SchemaBuilder.struct().field("gtid", Schema.STRING_SCHEMA).build()).put("gtid", "0010-122323-0232323:512345"));
+        metaData.put("source", new Struct(SchemaBuilder.struct().field("gtid", Schema.STRING_SCHEMA).build()).put("gtid", "0010-122323-0232323:2179558590"));
 
         String keyField = "customer";
         Schema basicKeySchema = SchemaBuilder
@@ -32,7 +32,7 @@ public class ClickHouseStructTest {
                 12322323L, new Struct(basicKeySchema), new Struct(basicKeySchema),
                 metaData, ClickHouseConverter.CDC_OPERATION.CREATE);
 
-        Assert.assertTrue(st.getGtid() == 512345);
+        Assert.assertTrue(st.getGtid() == 2179558590L);
 
     }
 }

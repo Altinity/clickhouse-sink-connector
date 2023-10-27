@@ -115,13 +115,5 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         }
 
         Assert.assertTrue(tmCount == 1);
-
-//        if(engine.get() != null) {
-//            engine.get().stop();
-//        }
-//        executorService.shutdown();
-//        Files.deleteIfExists(tmpFilePath);
-
-
     }
 }
