@@ -171,23 +171,23 @@ public class DebeziumConverter {
                     "yyyy-MM-dd'T'HH:mm:ss"
             };
 
-            boolean parsingSuccesful = false;
+            boolean parsingSuccessful = false;
             ZonedDateTime parsedDT = null;
             for (String formatString : date_formats) {
                 try {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
                     parsedDT = ZonedDateTime.parse((String) value, formatter.withZone(ZoneId.of("UTC")));
-                    parsingSuccesful = true;
+                    parsingSuccessful = true;
                     break;
                 } catch(Exception e) {
                     if (e.getCause() != null) {
-                        parsingSuccesful = true;
+                        parsingSuccessful = true;
                         break;
                     }
                 }
             }
 
-            if (parsingSuccesful) {
+            if (parsingSuccessful) {
                 Instant i;
                 if (parsedDT ==  null) {
                     i = Instant.MIN;
