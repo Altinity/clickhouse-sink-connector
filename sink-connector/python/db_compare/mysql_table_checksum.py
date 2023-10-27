@@ -59,7 +59,7 @@ def compute_checksum(table, statements, conn):
         conn.close()
 
  
-def get_table_checksum_query(table, conn):
+def get_table_checksum_query(table, conn, binary_encoding):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
                                                args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
@@ -99,7 +99,10 @@ def get_table_checksum_query(table, conn):
                 select += f"case when {column_name} >='2299-12-31' then CAST('2299-12-31' AS {data_type}) else case when {column_name} <= '1900-01-01' then CAST('1900-01-01' AS {data_type}) else {column_name} end end"
             else:
                 if is_binary_datatype(data_type):
-                  select += "lower(hex(cast("+column_name+"as binary)))"
+                  binary_encode = "lower(hex(cast("+column_name+"as binary)))"
+                  if binary_encoding == 'base64':
+                    binary_encode = "replace(to_base64(cast("+column_name+" as binary)),'\\n','')"
+                  select += binary_encode
                 else:
                   select += column_name + ""
         first_column = False
@@ -203,7 +206,7 @@ def calculate_sql_checksum(table):
         statements = []
         
         (query, select_query, distributed_by,
-        external_table_types) = get_table_checksum_query(table, conn)
+        external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types)
         compute_checksum(table, statements, conn)
@@ -260,6 +263,8 @@ def main():
                         help='Output the raw format to a file called out.txt', required=False)
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
+    parser.add_argument(
+        '--binary_encoding', help='either hex or base64 to encode MySQL binary content', default='hex', required=False)
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
