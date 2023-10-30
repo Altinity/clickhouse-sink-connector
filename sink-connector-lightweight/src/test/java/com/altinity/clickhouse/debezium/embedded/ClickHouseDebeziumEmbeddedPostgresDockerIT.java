@@ -1,26 +1,33 @@
 package com.altinity.clickhouse.debezium.embedded;
 
+import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
-import org.testcontainers.containers.ClickHouseContainer;
-import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
+
+/**
+ * This is a test for  "plugin.name", "pgoutput"
+ */
 public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("init_clickhouse.sql")
             .withExposedPorts(8123).withNetworkAliases("clickhouse").withAccessToHost(true);
 
@@ -35,47 +42,18 @@ public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
             .withNetworkAliases("postgres").withAccessToHost(true);
 
 
+    public Properties getProperties() throws Exception {
 
-    public Map<String, String> getDefaultProperties() throws IOException {
 
-
-        Map<String, String> properties = new HashMap<String, String>();
-        properties.put("database.hostname", "postgres");
-        properties.put("database.port", "5432");
-        properties.put("database.dbname", "public");
-        properties.put("database.user", "root");
-        properties.put("database.password", "root");
-        properties.put("snapshot.mode", "initial");
-        properties.put("connector.class", "io.debezium.connector.postgresql.PostgresConnector");
-        properties.put("plugin.name", "pgoutput");
-        properties.put("plugin.path", "/");
-        properties.put("table.include.list", "public.tm");
-        properties.put("topic.prefix","test-server");
-        properties.put("slot.max.retries", "6");
-        properties.put("slot.retry.delay.ms", "5000");
-        
-        properties.put("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
-
-        //String tempOffsetPath = "/tmp/2/offsets" + System.currentTimeMillis() + ".dat";
-        Path tmpFilePath = Files.createTempFile("offsets", ".dat");
-
-        if (tmpFilePath != null) {
-            System.out.println("TEMP FILE PATH" + tmpFilePath);
-        }
-
-        Files.deleteIfExists(tmpFilePath);
-        properties.put("offset.storage.file.filename", tmpFilePath.toString());
-        properties.put("offset.flush.interval.ms", "60000");
-        properties.put("auto.create.tables", "true");
-        properties.put("clickhouse.server.url", "clickhouse");
-        properties.put("clickhouse.server.port", "8123");
-        properties.put("clickhouse.server.user", "default");
-        properties.put("clickhouse.server.password", "");
-        properties.put("clickhouse.server.database", "public");
-        properties.put("replacingmergetree.delete.column", "_sign");
-        properties.put("metrics.port", "8087");
-        properties.put("database.allowPublicKeyRetrieval", "true");
-
+        Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
+        properties.put("plugin.name", "pgoutput" );
+        properties.put("plugin.path", "/" );
+        properties.put("table.include.list", "public.tm" );
+        properties.put("topic.prefix", "test-server" );
+        properties.put("slot.max.retries", "6" );
+        properties.put("slot.retry.delay.ms", "5000" );
+        properties.put("database.allowPublicKeyRetrieval", "true" );
+        properties.put("table.include.list", "public.tm,public.tm2" );
         return properties;
     }
 
@@ -88,11 +66,20 @@ public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
         Thread.sleep(10000);
 
         Testcontainers.exposeHostPorts(postgreSQLContainer.getFirstMappedPort());
-        GenericContainer sinkConnectorLightWeightContainer = new
-                GenericContainer("registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest")
-                .withEnv(getDefaultProperties()).withNetwork(network);
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
-        sinkConnectorLightWeightContainer.start();
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(getProperties(), new SourceRecordParserService(),
+                        new MySQLDDLParserService());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
         Thread.sleep(50000);
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -111,14 +98,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
             tmCount =  chRs.getInt(1);
         }
 
-        Assert.assertTrue(tmCount == 1);
-
-//        if(engine.get() != null) {
-//            engine.get().stop();
-//        }
-//        executorService.shutdown();
-//        Files.deleteIfExists(tmpFilePath);
-
+        Assert.assertTrue(tmCount == 2);
 
     }
 }

@@ -2,30 +2,20 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
-import com.clickhouse.client.ClickHouseProtocol;
-import com.clickhouse.data.ClickHouseChecker;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.*;
+import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
-import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.containers.wait.strategy.WaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.shaded.org.bouncycastle.asn1.cmp.GenRepContent;
 import org.testcontainers.utility.DockerImageName;
-import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.time.Duration;
-import java.util.Map;
 import java.util.Properties;
-
-import static java.time.temporal.ChronoUnit.SECONDS;
 
 @Testcontainers
 public class ClickHouseDebeziumEmbeddedDDLBaseIT {
