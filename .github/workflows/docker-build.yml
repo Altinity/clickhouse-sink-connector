@@ -1,0 +1,11 @@
+#- name: Login to Docker Hub
+#  uses: docker/login-action@v2
+#  with:
+#    username: ${{ secrets.DOCKERHUB_USERNAME }}
+#    password: ${{ secrets.DOCKERHUB_TOKEN }}
+#- name: Build the Docker image
+#  working-directory: sink-connector
+#  run: docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinity/clickhouse-sink-connector:$(date +%F)
+#- name: Push docker image to dockerhub
+#  working-directory: sink-connector
+#  run: docker push altinity/clickhouse-sink-connector:$(date +%F)

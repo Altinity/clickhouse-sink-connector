@@ -1,4 +1,4 @@
-name: Integration tests Sink connector lightweight
+name: Sink Connector(Light-weight) Tests
 
 on:
   push:

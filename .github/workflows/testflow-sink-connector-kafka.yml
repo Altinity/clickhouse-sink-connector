@@ -1,4 +1,4 @@
-name: TestFlows Tests
+name: TestFlows Tests - Sink connector(Kafka)
 
 on:
   push:
