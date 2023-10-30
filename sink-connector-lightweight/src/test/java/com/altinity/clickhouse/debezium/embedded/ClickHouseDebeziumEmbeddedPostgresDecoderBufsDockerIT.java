@@ -56,7 +56,6 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         properties.put("plugin.name", "decoderbufs");
         properties.put("plugin.path", "/");
         properties.put("table.include.list", "public.tm");
-        properties.put("topic.prefix","test-server");
         properties.put("slot.max.retries", "6");
         properties.put("slot.retry.delay.ms", "5000");
         properties.put("database.allowPublicKeyRetrieval", "true");
