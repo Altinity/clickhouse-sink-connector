@@ -12,6 +12,7 @@ import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
 import java.util.Map;
@@ -24,12 +25,15 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * This is a test for  "plugin.name", "pgoutput"
  */
-public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
+public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
     @Container
-    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-            .withInitScript("init_clickhouse.sql")
-            .withExposedPorts(8123).withNetworkAliases("clickhouse").withAccessToHost(true);
+    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+            .asCompatibleSubstituteFor("clickhouse"))
+            .withInitScript("init_clickhouse_it.sql")
+            .withUsername("ch_user")
+            .withPassword("password")
+            .withExposedPorts(8123);
 
     @Container
     public static PostgreSQLContainer postgreSQLContainer = new PostgreSQLContainer<>("postgres:latest")
