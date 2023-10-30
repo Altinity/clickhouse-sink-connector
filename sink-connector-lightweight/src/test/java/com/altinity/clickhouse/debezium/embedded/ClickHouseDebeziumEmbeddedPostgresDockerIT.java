@@ -58,7 +58,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDockerIT {
     }
 
     @Test
-    public void testDataTypesDB() throws Exception {
+    public void testPgOutputPlugin() throws Exception {
         Network network = Network.newNetwork();
 
         postgreSQLContainer.withNetwork(network).start();

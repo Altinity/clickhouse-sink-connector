@@ -66,7 +66,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
-    public void testDataTypesDB() throws Exception {
+    public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
 
         postgreSQLContainer.withNetwork(network).start();
