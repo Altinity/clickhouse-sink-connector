@@ -1,4 +1,4 @@
-name: TestFlows Tests Lightweight
+name: TestFlows Tests - Sink Connector(Light-weight)
 
 on:
   push:
