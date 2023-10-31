@@ -63,7 +63,7 @@ public class BlockMetaData {
 
     @Getter
     @Setter
-    int transactionId = -1;
+    long transactionId = -1;
 
     @Getter
     @Setter
@@ -90,7 +90,7 @@ public class BlockMetaData {
 
     public void update(ClickHouseStruct record) {
 
-        int gtId = record.getGtid();
+        long gtId = record.getGtid();
         if (gtId != -1) {
             if (gtId > this.transactionId) {
                 this.transactionId = gtId;

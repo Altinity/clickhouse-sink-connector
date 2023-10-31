@@ -32,6 +32,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
 
         BasicConfigurator.configure();
         mySqlContainer.start();
+        clickHouseContainer.start();
         Thread.sleep(15000);
     }
 
@@ -82,7 +83,7 @@ public class ClickHouseDebeziumEmbeddedDDLAddColumnIT extends ClickHouseDebezium
         // Validate all ship_class columns.
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Int16)"));
+        Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
         Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
