@@ -56,7 +56,7 @@ public class TableMetaDataWriter {
         } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_ID.getColumn())) {
             ps.setLong(index, record.getServerId()) ;
         } else if (colName.equalsIgnoreCase(KafkaMetaData.GTID.getColumn())) {
-            ps.setInt(index, record.getGtid());
+            ps.setLong(index, record.getGtid());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_FILE.getColumn())) {
             ps.setString(index, record.getFile());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_POSITION.getColumn())) {

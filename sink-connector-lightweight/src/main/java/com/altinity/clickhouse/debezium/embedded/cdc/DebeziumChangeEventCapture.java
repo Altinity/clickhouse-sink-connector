@@ -154,8 +154,8 @@ public class DebeziumChangeEventCapture {
             Struct struct = (Struct) sr.value();
 
             if (struct == null) {
-                log.error("STRUCT EMPTY");
-                //return;
+                log.warn(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                return;
             }
             if (struct.schema() == null) {
                 log.error("SCHEMA EMPTY");
