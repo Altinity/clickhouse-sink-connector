@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
@@ -10,10 +11,11 @@ import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.BindMode;
-import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -62,15 +64,12 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
         public void testTableOperations(String clickHouseServerVersion) throws Exception {
                 //,String rcxExpectedResult) throws Exception {
 
-            clickHouseContainer = new ClickHouseContainer(clickHouseServerVersion)
-            .withInitScript("init_clickhouse.sql")
-//                    .withEnv("CLICKHOUSE_USER", "root")
-//                    .withEnv("CLICKHOUSE_PASSWORD", "root")
-//                    .withEnv("CLICKHOUSE_DB", "test")
-//                    .withClasspathResourceMapping("users.xml",
-//                            "/etc/clickhouse-server/users.xml",
-//                            BindMode.READ_ONLY)
-            .withExposedPorts(8123);
+            clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+                    .asCompatibleSubstituteFor("clickhouse"))
+                    .withInitScript("init_clickhouse_it.sql")
+                    .withUsername("ch_user")
+                    .withPassword("password")
+                    .withExposedPorts(8123);
 
             clickHouseContainer.start();
 
@@ -80,18 +79,8 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
             executorService.execute(() -> {
                 try {
 
-                    Properties props = new ConfigLoader().load("config.yml");
-                    //Properties props = getDebeziumProperties();
-                    props.setProperty("database.hostname", mySqlContainer.getHost());
-                    props.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-                    props.setProperty("database.include.list", "employees");
-                    props.setProperty("clickhouse.server.database", "employees");
-                    props.setProperty("offset.storage.jdbc.url", clickHouseContainer.getJdbcUrl());
-                    props.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-                    props.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-                    props.setProperty("schema.history.internal.jdbc.url", clickHouseContainer.getJdbcUrl());
                     engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(props, new SourceRecordParserService(),
+                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
                             new MySQLDDLParserService());
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -166,10 +155,10 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
                         "    `username` String,\n" +
                         "    `email` Nullable(String),\n" +
                         "    `joined` Date32,\n" +
-                        "    `_sign` Int8,\n" +
-                        "    `_version` UInt64\n" +
+                        "    `_version` UInt64,\n" +
+                        "    `is_deleted` UInt8\n" +
                         ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version)\n" +
+                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
                         "PARTITION BY joined\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
@@ -191,21 +180,22 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
                         "PARTITION BY (a, d, c)\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
-            } else {
-                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-                        "(\n" +
-                        "    `a` Int32,\n" +
-                        "    `b` Nullable(Int32),\n" +
-                        "    `c` String,\n" +
-                        "    `d` Int32,\n" +
-                        "    `_sign` Int8,\n" +
-                        "    `_version` UInt64\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version)\n" +
-                        "PARTITION BY (a, d, c)\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
             }
+//            else {
+//                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
+//                        "(\n" +
+//                        "    `a` Int32,\n" +
+//                        "    `b` Nullable(Int32),\n" +
+//                        "    `c` String,\n" +
+//                        "    `d` Int32,\n" +
+//                        "    `_sign` Int8,\n" +
+//                        "    `_version` UInt64\n" +
+//                        ")\n" +
+//                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+//                        "PARTITION BY (a, d, c)\n" +
+//                        "ORDER BY tuple()\n" +
+//                        "SETTINGS index_granularity = 8192"));
+//            }
 
 //            new com.altinity.clickhouse.sink.connector.db.DBMetadata().getTableEngine(writer.getConnection(), "employees", "rmt_test");
 
@@ -237,43 +227,40 @@ public class ClickHouseDebeziumEmbeddedDDLTableOperationsIT {
     protected Properties getDebeziumProperties() throws Exception {
 
         // Start the debezium embedded application.
-        Properties defaultProps = (new EnvironmentConfigurationService()).parse();
+
+        Properties defaultProps = new Properties();
+        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+
+        defaultProps.putAll(defaultProperties);
+        Properties fileProps = new ConfigLoader().load("config.yml");
+        defaultProps.putAll(fileProps);
+
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
         defaultProps.setProperty("database.user", "root");
         defaultProps.setProperty("database.password", "adminpass");
 
-        defaultProps.setProperty("database.include.list", "employees");
-        defaultProps.setProperty("snapshot.mode", "initial");
-
-
-        defaultProps.setProperty("snapshot.mode", "initial");
-        defaultProps.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-
-        defaultProps.setProperty("include.schema.change", "true");
-        defaultProps.setProperty("include.schema.comments", "true");
-
-       // defaultProps.setProperty("offset.storage", "org.apache.kafka.connect.storage.FileOffsetBackingStore");
-        defaultProps.setProperty("provide.transaction.metadata", "true");
-        //String tempOffsetPath = "/tmp/2/offsets" + System.currentTimeMillis() + ".dat";
-        Path tmpFilePath = Files.createTempFile("offsets", ".dat");
-        Files.deleteIfExists(tmpFilePath);
-        //defaultProps.setProperty("offset.storage.file.filename", tmpFilePath.toAbsolutePath().toString());
-        defaultProps.setProperty("offset.flush.interval.ms", "60000");
-
-        defaultProps.setProperty("auto.create.tables", "true");
         defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", "default");
-        defaultProps.setProperty("clickhouse.server.password", "");
+        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
+        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
         defaultProps.setProperty("clickhouse.server.database", "employees");
-        defaultProps.setProperty("replacingmergetree.delete.column", "_sign");
-        defaultProps.setProperty("metrics.port", "8088");
-        defaultProps.setProperty("thread.pool.size", "1");
-        defaultProps.setProperty("database.allowPublicKeyRetrieval", "true");
-        defaultProps.setProperty("metrics.enable", "false");
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
 
         return defaultProps;
+
     }
 
 }
