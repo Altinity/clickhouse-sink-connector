@@ -10,7 +10,7 @@ public class ConfigLoaderTest {
     @Test
     public void testLoad() {
         ConfigLoader loader = new ConfigLoader();
-        Properties props = loader.load("config.yaml");
+        Properties props = loader.load("config.yml");
 
         Assertions.assertNotNull(props);
     }
