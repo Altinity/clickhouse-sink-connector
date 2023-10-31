@@ -11,7 +11,7 @@ on:
         description: "sink connector version"
         required: true
         type: string
-        default: "2023-08-28"
+        default: "2023-10-30Update "
 
 env:
 #  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
