@@ -76,7 +76,7 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
-    private int gtid = -1;
+    private long gtid = -1;
 
     @Getter
     @Setter
@@ -220,7 +220,7 @@ public class ClickHouseStruct {
             if(fieldNames.contains(GTID) && source.get(GTID) != null && source.get(GTID) instanceof String) {
                 String[] gtidArray = ((String) source.get(GTID)).split(":");
                 if(gtidArray.length == 2) {
-                    this.setGtid(Integer.parseInt(gtidArray[1]));
+                    this.setGtid(Long.parseLong(gtidArray[1]));
                 }
             }
             if(fieldNames.contains(LSN) && source.get(LSN) != null && source.get(LSN) instanceof Long) {
