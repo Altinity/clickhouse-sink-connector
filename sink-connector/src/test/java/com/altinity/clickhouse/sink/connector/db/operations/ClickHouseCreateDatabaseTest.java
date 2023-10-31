@@ -8,6 +8,7 @@ import org.junit.Assert;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.junit.jupiter.Container;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.apache.commons.lang3.StringUtils;
@@ -45,9 +46,14 @@ public class ClickHouseCreateDatabaseTest {
         maintenanceDbWriter = new DbWriter(hostName, port, systemDb, null, userName, password, config, null);
     }
 
+    @BeforeEach                                         
+    void dropTestDatabase() throws SQLException {
+        Statement drop = maintenanceDbWriter.getConnection().createStatement();
+        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", dbName));
+    }
+
     @Test
     public void testCreateNewDatabase() throws SQLException {
-        this.dropTestDatabase(dbName);
         ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
         ClickHouseConnection conn = dbWriter.getConnection();
         try {
@@ -60,10 +66,5 @@ public class ClickHouseCreateDatabaseTest {
         String query = String.format("SELECT name FROM system.databases WHERE name = '%s'", dbName);
         ResultSet rs = stmt.executeQuery(query);
         Assert.assertTrue(rs.next());
-    }
-
-    public void dropTestDatabase(String db) throws SQLException {
-        Statement drop = maintenanceDbWriter.getConnection().createStatement();
-        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", db));
     }
 }
