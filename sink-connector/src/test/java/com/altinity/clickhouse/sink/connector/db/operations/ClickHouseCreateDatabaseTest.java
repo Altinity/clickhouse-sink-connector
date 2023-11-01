@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import com.clickhouse.jdbc.ClickHouseDataSource;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 
@@ -12,8 +11,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.ClickHouseContainer;
-import org.apache.commons.lang3.StringUtils;
+import org.testcontainers.clickhouse.ClickHouseContainer;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -31,15 +29,14 @@ public class ClickHouseCreateDatabaseTest {
     static String dbName;
 
     @Container
-    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-            .withInitScript("./init_clickhouse.sql");;
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest");
     @BeforeAll
     static void initialize() {
 
         String hostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
-        String userName = "root";
-        String password = "root";
+        Integer port = clickHouseContainer.getMappedPort(8123);
+        String userName = "default";
+        String password = "";
         String systemDb = "system";
         dbName = "test_create_db";
 
