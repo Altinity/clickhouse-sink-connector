@@ -4,6 +4,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
+
 import org.junit.Assert;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.junit.jupiter.Container;
@@ -29,13 +31,13 @@ public class ClickHouseCreateDatabaseTest {
     static String dbName;
 
     @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql");;
     @BeforeAll
     static void initialize() {
 
-        String hostName = "localhost";
-        Integer port = 8123;
+        String hostName = clickHouseContainer.getHost();;
+        Integer port = clickHouseContainer.getFirstMappedPort();
         String userName = "root";
         String password = "root";
         String systemDb = "system";
@@ -54,6 +56,7 @@ public class ClickHouseCreateDatabaseTest {
 
     @Test
     public void testCreateNewDatabase() throws SQLException {
+        System.out.println("Executing testCreateNewDatabase...");
         ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
         ClickHouseConnection conn = dbWriter.getConnection();
         try {
