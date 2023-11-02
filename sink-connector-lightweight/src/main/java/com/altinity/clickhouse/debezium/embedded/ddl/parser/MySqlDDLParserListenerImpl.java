@@ -354,7 +354,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                                             .append(")").append(",");
                                 } else {
-                                    this.query.append(colDataType).append(",");
+                                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
                                 }
                             }
                         }
