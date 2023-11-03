@@ -600,7 +600,7 @@ public class DbWriter extends BaseDbWriter {
             if(type == Schema.Type.ARRAY) {
                 schemaName = f.schema().valueSchema().type().name();
             }
-            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps)) {
+            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, this.config)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }

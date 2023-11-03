@@ -1,5 +1,9 @@
 #!/bin/bash
 
+cd sink-connector
+mvn clean install
+
+cd ..
 cd sink-connector-lightweight
 mvn clean install -DskipTests=true
 today_date=$(date +%F)
