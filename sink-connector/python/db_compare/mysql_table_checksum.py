@@ -59,7 +59,7 @@ def compute_checksum(table, statements, conn):
         conn.close()
 
  
-def get_table_checksum_query(table, conn):
+def get_table_checksum_query(table, conn, binary_encoding):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
                                                args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
@@ -68,6 +68,8 @@ def get_table_checksum_query(table, conn):
     nullables = []
     data_types = {}
     first_column = True
+    min_date_value = args.min_date_value
+    max_date_value = args.max_date_value
     for row in rowset:
         column_name = '`'+row['column_name']+'`'
         data_type = row['data_type']
@@ -78,29 +80,26 @@ def get_table_checksum_query(table, conn):
 
         if is_nullable == 'YES':
             nullables.append(column_name)
-
         if 'datetime' == data_type or 'datetime(1)'== data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.999', 1, length({column_name})) then TRIM(TRAILING '0' FROM CAST('2283-11-11 23:59:59.999' AS datetime(3))) else case when {column_name} <= '1925-01-01 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('1925-01-01 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
+            select += f"case when {column_name} >  substr('{max_date_value} 23:59:59.999', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_date_value} 23:59:59.999' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
         elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
-            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >  substr('2283-11-11 23:59:59.999999', 1, length({column_name})) then TRIM(TRAILING '0' FROM CAST('2283-11-11 23:59:59.999999' AS datetime(6))) else case when {column_name} <= '1925-01-01 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('1925-01-01 00:00:00.000000' AS datetime(6)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
+            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
+            select += f"case when {column_name} >  substr('{max_date_value} 23:59:59.999999', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_date_value} 23:59:59.999999' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000000' AS datetime(6)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
         elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
-            select += f"cast({column_name} as time(6))"
+            select += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
         elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
-            select += f"TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char))))"
-        #elif 'datetime' in data_type:
-        #    # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime/
-        #    select += f"case when {column_name} >='2283-11-11' then CAST('2283-11-11' AS {data_type}) else case when {column_name} <= '1970-01-01' then CAST('1925-01-01 00:00:00' AS {data_type}) else {column_name} end end"*/
-        # elif "float" in data_type:
-        #     select += f"CAST({column_name} as DECIMAL(64,8))"
+            select += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
         else:
-            if 'date' == data_type:
+            if 'date' == data_type: # Date are converted to Date32 in CH
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
-                select += f"case when {column_name} >='2283-11-11' then CAST('2283-11-11' AS {data_type}) else case when {column_name} <= '1925-01-01' then CAST('1925-01-01' AS {data_type}) else {column_name} end end"
+                select += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
             else:
                 if is_binary_datatype(data_type):
-                  select += "lower(hex(cast("+column_name+"as binary)))"
+                  binary_encode = "lower(hex(cast("+column_name+"as binary)))"
+                  if binary_encoding == 'base64':
+                    binary_encode = "replace(to_base64(cast("+column_name+" as binary)),'\\n','')"
+                  select += binary_encode
                 else:
                   select += column_name + ""
         first_column = False
@@ -204,7 +203,7 @@ def calculate_sql_checksum(table):
         statements = []
         
         (query, select_query, distributed_by,
-        external_table_types) = get_table_checksum_query(table, conn)
+        external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types)
         compute_checksum(table, statements, conn)
@@ -239,7 +238,7 @@ logging.setLogRecordFactory(record_factory)
 
 def main():
 
-    parser = argparse.ArgumentParser(description='''
+    parser = argparse.ArgumentParser(description='''Compute a ClickHouse compatible checksum.
           ''')
     # Required
     parser.add_argument('--mysql_host', help='MySQL host', required=True)
@@ -261,6 +260,12 @@ def main():
                         help='Output the raw format to a file called out.txt', required=False)
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
+    parser.add_argument(
+        '--binary_encoding', help='either hex or base64 to encode MySQL binary content', default='hex', required=False)
+    parser.add_argument(
+        '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
+    parser.add_argument(
+        '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
