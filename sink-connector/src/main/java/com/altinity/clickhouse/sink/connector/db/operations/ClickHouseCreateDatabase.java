@@ -6,6 +6,7 @@ import java.sql.SQLException;
 
 public class ClickHouseCreateDatabase extends ClickHouseTableOperationsBase {
     public void createNewDatabase(ClickHouseConnection conn, String dbName) throws SQLException {
-        this.runQuery(String.format("CREATE DATABASE %s", dbName), conn);
+        String query = String.format("USE system; CREATE DATABASE IF NOT EXISTS %s; USE %s", dbName, dbName);
+        this.runQuery(query, conn);
     }
 }
