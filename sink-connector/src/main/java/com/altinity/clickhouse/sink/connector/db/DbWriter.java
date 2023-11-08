@@ -334,8 +334,7 @@ public class DbWriter extends BaseDbWriter {
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString()),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString()),
-                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()),
-                        this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
+                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()));
 
 
 
