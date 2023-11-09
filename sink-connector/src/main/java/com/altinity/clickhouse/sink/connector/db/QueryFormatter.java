@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.clickhouse.data.ClickHouseUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
@@ -61,7 +62,7 @@ public class QueryFormatter {
             String sourceColumnNameWithBackTicks = new StringBuffer().append("`").append(entry.getKey()).append("`").toString();
             //String sourceColumnName = f.name();
             // Get Field Name and lookup in the Clickhouse column to datatype map.
-            String dataType = columnNameToDataTypeMap.get(entry.getKey());
+            String dataType = ClickHouseUtils.escape(columnNameToDataTypeMap.get(entry.getKey()), '\'');
 
             if(dataType != null) {
                 // Is the column a kafka metadata column.

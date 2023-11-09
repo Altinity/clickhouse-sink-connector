@@ -114,7 +114,7 @@ public class DbWriter extends BaseDbWriter {
                         if(record.getAfterStruct() != null) {
                             fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
                         } else if(record.getBeforeStruct() != null) {
-                            fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
+                            fields = record.getBeforeStruct().schema().fields().toArray(new Field[0]);
                         }
 
                         act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);

@@ -48,3 +48,13 @@ CREATE TABLE altinity_sink_connector.replica_source_info
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8198;
+
+USE employees;
+CREATE TABLE employees.dt
+(
+`timestamp` DateTime('Asia/Istanbul'),
+`json` String,
+`event_id` UInt8,
+`sign` Int8
+)
+ENGINE = MergeTree() ORDER by event_id;

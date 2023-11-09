@@ -27,3 +27,13 @@ KEY `user_t_date` (`u_id`,`t_id`,`date`)
 
 
 insert into test_ent values(111, 222, '2023-01-01', 222, 222, 1, '2008-01-01 00:00:01', 'Test', '22:10', '23:10', 2, '');
+
+CREATE TABLE dt
+(
+`timestamp` timestamp,
+`json` varchar(100),
+`event_id` int unsigned,
+`sign` smallint
+);
+
+insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 2);
