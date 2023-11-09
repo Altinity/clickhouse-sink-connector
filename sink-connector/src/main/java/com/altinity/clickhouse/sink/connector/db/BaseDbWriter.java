@@ -6,11 +6,14 @@ import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.commons.lang3.StringUtils;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 public class BaseDbWriter {
 
@@ -75,7 +78,7 @@ public class BaseDbWriter {
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
      */
-    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
+    public Map<String, String> getColumnsDataTypesForTable(String tableName, String sourceTimeZone) {
 
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
@@ -89,6 +92,9 @@ public class BaseDbWriter {
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
+                if (typeName.contains("DateTime")) {
+                    typeName = addTimeZoneToColumnDefinition(typeName, sourceTimeZone);
+                } 
 
 //                Object dataType = columns.getString("DATA_TYPE");
 //                String columnSize = columns.getString("COLUMN_SIZE");
@@ -139,6 +145,29 @@ public class BaseDbWriter {
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         return rs;
 
+    }
+
+    public String addTimeZoneToColumnDefinition(String typeName, String timeZone) {
+        Pattern pattern = Pattern.compile("DateTime(64)?(\\([^\\)]*\\))?");
+        Matcher matcher = pattern.matcher(typeName);
+        StringBuffer result = new StringBuffer("");
+        int cursor = 0;
+        while (matcher.find()) {
+            int start = matcher.start();
+            int end = matcher.end();
+            result.append(typeName.substring(cursor, start));
+            cursor = end;
+            String occurrence = typeName.substring(start, end);
+            if (occurrence.contains("DateTime64")) {
+                String[] params = StringUtils.substringBetween(occurrence, "(", ")").split(",");
+                String precision = params[0].trim();
+                result.append(String.format("DateTime64(%s,'%s')", precision, timeZone));
+            } else {
+                result.append(String.format("DateTime('%s')", timeZone));
+            }
+        }
+        result.append(typeName.substring(cursor));
+        return result.toString();
     }
 
     /**

@@ -19,6 +19,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,7 +99,7 @@ public class DbWriterTest {
     public void testGetColumnsDataTypesForTable() {
 
         String dbHostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
+        Integer port = clickHouseContainer.getMappedPort(8123);
         String database = "employees";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
@@ -104,15 +107,16 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
-        Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees","Europe/Moscow");
 
+        //System.out.println(columnDataTypesMap.values());
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap.size() == 20);
 
         String database2 = "employees2";
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
-        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees","UTC");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap2.size() == 2);
@@ -292,6 +296,73 @@ public class DbWriterTest {
 
             ps.addBatch();
             ps.executeBatch();
+
+        } catch(Exception e) {
+            System.out.println("Error connecting" + e);
+        }
+
+    }
+
+    @Test
+    @Tag("IntegrationTest")
+    public void testDateTime64Insert() {
+        String hostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getMappedPort(8123);
+        String database = "test";
+        String userName = "default";
+        String password = "";
+        String tableName = "datetime64";
+
+        Properties properties = new Properties();
+        properties.setProperty("client_name", "TestDateTime64");
+        //properties.setProperty("use_server_time_zone", "false");
+        //properties.setProperty("use_time_zone", "Europe/Moscow");
+
+        String[] timeZones = new String[]{"UTC","Brazil/West","Europe/Moscow"};
+
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+        String url = dbWriter.getConnectionString(hostName, port, database);
+
+        try {
+            ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
+            ClickHouseConnection conn = dataSource.getConnection(userName, password);
+            int index = 1;
+            for (String i : timeZones) {
+                String insertQueryTemplate = String.format(
+                    "insert into test.datetime64" +
+                        "(id,columnWithoutTZ,columnWithTZ,sourceTZ) " +
+                    "select " +
+                        "id,columnWithoutTZ,columnWithTZ,sourceTZ " +
+                    "from input(" +
+                        "'id UInt8" +
+                        ",columnWithoutTZ DateTime64(6,\\'%s\\')" +
+                        ",columnWithTZ DateTime64(6,\\'%s\\')" +
+                        ",sourceTZ String')", i,i);
+                PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
+                ps.setInt(1, index++);
+                ps.setString(2, "2021-12-31 19:01:00.000000"); //UTC 1640977260
+                ps.setString(3, "2021-12-31 19:01:00.000000");
+                ps.setString(4, i);
+                ps.addBatch();
+                ps.executeBatch();
+            }
+            Statement stmt = dbWriter.getConnection().createStatement();
+            ResultSet rs = stmt.executeQuery(String.format("select id" +
+                ",toInt64(columnWithoutTZ)" +
+                ",toInt64(columnWithTZ)" +
+                ",sourceTZ" +
+                " from %s.%s", database,tableName));
+            
+            int columns = rs.getMetaData().getColumnCount();
+            while(rs.next()){
+                for (int i = 1; i <= columns; i++){
+                    System.out.print(rs.getString(i) + "\t");
+                }
+                System.out.println();
+            }
+            //Assert.assertTrue(rs.next());
 
         } catch(Exception e) {
             System.out.println("Error connecting" + e);

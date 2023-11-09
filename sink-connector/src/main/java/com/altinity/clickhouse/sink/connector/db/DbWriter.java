@@ -60,6 +60,9 @@ public class DbWriter extends BaseDbWriter {
     // Delete column for ReplacingMergeTree
     private String replacingMergeTreeDeleteColumn = null;
 
+    // Source dateTime timezone
+    private String sourceTimeZone = null;
+
     /**
      * IMPORTANT: The logic to identify the new replacing mergetree
      * table which lets you specify the is_deleted column in
@@ -84,11 +87,12 @@ public class DbWriter extends BaseDbWriter {
         this.tableName = tableName;
 
         this.config = config;
+        this.sourceTimeZone = this.config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
 
         try {
             if (this.conn != null) {
                 // Order of the column names and the data type has to match.
-                this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+                this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName, this.sourceTimeZone);
             }
 
             DBMetadata metadata = new DBMetadata();
@@ -118,7 +122,7 @@ public class DbWriter extends BaseDbWriter {
                         }
 
                         act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);
-                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName, this.sourceTimeZone);
                         response = metadata.getTableEngine(this.conn, database, tableName);
                         this.engine = response.getLeft();
                     } catch (Exception e) {
@@ -291,7 +295,7 @@ public class DbWriter extends BaseDbWriter {
                 if(enableSchemaEvolution) {
                     try {
                         alterTable(record.getAfterStruct().schema().fields());
-                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
+                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName, this.sourceTimeZone);
 
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
@@ -600,7 +604,7 @@ public class DbWriter extends BaseDbWriter {
             if(type == Schema.Type.ARRAY) {
                 schemaName = f.schema().valueSchema().type().name();
             }
-            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps)) {
+            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, sourceTimeZone, index, ps)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }

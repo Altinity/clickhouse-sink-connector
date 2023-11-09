@@ -51,7 +51,6 @@ public class DebeziumConverter {
 
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
-            //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
             Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS);
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, true);
 
@@ -68,12 +67,14 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static Long convert(Object value, boolean isDateTime64) {
+        public static String convert(Object value, boolean isDateTime64) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             Instant providedDT = Instant.ofEpochMilli((long) value);
 
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(providedDT, isDateTime64);
 
-            return modifiedDT.toEpochMilli();
+            //return modifiedDT.toEpochMilli();
+            return ZonedDateTime.ofInstant(modifiedDT, ZoneId.of("UTC")).format(destFormatter);
         }
 
 
@@ -134,7 +135,7 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value) {
+        public static String convert(Object value, String timeZone) {
 
 //            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
 //            DateTimeFormatter bqZonedTimestampFormat =
@@ -196,7 +197,7 @@ public class DebeziumConverter {
                 }
                 //check date range
                 i = checkIfDateTimeExceedsSupportedRange(i, true);
-                result = ZonedDateTime.ofInstant(i, ZoneId.of("UTC")).format(destFormatter);
+                result = ZonedDateTime.ofInstant(i, ZoneId.of(timeZone)).format(destFormatter);
             } else {
                 log.error("Error parsing zonedtimestamp " + (String) value);
             }
