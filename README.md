@@ -32,11 +32,17 @@ Also Update **ClickHouse information** for the following fields that are used to
 4.  Add table filters: `table.include.list`.
 5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
 6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
+**ClickHouse HTTPS servers**
+For `https` servers, make sure the `clickhouse.server.url` includes `https`
+Also add `?ssl=true` and port `8443` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
+Example: **ClickHouse Cloud**
+```
+clickhouse.server.url: "https://cloud_url"
+offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+```
 
 ### MySQL Configuration 
-For `https` servers, make sure the `clickhouse.server.url` includes `https`
-Also add `?ssl=true` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
-
 [MySQL Configuration](sink-connector-lightweight/docker/config.yml)
 
 ### PostgreSQL Configuration
