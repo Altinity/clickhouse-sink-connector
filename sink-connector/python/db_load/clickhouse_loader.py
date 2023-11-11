@@ -487,10 +487,18 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
                     if structure != "":
                             structure += ", "
                     structure +=" "+column_name + " "
-                    if column['nullable'] == True:
-                        structure +=" Nullable(String)"
+                    datatype = column['datatype']
+                    mysql_datetype = column['mysql_datatype']
+                    if 'timestamp' in mysql_datetype.lower():
+                          if column['nullable'] == True:
+                            structure +=f" Nullable({datatype})"
+                          else:
+                            structure +=f" {datatype}"
                     else:
-                        structure +=" String"
+                      if column['nullable'] == True:
+                          structure +=" Nullable(String)"
+                      else:
+                          structure +=" String"
 
                 cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{password}' -mn """
                 futures.append(executor.submit(execute_load, cmd))
