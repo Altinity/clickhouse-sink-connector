@@ -71,7 +71,7 @@ public class ClickHouseDataTypeMapperTest {
         ps.setString(index++, "Test");
         ps.setDouble(index++, 0d);
         ps.setDouble(index++, 0d);
-        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps);
+        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, "UTC", index++, ps);
         ps.setDouble(index, 1d);
         ps.setInt(index++,1);
         ps.setInt(index++, 12);

@@ -53,6 +53,8 @@ public enum ClickHouseSinkConnectorConfigVariables {
     //Config variable for auto creating tables if they dont exist.
     AUTO_CREATE_TABLES("auto.create.tables"),
 
+    //Config variable to define source timezone. 
+    SOURCE_DATETIME_TIMEZONE("source.datetime.timezone"),
     // Config variable when set to true, columns will be added.
     ENABLE_SCHEMA_EVOLUTION("schema.evolution"),
 

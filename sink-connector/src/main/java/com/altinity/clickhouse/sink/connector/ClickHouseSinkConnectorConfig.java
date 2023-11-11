@@ -264,6 +264,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.NONE,
                     ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString())
                 .define(
+                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(),
+                    Type.STRING,
+                    "UTC",
+                    Importance.LOW,
+                    "Config variable to define source timezone " +
+                        "All incoming DateTime* values will be recalculated to UTC considering specified timezone",
+                    CONFIG_GROUP_CONNECTOR_CONFIG,
+                    1,
+                    ConfigDef.Width.NONE,
+                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString(),
                         Type.BOOLEAN,
                         false,

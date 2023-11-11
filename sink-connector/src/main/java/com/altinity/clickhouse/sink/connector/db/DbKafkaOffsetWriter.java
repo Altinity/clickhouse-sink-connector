@@ -39,6 +39,10 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
 
     }
 
+    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
+        return super.getColumnsDataTypesForTable(tableName, "UTC");
+    }
+
     /**
      * Function to create kafka offset table.
      */

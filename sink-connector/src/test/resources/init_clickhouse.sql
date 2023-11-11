@@ -1,6 +1,15 @@
 CREATE database test;
 
 --use test;
+CREATE TABLE test.datetime64
+(
+  `id` UInt8,
+  `columnWithoutTZ` DateTime64(6),
+  `columnWithTZ` DateTime64(6,'America/New_York'),
+  `sourceTZ` String
+)
+ENGINE = MergeTree()
+ORDER BY id;
 
 CREATE TABLE employees
 (

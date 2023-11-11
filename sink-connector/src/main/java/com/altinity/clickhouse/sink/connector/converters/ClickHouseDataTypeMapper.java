@@ -108,6 +108,7 @@ public class ClickHouseDataTypeMapper {
      */
     public static boolean convert(Schema.Type type, String schemaName,
                                                Object value,
+                                               String sourceTimeZone,
                                                int index,
                                                PreparedStatement ps) throws SQLException {
 
@@ -154,7 +155,7 @@ public class ClickHouseDataTypeMapper {
         if (type == Schema.Type.STRING) {
             if (schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
                 // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
-                ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
+                ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value, sourceTimeZone));
 
             } else if(schemaName != null && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON, it should be written, String otherwise
@@ -186,14 +187,14 @@ public class ClickHouseDataTypeMapper {
             if (isFieldDateTime) {
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // Handle microtimestamp first
-                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value));
                 }
                 else if (value instanceof Long) {
                     boolean isColumnDateTime64 = false;
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    ps.setLong(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
