@@ -8,9 +8,10 @@ import org.slf4j.LoggerFactory;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZonedDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
@@ -151,29 +152,52 @@ public class DebeziumConverter {
             // for example you might truncate microseconds
             // to milliseconds(3) if .SSS is above .SSSSSS
             String[] date_formats = {
-                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'"
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SXXX",
+                    "yyyy-MM-dd'T'HH:mm:ssXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SZ",
+                    "yyyy-MM-dd'T'HH:mm:ssZ",
+                    "yyyy-MM-dd'T'HH:mm:ss"
             };
 
-            boolean parsingSuccesful = false;
+            boolean parsingSuccessful = false;
+            ZonedDateTime parsedDT = null;
             for (String formatString : date_formats) {
                 try {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
-                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
-                    result = zd.format(destFormatter);
-                    //result = removeTrailingZeros(result);
-                    parsingSuccesful = true;
+                    parsedDT = ZonedDateTime.parse((String) value, formatter.withZone(ZoneId.of("UTC")));
+                    parsingSuccessful = true;
                     break;
                 } catch(Exception e) {
-                    // Continue
+                    if (e.getCause() != null) {
+                        parsingSuccessful = true;
+                        break;
+                    }
                 }
             }
-            if(parsingSuccesful == false) {
+
+            if (parsingSuccessful) {
+                Instant i;
+                if (parsedDT ==  null) {
+                    i = Instant.MIN;
+                } else {
+                    i = parsedDT.toInstant();
+                }
+                //check date range
+                i = checkIfDateTimeExceedsSupportedRange(i, true);
+                result = ZonedDateTime.ofInstant(i, ZoneId.of("UTC")).format(destFormatter);
+            } else {
                 log.error("Error parsing zonedtimestamp " + (String) value);
             }
 
