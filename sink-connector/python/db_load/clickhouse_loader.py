@@ -152,7 +152,7 @@ def find_partitioning_options(source):
     return partitioning_options
 
 
-def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support):
+def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone):
     
     # do we have a table in the source
     
@@ -265,23 +265,23 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
     return (res, columns)
 
 
-def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support, use_regexp_parser):
+def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_support, use_regexp_parser, datetime_timezone):
     # do we have a table in the source
     if not find_create_table(source):
         return ('', [])
 
     src = source
-    if use_regexp_parser:
-       return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support)
+    #if use_regexp_parser == True:
+    #   return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone)
     # the progressive grammar trims the comment
     partition_options = find_partitioning_options(source)
 
     try:
-        return convert_to_clickhouse_table_antlr(src, rmt_delete_support, partition_options)
+        return convert_to_clickhouse_table_antlr(src, rmt_delete_support, partition_options, datetime_timezone)
     except Exception as ex:
         logging.info(f"Use regexp DDL converter")
         logging.info(f"{ex}")
-        return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support)
+        return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone)
 
 
 def get_unix_timezone_from_mysql_timezone(timezone):
@@ -304,10 +304,10 @@ def get_unix_timezone_from_mysql_timezone(timezone):
     return tz
 
 
-def load_schema(args, dry_run=False):
+def load_schema(args, dry_run=False, datetime_timezone=None):
 
     if args.mysqlshell:
-        return load_schema_mysqlshell(args,  dry_run=dry_run)
+        return load_schema_mysqlshell(args,  dry_run=dry_run, datetime_timezone=datetime_timezone)
 
     schema_map = {}
     # create database
@@ -334,7 +334,7 @@ def load_schema(args, dry_run=False):
             with gzip.open(file, "r") as schema_file:
                 source = schema_file.read().decode('UTF-8')
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser)
+                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
                 timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -349,7 +349,7 @@ def load_schema(args, dry_run=False):
     return (tz, schema_map)
 
 
-def load_schema_mysqlshell(args, dry_run=False):
+def load_schema_mysqlshell(args, dry_run=False, datetime_timezone=None):
 
     schema_map = {}
     # create database
@@ -380,7 +380,7 @@ def load_schema_mysqlshell(args, dry_run=False):
             with open(file, "r") as schema_file:
                 source = schema_file.read()
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser)
+                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
                 # timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -487,10 +487,18 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
                     if structure != "":
                             structure += ", "
                     structure +=" "+column_name + " "
-                    if column['nullable'] == True:
-                        structure +=" Nullable(String)"
+                    datatype = column['datatype']
+                    mysql_datetype = column['mysql_datatype']
+                    if 'timestamp' in mysql_datetype.lower():
+                          if column['nullable'] == True:
+                            structure +=f" Nullable({datatype})"
+                          else:
+                            structure +=f" {datatype}"
                     else:
-                        structure +=" String"
+                      if column['nullable'] == True:
+                          structure +=" Nullable(String)"
+                      else:
+                          structure +=" String"
 
                 cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{password}' -mn """
                 futures.append(executor.submit(execute_load, cmd))
@@ -554,7 +562,8 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--rmt_delete_support', help='Use RMT deletes', dest='rmt_delete_support',
                         action='store_true', default=False)
-      
+    parser.add_argument('--clickhouse_datetime_timezone',
+                        help='Timezone for CH date times', required=False, default=None) 
     args = parser.parse_args()
     schema = not args.data_only
     data = not args.schema_only
@@ -568,7 +577,7 @@ def main():
         'zstd'), "zstd should be in the PATH for util.dumpSchemas load"
 
     if schema:
-        (timezone, schema_map) = load_schema(args, dry_run=args.dry_run)
+        (timezone, schema_map) = load_schema(args, dry_run=args.dry_run, datetime_timezone = args.clickhouse_datetime_timezone)
     if data:
         if timezone is None:
             (timezone, schema_map) = load_schema(args, dry_run=True)
