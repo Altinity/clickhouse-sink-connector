@@ -12,6 +12,7 @@ import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -19,7 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
+public class CreateTableDataTypesIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
@@ -56,7 +57,7 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
             }
         });
 
-        Thread.sleep(20000);
+        Thread.sleep(30000);
 
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -86,11 +87,63 @@ public class ClickHouseDebeziumEmbeddedDDLCreateTableIT extends ClickHouseDebezi
         Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(3)"));
         Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(3)"));
         Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(3))"));
+
+        writer.getConnection().close();
+        //Thread.sleep(10000);
+
+         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        // Validate temporal_types_DATE data.
+        ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
+
+        while(dateResult.next()) {
+            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1925-01-01"));
+            Assert.assertTrue(dateResult.getDate("Mid_Value").toString().equalsIgnoreCase("2022-09-29"));
+            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2283-11-11"));
+        }
+        // Validate temporal_types_DATETIME data.
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+
+        while(dateTimeResult.next()) {
+            System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
+        }
+
+//        // DATETIME1
+//        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+//        while(dateTimeResult.next()) {
+//            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.000"));
+//            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.000"));
+//            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
+//        }
+//
+//        // DATETIME2
+//        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+//        while(dateTimeResult.next()) {
+//            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.000"));
+//            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.000"));
+//            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
+//        }
+//
+//        // DATETIME3
+//        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1");
+//        while(dateTimeResult.next()) {
+//            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.000"));
+//            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.000"));
+//            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
+//        }
+
+
         if(engine.get() != null) {
             engine.get().stop();
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
 
+        writer.getConnection().close();
     }
 }

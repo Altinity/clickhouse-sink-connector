@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 
-public class ClickHouseDebeziumEmbeddedEmployeesDBIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
+public class EmployeesDBIT extends DDLBaseIT {
 
 
         @BeforeEach

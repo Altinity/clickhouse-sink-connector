@@ -19,14 +19,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
+public class DDLModifyColumnIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("alter_ddl_change_column.sql")
+                .withInitScript("alter_ddl_modify_column.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -36,7 +36,7 @@ public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebez
     }
 
     @Test
-    public void testChangeColumn() throws Exception {
+    public void testModifyColumn() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
@@ -53,20 +53,16 @@ public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebez
         Thread.sleep(10000);
 
         Connection conn = connectToMySQL();
-        // alter table ship_class change column class_name class_name_new int;
-        // alter table ship_class change column tonange tonange_new decimal(10,10);
 
-        conn.prepareStatement("alter table ship_class change column class_name class_name_new int").execute();
-        conn.prepareStatement("alter table ship_class change column tonange tonange_new decimal(10,10)").execute();
-        conn.prepareStatement("alter table add_test change column col1 col1_new int, modify column col2 varchar(255)").execute();
-        conn.prepareStatement("alter table add_test change column col2 new_col2_name int after col3;").execute();
-        conn.prepareStatement("alter table add_test change column col3 new_col3_name int first").execute();
+        conn.prepareStatement("alter table ship_class modify column class_name int;").execute();
+        conn.prepareStatement("alter table ship_class modify column tonange decimal(10,10);").execute();
+        conn.prepareStatement("alter table add_test modify column col1 int, modify column col2 varchar(255);").execute();
+        conn.prepareStatement("alter table add_test modify column col1 int default 0;").execute();
+        conn.prepareStatement("alter table add_test modify column col3 int first;").execute();
+        conn.prepareStatement("alter table add_test modify column col2 int after col3;").execute();
 
-//        conn.prepareStatement("alter table add_test change column col1 int").execute();
-//        conn.prepareStatement("alter table add_test change column col3 int first").execute();
-//        conn.prepareStatement("alter table add_test change column col2 int after col3").execute();
 
-        Thread.sleep(10000);
+        Thread.sleep(15000);
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
@@ -74,23 +70,18 @@ public class ClickHouseDebeziumEmbeddedDDLChangeColumnIT extends ClickHouseDebez
         Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
 
-        Thread.sleep(10000);
-        // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Decimal(10, 10)"));
-        Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
+        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Decimal(10, 10)"));
 
-        // Files.deleteIfExists(tmpFilePath);
-        Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Int32"));
-
+        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
 
         if(engine.get() != null) {
             engine.get().stop();
         }
+        // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-
 
     }
 }

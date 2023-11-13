@@ -18,7 +18,7 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 @Testcontainers
-public class ClickHouseDebeziumEmbeddedDDLBaseIT {
+public class DDLBaseIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
