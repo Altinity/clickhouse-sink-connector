@@ -111,7 +111,8 @@ public class ClickHouseDataTypeMapper {
     public static boolean convert(Schema.Type type, String schemaName,
                                   Object value,
                                   int index,
-                                  PreparedStatement ps, ClickHouseSinkConnectorConfig config) throws SQLException {
+                                  PreparedStatement ps, ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType) throws SQLException {
 
         boolean result = true;
 
@@ -167,7 +168,7 @@ public class ClickHouseDataTypeMapper {
         } else if (isFieldTypeInt) {
             if (schemaName != null && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                 // Date field arrives as INT32 with schema name set to io.debezium.time.Date
-                ps.setDate(index, DebeziumConverter.DateConverter.convert(value));
+                ps.setDate(index, DebeziumConverter.DateConverter.convert(value, clickHouseDataType));
 
             } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);

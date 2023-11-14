@@ -148,3 +148,13 @@ CREATE TABLE employees2.employees
 ENGINE = ReplacingMergeTree(_version_employees)
 PRIMARY KEY emp1
 ORDER BY emp1;
+
+create table employees2.ma_users
+(
+    date DateTime64(3) default now(),
+    json String,
+    sign Int8
+    )
+    engine = MergeTree()
+    ORDER BY date
+    SETTINGS index_granularity = 8192;

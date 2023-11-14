@@ -366,7 +366,6 @@ def main():
     parser.add_argument('--secure',
                         help='True or False', default=False, required=False)
     parser.add_argument('--sign_column', help='Override sign column, by default its _sign', default='_sign', required=False)
-    parser.add_argument('--new_rmt', help="Newer RMT tree have a is_deleted column, the column needs to be passed in --sign-column=is_deleted and this flag set to true and the deleted rows will be skipped", default=False, required=False)
     parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--order_by', help='order by` clause', required=False)

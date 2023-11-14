@@ -1,6 +1,10 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import com.clickhouse.data.ClickHouseChecker;
+import com.clickhouse.data.ClickHouseDataType;
+import com.clickhouse.data.ClickHouseValues;
+import com.clickhouse.data.format.BinaryStreamUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
@@ -101,23 +106,29 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static Date convert(Object value) {
-            Integer epochInDays = checkIfDateExceedsSupportedRange((Integer) value);
+        public static Date convert(Object value, ClickHouseDataType chDataType) {
+            Integer epochInDays = checkIfDateExceedsSupportedRange((Integer) value, chDataType);
+            LocalDate d = LocalDate.ofEpochDay(epochInDays);
 
-            // The value is epoch in Days
-            long msSinceEpoch = TimeUnit.DAYS.toMillis(epochInDays);
-            java.util.Date date = new java.util.Date(msSinceEpoch);
-
-
-            return new java.sql.Date(date.getTime());
+            return Date.valueOf(d);
         }
 
-        public static Integer checkIfDateExceedsSupportedRange(Integer epochInDays) {
+        public static Integer checkIfDateExceedsSupportedRange(Integer epochInDays, ClickHouseDataType chDataType) {
 
-            if(epochInDays < DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32) {
-                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
-            } else if (epochInDays > DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32){
-                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
+            if(chDataType == ClickHouseDataType.Date32) {
+                if (epochInDays < DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32) {
+                    return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32;
+                } else if (epochInDays > DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32) {
+                    return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32;
+                }
+            } else if(chDataType == ClickHouseDataType.Date) {
+                if(epochInDays < 0) {
+                    return 0;
+                } else if(epochInDays > BinaryStreamUtils.U_INT16_MAX) {
+                    return BinaryStreamUtils.U_INT16_MAX;
+                }
+            } else {
+                log.error("Unknown DATE field");
             }
 
             return epochInDays;

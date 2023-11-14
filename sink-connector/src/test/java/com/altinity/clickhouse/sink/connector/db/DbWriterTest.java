@@ -173,6 +173,11 @@ public class DbWriterTest {
                 database, "registration");
         Assert.assertNull(result_registration.getLeft());
 
+        MutablePair<DBMetadata.TABLE_ENGINE, String> ma_users_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
+                "employees2", "ma_users");
+        Assert.assertTrue(ma_users_registration.getLeft() == DBMetadata.TABLE_ENGINE.MERGE_TREE);
+
+
     }
 
     public static ConcurrentLinkedQueue<ClickHouseStruct> getSampleRecords() {

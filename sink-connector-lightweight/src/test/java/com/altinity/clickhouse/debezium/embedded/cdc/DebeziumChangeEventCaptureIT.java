@@ -1,12 +1,11 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.ClickHouseDebeziumEmbeddedDDLBaseIT;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLBaseIT;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.collect.Maps;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
-import org.json.simple.parser.ParseException;
 import static org.junit.Assert.assertTrue;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -17,7 +16,7 @@ import java.util.Map;
 import java.util.Properties;
 
 @Testcontainers
-public class DebeziumChangeEventCaptureIT extends ClickHouseDebeziumEmbeddedDDLBaseIT {
+public class DebeziumChangeEventCaptureIT extends DDLBaseIT {
 
     private static final Logger log = LoggerFactory.getLogger(DebeziumChangeEventCaptureIT.class);
     @Test

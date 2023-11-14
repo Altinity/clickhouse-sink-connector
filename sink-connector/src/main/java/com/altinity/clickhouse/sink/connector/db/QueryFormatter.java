@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.clickhouse.data.ClickHouseUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
@@ -40,11 +41,7 @@ public class QueryFormatter {
                                                                                       Map<String, String> columnNameToDataTypeMap,
                                                                                       boolean includeKafkaMetaData,
                                                                                       boolean includeRawData,
-                                                                                      String rawDataColumn,
-                                                                                      String signColumn,
-                                                                                      String versionColumn,
-                                                                                      String replacingMergeTreeDeleteColumn,
-                                                                                      DBMetadata.TABLE_ENGINE tableEngine) {
+                                                                                      String rawDataColumn) {
 
 
         Map<String, Integer> colNameToIndexMap = new HashMap<String, Integer>();
@@ -62,34 +59,35 @@ public class QueryFormatter {
 
             //for(Field f: fields) {
             String sourceColumnName = entry.getKey();
+            String sourceColumnNameWithBackTicks = new StringBuffer().append("`").append(entry.getKey()).append("`").toString();
             //String sourceColumnName = f.name();
             // Get Field Name and lookup in the Clickhouse column to datatype map.
-            String dataType = columnNameToDataTypeMap.get(sourceColumnName);
+            String dataType = ClickHouseUtils.escape(columnNameToDataTypeMap.get(entry.getKey()), '\'');
 
             if(dataType != null) {
                 // Is the column a kafka metadata column.
                 if(isKafkaMetaDataColumn(sourceColumnName)) {
                     if(includeKafkaMetaData) {
                         //log.info("Kafka metadata enabled and column added to clickhouse: "  + sourceColumnName );
-                        colNamesDelimited.append(sourceColumnName).append(",");
-                        colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
+                        colNamesDelimited.append(sourceColumnNameWithBackTicks).append(",");
+                        colNamesToDataTypes.append(sourceColumnNameWithBackTicks).append(" ").append(dataType).append(",");
                         colNameToIndexMap.put(sourceColumnName, index++);
                     }
                 } else if(sourceColumnName.equalsIgnoreCase(rawDataColumn)) {
                     if(includeRawData) {
                         //log.info("RAW DATA enabled and column added to clickhouse: "  + sourceColumnName );
-                        colNamesDelimited.append(sourceColumnName).append(",");
-                        colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
+                        colNamesDelimited.append(sourceColumnNameWithBackTicks).append(",");
+                        colNamesToDataTypes.append(sourceColumnNameWithBackTicks).append(" ").append(dataType).append(",");
                         colNameToIndexMap.put(sourceColumnName, index++);
                     }
 
                 }else {
-                    colNamesDelimited.append(sourceColumnName).append(",");
-                    colNamesToDataTypes.append(sourceColumnName).append(" ").append(dataType).append(",");
+                    colNamesDelimited.append(sourceColumnNameWithBackTicks).append(",");
+                    colNamesToDataTypes.append(sourceColumnNameWithBackTicks).append(" ").append(dataType).append(",");
                     colNameToIndexMap.put(sourceColumnName, index++);
                 }
             } else {
-                log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnName));
+                log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnNameWithBackTicks));
             }
         }
 
@@ -123,8 +121,10 @@ public class QueryFormatter {
         StringBuilder colNamesToDataTypes = new StringBuilder();
 
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            colNamesDelimited.append(entry.getKey()).append(",");
-            colNamesToDataTypes.append(entry.getKey()).append(" ").append(entry.getValue()).append(",");
+            String columnName = new StringBuffer().append("`").append(entry.getKey()).append("`").toString();
+
+            colNamesDelimited.append(columnName).append(",");
+            colNamesToDataTypes.append(columnName).append(" ").append(entry.getValue()).append(",");
         }
 
         if(colNamesDelimited.length() != 0) {

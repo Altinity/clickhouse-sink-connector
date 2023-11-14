@@ -254,9 +254,11 @@ public class DebeziumChangeEventCapture {
             enableSnapshotDDLPropertyFlag = true;
         }
 
-//        if(isDropOrTruncate.get()== false) {
-//            return false;
-//        }
+        String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+        if(disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get()== true) {
+            log.debug("Ignoring Drop or Truncate");
+            return true;
+        }
         if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == false) {
             // User wants to ignore snapshot
             return true;
