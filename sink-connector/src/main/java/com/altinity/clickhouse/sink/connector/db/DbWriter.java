@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.clickhouse.data.ClickHouseDataType;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Field;
@@ -114,7 +115,7 @@ public class DbWriter extends BaseDbWriter {
                         if(record.getAfterStruct() != null) {
                             fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
                         } else if(record.getBeforeStruct() != null) {
-                            fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
+                            fields = record.getBeforeStruct().schema().fields().toArray(new Field[0]);
                         }
 
                         act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);
@@ -179,25 +180,7 @@ public class DbWriter extends BaseDbWriter {
     }
 
     /**
-     * Function which has logic of choosing between before and after fields
-     * based on CDC operation and Table Engine.
-     *
-     * @param engine
-     * @return
-     */
-    public List<Field> getModifiedFieldsBasedOnTableEngine(DBMetadata.TABLE_ENGINE engine, ClickHouseStruct record) {
-        List<Field> modifiedFields = null;
-        if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation())) {
-            modifiedFields = record.getAfterModifiedFields();
-        } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-            modifiedFields = record.getBeforeModifiedFields();
-        }
-
-        return modifiedFields;
-    }
-
-    /**
-     * Function
+     * Function to get the CDC Operation
      *
      * @param operation
      * @return
@@ -334,8 +317,7 @@ public class DbWriter extends BaseDbWriter {
                 (this.tableName, modifiedFields, this.columnNameToDataTypeMap,
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString()),
                         this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString()),
-                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()),
-                        this.signColumn, this.versionColumn, this.replacingMergeTreeDeleteColumn, this.engine);
+                        this.config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()));
 
 
 
@@ -584,6 +566,7 @@ public class DbWriter extends BaseDbWriter {
 
                 continue;
             }
+
             if (!this.columnNameToDataTypeMap.containsKey(colName)) {
                 log.error(" ***** ERROR: Column:{} not found in ClickHouse", colName);
                 continue;
@@ -600,7 +583,15 @@ public class DbWriter extends BaseDbWriter {
             if(type == Schema.Type.ARRAY) {
                 schemaName = f.schema().valueSchema().type().name();
             }
-            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps)) {
+            // This will throw an exception, unknown data type.
+            ClickHouseDataType chDataType = null;
+
+            try {
+                chDataType = ClickHouseDataType.of(this.columnNameToDataTypeMap.get(colName));
+            } catch(Exception e) {
+                log.debug("Unknown data type ", chDataType);
+            }
+            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, this.config, chDataType)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }

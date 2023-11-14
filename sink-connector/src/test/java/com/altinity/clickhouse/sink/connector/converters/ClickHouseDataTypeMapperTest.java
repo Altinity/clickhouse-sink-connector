@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
@@ -16,6 +17,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashMap;
 
 @Testcontainers
 public class ClickHouseDataTypeMapperTest {
@@ -71,7 +73,7 @@ public class ClickHouseDataTypeMapperTest {
         ps.setString(index++, "Test");
         ps.setDouble(index++, 0d);
         ps.setDouble(index++, 0d);
-        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps);
+        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps, new ClickHouseSinkConnectorConfig(new HashMap<String, String>()), ClickHouseDataType.Float32);
         ps.setDouble(index, 1d);
         ps.setInt(index++,1);
         ps.setInt(index++, 12);

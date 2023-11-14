@@ -15,6 +15,7 @@ public class Constants {
     public static final String CREATE_TABLE = "CREATE TABLE";
     public static final String NULLABLE = "Nullable";
 
+    public static final String NOT_NULLABLE = "NOT NULL";
 
     public static final String ADD_COLUMN = "ADD COLUMN %s %s";
     public static final String ADD_COLUMN_NULLABLE = "ADD COLUMN %s Nullable(%s)";

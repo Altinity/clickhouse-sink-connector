@@ -1,6 +1,6 @@
 [![License](http://img.shields.io/:license-apache%202.0-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
-[![Tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-integration-tests.yml)
-[![Build, Unit tests, Push Docker image.](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/unit_test_docker_image.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/unit_test_docker_image.yml)
+[![Sink Connector(Kafka version) tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-kafka-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-kafka-tests.yml)
+[![Sink Connector(Light-weight) Tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-tests.yml)
 <a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
   <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
 </a>
@@ -32,109 +32,25 @@ Also Update **ClickHouse information** for the following fields that are used to
 4.  Add table filters: `table.include.list`.
 5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
 6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
-
-### MySQL Configuration (docker/config.yaml)
+**ClickHouse HTTPS servers**
 For `https` servers, make sure the `clickhouse.server.url` includes `https`
-Also add `?ssl=true` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
-
+Also add `?ssl=true` and port `8443` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
+Example: **ClickHouse Cloud**
 ```
-database.hostname: "mysql-master"
-database.port: "3306"
-database.user: "root"
-database.password: "root"
-database.server.name: "ER54"
-database.include.list: sbtest
-#table.include.list=sbtest1
-clickhouse.server.url: "clickhouse"
-clickhouse.server.user: "root"
-clickhouse.server.password: "root"
-clickhouse.server.port: "8123"
-clickhouse.server.database: "test"
-database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "schema_only"
-offset.flush.interval.ms: 5000
-connector.class: "io.debezium.connector.mysql.MySqlConnector"
-offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
-offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
-offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
-offset.storage.jdbc.user: "root"
-offset.storage.jdbc.password: "root"
-offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
-(
-    `id` String,
-    `offset_key` String,
-    `offset_val` String,
-    `record_insert_ts` DateTime,
-    `record_insert_seq` UInt64,
-    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
-)
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
-SETTINGS index_granularity = 8198"
-offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
-schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
-schema.history.internal.jdbc.user: "root"
-schema.history.internal.jdbc.password: "root"
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
-(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
-
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "true"
-auto.create.tables: "true"
+clickhouse.server.url: "https://cloud_url"
+offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
 ```
-### PostgreSQL Config(docker/config_postgres.yml)
+
+### MySQL Configuration 
+[MySQL Configuration](sink-connector-lightweight/docker/config.yml)
+
+### PostgreSQL Configuration
 For AWS RDS users, you might need to add heartbeat interval and query to avoid WAL logs constantly growing in size.
 https://stackoverflow.com/questions/76415644/postgresql-wal-log-limiting-rds
 https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-wal-disk-space
-```
-database.hostname: "postgres"
-database.port: "5432"
-database.user: "root"
-database.password: "root"
-database.server.name: "ER54"
-schema.include.list: public
-plugin.name: "pgoutput"
-table.include.list: "public.tm"
-clickhouse.server.url: "clickhouse"
-clickhouse.server.user: "root"
-clickhouse.server.password: "root"
-clickhouse.server.port: "8123"
-clickhouse.server.database: "test"
-database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "initial"
-offset.flush.interval.ms: 5000
-connector.class: "io.debezium.connector.postgresql.PostgresConnector"
-offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
-offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
-offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
-offset.storage.jdbc.user: "root"
-offset.storage.jdbc.password: "root"
-offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
-(
-    `id` String,
-    `offset_key` String,
-    `offset_val` String,
-    `record_insert_ts` DateTime,
-    `record_insert_seq` UInt64,
-    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
-)
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
-SETTINGS index_granularity = 8198"
-offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
-schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
-schema.history.internal.jdbc.user: "root"
-schema.history.internal.jdbc.password: "root"
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
-(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
-enable.snapshot.ddl: "true"
-auto.create.tables: "true"
-database.dbname: "public"
-```
+[PostgreSQL Configuration](sink-connector-lightweight/docker/config_postgres.yml)
 
 ## Command Line(JAR)
 https://github.com/Altinity/clickhouse-sink-connector/releases
@@ -212,14 +128,14 @@ GLOBAL OPTIONS:
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | database.hostname                     | Source Database HostName                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | database.port                         | Source Database Port number                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| database.user                         | Source Database Username(user needs to have replication permission, Refer https://debezium.io/documentation/reference/stable/connectors/mysql.html)                                                                                                          GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'user' IDENTIFIED BY 'password';                                                                                                                                                                                                                                                                      |
+| database.user                         | Source Database Username(user needs to have replication permission, Refer https://debezium.io/documentation/reference/stable/connectors/mysql.html)                                                                                                          GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'user' IDENTIFIED BY 'password';                                                                                                                                                  |
 | database.password                     | Source Database Password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | database.include.list                 | List of databases to be included in replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | table.include.list                    | List of tables to be included in replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| clickhouse.server.url                 | ClickHouse URL, For TLS(use `https` and set port to `8443`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| clickhouse.server.url                 | ClickHouse URL, For TLS(use `https` and set port to `8443`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | clickhouse.server.user                | ClickHouse username                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| clickhouse.server.password                | ClickHouse password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| clickhouse.server.port                | ClickHouse port, For TLS(use the correct port `8443` or `443`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| clickhouse.server.password            | ClickHouse password                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| clickhouse.server.port                | ClickHouse port, For TLS(use the correct port `8443` or `443`                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | clickhouse.server.database            | ClickHouse destination database                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | snapshot.mode                         | "initial" -> Data that already exists in source database will be replicated. "schema_only" -> Replicate data that is added/modified after the connector is started.\<br/> MySQL: https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-property-snapshot-mode \ <br/>PostgreSQL: https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-property-snapshot-mode  <br/> MongoDB: initial, never. https://debezium.io/documentation/reference/stable/connectors/mongodb.html |
 | connector.class                       | MySQL -> "io.debezium.connector.mysql.MySqlConnector" <br/> PostgreSQL -> <br/> Mongo ->   <br/>                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -229,6 +145,10 @@ GLOBAL OPTIONS:
 | disable.ddl                           | **Optional**, Default: false, if DDL execution needs to be disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | enable.ddl.snapshot                   | **Optional**, Default: false, If set to true, the DDL that is passed as part of snapshot process will be executed. Default behavior is DROP/TRUNCATE as part of snapshot is disabled.                                                                                                                                                                                                                                                                                                                                                |
 | database.allowPublicKeyRetrieval      | **Optional**, MySQL specific: true/false                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| auto.create.tables                    | When True, connector will create tables(transformed DDL from source)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| persist.raw.bytes                     | Debezium.BYTES data(usually UUID) is persisted as raw bytes(CH String) if set to true.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| connectionTimeZone                    | Specify MySQL timezone for DATETIME conversions.https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-temporal-types                                                                                                                                                                                                                                                                                                                                                                                        |
+| enable.snapshot.ddl                   | When true, pre-existing DDL statements from source(MySQL) will be executed. Warning: This might run DROP TABLE commands.                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 
 

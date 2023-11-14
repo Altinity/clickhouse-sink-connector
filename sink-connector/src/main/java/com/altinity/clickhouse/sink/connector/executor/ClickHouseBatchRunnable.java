@@ -195,8 +195,9 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         boolean result = false;
 
-        writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
-
+        synchronized (queryToRecordsMap) {
+            writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
+        }
         try {
             Metrics.updateMetrics(bmd);
         } catch(Exception e) {
