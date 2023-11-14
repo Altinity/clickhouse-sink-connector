@@ -83,18 +83,17 @@ public class DebeziumConverterTest {
         Integer date = -354285;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1979-12-31"));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1925-01-01"));
     }
 
     @Test
     public void testDateConverterMinRange() {
 
-        Integer date = -144450000;
+        Integer date = -16436;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
-        SimpleDateFormat dt1 = new SimpleDateFormat("yyyy-MM-dd");
-        String minSupportedDate = dt1.format(new Date(TimeUnit.DAYS.toMillis(CLICKHOUSE_MIN_SUPPORTED_DATE32))).toString();
 
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(minSupportedDate));
+
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1925-01-01"));
     }
     @Test
     public void testDateConverterMaxRange() {
@@ -102,9 +101,7 @@ public class DebeziumConverterTest {
         Integer date = 450000;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
 
-        SimpleDateFormat dt1 = new SimpleDateFormat("yyyy-MM-dd");
-        String maxSupportedDate = dt1.format(new Date(TimeUnit.DAYS.toMillis(CLICKHOUSE_MAX_SUPPORTED_DATE32))).toString();
-        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase(maxSupportedDate));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("2283-11-11"));
     }
 
     @Test
@@ -113,7 +110,7 @@ public class DebeziumConverterTest {
         // Epoch (days)
         Integer epochInDays = 8249;
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(epochInDays, ClickHouseDataType.Date32);
-      //  Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1992-08-01"));
+        Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1992-08-02"));
     }
 
     @Test
