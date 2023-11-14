@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
@@ -107,9 +109,9 @@ public class ClickHouseDataTypeMapper {
      * @throws SQLException
      */
     public static boolean convert(Schema.Type type, String schemaName,
-                                               Object value,
-                                               int index,
-                                               PreparedStatement ps) throws SQLException {
+                                  Object value,
+                                  int index,
+                                  PreparedStatement ps, ClickHouseSinkConnectorConfig config) throws SQLException {
 
         boolean result = true;
 
@@ -208,7 +210,12 @@ public class ClickHouseDataTypeMapper {
                 String hexValue = new String((byte[]) value);
                 ps.setString(index, hexValue);
             } else if (value instanceof java.nio.ByteBuffer) {
-                ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
+                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    //String hexValue = new String((byte[]) value);
+                    ps.setBytes(index, ((ByteBuffer) value).array());
+                } else {
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
+                }
             }
 
         } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
