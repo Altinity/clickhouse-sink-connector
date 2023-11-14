@@ -1,0 +1,31 @@
+name: Sink connector(Kafka version) Docker Build/Push
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up JDK 11
+        uses: actions/setup-java@v2
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build with Maven
+        working-directory: sink-connector
+        run: mvn -B package --file pom.xml
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build the Docker image
+        working-directory: sink-connector
+        run: docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinity/clickhouse-sink-connector:$(date +%F)
+      - name: Push docker image to dockerhub
+        working-directory: sink-connector
+        run: docker push altinity/clickhouse-sink-connector:$(date +%F)

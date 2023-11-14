@@ -354,7 +354,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                                             .append(")").append(",");
                                 } else {
-                                    this.query.append(colDataType).append(",");
+                                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
                                 }
                             }
                         }
@@ -548,6 +548,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitCharSet(MySqlParser.CharSetContext charSetContext) {
+
+    }
+
+    @Override
+    public void enterCurrentUserExpression(MySqlParser.CurrentUserExpressionContext currentUserExpressionContext) {
+
+    }
+
+    @Override
+    public void exitCurrentUserExpression(MySqlParser.CurrentUserExpressionContext currentUserExpressionContext) {
 
     }
 
@@ -831,6 +841,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     }
 
+    @Override
+    public void enterClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+
+    }
+
+    @Override
+    public void exitClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
+
+    }
+
 //    @Override
 //    public void enterClusteringKeyColumnConstraint(MySqlParser.ClusteringKeyColumnConstraintContext clusteringKeyColumnConstraintContext) {
 //
@@ -968,6 +988,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitCheckTableConstraint(MySqlParser.CheckTableConstraintContext checkTableConstraintContext) {
+
+    }
+
+    @Override
+    public void enterClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
+
+    }
+
+    @Override
+    public void exitClusteringKeyTableConstraint(MySqlParser.ClusteringKeyTableConstraintContext clusteringKeyTableConstraintContext) {
 
     }
 
@@ -1378,6 +1408,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitTableOptionUnion(MySqlParser.TableOptionUnionContext tableOptionUnionContext) {
+
+    }
+
+    @Override
+    public void enterTableOptionWithSystemVersioning(MySqlParser.TableOptionWithSystemVersioningContext tableOptionWithSystemVersioningContext) {
+
+    }
+
+    @Override
+    public void exitTableOptionWithSystemVersioning(MySqlParser.TableOptionWithSystemVersioningContext tableOptionWithSystemVersioningContext) {
 
     }
 
@@ -2042,6 +2082,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public void exitAlterByAddCheckTableConstraint(MySqlParser.AlterByAddCheckTableConstraintContext alterByAddCheckTableConstraintContext) {
     }
 
+    @Override
+    public void enterAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+
+    }
+
+    @Override
+    public void exitAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
+
+    }
+
 //    @Override
 //    public void enterAlterByAlterCheckTableConstraint(MySqlParser.AlterByAlterCheckTableConstraintContext alterByAlterCheckTableConstraintContext) {
 //
@@ -2163,6 +2213,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitAlterByRenameIndex(MySqlParser.AlterByRenameIndexContext alterByRenameIndexContext) {
+
+    }
+
+    @Override
+    public void enterAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
+
+    }
+
+    @Override
+    public void exitAlterByAlterColumnDefault(MySqlParser.AlterByAlterColumnDefaultContext alterByAlterColumnDefaultContext) {
 
     }
 
@@ -2453,6 +2513,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitAlterByAddDefinitions(MySqlParser.AlterByAddDefinitionsContext alterByAddDefinitionsContext) {
+
+    }
+
+    @Override
+    public void enterAlterPartition(MySqlParser.AlterPartitionContext alterPartitionContext) {
+
+    }
+
+    @Override
+    public void exitAlterPartition(MySqlParser.AlterPartitionContext alterPartitionContext) {
 
     }
 
@@ -2796,6 +2866,36 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
+    public void enterValuesStatement(MySqlParser.ValuesStatementContext valuesStatementContext) {
+
+    }
+
+    @Override
+    public void exitValuesStatement(MySqlParser.ValuesStatementContext valuesStatementContext) {
+
+    }
+
+    @Override
+    public void enterWithStatement(MySqlParser.WithStatementContext withStatementContext) {
+
+    }
+
+    @Override
+    public void exitWithStatement(MySqlParser.WithStatementContext withStatementContext) {
+
+    }
+
+    @Override
+    public void enterTableStatement(MySqlParser.TableStatementContext tableStatementContext) {
+
+    }
+
+    @Override
+    public void exitTableStatement(MySqlParser.TableStatementContext tableStatementContext) {
+
+    }
+
+    @Override
     public void enterUpdateStatement(MySqlParser.UpdateStatementContext updateStatementContext) {
 
     }
@@ -3072,6 +3172,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitNaturalJoin(MySqlParser.NaturalJoinContext naturalJoinContext) {
+
+    }
+
+    @Override
+    public void enterJoinSpec(MySqlParser.JoinSpecContext joinSpecContext) {
+
+    }
+
+    @Override
+    public void exitJoinSpec(MySqlParser.JoinSpecContext joinSpecContext) {
 
     }
 
@@ -4406,6 +4516,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
+    public void enterRandomAuthOption(MySqlParser.RandomAuthOptionContext randomAuthOptionContext) {
+
+    }
+
+    @Override
+    public void exitRandomAuthOption(MySqlParser.RandomAuthOptionContext randomAuthOptionContext) {
+
+    }
+
+    @Override
     public void enterStringAuthOption(MySqlParser.StringAuthOptionContext stringAuthOptionContext) {
 
     }
@@ -4432,6 +4552,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitSimpleAuthOption(MySqlParser.SimpleAuthOptionContext simpleAuthOptionContext) {
+
+    }
+
+    @Override
+    public void enterAuthOptionClause(MySqlParser.AuthOptionClauseContext authOptionClauseContext) {
+
+    }
+
+    @Override
+    public void exitAuthOptionClause(MySqlParser.AuthOptionClauseContext authOptionClauseContext) {
 
     }
 
@@ -4926,6 +5056,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
+    public void enterShowUserstatPlugin(MySqlParser.ShowUserstatPluginContext showUserstatPluginContext) {
+
+    }
+
+    @Override
+    public void exitShowUserstatPlugin(MySqlParser.ShowUserstatPluginContext showUserstatPluginContext) {
+
+    }
+
+    @Override
     public void enterVariableClause(MySqlParser.VariableClauseContext variableClauseContext) {
 
     }
@@ -5276,6 +5416,26 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
+    public void enterSimpleUserName(MySqlParser.SimpleUserNameContext simpleUserNameContext) {
+
+    }
+
+    @Override
+    public void exitSimpleUserName(MySqlParser.SimpleUserNameContext simpleUserNameContext) {
+
+    }
+
+    @Override
+    public void enterHostName(MySqlParser.HostNameContext hostNameContext) {
+
+    }
+
+    @Override
+    public void exitHostName(MySqlParser.HostNameContext hostNameContext) {
+
+    }
+
+    @Override
     public void enterUserName(MySqlParser.UserNameContext userNameContext) {
 
     }
@@ -5322,6 +5482,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitEngineName(MySqlParser.EngineNameContext engineNameContext) {
+
+    }
+
+    @Override
+    public void enterEngineNameBase(MySqlParser.EngineNameBaseContext engineNameBaseContext) {
+
+    }
+
+    @Override
+    public void exitEngineNameBase(MySqlParser.EngineNameBaseContext engineNameBaseContext) {
 
     }
 
@@ -5562,6 +5732,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitLongVarbinaryDataType(MySqlParser.LongVarbinaryDataTypeContext longVarbinaryDataTypeContext) {
+
+    }
+
+    @Override
+    public void enterUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
+
+    }
+
+    @Override
+    public void exitUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
 
     }
 
@@ -5872,6 +6052,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitSimpleFunctionCall(MySqlParser.SimpleFunctionCallContext simpleFunctionCallContext) {
+
+    }
+
+    @Override
+    public void enterCurrentUser(MySqlParser.CurrentUserContext currentUserContext) {
+
+    }
+
+    @Override
+    public void exitCurrentUser(MySqlParser.CurrentUserContext currentUserContext) {
 
     }
 
@@ -6342,6 +6532,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
     @Override
     public void exitCollateExpressionAtom(MySqlParser.CollateExpressionAtomContext collateExpressionAtomContext) {
+
+    }
+
+    @Override
+    public void enterVariableAssignExpressionAtom(MySqlParser.VariableAssignExpressionAtomContext variableAssignExpressionAtomContext) {
+
+    }
+
+    @Override
+    public void exitVariableAssignExpressionAtom(MySqlParser.VariableAssignExpressionAtomContext variableAssignExpressionAtomContext) {
 
     }
 

@@ -7,7 +7,7 @@ import logging
 
 
 class CreateTableMySQLParserListener(MySqlParserListener):
-    def __init__(self, rmt_delete_support, partition_options):
+    def __init__(self, rmt_delete_support, partition_options, datetime_timezone=None):
       self.buffer = ""
       self.columns = ""
       self.primary_key = ""
@@ -16,7 +16,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
       self.rename_list = []
       self.rmt_delete_support = rmt_delete_support
       self.partition_options = partition_options
-
+      self.datatime_timezone = datetime_timezone
 
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
@@ -24,6 +24,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         start, stop = ctx.start.start, ctx.stop.stop
         return input_stream.getText(start, stop)
 
+    def add_timezone(self, dataTypeText):
+        if self.datatime_timezone is not None:
+            dataTypeText = dataTypeText[:-1]+",'"+self.datatime_timezone+"')"
+        return dataTypeText
 
     def convertDataType(self, dataType):
         dataTypeText = self.extract_original_text(dataType)
@@ -36,8 +40,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         if isinstance(dataType, MySqlParser.DimensionDataTypeContext):
           if dataType.DATETIME() or dataType.TIMESTAMP():
             dataTypeText = 'DateTime64(0)'
+            dataTypeText = self.add_timezone(dataTypeText)
             if dataType.lengthOneDimension():
               dataTypeText = 'DateTime64'+dataType.lengthOneDimension().getText()
+              dataTypeText = self.add_timezone(dataTypeText)
           elif dataType.TIME():
                dataTypeText = "String"
  
@@ -57,6 +63,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         # data type modifier (NULL / NOT NULL / PRIMARY KEY)
         notNull = False
         notSymbol = True
+        nullable = True
         for child in columnDefinition.getChildren():
             if child.getRuleIndex() == MySqlParser.RULE_columnConstraint:
               
@@ -65,19 +72,28 @@ class CreateTableMySQLParserListener(MySqlParserListener):
                 if nullNotNull:
                   text = self.extract_original_text(child)
                   column_buffer += " " + text
+                  if "NULL" == text:
+                     nullable = True
+                     notNull = True
+                     continue 
+
                   if nullNotNull.NOT():
                     notSymbol = True
-                  if nullNotNull.NULL_LITERAL() and notSymbol:
+                  if (nullNotNull.NULL_LITERAL() or nullNotNull.NULL_SPEC_LITERAL()) and notSymbol:
                     notNull = True
-                    
+                    nullable = False
+                  else:
+                    notNull = False 
+                    nullable = True 
 
               if isinstance(child, MySqlParser.PrimaryKeyColumnConstraintContext) and child.PRIMARY():
                 self.primary_key = column_name
         # column without nullable info are default nullable in MySQL, while they are not null in ClickHouse
         if not notNull:
             column_buffer += " NULL"
+            nullable = True
 
-        return (column_buffer, dataType, not notNull)
+        return (column_buffer, dataType, nullable)
 
 
     def exitColumnDeclaration(self, ctx):
@@ -90,6 +106,8 @@ class CreateTableMySQLParserListener(MySqlParserListener):
 
         # columns have an identifier and a column definition
         columnDefinition = ctx.columnDefinition()
+        dataType = columnDefinition.dataType()
+        originalDataTypeText = self.extract_original_text(dataType)
 
         (columnDefinition_buffer, dataType, nullable) = self.translateColumnDefinition(column_name, columnDefinition)
 
@@ -97,7 +115,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
 
         self.columns.append(column_buffer)
         dataTypeText = self.convertDataType(dataType) 
-        columnMap = {'column_name': column_name, 'datatype': dataTypeText, 'nullable': nullable}
+        columnMap = {'column_name': column_name, 'datatype': dataTypeText, 'nullable': nullable, 'mysql_datatype':originalDataTypeText}
         logging.info(str(columnMap))
         self.columns_map.append(columnMap)
     

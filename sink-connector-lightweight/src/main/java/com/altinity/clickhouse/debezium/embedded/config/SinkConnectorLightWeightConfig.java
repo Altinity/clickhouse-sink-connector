@@ -9,6 +9,8 @@ public class SinkConnectorLightWeightConfig {
     // By default DDL is true, this flag is used to disable ddl.
     public static final String DISABLE_DDL = "disable.ddl";
 
+    public static final String DISABLE_DROP_TRUNCATE = "disable.drop.truncate";
+
 
     // Enable execution of snapshot ddl.
     public static final String ENABLE_SNAPSHOT_DDL = "enable.snapshot.ddl";

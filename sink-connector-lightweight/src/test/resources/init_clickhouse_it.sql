@@ -1,8 +1,9 @@
 --CREATE USER 'ch_user' IDENTIFIED WITH plaintext_password BY 'root';
 --SET allow_introspection_functions=1;
 --GRANT ALL ON . TO 'ch_user' WITH GRANT OPTION
-
-
+--
+--
+-- CREATE USER ch_user IDENTIFIED WITH plaintext_password BY 'password';
 CREATE database datatypes;
 CREATE database employees;
 CREATE database public;
@@ -47,3 +48,13 @@ CREATE TABLE altinity_sink_connector.replica_source_info
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8198;
+
+USE employees;
+CREATE TABLE employees.dt
+(
+`timestamp` DateTime('Asia/Istanbul'),
+`json` String,
+`event_id` UInt8,
+`sign` Int8
+)
+ENGINE = MergeTree() ORDER by event_id;

@@ -385,6 +385,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If true, the bytes value is not converted to a String value, its written as raw Bytes",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())
                 // ToDo: Add JVM Proxy
                 ;
     }
