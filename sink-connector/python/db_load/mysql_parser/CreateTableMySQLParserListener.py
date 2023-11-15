@@ -7,7 +7,7 @@ import logging
 
 
 class CreateTableMySQLParserListener(MySqlParserListener):
-    def __init__(self, rmt_delete_support, partition_options):
+    def __init__(self, rmt_delete_support, partition_options, datetime_timezone=None):
       self.buffer = ""
       self.columns = ""
       self.primary_key = ""
@@ -16,7 +16,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
       self.rename_list = []
       self.rmt_delete_support = rmt_delete_support
       self.partition_options = partition_options
-
+      self.datatime_timezone = datetime_timezone
 
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
@@ -24,6 +24,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         start, stop = ctx.start.start, ctx.stop.stop
         return input_stream.getText(start, stop)
 
+    def add_timezone(self, dataTypeText):
+        if self.datatime_timezone is not None:
+            dataTypeText = dataTypeText[:-1]+",'"+self.datatime_timezone+"')"
+        return dataTypeText
 
     def convertDataType(self, dataType):
         dataTypeText = self.extract_original_text(dataType)
@@ -36,8 +40,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         if isinstance(dataType, MySqlParser.DimensionDataTypeContext):
           if dataType.DATETIME() or dataType.TIMESTAMP():
             dataTypeText = 'DateTime64(0)'
+            dataTypeText = self.add_timezone(dataTypeText)
             if dataType.lengthOneDimension():
               dataTypeText = 'DateTime64'+dataType.lengthOneDimension().getText()
+              dataTypeText = self.add_timezone(dataTypeText)
           elif dataType.TIME():
                dataTypeText = "String"
  
