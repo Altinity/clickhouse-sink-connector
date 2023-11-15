@@ -38,8 +38,9 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -59,7 +60,7 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchRunnable runnable;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private final ConcurrentHashMap<String, Queue<ClickHouseStruct>> records = new ConcurrentHashMap<>();
 
 
     private BaseDbWriter writer = null;
@@ -198,14 +199,8 @@ public class DebeziumChangeEventCapture {
                 } catch(Exception e) {
                     log.error("Error retrieving status metrics");
                 }
-                ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
                 if (chStruct != null) {
-                    queue.add(chStruct);
-                }
-                synchronized (this.records) {
-                    if (chStruct != null) {
-                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
-                    }
+                    addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
                 }
             }
 
@@ -562,17 +557,22 @@ public class DebeziumChangeEventCapture {
      * @param topicName
      * @param chs
      */
-    private void addRecordsToSharedBuffer(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs;
+    private void addRecordsToSharedBuffer(String topicName, ClickHouseStruct chs) throws InterruptedException {
+        Queue<ClickHouseStruct> structs;
 
         if (this.records.containsKey(topicName)) {
             structs = this.records.get(topicName);
         } else {
-            structs = new ConcurrentLinkedQueue<>();
+            structs = new LinkedBlockingQueue<>(200_000);
+            this.records.putIfAbsent(topicName, structs);
         }
-        structs.add(chs);
-        synchronized (this.records) {
-            this.records.put(topicName, structs);
+        while (true) {
+            try {
+                structs.add(chs);
+                break;
+            } catch (IllegalStateException e) {
+                Thread.sleep(50);
+            }
         }
     }
 

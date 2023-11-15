@@ -15,11 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * Runnable object that will be called on
@@ -28,7 +25,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseBatchRunnable implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private final ConcurrentHashMap<String, Queue<ClickHouseStruct>> records;
 
     private final ClickHouseSinkConnectorConfig config;
 
@@ -44,11 +41,9 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
     // Map of topic name to buffered records.
-    Map<String, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> topicToRecordsMap;
-
     private DBCredentials dbCredentials;
 
-    public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records,
+    public ClickHouseBatchRunnable(ConcurrentHashMap<String, Queue<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
         this.records = records;
@@ -61,7 +56,6 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
-        this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
 
@@ -96,14 +90,44 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
 
             // Topic Name -> List of records
-            for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
-                if (entry.getValue().size() > 0) {
-                    processRecordsByTopic(entry.getKey(), entry.getValue());
+            for (Map.Entry<String, Queue<ClickHouseStruct>> entry : this.records.entrySet()) {
+                Queue<ClickHouseStruct> queue = entry.getValue();
+                while (!queue.isEmpty()) {
+                    Queue<ClickHouseStruct> buffer = this.moveRecordsToSeparateBuffer(entry.getValue());
+                    processRecordsByTopic(entry.getKey(), buffer);
                 }
             }
         } catch(Exception e) {
             log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
         }
+    }
+
+    private Queue<ClickHouseStruct> moveRecordsToSeparateBuffer(Queue<ClickHouseStruct> from) throws InterruptedException {
+        long timeMillis = System.currentTimeMillis();
+        Iterator<ClickHouseStruct> iterator = from.iterator();
+        int bufferSize = 100_000;
+        ArrayDeque<ClickHouseStruct> buffer = new ArrayDeque<>(bufferSize);
+        while (System.currentTimeMillis() - timeMillis < 5000) {
+            if (!iterator.hasNext()) {
+                break;
+            }
+            int counter = 0;
+            while (iterator.hasNext() && buffer.size() < bufferSize) {
+                buffer.add(iterator.next());
+                iterator.remove();
+                ++counter;
+            }
+            if (buffer.size() == bufferSize) {
+                break;
+            }
+            if (counter < 1000) {  //probably fetching data from binlog by now (or small or really wide table)
+                break;
+            }
+            Thread.sleep(50);
+        }
+        log.info(String.format("Built new batch for processing in %d msec", System.currentTimeMillis() - timeMillis));
+
+        return buffer;
     }
 
     /**
@@ -141,7 +165,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param topicName
      * @param records
      */
-    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<ClickHouseStruct> records) throws SQLException {
+    private void processRecordsByTopic(String topicName, Queue<ClickHouseStruct> records) throws SQLException {
 
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
@@ -154,22 +178,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Step 1: The Batch Insert with preparedStatement in JDBC
         // works by forming the Query and then adding records to the Batch.
         // This step creates a Map of Query -> Records(List of ClickHouseStruct)
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap;
-
-        if(topicToRecordsMap.containsKey(topicName)) {
-            queryToRecordsMap = topicToRecordsMap.get(topicName);
-        } else {
-            queryToRecordsMap = new HashMap<>();
-            topicToRecordsMap.put(topicName, queryToRecordsMap);
-        }
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
         Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
         BlockMetaData bmd = new BlockMetaData();
 
-        if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd)) {
-            // Remove the entry.
-            queryToRecordsMap.remove(topicName);
-        }
+        flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd);
 
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");

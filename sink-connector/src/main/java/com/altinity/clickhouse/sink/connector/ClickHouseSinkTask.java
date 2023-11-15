@@ -18,8 +18,9 @@ import org.slf4j.LoggerFactory;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -39,7 +40,7 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchExecutor executor;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private ConcurrentHashMap<String, Queue<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
@@ -115,16 +116,25 @@ public class ClickHouseSinkTask extends SinkTask {
     }
 
     private void appendToRecords(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs;
+        Queue<ClickHouseStruct> structs;
 
-        if(this.records.containsKey(topicName)) {
+        if (this.records.containsKey(topicName)) {
             structs = this.records.get(topicName);
         } else {
-            structs = new ConcurrentLinkedQueue<>();
+            structs = new LinkedBlockingQueue<>(200_000);
+            this.records.putIfAbsent(topicName, structs);
         }
-        structs.add(chs);
-        synchronized (this.records) {
-            this.records.put(topicName, structs);
+        while (true) {
+            try {
+                structs.add(chs);
+                break;
+            } catch (IllegalStateException e) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException ignored) {
+
+                }
+            }
         }
     }
 

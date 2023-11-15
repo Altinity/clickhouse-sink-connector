@@ -13,13 +13,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class ClickHouseBatchRunnableTest {
 
 
-    ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>
+    ConcurrentHashMap<String, Queue<ClickHouseStruct>>
             records = new ConcurrentHashMap<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
