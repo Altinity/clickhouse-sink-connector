@@ -11,6 +11,8 @@ import org.slf4j.LoggerFactory;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.ZoneId;
+import java.util.TimeZone;
 
 public class DBMetadata {
 
@@ -253,6 +255,22 @@ public class DBMetadata {
 
         if (currentVersion.compareTo(supportedVersion) < 0) {
             result = false;
+        }
+
+        return result;
+    }
+
+
+    /**
+     * Function to get the ClickHouse server timezone(Defaults to UTC)
+     */
+    public ZoneId getServerTimeZone(ClickHouseConnection conn) {
+        ZoneId result = ZoneId.of("UTC");
+        if(conn != null) {
+            TimeZone serverTimeZone = conn.getServerTimeZone();
+            if(serverTimeZone != null) {
+                result = serverTimeZone.toZoneId();
+            }
         }
 
         return result;

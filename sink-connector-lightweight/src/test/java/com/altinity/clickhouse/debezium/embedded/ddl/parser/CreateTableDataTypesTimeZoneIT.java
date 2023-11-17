@@ -81,10 +81,6 @@ public class CreateTableDataTypesTimeZoneIT {
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 
-        ResultSet clickHouseTimeZone = writer.executeQueryWithResultSet("select timezone()");
-        while(clickHouseTimeZone.next()) {
-            clickHouseTimeZone.getString(1).equalsIgnoreCase("America/Chicago");
-        }
         Map<String, String> decimalTable = writer.getColumnsDataTypesForTable("numeric_types_DECIMAL_65_30");
         Map<String, String> dateTimeTable = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
         Map<String, String> timestampTable = writer.getColumnsDataTypesForTable("temporal_types_TIMESTAMP6");
