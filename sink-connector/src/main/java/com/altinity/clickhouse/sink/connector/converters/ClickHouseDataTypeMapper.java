@@ -19,6 +19,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -112,7 +113,7 @@ public class ClickHouseDataTypeMapper {
                                   Object value,
                                   int index,
                                   PreparedStatement ps, ClickHouseSinkConnectorConfig config,
-                                  ClickHouseDataType clickHouseDataType) throws SQLException {
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone) throws SQLException {
 
         boolean result = true;
 
@@ -157,7 +158,7 @@ public class ClickHouseDataTypeMapper {
         if (type == Schema.Type.STRING) {
             if (schemaName != null && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
                 // MySQL(Timestamp) -> String, name(ZonedTimestamp) -> Clickhouse(DateTime)
-                ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value));
+                ps.setString(index, DebeziumConverter.ZonedTimestampConverter.convert(value, serverTimeZone));
 
             } else if(schemaName != null && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON, it should be written, String otherwise

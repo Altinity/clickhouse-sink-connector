@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -524,6 +525,7 @@ public class DbWriter extends BaseDbWriter {
     public void insertPreparedStatement(Map<String, Integer> columnNameToIndexMap, PreparedStatement ps, List<Field> fields,
                                         ClickHouseStruct record, Struct struct, boolean beforeSection) throws Exception {
 
+        ZoneId serverTimeZone = this.getServerTimeZone();
        // int index = 1;
         // Use this map's key natural ordering as the source of truth.
         for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
@@ -591,7 +593,7 @@ public class DbWriter extends BaseDbWriter {
             } catch(Exception e) {
                 log.debug("Unknown data type ", chDataType);
             }
-            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, this.config, chDataType)) {
+            if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, this.config, chDataType, serverTimeZone)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }

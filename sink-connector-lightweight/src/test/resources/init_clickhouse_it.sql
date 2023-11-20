@@ -55,6 +55,8 @@ CREATE TABLE employees.dt
 `timestamp` DateTime('Asia/Istanbul'),
 `json` String,
 `event_id` UInt8,
-`sign` Int8
+`sign` Int8,
+`_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9)),
+`_updated` DateTime MATERIALIZED now()
 )
-ENGINE = MergeTree() ORDER by event_id;
+ENGINE = ReplacingMergeTree(_version) ORDER by event_id;

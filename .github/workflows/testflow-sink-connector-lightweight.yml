@@ -16,7 +16,8 @@ on:
 env:
 #  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
 #  SINK_CONNECTOR_VERSION: "2023-08-11"
-  SINK_CONNECTOR_VERSION: "latest"
+  # If inputs.sink_version is defined, then use the sink_version, else use $(date + %F)
+  SINK_CONNECTOR_VERSION: $(date +%F)
 
 jobs:
   testflows_lightweight:

@@ -11,11 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
@@ -144,7 +140,7 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value) {
+        public static String convert(Object value, ZoneId serverTimezone) {
 
 //            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
 //            DateTimeFormatter bqZonedTimestampFormat =
@@ -156,26 +152,46 @@ public class DebeziumConverter {
 //            return bqZonedTimestampFormat.format(parsedTime);
 
             String result = "";
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
+                    .withZone(serverTimezone);
 
             // The order of this array matters,
             // for example you might truncate microseconds
             // to milliseconds(3) if .SSS is above .SSSSSS
             String[] date_formats = {
-                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'"
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SXXX",
+                    "yyyy-MM-dd'T'HH:mm:ssXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SZ",
+                    "yyyy-MM-dd'T'HH:mm:ssZ",
+                    "yyyy-MM-dd'T'HH:mm:ss"
             };
 
             boolean parsingSuccesful = false;
             for (String formatString : date_formats) {
                 try {
-                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
-                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString).withZone(serverTimezone);
+                    ZonedDateTime zd = ZonedDateTime.parse((String) value, formatter.withZone(serverTimezone));
+
+                    long dateTimeInMs = zd.toInstant().toEpochMilli();
+                    if(dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX) {
+                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX), serverTimezone);
+                    } else if(dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN) {
+                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN), serverTimezone);
+                    }
+                    //long v = ClickHouseChecker.between(ClickHouseValues.UTC_ZONE.equals(this.zoneId) ? dt.toEpochSecond(ZoneOffset.UTC) : dt.atZone(this.zoneId).toEpochSecond(), "DateTime", BinaryStreamUtils.DATETIME64_MIN, BinaryStreamUtils.DATETIME64_MAX);
+
                     result = zd.format(destFormatter);
                     //result = removeTrailingZeros(result);
                     parsingSuccesful = true;
