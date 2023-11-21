@@ -14,6 +14,8 @@ import java.sql.Timestamp;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Calendar;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
 public class DebeziumConverter {
@@ -44,39 +46,58 @@ public class DebeziumConverter {
     }
 
     public static class MicroTimestampConverter {
-
+        // DATETIME(4), DATETIME(5), DATETIME(6)
+        // Represents the number of microseconds past the epoch and does not include time zone information.
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static Timestamp convert(Object value) {
+        public static String convert(Object value, ZoneId serverTimezone) {
             Long microTimestamp = (Long) value;
 
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
-            Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS);
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, true);
+            Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS).atZone(serverTimezone).toInstant();
+            long result = receivedDT.atZone(serverTimezone).toEpochSecond();
 
-            return Timestamp.from(modifiedDT);
+            if(result < BinaryStreamUtils.DATETIME64_MIN) {
+                //return Timestamp.from(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN));
+                return Timestamp.valueOf(LocalDateTime.of(LocalDate.of(1925, 1, 2), LocalTime.MIN)).toString();
+
+            } else if(result > BinaryStreamUtils.DATETIME64_MAX) {
+                //return Timestamp.from(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX));
+                return Timestamp.valueOf(LocalDateTime.of(LocalDate.of(2283, 11, 10), LocalTime.MAX)).toString();
+
+            }
+            System.out.println("MICROTIMESTAMP result" + result);
+            System.out.println("TIMESTAMP result" + Timestamp.from(receivedDT).toString());
+            return Timestamp.from(receivedDT).toString();
+            //return Timestamp.from(Instant.ofEpochSecond(result));
         }
     }
 
     public static class TimestampConverter {
 
         /**
-         * Function to convert Debezium Timestamp fields to DATETIME(0), DATETIME(1), DATETIME(2)
+         * Function to convert Debezium Timestamp fields to DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
+         * Input represents number of milliseconds from Epoch and does not include timezone information.
          * Timestamp does not have microseconds
          * ISO formatted String.
          * @param value
          * @return
          */
-        public static Long convert(Object value, boolean isDateTime64) {
-            Instant providedDT = Instant.ofEpochMilli((long) value);
+        public static String convert(Object value, boolean isDateTime64, ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+            // Input is a long.
+            Instant i = Instant.ofEpochMilli((long) value);
+            LocalDateTime dt = LocalDateTime.ofInstant(i,serverTimezone);
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(providedDT, isDateTime64);
-
-            return modifiedDT.toEpochMilli();
+//            if(result < BinaryStreamUtils.DATETIME64_MIN) {
+//                return BinaryStreamUtils.DATETIME64_MIN;
+//            } else if(result > BinaryStreamUtils.DATETIME64_MAX) {
+//                return BinaryStreamUtils.DATETIME64_MAX;
+//            }
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, isDateTime64);
+            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
-
-
     }
 
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, boolean isDateTime64) {

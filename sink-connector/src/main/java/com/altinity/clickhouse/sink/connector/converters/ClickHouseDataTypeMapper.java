@@ -7,8 +7,10 @@ import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
 import io.debezium.data.Enum;
+import io.debezium.data.EnumSet;
 import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
+import io.debezium.time.Date;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
@@ -20,9 +22,7 @@ import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Function that maps the debezium/kafka connect
@@ -190,14 +190,16 @@ public class ClickHouseDataTypeMapper {
             if (isFieldDateTime) {
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // Handle microtimestamp first
-                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value));
+                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone));
+//                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone),
+//                            Calendar.getInstance(TimeZone.getTimeZone(serverTimeZone)));
                 }
                 else if (value instanceof Long) {
                     boolean isColumnDateTime64 = false;
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    ps.setLong(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64));
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64, serverTimeZone));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
