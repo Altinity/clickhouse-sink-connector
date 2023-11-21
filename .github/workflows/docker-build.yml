@@ -1,5 +1,8 @@
 name: Sink connector(Kafka version) Docker Build/Push
 
+env:
+  IMAGE_TAG: altinity/clickhouse-sink-connector:$(date +%F)
+
 on:
   pull_request:
     branches: [ main ]
@@ -25,7 +28,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build the Docker image
         working-directory: sink-connector
-        run: docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinity/clickhouse-sink-connector:$(date +%F)
+        run: docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag ${{ env.IMAGE_TAG }}
       - name: Push docker image to dockerhub
         working-directory: sink-connector
-        run: docker push altinity/clickhouse-sink-connector:$(date +%F)
+        run: docker push ${{ env.IMAGE_TAG }}
