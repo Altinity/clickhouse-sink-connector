@@ -1,4 +1,4 @@
-name: Sink Connector(Kafka version) tests
+name: Kafka - Java tests
 
 on:
   push:

@@ -1,0 +1,27 @@
+name: Kafka Sink Connector - Pull Request Pipeline
+
+on:
+  pull_request:
+    types:
+      - synchronize
+      - reopened
+      - opened
+    branches:
+      - '**'
+  push:
+    branches:
+      - '**'
+
+jobs:
+  Build:
+    uses: ./.github/workflows/docker-build.yml
+
+  TestFlowsTest:
+    needs: [Build]
+    uses: ./.github/workflows/testflow-sink-connector-kafka-tests.yml
+    with:
+      sink_version: ${{ github.event.number }}-$GITHUB_SHA-kafka
+
+  JavaTest:
+    needs: [Build]
+    uses: ./.github/workflows/sink-connector-kafka-tests.yml
