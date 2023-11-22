@@ -64,6 +64,9 @@ public class QueryFormatter {
             // Get Field Name and lookup in the Clickhouse column to datatype map.
             String dataType = ClickHouseUtils.escape(columnNameToDataTypeMap.get(entry.getKey()), '\'');
 
+            if(dataType.contains("DateTime")) {
+                dataType = "String";
+            }
             if(dataType != null) {
                 // Is the column a kafka metadata column.
                 if(isKafkaMetaDataColumn(sourceColumnName)) {

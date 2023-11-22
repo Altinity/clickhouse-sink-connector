@@ -17,7 +17,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,7 +34,7 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
             .asCompatibleSubstituteFor("clickhouse"))
-            .withInitScript("init_clickhouse_it.sql")
+            .withInitScript("init_clickhouse_schema_only.sql")
             .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
             .withUsername("ch_user")
             .withPassword("password")
@@ -74,14 +77,21 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         });
 
         Thread.sleep(30000);
+        Connection conn = connectToMySQL();
+        // alter table ship_class change column class_name class_name_new int;
+        // alter table ship_class change column tonange tonange_new decimal(10,10);
 
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME1` VALUES ('DATETIME(1)-INSERT','1000-01-01 00:00:00.0','2022-09-29 01:48:25.1','9999-12-31 23:59:59.9','9999-12-31 23:59:59');").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME2` VALUES ('DATETIME(2)-INSERT','1000-01-01 00:00:00.00','2022-09-29 01:49:05.12','9999-12-31 23:59:59.99','9999-12-31 23:59:59');\n").execute();
+        //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 
 
         writer.getConnection().close();
-        //Thread.sleep(10000);
+        Thread.sleep(10000);
 
          writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
@@ -211,6 +221,7 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         defaultProps.setProperty("snapshot.mode", "schema_only");
         defaultProps.setProperty("disable.drop.truncate", "true");
         defaultProps.setProperty("auto.create.tables", "false");
+        defaultProps.setProperty("enable.snapshot.ddl", "false");
 
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
@@ -239,4 +250,22 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         return defaultProps;
 
     }
+
+    Connection connectToMySQL() {
+        Connection conn = null;
+        try {
+
+            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
+                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
+            conn = DriverManager.getConnection(connectionUrl);
+
+
+        } catch (SQLException ex) {
+            // handle any errors
+
+        }
+
+        return conn;
+    }
+
 }
