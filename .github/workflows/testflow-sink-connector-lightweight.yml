@@ -1,22 +1,16 @@
-name: TestFlows Tests - Sink Connector(Light-weight)
+name: Lightweight - TestFlows Tests 
 
-on:
-  push:
-    branches: [ main, develop]
-  pull_request:
-    branches: [ main , develop]
+on:    
   workflow_dispatch:
     inputs:
       sink_version:
-        description: "sink connector version"
+        description: "Lightweight version"
         required: true
         type: string
-        default: 2023-11-16
+        default: latest
 
 env:
-#  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
-#  SINK_CONNECTOR_VERSION: "2023-08-11"
-  SINK_CONNECTOR_VERSION: "latest"
+  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
 
 jobs:
   testflows_lightweight:
