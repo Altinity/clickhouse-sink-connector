@@ -1,10 +1,7 @@
-name: Sink Connector(Light-weight) Tests
+name: Lightweight - Java Tests
 
 on:
-  push:
-    branches: [ main, develop]
-  pull_request:
-    branches: [ main , develop]
+  workflow_dispatch:
 
 jobs:
   build:
