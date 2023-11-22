@@ -18,7 +18,7 @@ jobs:
 
   TestFlowsTest:
     needs: [Build]
-    uses: ./.github/workflows/testflow-sink-connector-kafka-tests.yml
+    uses: ./.github/workflows/testflows-sink-connector-kafka-tests.yml
     with:
       sink_version: ${{ github.event.number }}-$GITHUB_SHA-kafka
 
