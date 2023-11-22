@@ -1,22 +1,16 @@
-name: TestFlows Tests - Sink connector(Kafka)
+name: Kafka - TestFlows Tests
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       sink_version:
-        description: "sink connector version"
+        description: "Kafka version"
         required: true
         type: string
-        default: "2023-10-30Update "
+        default: "latest"
 
 env:
-#  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
-#  SINK_CONNECTOR_VERSION: "2023-08-28"
-  SINK_CONNECTOR_VERSION: "latest"
+  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
 
 jobs:
   testflows:
