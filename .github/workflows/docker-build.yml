@@ -1,7 +1,7 @@
-name: Sink connector(Kafka version) Docker Build/Push
+name: Kafka - Build
 
 on: 
-  workflow_dispatch:
+  workflow_call:
 
 env:
   IMAGE_TAG: ${{ github.event.number }}-$GITHUB_SHA-kafka

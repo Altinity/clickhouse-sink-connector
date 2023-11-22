@@ -1,7 +1,7 @@
 name: Lightweight - TestFlows Tests 
 
 on:    
-  workflow_dispatch:
+  workflow_call:
     inputs:
       sink_version:
         description: "Lightweight version"

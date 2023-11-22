@@ -1,7 +1,7 @@
 name: Kafka - Java tests
 
 on: 
-  workflow_dispatch:
+  workflow_call:
 
 jobs:
   build:

@@ -13,15 +13,15 @@ on:
       - '**'
 
 jobs:
-  Build:
+  build-kafka:
     uses: ./.github/workflows/docker-build.yml
 
-  TestFlowsTest:
-    needs: [Build]
+  testflows-kafka:
+    needs: [build-kafka]
     uses: ./.github/workflows/testflows-sink-connector-kafka-tests.yml
     with:
       sink_version: ${{ github.event.number }}-$GITHUB_SHA-kafka
 
-  JavaTest:
-    needs: [Build]
+  java-test-kafka:
+    needs: [build-kafka]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml
