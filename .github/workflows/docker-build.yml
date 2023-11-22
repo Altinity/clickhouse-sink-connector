@@ -25,6 +25,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
         if: ${{ env.username != '' }}
       - name: Build the Docker image
+        env:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+        if: ${{ env.username != '' }}
         working-directory: sink-connector
         run: docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinity/clickhouse-sink-connector:$(date +%F)
       - name: Push docker image to dockerhub
