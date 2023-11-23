@@ -19,6 +19,6 @@ jobs:
     with:
       sink_version: ${{ github.event.number }}-${{ github.sha }}-kafka
 
-  java-test-kafka:
+  java-tests-kafka:
     needs: [build-kafka]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml
