@@ -21,6 +21,7 @@ jobs:
         id: pr_num
 
       - name: Setup env
+        working-directory: sink-connector
         run: |
           echo "IMAGE_TAG=${{ steps.pr_num.outputs.number }}-$GITHUB_SHA-kafka" >> "$GITHUB_ENV"
           echo "PROJECT_VERSION=$(mvn -q -Dexec.executable=echo -Dexec.args='${project.version}' --non-recursive exec:exec)" >> "$GITHUB_ENV"
