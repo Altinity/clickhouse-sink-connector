@@ -23,6 +23,7 @@ jobs:
       - name: Setup env
         working-directory: sink-connector
         run: |
+          echo ${{ github.event.number }}
           echo "IMAGE_TAG=${{ steps.pr_num.outputs.number }}-$GITHUB_SHA-kafka" >> "$GITHUB_ENV"
           echo "PROJECT_VERSION=$(mvn -q -Dexec.executable=echo -Dexec.args='${project.version}' --non-recursive exec:exec)" >> "$GITHUB_ENV"
 
@@ -50,10 +51,10 @@ jobs:
         working-directory: sink-connector
         run: |
           docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag clickhouse-sink-connector:${{ env.IMAGE_TAG }}
-          docker save clickhouse-sink-connector:${{ env.IMAGE_TAG }} > clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar
+          docker save clickhouse-sink-connector:${{ env.IMAGE_TAG }}| gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar.gz
 
       - name: Upload Docker tar
         uses: actions/upload-artifact@v3
         with:
-          name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar
-          path: sink-connector/clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar
+          name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar.gz
+          path: sink-connector/clickhouse-sink-connector_${{ env.IMAGE_TAG }}.tar.gz

@@ -21,11 +21,11 @@ jobs:
 
       - uses: actions/download-artifact@v3
         with:
-          name: clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar
+          name: clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar.gz
 
       - name: Load Docker image
         run: |
-          docker load  < clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar
+          docker load  < clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar.gz
           docker image ls
 
       - name: Runner ssh command
