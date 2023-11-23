@@ -32,30 +32,10 @@ public class DebeziumConverterTest {
     }
 
     @Test
-    public void testMicroTimestampConverter() {
-
-
-        // With microseconds
-//        String resultWMicroSeconds = DebeziumConverter.MicroTimestampConverter.convert(1665076675000000L);
-//       // Assert.assertTrue(resultWMicroSeconds == 1665076675000L);
-//
-//        // With milliseconds
-//        String resultWMilliSeconds = DebeziumConverter.MicroTimestampConverter.convert(1665076675000L);
-        //Assert.assertTrue(resultWMilliSeconds == 1665076675L);
-
-//
-//        Timestamp result = DebeziumConverter.MicroTimestampConverter.convert(1664416228000000L, ZoneId.of("UTC"));
-//        System.out.println("");
-//
-//        Timestamp result2 = DebeziumConverter.MicroTimestampConverter.convert(253402300799999990L, ZoneId.of("UTC"));
-//        System.out.println("");
-    }
-
-    @Test
     public void testTimestampConverter() {
 
         Object timestampEpoch = 1640995260000L;
-        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false, ZoneId.of("UTC")));
+        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC")));
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1640995260000"));
     }
@@ -64,7 +44,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMinRange() {
 
         Object timestampEpoch = -2166681362000L;
-        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false, ZoneId.of("UTC")));
+        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC")));
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("-1420070400000"));
     }
@@ -73,7 +53,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMaxRange() {
 
         Object timestampEpoch = 4807440238000L;
-        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, false, ZoneId.of("UTC")));
+        String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC")));
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("4807440238000"));
     }
@@ -130,7 +110,7 @@ public class DebeziumConverterTest {
 
     @Test
     public void testCheckIfDateTimeExceedsSupportedRange() {
-        DebeziumConverter.TimestampConverter.convert(1665076675000L, false, ZoneId.of("UTC"));
+        DebeziumConverter.TimestampConverter.convert(1665076675000L, ClickHouseDataType.DateTime64, ZoneId.of("UTC"));
     }
 
 

@@ -84,28 +84,30 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value, boolean isDateTime64, ZoneId serverTimezone) {
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             // Input is a long.
             Instant i = Instant.ofEpochMilli((long) value);
-            LocalDateTime dt = LocalDateTime.ofInstant(i,serverTimezone);
-
-//            if(result < BinaryStreamUtils.DATETIME64_MIN) {
-//                return BinaryStreamUtils.DATETIME64_MIN;
-//            } else if(result > BinaryStreamUtils.DATETIME64_MAX) {
-//                return BinaryStreamUtils.DATETIME64_MAX;
-//            }
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, isDateTime64);
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
 
-    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, boolean isDateTime64) {
+    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType) {
 
-        if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
-            return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
-        } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME)){
-            return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME;
+        if(clickHouseDataType == ClickHouseDataType.DateTime ||
+                clickHouseDataType == ClickHouseDataType.DateTime32) {
+            if(providedDateTime.getEpochSecond() < DataTypeRange.DATETIME32_MIN) {
+                return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MIN);
+            } else if(providedDateTime.getEpochSecond() > DataTypeRange.DATETIME32_MAX) {
+                return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
+            }
+        } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {
+            if (providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64)) {
+                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
+            } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64)) {
+                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64;
+            }
         }
 
         return providedDateTime;

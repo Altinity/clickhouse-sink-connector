@@ -195,11 +195,12 @@ public class ClickHouseDataTypeMapper {
 //                            Calendar.getInstance(TimeZone.getTimeZone(serverTimeZone)));
                 }
                 else if (value instanceof Long) {
+                    // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
                     boolean isColumnDateTime64 = false;
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, isColumnDateTime64, serverTimeZone));
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, serverTimeZone));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
