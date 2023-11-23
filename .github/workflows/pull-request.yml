@@ -8,9 +8,6 @@ on:
       - opened
     branches:
       - '**'
-  push:
-    branches:
-      - '**'
 
 jobs:
   build-kafka:
