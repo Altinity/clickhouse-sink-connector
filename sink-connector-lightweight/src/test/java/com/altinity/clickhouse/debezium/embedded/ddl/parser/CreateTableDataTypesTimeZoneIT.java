@@ -107,37 +107,47 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(3))"));
 
         writer.getConnection().close();
-        //Thread.sleep(10000);
+        Thread.sleep(10000);
 
          writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
         // Validate temporal_types_DATE data.
         ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
-
+        boolean dateResultValueChecked = false;
         while(dateResult.next()) {
+            dateResultValueChecked = true;
             Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1925-01-01"));
             Assert.assertTrue(dateResult.getDate("Mid_Value").toString().equalsIgnoreCase("2022-09-29"));
             Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2283-11-11"));
         }
+        Assert.assertTrue(dateResultValueChecked);
+
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        boolean dateTimeResultValueChecked = false;
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
+            dateTimeResultValueChecked = true;
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
         }
+        Assert.assertTrue(dateTimeResultValueChecked);
 
         // DATETIME1
+        boolean dateTimeResult1ValueChecked = false;
+
         ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
+            dateTimeResult1ValueChecked = true;
 
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
         }
+        Assert.assertTrue(dateTimeResult1ValueChecked);
 
         // DATETIME2
         ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
