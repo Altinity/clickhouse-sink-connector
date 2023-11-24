@@ -116,9 +116,15 @@ public class CreateTableDataTypesTimeZoneIT {
         boolean dateResultValueChecked = false;
         while(dateResult.next()) {
             dateResultValueChecked = true;
-            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1925-01-01"));
-            Assert.assertTrue(dateResult.getDate("Mid_Value").toString().equalsIgnoreCase("2022-09-29"));
-            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2283-11-11"));
+
+
+            System.out.println(dateResult.getTimestamp("Mid_Value").toString());
+            System.out.println(dateResult.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateResult.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateResult.getDate("Mid_Value").toString().contains("2022-09-29"));
+            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().contains("2283-11-11"));
+            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().contains("1925-01-01"));
         }
         Assert.assertTrue(dateResultValueChecked);
 
@@ -129,6 +135,11 @@ public class CreateTableDataTypesTimeZoneIT {
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
             dateTimeResultValueChecked = true;
+
+            System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
+
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
@@ -143,6 +154,10 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println("DATE TIME 1");
             dateTimeResult1ValueChecked = true;
 
+            System.out.println(dateTimeResult1.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult1.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
+
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
@@ -153,6 +168,9 @@ public class CreateTableDataTypesTimeZoneIT {
         ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
+            System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult2.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.12"));

@@ -122,7 +122,7 @@ public class DebeziumConverter {
          *
          * Function to convert Debezium Date fields
          * to java.sql.Date
-         * @param value
+         * @param value - NUMBER OF DAYS since epoch.
          * @return
          */
         public static Date convert(Object value, ClickHouseDataType chDataType) {
@@ -165,15 +165,6 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ZoneId serverTimezone) {
 
-//            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
-//            DateTimeFormatter bqZonedTimestampFormat =
-//                    new DateTimeFormatterBuilder()
-//                            .append(DateTimeFormatter.ISO_LOCAL_DATE)
-//                            .appendLiteral(' ')
-//                            .append(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
-//                            .toFormatter();
-//            return bqZonedTimestampFormat.format(parsedTime);
-
             String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
                     .withZone(serverTimezone);
@@ -208,15 +199,12 @@ public class DebeziumConverter {
                     ZonedDateTime zd = ZonedDateTime.parse((String) value, formatter.withZone(serverTimezone));
 
                     long dateTimeInMs = zd.toInstant().toEpochMilli();
-                    if(dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX) {
+                    if(dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX * 1000) {
                         zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX), serverTimezone);
-                    } else if(dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN) {
+                    } else if(dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN * 1000) {
                         zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN), serverTimezone);
                     }
-                    //long v = ClickHouseChecker.between(ClickHouseValues.UTC_ZONE.equals(this.zoneId) ? dt.toEpochSecond(ZoneOffset.UTC) : dt.atZone(this.zoneId).toEpochSecond(), "DateTime", BinaryStreamUtils.DATETIME64_MIN, BinaryStreamUtils.DATETIME64_MAX);
-
                     result = zd.format(destFormatter);
-                    //result = removeTrailingZeros(result);
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {
