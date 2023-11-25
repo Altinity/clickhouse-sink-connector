@@ -27,5 +27,5 @@ public class DataTypeRange
 
     // DateTime and DateTime32
     public static final long DATETIME32_MIN = 0L;
-    public static final long DATETIME32_MAX = BinaryStreamUtils.DATETIME_MAX;
+    public static final long DATETIME32_MAX = BinaryStreamUtils.DATETIME_MAX / 1000;
 }

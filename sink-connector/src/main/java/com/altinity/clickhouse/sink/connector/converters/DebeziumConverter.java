@@ -18,6 +18,8 @@ import java.util.Calendar;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
+import static java.time.Instant.ofEpochMilli;
+
 public class DebeziumConverter {
 
     private static final int MICROS_IN_SEC = 1000000;
@@ -83,7 +85,7 @@ public class DebeziumConverter {
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             // Input is a long.
-            Instant i = Instant.ofEpochMilli((long) value);
+            Instant i = ofEpochMilli((long) value);
             System.out.println("RECEIVED VALUE" + i.toString());
 
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
@@ -96,9 +98,9 @@ public class DebeziumConverter {
 
         if(clickHouseDataType == ClickHouseDataType.DateTime ||
                 clickHouseDataType == ClickHouseDataType.DateTime32) {
-            if(providedDateTime.getEpochSecond() < DataTypeRange.DATETIME32_MIN) {
+            if(providedDateTime.isBefore(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MIN)))) {
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MIN);
-            } else if(providedDateTime.getEpochSecond() > DataTypeRange.DATETIME32_MAX) {
+            } else if(providedDateTime.isAfter(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MAX)))) {
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
             }
         } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {
