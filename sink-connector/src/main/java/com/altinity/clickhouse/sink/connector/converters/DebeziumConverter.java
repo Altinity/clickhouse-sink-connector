@@ -49,27 +49,23 @@ public class DebeziumConverter {
         // DATETIME(4), DATETIME(5), DATETIME(6)
         // Represents the number of microseconds past the epoch and does not include time zone information.
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static String convert(Object value, ZoneId serverTimezone) {
-            Long microTimestamp = (Long) value;
+        public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
+            Long epochMicroSeconds = (Long) value;
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
-            Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS).atZone(serverTimezone).toInstant();
+            long epochSeconds = epochMicroSeconds / 1_000_000L;
+            long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
+            Instant receivedDT = Instant.ofEpochSecond( epochSeconds, nanoOffset );
+            //Instant receivedDT = Instant.EPOCH.plus(instant, ChronoUnit.MICROS).atZone(serverTimezone).toInstant();
             long result = receivedDT.atZone(serverTimezone).toEpochSecond();
 
-            if(result < BinaryStreamUtils.DATETIME64_MIN) {
-                //return Timestamp.from(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN));
-                return Timestamp.valueOf(LocalDateTime.of(LocalDate.of(1925, 1, 2), LocalTime.MIN)).toString();
-
-            } else if(result > BinaryStreamUtils.DATETIME64_MAX) {
-                //return Timestamp.from(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX));
-                return Timestamp.valueOf(LocalDateTime.of(LocalDate.of(2283, 11, 10), LocalTime.MAX)).toString();
-
-            }
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, clickHouseDataType);
             System.out.println("MICROTIMESTAMP result" + result);
-            System.out.println("TIMESTAMP result" + Timestamp.from(receivedDT).toString());
-            return Timestamp.from(receivedDT).toString();
+            System.out.println("TIMESTAMP result" + Timestamp.from(modifiedDT).toString());
+            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
             //return Timestamp.from(Instant.ofEpochSecond(result));
         }
     }
@@ -88,7 +84,10 @@ public class DebeziumConverter {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             // Input is a long.
             Instant i = Instant.ofEpochMilli((long) value);
+            System.out.println("RECEIVED VALUE" + i.toString());
+
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            System.out.println("CONVERTED VALUE" + modifiedDT.atZone(serverTimezone).format(destFormatter).toString());
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
