@@ -115,7 +115,7 @@ public class EmployeesDBIT extends DDLBaseIT {
                 employeesCHCount =  chRs.getInt(1);
             }
 
-            //  Assert.assertTrue(employeesMySqlCount == employeesCHCount);
+            Assert.assertTrue(employeesMySqlCount == employeesCHCount);
             // Files.deleteIfExists(tmpFilePath);
             if(engine.get() != null) {
                 engine.get().stop();

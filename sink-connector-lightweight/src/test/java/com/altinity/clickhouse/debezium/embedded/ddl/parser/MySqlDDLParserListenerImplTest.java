@@ -64,8 +64,25 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
         log.info("Create table " + clickHouseQuery);
+
+        String createQueryWithoutPrimaryKey =  "create table t(\n" +
+                "id int ,\n" +
+                "dt date not null\n" +
+                ") engine=InnoDB\n" +
+                "PARTITION BY RANGE  COLUMNS(dt)\n" +
+                "(PARTITION p20201231 VALUES LESS THAN ('2021-01-01') ENGINE = InnoDB,\n" +
+                " PARTITION p20211230 VALUES LESS THAN ('2021-12-31') ENGINE = InnoDB,\n" +
+                " PARTITION p20211231 VALUES LESS THAN ('2022-01-03') ENGINE = InnoDB,\n" +
+                " PARTITION p20220103 VALUES LESS THAN ('2022-01-04') ENGINE = InnoDB,\n" +
+                " PARTITION p20220104 VALUES LESS THAN ('2022-01-05') ENGINE = InnoDB,\n" +
+                " PARTITION p20220105 VALUES LESS THAN ('2022-01-06') ENGINE = InnoDB\n" +
+                ");";
+        StringBuffer clickHouseQueryWOPrimaryKey = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQueryWithoutPrimaryKey, "Persons", clickHouseQueryWOPrimaryKey);
+        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("Create table CREATE TABLE t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
+        log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
     @Test
     public void testCreateTableWithKeyPartition() {
@@ -82,6 +99,23 @@ public class MySqlDDLParserListenerImplTest {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE members(firstname String NOT NULL ,lastname String NOT NULL ,username String NOT NULL ,email Nullable(String),joined Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined ORDER BY tuple()"));
+        log.info("Create table " + clickHouseQuery);
+    }
+
+    @Test
+    public void testDateTimeColumns() {
+        String createQuery = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
+                "  `Type` varchar(50) NOT NULL,\n" +
+                "  `Minimum_Value` datetime(4) NOT NULL,\n" +
+                "  `Mid_Value` datetime(4) NOT NULL,\n" +
+                "  `Maximum_Value` datetime(4) NOT NULL,\n" +
+                "  `Null_Value` datetime(4) DEFAULT NULL,\n" +
+                "  PRIMARY KEY (`Type`)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64 NOT NULL ,`Mid_Value` DateTime64 NOT NULL ,`Maximum_Value` DateTime64 NOT NULL ,`Null_Value` Nullable(DateTime64),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
     }
     @Test

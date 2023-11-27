@@ -348,6 +348,12 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
                                         if (colDefinitionChildTree.getText() != null) {
 
                                         }
+                                    } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
+                                        for(ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
+                                            System.out.println(primaryKeyTree.getText());
+                                            orderByColumns.append(columnName);
+                                            break;
+                                        }
                                     }
                                 }
                                 if(isNullColumn) {

@@ -152,7 +152,7 @@ public class DebeziumConverter {
                     return BinaryStreamUtils.U_INT16_MAX;
                 }
             } else {
-                log.error("Unknown DATE field");
+                log.warn("Unknown DATE field:" + chDataType);
             }
 
             return epochInDays;

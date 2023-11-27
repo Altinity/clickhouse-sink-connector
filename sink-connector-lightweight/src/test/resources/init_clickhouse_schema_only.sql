@@ -100,3 +100,6 @@ CREATE TABLE employees.temporal_types_DATETIME2
 ENGINE = ReplacingMergeTree(_version, is_deleted)
 ORDER BY Type
 SETTINGS index_granularity = 8192;
+
+
+
