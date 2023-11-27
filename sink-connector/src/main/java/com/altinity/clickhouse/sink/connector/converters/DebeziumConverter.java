@@ -53,8 +53,12 @@ public class DebeziumConverter {
         //ToDO: IF values exceed the ones supported by clickhouse
         public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
             Long epochMicroSeconds = (Long) value;
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+            //DateTime64 has a 8 digit precision.
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+            if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            }
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
@@ -100,7 +104,7 @@ public class DebeziumConverter {
                 clickHouseDataType == ClickHouseDataType.DateTime32) {
             if(providedDateTime.isBefore(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MIN)))) {
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MIN);
-            } else if(providedDateTime.isAfter(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MAX)))) {
+            } else if(providedDateTime.isAfter(Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX))) {
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
             }
         } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {

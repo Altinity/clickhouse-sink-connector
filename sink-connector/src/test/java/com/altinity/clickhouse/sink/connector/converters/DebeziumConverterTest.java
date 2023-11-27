@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseArrayValue;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -13,7 +14,10 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.PreparedStatement;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+
+import static java.time.Instant.ofEpochMilli;
 
 
 public class DebeziumConverterTest {
@@ -23,10 +27,15 @@ public class DebeziumConverterTest {
     public void testTimestampConverter() {
 
         Object timestampEpoch = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
+        Object timestampEpoch2 = LocalDateTime.of(2022, 9, 29, 01 , 48, 25 ,100).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
+
+        Instant dateTimeMax = Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MAX));
 
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC"));
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00"));
 
+        String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("UTC"));
+        Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
         // 6 hours difference.
         String timestampWithChicagoTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"));
         Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00"));
@@ -51,7 +60,7 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMaxRange() {
 
         //DateTime64
-        Object timestampEpochDateTime = LocalDateTime.of(2289, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
+        Object timestampEpochDateTime = LocalDateTime.of(2289, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli();
         String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime64, ZoneId.of("UTC")));
 
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2283-11-11 23:59:59"));
@@ -66,19 +75,19 @@ public class DebeziumConverterTest {
     @DisplayName("Test Microtimestamp converter- for DATETIME(4,5,6) and can map to DateTime or DateTime64 in ClickHouse")
     public void testMicroTimestampConverter() {
 
-        Object timestampEpoch = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
-
+        long timestampEpoch = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).plus(222, ChronoUnit.MILLIS).toInstant().toEpochMilli() * 1000;
+        timestampEpoch += 222;
         // UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00.22222200"));
 
         // America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00.22222200"));
 
         // America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2021-12-31 16:01:00"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2021-12-31 16:01:00.22222200"));
 
     }
 

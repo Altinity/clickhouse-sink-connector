@@ -6,8 +6,7 @@ import static com.clickhouse.data.format.BinaryStreamUtils.DATETIME64_MIN;
 import static java.time.Instant.from;
 import static java.time.Instant.ofEpochMilli;
 
-import java.time.Instant;
-import java.time.ZoneId;
+import java.time.*;
 
 public class DataTypeRange
 {
@@ -27,5 +26,5 @@ public class DataTypeRange
 
     // DateTime and DateTime32
     public static final long DATETIME32_MIN = 0L;
-    public static final long DATETIME32_MAX = BinaryStreamUtils.DATETIME_MAX / 1000;
+    public static final long DATETIME32_MAX = LocalDateTime.of(LocalDate.of(2106, 02, 07), LocalTime.of(6, 28, 15)).toEpochSecond(ZoneOffset.UTC);
 }
