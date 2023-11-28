@@ -262,7 +262,8 @@ mvn install -DskipTests=true
 | Blob               |                                                      | String + hex                    |
 | Char               | String                                               | String / LowCardinality(String) |
 | Date               | Schema: INT64<br>Name:<br>debezium.Date              | Date(6)                         |
-| DateTime(6)        | Schema: INT64<br>Name: debezium.Timestamp            | DateTime64(6)                   |
+| DateTime(0/1/2/3)  | Schema: INT64<br>Name: debezium.Timestamp            | DateTime64(0/1/2/3)             |
+| DateTime(4/5/6)    | Schema: INT64<br>Name: debezium.MicroTimestamp       | DateTime64(4/5/6)               |
 | Decimal(30,12)     | Schema: Bytes<br>Name:<br>kafka.connect.data.Decimal | Decimal(30,12)                  |
 | Double             |                                                      | Float64                         |
 | Int                | INT32                                                | Int32                           |
