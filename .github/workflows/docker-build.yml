@@ -24,7 +24,7 @@ jobs:
 
       - name: Build with Maven (Kafka version)
         working-directory: sink-connector
-        run: mvn -B package install --file pom.xml
+        run: mvn -B package install -DskipTests=true --file pom.xml
 
       - name: Update sink connector jar file version in sink-connector-lightweight pom.xml
         working-directory: sink-connector-lightweight
@@ -32,7 +32,7 @@ jobs:
 
       - name: Build with Maven (Lightweight version)
         working-directory: sink-connector-lightweight
-        run:  mvn -B package --file pom.xml
+        run:  mvn -B package -DskipTests=true --file pom.xml
 
       - name: Upload Maven build
         uses: actions/upload-artifact@v3
