@@ -32,16 +32,16 @@ public class DebeziumConverterTest {
         Instant dateTimeMax = Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MAX));
 
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC"));
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
         String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("UTC"));
-        Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
+        Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25.000"));
         // 6 hours difference.
         String timestampWithChicagoTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"));
-        Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00"));
+        Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00.000"));
 
         String timestampWithPacificTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Los_Angeles"));
-        Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2021-12-31 16:01:00"));
+        Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2021-12-31 16:01:00.000"));
     }
 
     @Test
@@ -49,10 +49,12 @@ public class DebeziumConverterTest {
     public void testTimestampConverterMinRange() {
 
         Object timestampEpochDateTime = LocalDateTime.of(1960, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
-        Assert.assertTrue(DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime32, ZoneId.of("UTC")).equalsIgnoreCase("1970-01-01 00:00:00"));
+        String result = DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime32, ZoneId.of("UTC"));
+        Assert.assertTrue(result.equalsIgnoreCase("1970-01-01 00:00:00.000"));
 
         //Clickhouse column DateTime64
-        Assert.assertTrue(DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime64, ZoneId.of("UTC")).equalsIgnoreCase("1960-01-01 00:01:00"));
+        String dateTime64Result = DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime64, ZoneId.of("UTC"));
+        Assert.assertTrue(dateTime64Result.equalsIgnoreCase("1960-01-01 00:01:00.000"));
     }
 
     @Test
@@ -99,15 +101,15 @@ public class DebeziumConverterTest {
 
         // DateTime64 and UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1925-01-01 00:00:00"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("1925-01-01 00:00:00.00000000"));
 
         // DateTime64 and America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("1924-12-31 18:00:00"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("1924-12-31 18:00:00.00000000"));
 
         // DateTime64 and America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("1924-12-31 16:00:00"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("1924-12-31 16:00:00.00000000"));
 
         // DateTime32 and UTC timezone
         String formattedTimestampDate32 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime);
@@ -130,15 +132,15 @@ public class DebeziumConverterTest {
 
         // DateTime64 and UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2283-11-11 23:59:59"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2283-11-11 23:59:59.99999999"));
 
         // DateTime64 and America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2283-11-11 17:59:59"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2283-11-11 17:59:59.99999999"));
 
         // DateTime64 and America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2283-11-11 15:59:59"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2283-11-11 15:59:59.99999999"));
 
         // DateTime32 and UTC timezone
         String formattedTimestampDate32 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime);
@@ -225,7 +227,7 @@ public class DebeziumConverterTest {
         Object timeInMicroSeconds = LocalTime.of(10, 1, 1, 1).toEpochSecond(LocalDate.now(), ZoneOffset.UTC);
         String formattedTime = DebeziumConverter.MicroTimeConverter.convert(timeInMicroSeconds);
 
-        Assert.assertTrue(formattedTime.equalsIgnoreCase("00:28:20.906461"));
+        Assert.assertTrue(formattedTime.equalsIgnoreCase("00:28:21.252061"));
 
         Object timePacificTZ = ZonedDateTime.of(2024, 1, 1, 1, 1, 1, 1, ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000 * 1000;
         String formattedTimePacificTZ = DebeziumConverter.MicroTimeConverter.convert(timePacificTZ);
