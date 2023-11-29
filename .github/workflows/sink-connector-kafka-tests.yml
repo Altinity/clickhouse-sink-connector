@@ -1,13 +1,10 @@
-name: Sink Connector(Kafka version) tests
+name: Kafka - Java tests
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+on: 
+  workflow_call:
 
 jobs:
-  build:
+  java-tests:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
