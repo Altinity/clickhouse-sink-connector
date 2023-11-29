@@ -8,6 +8,13 @@ on:
         required: true
         type: string
         default: latest
+  workflow_dispatch:
+    inputs:
+      sink_version:
+        description: "Manual trigger: Lightweight version"
+        required: true
+        type: string
+        default: latest
 
 env:
   SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
