@@ -23,6 +23,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
+        <sink-connector-library-version>0.0.4</sink-connector-library-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -52,22 +53,6 @@
             <artifactId>javalin</artifactId>
             <version>5.5.0</version>
         </dependency>
-
-        <!-- QUARKUS DEPENDENCIES -->
-        <!-- <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-arc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit5</artifactId>
-            <scope>test</scope>
-        </dependency> -->
-        <!-- QUARKUS END DEPENDENCIES -->
         <dependency>
             <groupId>com.googlecode.json-simple</groupId>
             <artifactId>json-simple</artifactId>
@@ -221,18 +206,7 @@
             <version>${version.testcontainers}</version>
             <scope>test</scope>
         </dependency>
-        <!-- https://mvnrepository.com/artifact/org.postgresql/postgresql -->
 
-
-
-        <!-- <dependency>
-            <groupId>com.altinity.clickhouse.sink.connector</groupId>
-            <artifactId>sink</artifactId>
-            <version>1.0</version>
-            <scope>system</scope>
-            <classifier>sources</classifier>
-            <systemPath>${project.basedir}/src/main/resources/clickhouse-kafka-sink-connector-0.0.1.jar</systemPath>
-        </dependency> -->
         <!--junit for unit test-->
         <dependency>
             <groupId>org.junit</groupId>
@@ -248,13 +222,6 @@
             <scope>test</scope>
         </dependency>
 
-<!--        <dependency>
-            <groupId>org.antlr</groupId>
-            <artifactId>antlr4-runtime</artifactId>
-            <version>4.10.1</version>
-            <scope>runtime</scope>
-
-        </dependency> -->
         <dependency>
             <groupId>org.junit-pioneer</groupId>
             <artifactId>junit-pioneer</artifactId>
@@ -262,23 +229,6 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- grpc dependencies -->
-        <!-- <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-netty-shaded</artifactId>
-            <version>1.50.2</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-protobuf</artifactId>
-            <version>1.50.2</version>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-stub</artifactId>
-            <version>1.50.2</version>
-        </dependency> -->
         <dependency> <!-- necessary for Java 9+ -->
             <groupId>org.apache.tomcat</groupId>
             <artifactId>annotations-api</artifactId>
@@ -355,48 +305,6 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.12.6</version>
         </dependency>
-        <!-- <dependency>
-             <groupId>io.confluent</groupId>
-             <artifactId>kafka-schema-registry-client</artifactId>
-             <version>6.2.0</version>
-             <exclusions>
-                 <exclusion>
-                     <groupId>io.confluent</groupId>
-                     <artifactId>common-utils</artifactId>
-                 </exclusion>
-                 <exclusion>
-                     <groupId>io.confluent</groupId>
-                     <artifactId>common-config</artifactId>
-                 </exclusion>
-                 <exclusion>
-                     <groupId>io.swagger</groupId>
-                     <artifactId>swagger-annotations</artifactId>
-                 </exclusion>
-                 <exclusion>
-                     <groupId>io.swagger</groupId>
-                     <artifactId>swagger-core</artifactId>
-                 </exclusion>
-             </exclusions>
-         </dependency>
-         <dependency>
-             <groupId>io.confluent</groupId>
-             <artifactId>kafka-avro-serializer</artifactId>
-             <version>5.5.1</version>
-             <exclusions>
-                 <exclusion>
-                     <groupId>io.confluent</groupId>
-                     <artifactId>common-utils</artifactId>
-                 </exclusion>
-             </exclusions>
-         </dependency> -->
-        <!-- https://mvnrepository.com/artifact/io.confluent/kafka-connect-avro-converter -->
-        <!-- <dependency>
-            <groupId>io.confluent</groupId>
-            <artifactId>kafka-connect-avro-converter</artifactId>
-            <version>5.5.1</version>
-            <scope>test</scope>
-        </dependency> -->
-
 
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
         <dependency>
@@ -405,26 +313,11 @@
             <version>3.12.0</version>
         </dependency>
 
-
-        <!--JDBC driver for building connection with Clickhouse-->
-        <!-- <dependency>
-            <groupId>ru.yandex.clickhouse</groupId>
-            <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.3.2</version>
-        </dependency> -->
         <dependency>
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
             <version>0.4.5</version>
-            <!-- below is only needed when all you want is a shaded jar -->
-            <!-- <classifier>http</classifier>-->
-            <!-- <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>-->
         </dependency>
 
         <!-- Micrometer and support to prometheus -->
@@ -522,7 +415,7 @@
         <dependency>
             <groupId>com.altinity</groupId>
             <artifactId>clickhouse-kafka-sink-connector</artifactId>
-            <version>0.0.4</version>
+            <version>${sink-connector-library-version}</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>
@@ -535,21 +428,6 @@
             </extension>
         </extensions>
         <plugins>
-           <!-- <plugin>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
-                            <includeArtifactIds>io.debezium.ddl.parser</includeArtifactIds>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin> -->
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
@@ -568,84 +446,7 @@
                         </execution>
                     </executions>
                 </plugin>
-           <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
 
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
-                        </manifest>
-                    </archive>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>assemble-all</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin> -->
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-install-plugin</artifactId>
-                <version>2.5.2</version>
-                <executions>
-                    <execution>
-                        <id>install-external</id>
-                        <phase>clean</phase>
-                        <configuration>
-                            <file>${basedir}/src/main/resources/clickhouse-kafka-sink-connector-0.0.1.jar</file>
-                            <repositoryLayout>default</repositoryLayout>
-                            <groupId>com.altinity.clickhouse.sink.connector</groupId>
-                            <artifactId>sink</artifactId>
-                            <version>1.0</version>
-                            <packaging>jar</packaging>
-                            <generatePom>true</generatePom>
-                        </configuration>
-                        <goals>
-                            <goal>install-file</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin> -->
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>copy-dependencies</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.directory}</outputDirectory>
-                            <overWriteReleases>false</overWriteReleases>
-                            <overWriteSnapshots>true</overWriteSnapshots>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin> -->
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <addClasspath>true</addClasspath>
-                             <classpathPrefix>lib/</classpathPrefix>
-                            <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
-                        </manifest>
-                    </archive>
-                </configuration>
-            </plugin> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -660,12 +461,6 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
-
-                                    <!-- <manifestEntries>
-
-                                    <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
-                                    <Class-Path>lib/*.jar</Class-Path>
-                                    </manifestEntries> -->
                                 </transformer>
                             </transformers>
                             <artifactSet>
@@ -674,53 +469,16 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- <plugin>
-                <groupId>${quarkus.platform.group-id}</groupId>
-                <artifactId>quarkus-maven-plugin</artifactId>
-                <version>${quarkus.platform.version}</version>
-                <extensions>true</extensions>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>build</goal>
-                            <goal>generate-code</goal>
-                            <goal>generate-code-tests</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>-->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
                 <version>${version.checkstyle.plugin}</version>
             </plugin>
-            <!-- <plugin>
-                <groupId>org.xolstice.maven.plugins</groupId>
-                <artifactId>protobuf-maven-plugin</artifactId>
-                <version>0.6.1</version>
-                <configuration>
-                    <protocArtifact>com.google.protobuf:protoc:3.21.7:exe:${os.detected.classifier}</protocArtifact>
-                    <pluginId>grpc-java</pluginId>
-                    <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.50.2:exe:${os.detected.classifier}</pluginArtifact>
-                </configuration>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>compile</goal>
-                            <goal>compile-custom</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.22.0</version>
                 <configuration>
-                    <!-- <excludedGroups>IntegrationTest</excludedGroups> -->
-                    <!-- <excludes>
-                        <exclude>**/*IT.java</exclude>
-                    </excludes> -->
                     <includes>
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
@@ -732,23 +490,6 @@
                     <perCoreThreadCount>true</perCoreThreadCount>
                     <useSystemClassLoader>true</useSystemClassLoader>
                     </configuration>
-                <!-- <executions>
-                    <execution>
-                        <id>integration-test</id>
-                        <goals>
-                            <goal>test</goal>
-                        </goals>
-                        <phase>integration-test</phase>
-                        <configuration>
-                            <excludes>
-                                <exclude>none</exclude>
-                            </excludes>
-                            <includes>
-                                <include>**/*IT.java</include>
-                            </includes>
-                        </configuration>
-                    </execution>
-                </executions> -->
             </plugin>
 
             <plugin>
