@@ -1,25 +1,14 @@
 services:
   debezium-embedded:
-    #build:
-    #  context: ..
-    #  dockerfile: Dockerfile
-    #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
-    #    build:
-    #      context: ../
     restart: "no"
     ports:
       - "8083:8083"
       - "5005:5005"
-    #    depends_on:
-    #      - mysql-master
-    #    env_file:
-    #      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      #- ./data:/data
       - ./config_postgres.yml:/config.yml
 
   ### MONITORING ####
@@ -37,11 +26,7 @@ services:
       context: ./config/grafana
       args:
         GRAFANA_VERSION: latest
-    #container_name: grafana
-    #image: grafana/grafana
     restart: "no"
-      #volumes:
-    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
     environment:

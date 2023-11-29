@@ -1,4 +1,6 @@
-# Setup
+# Load Testing using SysBench.
+
+## Setup
 We use `SysBench` to perform load testing.
 https://github.com/akopytov/sysbench
 

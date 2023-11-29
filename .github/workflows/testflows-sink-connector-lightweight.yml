@@ -8,6 +8,13 @@ on:
         required: true
         type: string
         default: latest
+  workflow_dispatch:
+    inputs:
+      sink_version:
+        description: "Manual trigger: Lightweight version"
+        required: true
+        type: string
+        default: latest
 
 env:
   SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
@@ -22,18 +29,10 @@ jobs:
       - name: Runner ssh command
         working-directory: sink-connector/tests/integration
         run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
-      
-      - name: Install docker-compose
-        working-directory: sink-connector-lightweight/tests/integration
-        run: pip3 install docker-compose==1.29.2
-      
-      - name: Install testflows
-        working-directory: sink-connector-lightweight/tests/integration
-        run: pip3 install testflows
 
-      - name: Install awscli
+      - name: Install all dependencies
         working-directory: sink-connector-lightweight/tests/integration
-        run: pip3 install awscli
+        run: pip install -r requirements.txt
 
       - name: Get current date
         id: date

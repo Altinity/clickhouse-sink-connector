@@ -326,7 +326,7 @@ mvn install -DskipTests=true
 - [Architecture](doc/architecture.md)
 - [Local Setup - Docker Compose](doc/setup.md)
 - [Debezium Setup](doc/debezium_setup.md)
-- [Kubernetes Setup](doc/k8s_pipeline_setup.md)
+- [Kubernetes Setup](doc/k8s/k8s_pipeline_setup.md)
 - [Sink Configuration](doc/sink_configuration.md)
 - [Testing](doc/TESTING.md)
 - [Performance Benchmarking](doc/Performance.md)
