@@ -25,7 +25,6 @@ services:
 
 
   clickhouse:
-    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
     container_name: clickhouse
     image: clickhouse/clickhouse-server:latest
     restart: "no"
@@ -42,13 +41,10 @@ services:
         soft: "262144"
         hard: "262144"
     volumes:
-      #- ../sql/init_ch.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
 
   debezium-embedded:
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
-    #    build:
-    #      context: ../
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
     restart: "no"
     ports:
@@ -66,7 +62,6 @@ services:
         -Xmx5G
         -Xms128m
     volumes:
-      #- ./data:/data
       - ./config_postgres.yml:/config.yml
 
   ### MONITORING ####
@@ -84,11 +79,7 @@ services:
       context: ./config/grafana
       args:
         GRAFANA_VERSION: latest
-    #container_name: grafana
-    #image: grafana/grafana
     restart: "no"
-      #volumes:
-    #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
     environment:

@@ -7,8 +7,6 @@ version: "3.4"
 # create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
 
 services:
-
-
   mysql-master:
     container_name: mysql-master
     image: docker.io/bitnami/mysql:latest
@@ -37,10 +35,6 @@ services:
       # SHOW MASTER STATUS;
       container_name: mysql-slave
       image: docker.io/bitnami/mysql:8.0
-  #    command:
-  #      --default-authentication-plugin=mysql_native_password
-  #      --server-id=1
-  #      --binlog_do_db=test
       restart: "no"
       ports:
         - "3306"
@@ -55,8 +49,6 @@ services:
         - ALLOW_EMPTY_PASSWORD=yes
       volumes:
         - ./mysqld-slave.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-      # volumes:
-     #   - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
       healthcheck:
         test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
         interval: 15s
@@ -68,7 +60,6 @@ services:
         - mysql-master
 
   clickhouse:
-    # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
     container_name: clickhouse
     image: clickhouse/clickhouse-server:23.3.4
     restart: "no"
@@ -85,7 +76,6 @@ services:
         soft: "262144"
         hard: "262144"
     volumes:
-      #- ../sql/init_ch.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
     depends_on:
       zookeeper:
@@ -108,10 +98,6 @@ services:
         - label:disable
 
   debezium-embedded:
-    #build:
-    #  context: ..
-    #  dockerfile: Dockerfile
-    #image: clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]   
     restart: "no"
@@ -119,16 +105,10 @@ services:
       - "8083:8083"
       - "5005:5005"
       - "7000:7000"
-    #    depends_on:
-#      - mysql-master
-#    env_file:
-#      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      #- ./data:/data
       - ./config.yml:/config.yml
-
 
   ### MONITORING ####
   prometheus:
@@ -145,11 +125,7 @@ services:
       context: ./config/grafana
       args:
         GRAFANA_VERSION: latest
-    #container_name: grafana
-    #image: grafana/grafana
     restart: "no"
-      #volumes:
-      #  - ../config/grafana/dashboards:/etc/grafana/provisioning/dashboards
     ports:
       - "3000:3000"
     environment:

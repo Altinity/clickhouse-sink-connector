@@ -1,3 +1,7 @@
+## Kafka MetaData
+
+These are the columns that are added when the `store.kafka.metadata` configuration is enabled.
+
 | Column           | Data Type                | Description                                                                                                                                                           |
 |------------------|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `_offset`        | Nullable(UInt64),        | Kafka offset                                                                                                                                                          |

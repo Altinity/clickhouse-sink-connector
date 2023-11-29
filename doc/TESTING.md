@@ -1,5 +1,5 @@
 # Unit tests
-The unit tests are added in the following directory. This is a work in progress.
+The unit tests are added in the following directory.
 [test](../src/test/com/altinity/clickhouse/sink/connector)
 
 # Integration tests.
