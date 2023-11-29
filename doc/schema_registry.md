@@ -1,4 +1,5 @@
-#### Confluent Schema Registry
+# Confluent Schema Registry
+### Schema Registry API calls.
 
 REST API to get subjects
 ```

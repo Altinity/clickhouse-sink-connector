@@ -1,3 +1,4 @@
+# Troubleshooting.
 
 ### Caused by: io.debezium.DebeziumException: java.sql.SQLSyntaxErrorException: Access denied; you need (at least one of) 
 ### the SUPER, REPLICATION CLIENT privilege(s) for this operation

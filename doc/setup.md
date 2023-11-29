@@ -1,6 +1,6 @@
 This doc describes how to set up CDC pipeline
 
-# Pipeline
+# Setup Kafka Sink Connector Pipeline
 
 ![pipeline](img/pipeline.png)
 

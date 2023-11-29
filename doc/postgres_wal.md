@@ -1,3 +1,5 @@
+## PostgreSQL WAL Dump utility.
+
 Using the `pg_waldump` utility to dump the WAL log information. `pg_waldump` utility needs to be provided the postgresql data directory path.
 ```
 pg_waldump pg_wal/000000010000000000000001

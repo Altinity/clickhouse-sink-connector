@@ -1,3 +1,4 @@
+# MySQL Transactions(currently not supported)
 Transactions have to be enabled in the source connector, For MySQL
 the following flag has to be set
 `    "provide.transaction.metadata": "true"`

@@ -1,3 +1,5 @@
+# Sink Connector Sysbench test results
+
 ### Throughput (1 thread)
 ```
 │      2623 │ 2023-04-05 13:12:56 │

@@ -1,3 +1,6 @@
+# Kafka Sink connector configuration.
+
+
 All the Sink Connector configuration variables are documented here.
 
 `topics`: Kafka topics delimited by comma.\
