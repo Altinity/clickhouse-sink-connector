@@ -63,11 +63,11 @@ public class DebeziumConverterTest {
         Object timestampEpochDateTime = LocalDateTime.of(2289, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli();
         String formattedTimestamp = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime64, ZoneId.of("UTC")));
 
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2283-11-11 23:59:59"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2283-11-11 23:59:59.999"));
 
         //DateTime
         String formattedTimestampDate = String.valueOf(DebeziumConverter.TimestampConverter.convert(timestampEpochDateTime, ClickHouseDataType.DateTime, ZoneId.of("UTC")));
-        Assert.assertTrue(formattedTimestampDate.equalsIgnoreCase("2106-02-07 06:28:15"));
+        Assert.assertTrue(formattedTimestampDate.equalsIgnoreCase("2106-02-07 06:28:15.000"));
     }
 
 

@@ -85,7 +85,11 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME1` VALUES ('DATETIME(1)-INSERT','1000-01-01 00:00:00.0','2022-09-29 01:48:25.1','9999-12-31 23:59:59.9','9999-12-31 23:59:59');").execute();
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME2` VALUES ('DATETIME(2)-INSERT','1000-01-01 00:00:00.00','2022-09-29 01:49:05.12','9999-12-31 23:59:59.99','9999-12-31 23:59:59');\n").execute();
-        //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME3` VALUES ('DATETIME(3)-INSERT','1000-01-01 00:00:00.000','2022-09-29 01:49:22.123','9999-12-31 23:59:59.999',NULL)").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME4` VALUES ('DATETIME(4)-INSERT','1000-01-01 00:00:00.0000','2022-09-29 01:50:12.1234','9999-12-31 23:59:59.9999',NULL)").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME5` VALUES ('DATETIME(5)-INSERT','1000-01-01 00:00:00.00000','2022-09-29 01:50:28.12345','9999-12-31 23:59:59.99999',NULL)").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME6` VALUES ('DATETIME(6)-INSERT','1000-01-01 00:00:00.000000','2022-09-29 01:50:56.123456','9999-12-31 23:59:59.999999',NULL)").execute();
+    //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
@@ -151,66 +155,66 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
         }
 
-        // DATETIME3
-//        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
-//        while(dateTimeResult3.next()) {
-//            System.out.println("DATE TIME 3");
-//
-//            System.out.println(dateTimeResult3.getTimestamp("Mid_Value").toString());
-//            System.out.println(dateTimeResult3.getTimestamp("Maximum_Value").toString());
-//            System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
-//
-////            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:22.123"));
-////            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
-////            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
-//        }
+         //DATETIME3
+        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        while(dateTimeResult3.next()) {
+            System.out.println("DATE TIME 3");
+
+            System.out.println(dateTimeResult3.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult3.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:22.0"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
+        }
 
 
-//        // DATETIME4
-//        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
-//        while(dateTimeResult4.next()) {
-//            System.out.println("DATE TIME 4");
-//
-//            System.out.println(dateTimeResult4.getTimestamp("Mid_Value").toString());
-//            System.out.println(dateTimeResult4.getTimestamp("Maximum_Value").toString());
-//            System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
-//
-////            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:12.123"));
-////            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
-////            Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
-//
-//        }
-//
-//
-//        // DATETIME5
-//        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
-//        while(dateTimeResult5.next()) {
-//            System.out.println("DATE TIME 5");
-//
-//            System.out.println(dateTimeResult5.getTimestamp("Mid_Value").toString());
-//            System.out.println(dateTimeResult5.getTimestamp("Maximum_Value").toString());
-//            System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
-//
-////            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:28.123"));
-////            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
-////            Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
-//
-//        }
-//
-//        // DATETIME6
-//        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
-//        while(dateTimeResult6.next()) {
-//            System.out.println("DATE TIME 6");
-//
-//            System.out.println(dateTimeResult6.getTimestamp("Mid_Value").toString());
-//            System.out.println(dateTimeResult6.getTimestamp("Maximum_Value").toString());
-//            System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
-//
-//            //Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:56.123"));
-////            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2283-11-11 23:59:59.999"));
-////            Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1925-01-01 00:00:00.0"));
-//
-//        }
+        // DATETIME4
+        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        while(dateTimeResult4.next()) {
+            System.out.println("DATE TIME 4");
+
+            System.out.println(dateTimeResult4.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult4.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:12.1234"));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.9999"));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
+
+        }
+
+
+        // DATETIME5
+        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        while(dateTimeResult5.next()) {
+            System.out.println("DATE TIME 5");
+
+            System.out.println(dateTimeResult5.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult5.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:28.12345"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.99999"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
+
+        }
+
+        // DATETIME6
+        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        while(dateTimeResult6.next()) {
+            System.out.println("DATE TIME 6");
+
+            System.out.println(dateTimeResult6.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult6.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
+
+        }
 
         if(engine.get() != null) {
             engine.get().stop();

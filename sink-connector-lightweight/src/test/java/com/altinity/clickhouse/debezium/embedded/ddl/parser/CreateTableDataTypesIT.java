@@ -66,7 +66,9 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 
         Map<String, String> decimalTable = writer.getColumnsDataTypesForTable("numeric_types_DECIMAL_65_30");
-        Map<String, String> dateTimeTable = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
+        Map<String, String> dateTimeTable6 = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
+        Map<String, String> dateTimeTable2 = writer.getColumnsDataTypesForTable("temporal_types_DATETIME2");
+
         Map<String, String> timestampTable = writer.getColumnsDataTypesForTable("temporal_types_TIMESTAMP6");
 
         // Validate all decimal records.
@@ -77,11 +79,17 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
 
         // Validate dateTime64 records.
-        Assert.assertTrue(dateTimeTable.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(dateTimeTable.get("Minimum_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(dateTimeTable.get("Mid_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(dateTimeTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(dateTimeTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(3))"));
+        Assert.assertTrue(dateTimeTable6.get("Type").equalsIgnoreCase("String"));
+        Assert.assertTrue(dateTimeTable6.get("Minimum_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(dateTimeTable6.get("Mid_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(dateTimeTable6.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(dateTimeTable6.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
+
+        Assert.assertTrue(dateTimeTable2.get("Type").equalsIgnoreCase("String"));
+        Assert.assertTrue(dateTimeTable2.get("Minimum_Value").equalsIgnoreCase("DateTime64(2)"));
+        Assert.assertTrue(dateTimeTable2.get("Mid_Value").equalsIgnoreCase("DateTime64(2)"));
+        Assert.assertTrue(dateTimeTable2.get("Maximum_Value").equalsIgnoreCase("DateTime64(2)"));
+        Assert.assertTrue(dateTimeTable2.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(2))"));
 
         // Validate timestamp records
         Assert.assertTrue(timestampTable.get("Type").equalsIgnoreCase("String"));

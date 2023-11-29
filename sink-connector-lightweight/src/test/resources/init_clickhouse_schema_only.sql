@@ -102,4 +102,58 @@ ORDER BY Type
 SETTINGS index_granularity = 8192;
 
 
+CREATE TABLE employees.temporal_types_DATETIME3
+(
+    `Type` String,
+    `Minimum_Value` DateTime,
+    `Mid_Value` DateTime,
+    `Maximum_Value` DateTime,
+    `Null_Value` Nullable(DateTime),
+    `_version` UInt64,
+    `is_deleted` UInt8
+)
+    ENGINE = ReplacingMergeTree(_version, is_deleted)
+ORDER BY Type
+SETTINGS index_granularity = 8192;
 
+CREATE TABLE employees.temporal_types_DATETIME4
+(
+    `Type` String,
+    `Minimum_Value` DateTime64(6),
+    `Mid_Value` DateTime64(6),
+    `Maximum_Value` DateTime64(6),
+    `Null_Value` Nullable(DateTime64(6)),
+    `_version` UInt64,
+    `is_deleted` UInt8
+)
+    ENGINE = ReplacingMergeTree(_version, is_deleted)
+ORDER BY Type
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE employees.temporal_types_DATETIME5
+(
+    `Type` String,
+    `Minimum_Value` DateTime64(6),
+    `Mid_Value` DateTime64(6),
+    `Maximum_Value` DateTime64(6),
+    `Null_Value` Nullable(DateTime64(6)),
+    `_version` UInt64,
+    `is_deleted` UInt8
+)
+    ENGINE = ReplacingMergeTree(_version, is_deleted)
+ORDER BY Type
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE employees.temporal_types_DATETIME6
+(
+    `Type` String,
+    `Minimum_Value` DateTime64(6),
+    `Mid_Value` DateTime64(6),
+    `Maximum_Value` DateTime64(6),
+    `Null_Value` Nullable(DateTime64(6)),
+    `_version` UInt64,
+    `is_deleted` UInt8
+)
+    ENGINE = ReplacingMergeTree(_version, is_deleted)
+ORDER BY Type
+SETTINGS index_granularity = 8192;

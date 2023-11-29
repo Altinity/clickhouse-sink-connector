@@ -414,16 +414,24 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         int scale = 0;
 
         String chDataType = null;
+        MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
+
         if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
             try {
                 precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
                 scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
             } catch(Exception e) {
-                log.error("Error parsing precision, scale");
+                log.error("Error parsing precision, scale : columnName" + columnName);
+            }
+        }  // datetime(6)
+        else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains("datetime")){
+            try {
+                precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(")")));
+            } catch(Exception e) {
+                log.error("Error parsing precision:ColumnName:" + columnName);
             }
         }
 
-        MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         chDataType = DataTypeConverter.convertToString(columnName,
                 scale, precision, dtc);
 

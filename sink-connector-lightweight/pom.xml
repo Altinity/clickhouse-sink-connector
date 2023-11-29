@@ -525,6 +525,18 @@
             <version>0.0.5</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>com.altinity</groupId>
+            <artifactId>clickhouse-kafka-sink-connector</artifactId>
+            <version>0.0.5</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.altinity</groupId>
+            <artifactId>clickhouse-kafka-sink-connector</artifactId>
+            <version>0.0.5</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
     <build>
         <extensions>

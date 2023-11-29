@@ -87,7 +87,7 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
             // Input is a long.
             Instant i = ofEpochMilli((long) value);
             System.out.println("RECEIVED VALUE" + i.toString());
