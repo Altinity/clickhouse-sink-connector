@@ -24,7 +24,7 @@ jobs:
 
       - name: Build with Maven (Kafka version)
         working-directory: sink-connector
-        run: mvn -B package --file pom.xml
+        run: mvn -B package install --file pom.xml
 
       - name: Update sink connector jar file version in sink-connector-lightweight pom.xml
         working-directory: sink-connector-lightweight
