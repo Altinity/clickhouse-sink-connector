@@ -10,7 +10,7 @@ on:
         default: "latest"
 
 env:
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME}}
+  # DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME}}
   IMAGE_TAG: ${{ inputs.IMAGE_TAG }}
 
 jobs:
