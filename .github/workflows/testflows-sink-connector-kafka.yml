@@ -3,29 +3,37 @@ name: Kafka - TestFlows Tests
 on:
   workflow_call:
     inputs:
-      sink_version:
-        description: "Kafka connector version"
+      sink_image:
+        description: "Kafka connector docker image"
         required: true
         type: string
-        default: "latest"
+        default: "altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka"
+  workflow_dispatch:
+    inputs:
+      sink_image:
+        description: "Kafka connector docker image"
+        required: true
+        type: string
 
 env:
-  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
+  SINK_CONNECTOR_IMAGE: ${{ inputs.sink_image }}
 
 jobs:
   testflows:
-    runs-on: [self-hosted, style-checker, on-demand, type-cpx51, image-x86-app-docker-ce]
+    runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2
 
       - uses: actions/download-artifact@v3
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         with:
-          name: clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar.gz
+          name: clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-kafka.tar.gz
 
       - name: Load Docker image
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         run: |
-          docker load  < clickhouse-sink-connector_${{ env.SINK_CONNECTOR_VERSION }}.tar.gz
+          docker load  < clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-kafka.tar.gz
           docker image ls
 
       - name: Runner ssh command
@@ -84,6 +92,3 @@ jobs:
             sink-connector/tests/integration/logs/*.log
           if-no-files-found: error
           retention-days: 60
-
-
-
