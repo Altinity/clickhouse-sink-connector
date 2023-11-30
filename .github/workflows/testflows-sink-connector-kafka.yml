@@ -18,7 +18,7 @@ env:
   SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
 
 jobs:
-  testflows:
+  testflows-kafka:
     runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
 
     steps:
