@@ -3,20 +3,19 @@ name: Kafka - TestFlows Tests
 on:
   workflow_call:
     inputs:
-      sink_image:
+      SINK_CONNECTOR_IMAGE:
         description: "Kafka connector docker image"
         required: true
         type: string
-        default: "altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka"
   workflow_dispatch:
     inputs:
-      sink_image:
+      SINK_CONNECTOR_IMAGE:
         description: "Kafka connector docker image"
         required: true
         type: string
 
 env:
-  SINK_CONNECTOR_IMAGE: ${{ inputs.sink_image }}
+  SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
 
 jobs:
   testflows:

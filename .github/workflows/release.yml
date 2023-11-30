@@ -9,19 +9,19 @@ jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
     with:
-      image_tag: ${{ github.event.release.tag_name }}-test
+      IMAGE_TAG: ${{ github.event.release.tag_name }}-test
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
-      sink_image: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-kafka
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
     with:
-      sink_image: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-lt
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-lt
 
   java-tests-kafka:
     needs: [build-kafka-lightweight]
