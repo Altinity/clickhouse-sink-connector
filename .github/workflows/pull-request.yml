@@ -14,18 +14,21 @@ jobs:
     uses: ./.github/workflows/docker-build.yml
     with:
       IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
+    secrets: inherit
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+    secrets: inherit
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+    secrets: inherit
 
   java-tests-kafka:
     needs: [build-kafka-lightweight]
