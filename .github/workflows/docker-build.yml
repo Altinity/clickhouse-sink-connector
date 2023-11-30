@@ -10,7 +10,7 @@ on:
         default: "latest"
 
 env:
-  # DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME}}
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME}}
   IMAGE_TAG: ${{ inputs.IMAGE_TAG }}
 
 jobs:
@@ -84,6 +84,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ env.DOCKER_USERNAME != '' }}
 
       - name: Upload Kafka Docker image
         run: |
