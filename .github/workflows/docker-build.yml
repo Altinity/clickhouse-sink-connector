@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      - run: pwd
       - run: ls ${{ github.workspace }}
 
       - name: Set up JDK 11
