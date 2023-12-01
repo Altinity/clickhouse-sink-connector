@@ -8,12 +8,12 @@ on:
         type: string
       prerelease:
         required: true
-        type: string
-        default: 'true'
+        type: boolean
+        default: true
       draft:
         required: true
-        type: string
-        default: 'false'
+        type: boolean
+        default: false
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -34,26 +34,26 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Pull test images
-        if: ${{ inputs.prerelease == false && inputs.draft == false}}
+        if: ${{ !inputs.prerelease && !inputs.draft}}
         run: |
           docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka
           docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-lt
 
       - name: Tag images
-        if: ${{ inputs.prerelease == false && inputs.draft == false}}
+        if: ${{ !inputs.prerelease && !inputs.draft}}
         run: |
           docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka altinity/clickhouse-sink-connector:$release_tag-kafka
           docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-lt altinity/clickhouse-sink-connector:$release_tag-lt
 
       - name: Push images
-        if: ${{ inputs.prerelease == false && inputs.draft == false}}
+        if: ${{ !inputs.prerelease && !inputs.draft }}
         run: |
           docker push altinity/clickhouse-sink-connector:$release_tag-kafka
           docker push altinity/clickhouse-sink-connector:$release_tag-lt
 
       - name: Update Docker links
         working-directory: release-notes
-        if: ${{ inputs.prerelease == false && inputs.draft == false}}
+        if: ${{ !inputs.prerelease && !inputs.draft}}
         run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
 
       - name: Create Release
