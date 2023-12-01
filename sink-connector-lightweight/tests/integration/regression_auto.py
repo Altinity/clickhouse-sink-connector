@@ -30,70 +30,123 @@ xfails = {
     "update/no primary key": [(Fail, "makes delete")],
     "truncate/no primary key innodb": [(Fail, "doesn't work")],
     "truncate/no primary key": [(Fail, "doesn't work")],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": [
+        (Fail, "doesn't work")
+    ],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "types/json": [(Fail, "doesn't work in raw")],
-    "types/double": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/json": [
+        (Fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "types/bigint": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
     "delete/many partition many parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/one million datapoints/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/many partition one part/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/one partition one part/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/one partition mixed parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/many partition mixed parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "delete/parallel/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
-        ],
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
+    ],
     "update/many partition many parts": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "update/one million datapoints": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "update/many partition one part": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "insert/many partition many parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/one million datapoints/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/many partition one part/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/one partition one part/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/one partition mixed parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/many partition mixed parts/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
     "insert/parallel/*_no_primary_key": [
-        (Fail, "doesn't work without primary key as only last row of insert is replicated")
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
     ],
-    "types/enum": [
-        (Fail, "doesn't create table")
-    ],
-
+    "types/enum": [(Fail, "doesn't create table")],
 }
 xflags = {}
 
@@ -112,7 +165,7 @@ xflags = {}
     ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
-    )
+    ),
 )
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
@@ -158,9 +211,7 @@ def regression(
 
     self.context.env = env
 
-    self.context.clickhouse_table_engines = [
-        "ReplacingMergeTree"
-    ]
+    self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
 
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
@@ -192,8 +243,7 @@ def regression(
         "columns_inconsistency",
         "snowflake_id",
         # "offset",
-        "databases"
-
+        "databases",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))

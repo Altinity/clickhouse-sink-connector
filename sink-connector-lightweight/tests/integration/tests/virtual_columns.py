@@ -36,7 +36,6 @@ def virtual_column_names(
     # with When(f"I insert data in MySql table {table_name}"):
     #     mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
 
-
     with Then(f"I make check that ClickHouse table virtual column names are correct"):
         if check_clickhouse_version("<23")(self):
             retry(clickhouse.query, timeout=50, delay=1)(

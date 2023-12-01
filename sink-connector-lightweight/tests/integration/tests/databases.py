@@ -5,8 +5,7 @@ from integration.tests.steps.steps_global import *
 
 
 @TestOutline
-@Requirements(
-)
+@Requirements()
 def databases_tables(
     self,
     clickhouse_table_engine,
@@ -21,7 +20,6 @@ def databases_tables(
 
     table_name = f"databases_{getuid()}"
 
-
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_to_clickhouse_replicated_table(
             version_column=version_column,
@@ -31,7 +29,9 @@ def databases_tables(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with And(f"I create another database in Clickhouse and table with the same name {table_name} in it"):
+    with And(
+        f"I create another database in Clickhouse and table with the same name {table_name} in it"
+    ):
         clickhouse_node = self.context.cluster.node("clickhouse")
 
         create_database(name="test2")
@@ -43,7 +43,8 @@ def databases_tables(
             f"ENGINE = ReplacingMergeTree({version_column}) "
             f" PRIMARY KEY (id ) ORDER BY (id)"
             f" SETTINGS "
-            f"index_granularity = 8192;")
+            f"index_granularity = 8192;"
+        )
 
     with When(f"I insert data in MySql table {table_name}"):
         mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
