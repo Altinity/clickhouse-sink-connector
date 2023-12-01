@@ -7,6 +7,11 @@ on:
         description: "Lightweight connector docker image"
         required: true
         type: string
+    secrets:
+      DOCKER_USERNAME:
+        required: false
+      DOCKER_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       SINK_CONNECTOR_IMAGE:

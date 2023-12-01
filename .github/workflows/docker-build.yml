@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: "latest"
+    secrets:
+      DOCKER_USERNAME:
+        required: false
+      DOCKER_PASSWORD:
+        required: false
 
 env:
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME}}
