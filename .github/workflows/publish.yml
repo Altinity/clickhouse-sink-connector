@@ -73,18 +73,23 @@ jobs:
       - name: Download jar files
         uses: actions/download-artifact@v3
 
+      - name: Zip jar files
+        run: |
+          zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
+          zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+
       - name: Upload jar file to release (Kafka)
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
-          asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
-          asset_content_type: jar
+          asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar.zip
+          asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar.zip
+          asset_content_type: application/zip
 
       - name: Upload jar file to release (Lightweight)
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
-          asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
-          asset_content_type: jar
+          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
+          asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar.zip
+          asset_content_type: application/zip
