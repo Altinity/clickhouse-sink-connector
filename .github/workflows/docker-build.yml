@@ -52,7 +52,7 @@ jobs:
       - name: Upload Maven build (Kafka)
         uses: actions/upload-artifact@v3
         with:
-          name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.jar
+          name: clickhouse-sink-connector-kafka-${{ env.IMAGE_TAG }}.jar
           path: sink-connector/target/clickhouse-kafka-sink-connector-${{ env.PROJECT_VERSION }}.jar
 
       - name: Build Docker image (Kafka)
@@ -78,7 +78,7 @@ jobs:
       - name: Upload Maven build (Lightweight)
         uses: actions/upload-artifact@v3
         with:
-          name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.jar
+          name: clickhouse-sink-connector-lt-${{ env.IMAGE_TAG }}.jar
           path: sink-connector-lightweight/target/clickhouse-debezium-embedded-${{ env.PROJECT_VERSION }}.jar
 
       - name: Build with Go
