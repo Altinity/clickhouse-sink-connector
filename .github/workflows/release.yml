@@ -1,4 +1,4 @@
-name: Release
+name: Release Pipeline
 
 on: 
   workflow_dispatch:
@@ -17,28 +17,25 @@ on:
           - false
           - true
 
-env:
-  release_tag: ${{ inputs.release_tag }}
-
 jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
     with:
-      IMAGE_TAG: ${{ github.env.release_tag }}-test
+      IMAGE_TAG: ${{ inputs.release_tag }}-test
     secrets: inherit
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.env.release_tag }}-test-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-kafka
     secrets: inherit
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.env.release_tag }}-test-lt
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-lt
     secrets: inherit
 
   java-tests-kafka:

@@ -1,4 +1,4 @@
-name: Kafka Sink Connector - Pull Request Pipeline
+name: Pull Request Pipeline
 
 on:
   pull_request:

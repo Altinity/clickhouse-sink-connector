@@ -61,8 +61,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.env.release_tag }}
-          release_name: Release v${{ github.env.release_tag }}
+          tag_name: ${{ env.release_tag }}
+          release_name: Release v${{ env.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
           body-path: release_notes.md
@@ -71,13 +71,13 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: |
-            clickhouse-sink-connector-kafka-${{ github.env.release_tag }}.jar
-            clickhouse-sink-connector-lt-${{ github.env.release_tag }}.jar
+            clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+            clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
 
       - name: Upload jar files to release
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }} 
           asset_path: |
-            clickhouse-sink-connector-kafka-${{ github.env.release_tag }}.jar
-            clickhouse-sink-connector-lt-${{ github.env.release_tag }}.jar
+            clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+            clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
