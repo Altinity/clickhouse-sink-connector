@@ -1,30 +1,44 @@
 name: Release
 
 on: 
-  release:
-    types:
-    - published
-    - prereleased
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      prerelease:
+        type: choice
+        options:
+          - true
+          - false
+      draft:
+        type: choice
+        options:
+          - false
+          - true
+
+env:
+  release_tag: ${{ inputs.release_tag }}
 
 jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
     with:
-      IMAGE_TAG: ${{ github.event.release.tag_name }}-test
+      IMAGE_TAG: $release_tag-test
     secrets: inherit
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka
     secrets: inherit
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-lt
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:$release_tag-test-lt
     secrets: inherit
 
   java-tests-kafka:
@@ -38,3 +52,7 @@ jobs:
   publish:
     needs: [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
     uses: ./.github/workflows/publish.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      prerelease: ${{ inputs.prerelease }}
+      draft: ${{ inputs.draft }}
