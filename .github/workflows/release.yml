@@ -47,8 +47,7 @@ jobs:
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
 
   publish:
-    # needs: [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
-    needs: [build-kafka-lightweight]
+    needs: [build-kafka-lightweight] # [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
     uses: ./.github/workflows/publish.yml
     with:
       release_tag: ${{ inputs.release_tag }}
