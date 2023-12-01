@@ -163,13 +163,15 @@ public class BaseDbWriter {
 
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
         // Validate if timezone string is valid.
         ZoneId userProvidedTimeZoneId = null;
         try {
-            userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+            if(!userProvidedTimeZone.isEmpty()) {
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+                log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+            }
         } catch (Exception e){
-            log.error("**** Erorr parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
         }
 
         if(userProvidedTimeZoneId != null) {

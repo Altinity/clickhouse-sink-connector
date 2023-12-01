@@ -376,7 +376,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
-                        "UTC",
+                        "",
                         Importance.HIGH,
                         "Override timezone for DateTime columns in ClickHouse server",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

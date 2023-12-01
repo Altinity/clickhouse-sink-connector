@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
@@ -14,6 +15,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -46,7 +48,7 @@ public class DDLModifyColumnIT extends DDLBaseIT {
             try {
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService());
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

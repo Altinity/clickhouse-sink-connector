@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
@@ -20,6 +21,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -78,7 +80,7 @@ public class TableOperationsIT {
 
                     engine.set(new DebeziumChangeEventCapture());
                     engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                            new MySQLDDLParserService());
+                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())));
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }

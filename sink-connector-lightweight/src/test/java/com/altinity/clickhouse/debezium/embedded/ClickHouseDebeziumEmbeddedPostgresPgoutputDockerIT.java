@@ -4,6 +4,7 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +17,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -80,7 +82,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService());
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

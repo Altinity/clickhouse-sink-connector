@@ -3,6 +3,9 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
+
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -15,20 +18,41 @@ import org.antlr.v4.runtime.tree.TerminalNodeImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.ZoneId;
 import java.util.List;
 import java.util.ListIterator;
 
 public class MySqlDDLParserListenerImpl implements MySqlParserListener {
-
     private static final Logger log = LoggerFactory.getLogger(MySqlDDLParserListenerImpl.class);
-
     StringBuffer query;
-
     String tableName;
+    ClickHouseSinkConnectorConfig config;
+    ZoneId userProvidedTimeZone;
 
-    public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName) {
+    public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
+                                      ClickHouseSinkConnectorConfig config) {
         this.query = transformedQuery;
         this.tableName = tableName;
+        this.config = config;
+
+        this.userProvidedTimeZone = parseTimeZone();
+    }
+
+
+    public ZoneId parseTimeZone() {
+        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
+                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+        // Validate if timezone string is valid.
+        ZoneId userProvidedTimeZoneId = null;
+        try {
+            if(!userProvidedTimeZone.isEmpty())
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+        } catch (Exception e){
+            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+        }
+
+        return userProvidedTimeZoneId;
     }
 
     @Override
@@ -433,7 +457,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
         }
 
         chDataType = DataTypeConverter.convertToString(columnName,
-                scale, precision, dtc);
+                scale, precision, dtc, this.userProvidedTimeZone);
 
         return chDataType;
 

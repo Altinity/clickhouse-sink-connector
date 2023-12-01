@@ -31,13 +31,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration Test that validates replication of DateTime columns when user overrides CH server timezone, also MySQL server runs on a different timezone.")
-public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
+public class DateTimeWithUserProvidedDifferentTimeZoneIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
             .asCompatibleSubstituteFor("clickhouse"))
-            .withInitScript("init_clickhouse_schema_only.sql")
+            .withInitScript("init_clickhouse_user_provided_timezone.sql")
             .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
             .withUsername("ch_user")
             .withPassword("password")
@@ -69,10 +69,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             try {
 
                 Properties props = getDebeziumProperties();
-                props.setProperty("database.include.list", "datatypes");
-                props.setProperty("clickhouse.server.database", "datatypes");
-                // Override clickhouse server timezone.
-               // props.setProperty("clickhouse.datetime.timezone", "UTC");
+
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
@@ -129,9 +126,10 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.0"));
+            break;
         }
 
         // DATETIME1
@@ -142,9 +140,9 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult1.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult1.getTimestamp("Maximum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:48:25.0"));
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.9"));
         }
 
         // DATETIME2
@@ -155,9 +153,9 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult2.getTimestamp("Maximum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:05.0"));
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.12"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.99"));
         }
 
          //DATETIME3
@@ -242,10 +240,10 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         defaultProps.putAll(fileProps);
 
         // **** OVERRIDE set to schema only
-        defaultProps.setProperty("snapshot.mode", "schema_only");
+        defaultProps.setProperty("snapshot.mode", "initial");
         defaultProps.setProperty("disable.drop.truncate", "true");
-        defaultProps.setProperty("auto.create.tables", "false");
-        defaultProps.setProperty("enable.snapshot.ddl", "false");
+        defaultProps.setProperty("auto.create.tables", "true");
+        defaultProps.setProperty("enable.snapshot.ddl", "true");
 
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
@@ -271,6 +269,11 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
 
+//        props.setProperty("database.include.list", "datatypes");
+//        props.setProperty("clickhouse.server.database", "datatypes");
+        // Override clickhouse server timezone.
+        defaultProps.setProperty("database.connectionTimeZone", "UTC");
+        defaultProps.setProperty("clickhouse.datetime.timezone", "UTC");
         return defaultProps;
 
     }

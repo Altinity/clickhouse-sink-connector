@@ -97,7 +97,7 @@ public class DebeziumChangeEventCapture {
         }
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 

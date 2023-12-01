@@ -37,13 +37,3 @@ CREATE TABLE dt
 );
 
 insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 2);
-
-CREATE TABLE dt
-(
-    `timestamp` timestamp,
-    `json` varchar(100),
-    `event_id` int unsigned,
-    `sign` smallint
-);
-
-insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 2);
