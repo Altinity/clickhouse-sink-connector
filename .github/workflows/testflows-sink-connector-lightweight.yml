@@ -31,6 +31,8 @@ jobs:
     runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
 
     steps:
+      - run: echo ${{ github.event.pull_request.head.repo.full_name }}
+    
       - uses: actions/checkout@v2
 
       - uses: actions/download-artifact@v3
