@@ -24,7 +24,9 @@ jobs:
   debug:
    runs-on: ubuntu-latest
    steps:
-     - run: echo $release_tag
+     - run: |
+         echo $release_tag
+         echo ${{ github.env.release_tag }}
 
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
