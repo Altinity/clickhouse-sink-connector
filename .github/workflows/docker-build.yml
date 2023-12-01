@@ -63,6 +63,7 @@ jobs:
 
       - name: Upload Docker tar (Kafka)
         uses: actions/upload-artifact@v3
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
           path: sink-connector/clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
@@ -92,19 +93,20 @@ jobs:
 
       - name: Upload Docker tar (Lightweight)
         uses: actions/upload-artifact@v3
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
           path: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
 
       - name: Upload Docker images
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
         run: |
           docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
           docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
