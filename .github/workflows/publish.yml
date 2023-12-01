@@ -52,8 +52,9 @@ jobs:
           docker push altinity/clickhouse-sink-connector:$release_tag-lt
 
       - name: Update Docker links
+        working-directory: release-notes
         if: ${{ inputs.prerelease == false && inputs.draft == false}}
-        run: sed -i "s/release_tag/$release_tag/" release_notes.md
+        run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
 
       - name: Create Release
         id: create_release
@@ -65,7 +66,7 @@ jobs:
           release_name: Release v${{ env.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
-          body-path: release_notes.md
+          body-path: release-notes/${{ env.release_tag }}.md
 
       - name: Download jar files
         uses: actions/download-artifact@v3
