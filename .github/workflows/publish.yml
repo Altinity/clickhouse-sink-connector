@@ -56,8 +56,7 @@ jobs:
         if: ${{ !inputs.prerelease && !inputs.draft}}
         run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
 
-      - name: Sanity Check
-        run: ls ${{ github.workspace }}
+      - uses: actions/checkout@v2
 
       - name: Create Release
         id: create_release
@@ -69,7 +68,7 @@ jobs:
           release_name: Release v${{ env.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
-          body_path: ${{ github.workspace }}/release-notes/${{ env.release_tag }}.md
+          body_path: release-notes/${{ env.release_tag }}.md
 
       - name: Download jar files
         uses: actions/download-artifact@v3
