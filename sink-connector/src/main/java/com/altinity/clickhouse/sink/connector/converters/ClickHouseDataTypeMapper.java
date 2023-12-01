@@ -189,7 +189,8 @@ public class ClickHouseDataTypeMapper {
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
-                    // Handle microtimestamp first
+                    // DATETIME(4), DATETIME(5), DATETIME(6)
+
                     ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone, clickHouseDataType));
 //                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone),
 //                            Calendar.getInstance(TimeZone.getTimeZone(serverTimeZone)));

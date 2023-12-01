@@ -5,6 +5,8 @@ import java.util.Map;
 
 /**
  * Class that maps overrides of column data types.
+ * This is done specifically to work around a JDBC bug
+ * which does limits check on UTC timezone.
  */
 public class ColumnOverrides {
 

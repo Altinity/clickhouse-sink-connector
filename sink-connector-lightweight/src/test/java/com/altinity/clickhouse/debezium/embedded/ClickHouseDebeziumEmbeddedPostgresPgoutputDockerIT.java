@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserServic
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -62,6 +63,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
     }
 
     @Test
+    @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to PGOUTPUT")
     public void testPgOutputPlugin() throws Exception {
         Network network = Network.newNetwork();
 

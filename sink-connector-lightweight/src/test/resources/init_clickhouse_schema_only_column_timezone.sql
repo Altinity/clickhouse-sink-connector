@@ -64,10 +64,10 @@ ENGINE = ReplacingMergeTree(_version) ORDER by event_id;
 CREATE TABLE employees.temporal_types_DATETIME
 (
     `Type` String,
-    `Minimum_Value` DateTime64('Asia/Istanbul'),
-    `Mid_Value` DateTime64('Asia/Istanbul'),
-    `Maximum_Value` DateTime64('Asia/Istanbul'),
-    `Null_Value` Nullable(DateTime64('Asia/Istanbul')),
+    `Minimum_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Mid_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Maximum_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Null_Value` Nullable(DateTime64(1, 'Asia/Istanbul')),
     `_version` UInt64,
     `is_deleted` UInt8
 ) ENGINE = ReplacingMergeTree(_version, is_deleted)
@@ -77,10 +77,10 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE employees.temporal_types_DATETIME1
 (
     `Type` String,
-    `Minimum_Value` DateTime64('Asia/Istanbul'),
-    `Mid_Value` DateTime64('Asia/Istanbul'),
-    `Maximum_Value` DateTime64('Asia/Istanbul'),
-    `Null_Value` Nullable(DateTime64('Asia/Istanbul')),
+    `Minimum_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Mid_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Maximum_Value` DateTime64(1, 'Asia/Istanbul'),
+    `Null_Value` Nullable(DateTime64(1, 'Asia/Istanbul')),
     `_version` UInt64,
     `is_deleted` UInt8
 ) ENGINE = ReplacingMergeTree(_version, is_deleted)
@@ -90,13 +90,27 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE employees.temporal_types_DATETIME2
 (
     `Type` String,
-    `Minimum_Value` DateTime64('Asia/Istanbul'),
-    `Mid_Value` DateTime64('Asia/Istanbul'),
-    `Maximum_Value` DateTime64('Asia/Istanbul'),
-    `Null_Value` Nullable(DateTime64('Asia/Istanbul')),
+    `Minimum_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Mid_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Maximum_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Null_Value` Nullable(DateTime64(2, 'Asia/Istanbul')),
     `_version` UInt64,
     `is_deleted` UInt8
 )
 ENGINE = ReplacingMergeTree(_version, is_deleted)
+ORDER BY Type
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE employees.temporal_types_DATETIME6
+(
+    `Type` String,
+    `Minimum_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Mid_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Maximum_Value` DateTime64(2, 'Asia/Istanbul'),
+    `Null_Value` Nullable(DateTime64(2, 'Asia/Istanbul')),
+    `_version` UInt64,
+    `is_deleted` UInt8
+)
+    ENGINE = ReplacingMergeTree(_version, is_deleted)
 ORDER BY Type
 SETTINGS index_granularity = 8192;

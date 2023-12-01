@@ -69,8 +69,6 @@ public class DebeziumConverter {
             long result = receivedDT.atZone(serverTimezone).toEpochSecond();
 
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, clickHouseDataType);
-            System.out.println("MICROTIMESTAMP result" + result);
-            System.out.println("TIMESTAMP result" + Timestamp.from(modifiedDT).toString());
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
             //return Timestamp.from(Instant.ofEpochSecond(result));
         }
@@ -88,12 +86,15 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+
+            if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            }
+
             // Input is a long.
             Instant i = ofEpochMilli((long) value);
-            System.out.println("RECEIVED VALUE" + i.toString());
 
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
-            System.out.println("CONVERTED VALUE" + modifiedDT.atZone(serverTimezone).format(destFormatter).toString());
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
     }

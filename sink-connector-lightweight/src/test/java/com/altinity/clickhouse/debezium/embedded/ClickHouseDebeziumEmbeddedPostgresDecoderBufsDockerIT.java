@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserServic
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -65,6 +66,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
+    @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to DecoderBufs")
     public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
 

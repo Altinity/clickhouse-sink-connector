@@ -21,7 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-@DisplayName("Test replication of employees database")
+@DisplayName("Integration Test to validate replication of employees database")
 public class EmployeesDBIT extends DDLBaseIT {
 
 

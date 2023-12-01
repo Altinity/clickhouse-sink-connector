@@ -26,7 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-@DisplayName("Test that tests replication of data types and validates datetime, date limits when the timezone is set to America/Chicago in ClickHouse")
+@DisplayName("Integration Test that tests replication of data types and validates datetime, date limits when the timezone is set to America/Chicago in ClickHouse")
 public class DateTimeWithTimeZoneIT {
     protected MySQLContainer mySqlContainer;
 

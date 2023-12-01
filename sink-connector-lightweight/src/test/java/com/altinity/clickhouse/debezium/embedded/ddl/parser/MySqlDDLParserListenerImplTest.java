@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -103,6 +104,7 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("Test DDL conversion - DATETIME columns")
     public void testDateTimeColumns() {
         String createQuery6 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -284,6 +286,7 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("Test ALTER TABLE ADD column")
     public void testAddColumnWithNotNull() {
         String mysqlQuery = "alter table add_test add column customer_address varchar(100) not null, add column customer_name varchar(20) null;";
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -598,6 +601,7 @@ public class MySqlDDLParserListenerImplTest {
             "create database test_ddl, false",
             "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1, ALTER TABLE add_test RENAME COLUMN stocks to options, false"
     })
+    @DisplayName("Test to validate if the statement is flagged as DROP or TRUNCATE")
     public void checkIfDropOrTruncate(String sql, boolean expectedResult) {
         StringBuffer clickHouseQuery = new StringBuffer();
 
