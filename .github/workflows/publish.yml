@@ -102,7 +102,7 @@ jobs:
         run: |
           cd ..
           zip -r Source.zip clickhouse-sink-connector
-          tar czvf Source.tar.gz clickhouse-sink-connector
+          tar czf Source.tar.gz clickhouse-sink-connector
 
       - name: Upload source zip
         uses: actions/upload-release-asset@v1
@@ -110,7 +110,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: Source.zip
+          asset_name: Source code
           asset_path: ../Source.zip
           asset_content_type: application/zip
 
@@ -120,6 +120,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: Source.tar.gz
+          asset_name: Source code
           asset_path: ../Source.tar.gz
           asset_content_type: application/gzip
