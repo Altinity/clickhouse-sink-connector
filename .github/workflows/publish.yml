@@ -56,7 +56,7 @@ jobs:
         if: ${{ !inputs.prerelease && !inputs.draft}}
         run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
 
-      - uses: actions/checkout@v2
+    #   - uses: actions/checkout@v2
 
       - name: Create Release
         id: create_release
@@ -68,15 +68,21 @@ jobs:
           release_name: Release v${{ env.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
-          body_path: release-notes/${{ env.release_tag }}.md
+          body_path: https://github.com/Altinity/clickhouse-sink-connector/blob/develop/release-notes/${{ env.release_tag }}.md
 
       - name: Download jar files
         uses: actions/download-artifact@v3
 
-      - name: Upload jar files to release
+      - name: Upload jar file to release (Kafka)
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: clickhouse-sink-connector-*
-            # kafka-${{ env.release_tag }}.jar
-            # clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
+          asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+          asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+
+      - name: Upload jar file to release (Lightweight)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
+          asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
