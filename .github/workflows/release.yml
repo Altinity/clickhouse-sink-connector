@@ -51,5 +51,5 @@ jobs:
     uses: ./.github/workflows/publish.yml
     with:
       release_tag: ${{ inputs.release_tag }}
-      prerelease: '${{ inputs.prerelease }}'
-      draft: '${{ inputs.draft }}'
+      prerelease: ${{ inputs.prerelease }}
+      draft: ${{ inputs.draft }}

@@ -8,12 +8,12 @@ on:
         type: string
       prerelease:
         required: true
-        type: boolean
-        default: true
+        type: string
+        default: 'true'
       draft:
         required: true
-        type: boolean
-        default: false
+        type: string
+        default: 'false'
     secrets:
       DOCKERHUB_USERNAME:
         required: false
