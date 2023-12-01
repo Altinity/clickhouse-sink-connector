@@ -31,6 +31,13 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Update Kafka version
         working-directory: sink-connector
         if: ${{ github.event_name == 'release' }}
@@ -45,54 +52,63 @@ jobs:
         working-directory: sink-connector
         run: echo "PROJECT_VERSION=$(mvn -q -Dexec.executable=echo -Dexec.args='${project.version}' --non-recursive exec:exec)" >> "$GITHUB_ENV"
 
-      - name: Build with Maven (Kafka version)
+      - name: Build with Maven (Kafka)
         working-directory: sink-connector
         run: mvn -B package install -DskipTests=true --file pom.xml
 
-      - name: Build the Kafka Docker image
+      - name: Upload Maven build (Kafka)
+        uses: actions/upload-artifact@v3
+        with:
+          name: clickhouse-sink-connector-kafka-${{ env.IMAGE_TAG }}.jar
+          path: sink-connector/target/clickhouse-kafka-sink-connector-${{ env.PROJECT_VERSION }}.jar
+
+      - name: Build Docker image (Kafka)
         working-directory: sink-connector
         run: |
           docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
 
-      - name: Upload Kafka Docker tar
+      - name: Upload Docker tar (Kafka)
         uses: actions/upload-artifact@v3
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
           path: sink-connector/clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
+
+      - name: Upload Docker image (Kafka)
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        run: docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
 
       - name: Update sink connector jar file version in sink-connector-lightweight pom.xml
         working-directory: sink-connector-lightweight
         run:  mvn versions:set-property -Dproperty=sink-connector-library-version -DnewVersion=${{ env.PROJECT_VERSION }}
 
-      - name: Build with Maven (Lightweight version)
+      - name: Build with Maven (Lightweight)
         working-directory: sink-connector-lightweight
         run:  mvn -B package -DskipTests=true --file pom.xml
+
+      - name: Upload Maven build (Lightweight)
+        uses: actions/upload-artifact@v3
+        with:
+          name: clickhouse-sink-connector-lt-${{ env.IMAGE_TAG }}.jar
+          path: sink-connector-lightweight/target/clickhouse-debezium-embedded-${{ env.PROJECT_VERSION }}.jar
 
       - name: Build with Go
         working-directory: sink-connector-client
         run: CGO_ENABLED=0 go build
 
-      - name: Build the Lightweight Docker image
+      - name: Build Docker image (Lightweight)
         run: |
           docker build . --file sink-connector-lightweight/Dockerfile --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
-      - name: Upload Lightweight Docker tar
+      - name: Upload Docker tar (Lightweight)
         uses: actions/upload-artifact@v3
+        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
           path: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Upload Docker image (Lightweight)
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-
-      - name: Upload Kafka Docker image
-        run: |
-          docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
-          docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        run: docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
