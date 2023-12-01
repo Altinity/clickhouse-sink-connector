@@ -8,17 +8,20 @@ on:
         required: true
         type: string
     secrets:
-      DOCKER_USERNAME:
+      DOCKERHUB_USERNAME:
         required: false
-      DOCKER_PASSWORD:
+      DOCKERHUB_TOKEN:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
         required: false
   workflow_dispatch:
     inputs:
-      sink_version:
+      SINK_CONNECTOR_IMAGE:
         description: "Kafka connector docker image"
         required: true
         type: string
-        default: latest
 
 env:
   SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}

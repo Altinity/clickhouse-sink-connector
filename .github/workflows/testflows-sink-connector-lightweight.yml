@@ -8,9 +8,13 @@ on:
         required: true
         type: string
     secrets:
-      DOCKER_USERNAME:
+      DOCKERHUB_USERNAME:
         required: false
-      DOCKER_PASSWORD:
+      DOCKERHUB_TOKEN:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
         required: false
   workflow_dispatch:
     inputs:

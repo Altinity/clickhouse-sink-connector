@@ -9,13 +9,13 @@ on:
         type: string
         default: "latest"
     secrets:
-      DOCKER_USERNAME:
-        required: true
-      DOCKER_PASSWORD:
-        required: true
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
 
 env:
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   IMAGE_TAG: ${{ inputs.IMAGE_TAG }}
 
 jobs:
@@ -89,10 +89,10 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-        if: ${{ env.DOCKER_USERNAME != '' }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
 
       - name: Upload Kafka Docker image
         run: |
           docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
           docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
-        if: ${{ env.DOCKER_USERNAME != '' }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}

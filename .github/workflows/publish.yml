@@ -2,6 +2,11 @@ name: Publish Docker images
 
 on: 
   workflow_call:
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
 
 jobs:
   publish-docker:
