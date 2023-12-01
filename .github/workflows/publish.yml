@@ -57,7 +57,7 @@ jobs:
         run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
 
       - name: Sanity Check
-        run: cat ${{ github.workspace }}/release-notes/${{ env.release_tag }}.md
+        run: ls ${{ github.workspace }}
 
       - name: Create Release
         id: create_release
