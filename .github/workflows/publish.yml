@@ -97,3 +97,29 @@ jobs:
           asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
           asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar.zip
           asset_content_type: application/zip
+
+      - name: Zip and tar source code
+        run: |
+          cd ..
+          zip -r Source.zip clickhouse-sink-connector
+          tar czvf Source.tar.gz clickhouse-sink-connector
+
+      - name: Upload source zip
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: Source.zip
+          asset_path: ../Source.zip
+          asset_content_type: application/zip
+
+      - name: Upload source tar
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: Source.tar.gz
+          asset_path: ../Source.tar.gz
+          asset_content_type: application/gzip
