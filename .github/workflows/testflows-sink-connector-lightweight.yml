@@ -3,28 +3,46 @@ name: Lightweight - TestFlows Tests
 on:    
   workflow_call:
     inputs:
-      sink_version:
-        description: "Lightweight version"
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
         required: true
         type: string
-        default: latest
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
   workflow_dispatch:
     inputs:
-      sink_version:
-        description: "Manual trigger: Lightweight version"
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
         required: true
         type: string
-        default: latest
 
 env:
-  SINK_CONNECTOR_VERSION: "${{ inputs.sink_version }}"
+  SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
 
 jobs:
-  testflows_lightweight:
+  testflows-lightweight:
     runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2
+
+      - uses: actions/download-artifact@v3
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        with:
+          name: clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+
+      - name: Load Docker image
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          docker load  < clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+          docker image ls
 
       - name: Runner ssh command
         working-directory: sink-connector/tests/integration
@@ -58,13 +76,13 @@ jobs:
         run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
 
       - name: Upload artifacts to Altinity Test Reports S3 bucket
-        if: always()
         working-directory: sink-connector-lightweight/tests/integration/logs
         run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_sink_lw/ --recursive --exclude "*" --include "*.log" --include "*.html"
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: 'eu-west-2'
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' }}
 
       - uses: actions/upload-artifact@v3
         if: always()
@@ -74,6 +92,3 @@ jobs:
             sink-connector-lightweight/tests/integration/logs/*.log
           if-no-files-found: error
           retention-days: 60
-
-
-

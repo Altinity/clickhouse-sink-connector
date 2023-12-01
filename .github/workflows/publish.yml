@@ -1,0 +1,90 @@
+name: Publish Release
+
+on: 
+  workflow_call:
+    inputs: 
+      release_tag:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+        default: true
+      draft:
+        required: true
+        type: boolean
+        default: false
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+env:
+  release_tag: ${{ inputs.release_tag }}
+
+jobs:
+  publish-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull test images
+        if: ${{ !inputs.prerelease && !inputs.draft}}
+        run: |
+          docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka
+          docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-lt
+
+      - name: Tag images
+        if: ${{ !inputs.prerelease && !inputs.draft}}
+        run: |
+          docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka altinity/clickhouse-sink-connector:$release_tag-kafka
+          docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-lt altinity/clickhouse-sink-connector:$release_tag-lt
+
+      - name: Push images
+        if: ${{ !inputs.prerelease && !inputs.draft }}
+        run: |
+          docker push altinity/clickhouse-sink-connector:$release_tag-kafka
+          docker push altinity/clickhouse-sink-connector:$release_tag-lt
+
+      - name: Update Docker links
+        working-directory: release-notes
+        if: ${{ !inputs.prerelease && !inputs.draft}}
+        run: sed -i "s/release_tag/$release_tag/" ${{ env.release_tag }}.md
+
+      - uses: actions/checkout@v2
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.release_tag }}
+          release_name: Release v${{ env.release_tag }}
+          prerelease: ${{ inputs.prerelease }}
+          draft: ${{ inputs.draft }}
+          body_path: ${{ github.workspace }}/release-notes/${{ env.release_tag }}.md
+
+      - name: Download jar files
+        uses: actions/download-artifact@v3
+
+      - name: Upload jar file to release (Kafka)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+          asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+          asset_content_type: jar
+
+      - name: Upload jar file to release (Lightweight)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
+          asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
+          asset_content_type: jar

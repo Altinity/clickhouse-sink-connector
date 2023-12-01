@@ -95,7 +95,8 @@ def multiple_parallel_add_column(self, column_number=5, node=None):
 @TestFeature
 def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
-    multiple `ALTER TABLE RENAME COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
+    multiple `ALTER TABLE RENAME COLUMN` parallel queries MySQL and Clickhouse has the same columns.
+    """
     xfail("doesn't rename column")
     if node is None:
         node = self.context.cluster.node("mysql-master")
@@ -168,7 +169,8 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
 @TestFeature
 def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
-    multiple `ALTER TABLE CHANGE COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
+    multiple `ALTER TABLE CHANGE COLUMN` parallel queries MySQL and Clickhouse has the same columns.
+    """
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -241,7 +243,8 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
 @TestFeature
 def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
-    multiple `ALTER TABLE MODIFY COLUMN` parallel queries MySQL and Clickhouse has the same columns."""
+    multiple `ALTER TABLE MODIFY COLUMN` parallel queries MySQL and Clickhouse has the same columns.
+    """
     if node is None:
         node = self.context.cluster.node("mysql-master")
 

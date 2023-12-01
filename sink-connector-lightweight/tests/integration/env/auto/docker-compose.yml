@@ -15,7 +15,6 @@ services:
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
-#     - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
     healthcheck:
       test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
@@ -26,16 +25,12 @@ services:
 
   debezium:
     hostname: debezium
-    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_CONNECTOR_VERSION}
+    image:  ${SINK_CONNECTOR_IMAGE}
     restart: "no"
     expose:
       - "8083"
       - "1976"
       - "5005"
-#    depends_on:
-#      - mysql-master
-#    env_file:
-#      - docker.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -53,10 +48,6 @@ services:
       file: clickhouse-service.yml
       service: clickhouse
     hostname: clickhouse
-#    environment:
-#      - CLICKHOUSE_USER=1000
-#      - CLICKHOUSE_PASSWORD=1000
-#      - CLICKHOUSE_DB=test
     ulimits:
       nofile:
         soft: 262144
@@ -65,7 +56,6 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/database/:/var/lib/clickhouse/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/clickhouse/etc/:/etc/clickhouse-server/"
-#      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse0/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
     depends_on:
       zookeeper:
@@ -125,7 +115,7 @@ services:
 
 
   # dummy service which does nothing, but allows to postpone
-  # 'docker-compose up -d' till all dependecies will go healthy
+  # 'docker-compose up -d' till all dependencies will go healthy
   all_services_ready:
     image: hello-world
     depends_on:

@@ -83,7 +83,7 @@ services:
   sink:
     container_name: sink
     hostname: sink
-    image: "clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}"
+    image: ${SINK_CONNECTOR_IMAGE}
     restart: "no"
     expose:
       - "8083"

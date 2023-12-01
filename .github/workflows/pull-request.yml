@@ -1,4 +1,4 @@
-name: Kafka Sink Connector - Pull Request Pipeline
+name: Pull Request Pipeline
 
 on:
   pull_request:
@@ -10,15 +10,30 @@ on:
       - '**'
 
 jobs:
-  build-kafka:
+  build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
+    with:
+      IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
+    secrets: inherit
 
   testflows-kafka:
-    needs: [build-kafka]
+    needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
-      sink_version: ${{ github.event.number }}-${{ github.sha }}-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+    secrets: inherit
+
+  testflows-lightweight:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+    secrets: inherit
 
   java-tests-kafka:
-    needs: [build-kafka]
+    needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml
+
+  java-tests-lightweight:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/sink-connector-lightweight-tests.yml
