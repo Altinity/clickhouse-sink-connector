@@ -79,6 +79,7 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
           asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar
+          asset_content_type: jar
 
       - name: Upload jar file to release (Lightweight)
         uses: actions/upload-release-asset@v1
@@ -86,3 +87,4 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
           asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar
+          asset_content_type: jar
