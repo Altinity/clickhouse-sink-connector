@@ -10,16 +10,16 @@ on:
         default: "latest"
     secrets:
       DOCKER_USERNAME:
-        required: false
+        required: true
       DOCKER_PASSWORD:
-        required: false
+        required: true
 
 env:
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
   IMAGE_TAG: ${{ inputs.IMAGE_TAG }}
 
 jobs:
-  build-kafka:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2

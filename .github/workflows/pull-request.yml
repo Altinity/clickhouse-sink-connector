@@ -9,6 +9,9 @@ on:
     branches:
       - '**'
 
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+
 jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
