@@ -71,11 +71,9 @@ jobs:
           docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
 
-
-
       - name: Upload Docker tar (Kafka)
         uses: actions/upload-artifact@v3
-        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
           path: sink-connector/clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
@@ -109,7 +107,7 @@ jobs:
 
       - name: Upload Docker tar (Lightweight)
         uses: actions/upload-artifact@v3
-        if: ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' }}
         with:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
           path: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
