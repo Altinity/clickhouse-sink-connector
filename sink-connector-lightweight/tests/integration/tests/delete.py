@@ -143,7 +143,11 @@ def delete_zero_rows(self, table_name, node=None):
     with Then(
         "I check that Clickhouse replication table has the same number of rows as before delete"
     ):
-        retry(node.query, timeout=300, delay=5,)(
+        retry(
+            node.query,
+            timeout=300,
+            delay=5,
+        )(
             f"SELECT count() FROM test.{table_name}  FINAL WHERE _sign != -1 FORMAT CSV",
             message=f"{pre_delete}",
         )
@@ -168,7 +172,11 @@ def delete_all_rows(self, table_name, node=None):
         delete(row_delete=True, table_name=table_name, condition="id > -1")
 
     with Then("I check that Clickhouse replication table has zero rows"):
-        retry(node.query, timeout=300, delay=5,)(
+        retry(
+            node.query,
+            timeout=300,
+            delay=5,
+        )(
             f"SELECT count() FROM test.{table_name}  FINAL WHERE _sign != -1 FORMAT CSV",
             message="0",
         )

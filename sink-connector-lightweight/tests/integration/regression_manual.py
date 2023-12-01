@@ -39,22 +39,40 @@ xfails = {
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
     "delete/many partition many parts": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "delete/one million datapoints": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "delete/many partition one part": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "update/many partition many parts": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "update/one million datapoints": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "update/many partition one part": [
-        (Fail, "doesn't work without primary key and doesn't insert duplicates of primary key")
+        (
+            Fail,
+            "doesn't work without primary key and doesn't insert duplicates of primary key",
+        )
     ],
     "insert/many partition many parts/*_no_primary_key": [
         (Fail, "doesn't work without primary key only last row of insert is replicated")
@@ -74,12 +92,8 @@ xfails = {
     "insert/many partition mixed parts/*_no_primary_key": [
         (Fail, "doesn't work without primary key only last row of insert is replicated")
     ],
-    "insert/parallel": [
-        (Fail, "different results in MySQL and Clickhouse")
-    ],
-    "types/enum": [
-        (Fail, "doesn't replicate data")
-    ],
+    "insert/parallel": [(Fail, "different results in MySQL and Clickhouse")],
+    "types/enum": [(Fail, "doesn't replicate data")],
 }
 xflags = {}
 
@@ -98,7 +112,7 @@ xflags = {}
     ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
-    )
+    ),
 )
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
@@ -178,8 +192,7 @@ def regression(
         "virtual_columns",
         "partition_limits",
         "columns_inconsistency",
-        "snowflake_id"
-
+        "snowflake_id",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))

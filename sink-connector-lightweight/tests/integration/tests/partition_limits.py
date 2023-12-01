@@ -51,7 +51,11 @@ def partition_limits(
                     f"SELECT count(*) FROM {table_name}"
                 ).output.strip()[90:]
 
-                retry(clickhouse.query, timeout=50, delay=1,)(
+                retry(
+                    clickhouse.query,
+                    timeout=50,
+                    delay=1,
+                )(
                     f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",
                     message=mysql_count,
                 )

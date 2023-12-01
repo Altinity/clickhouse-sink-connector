@@ -199,7 +199,6 @@ class Cluster(object):
         caller_dir=None,
         stress=None,
     ):
-
         self._bash = {}
         self._control_shell = None
         self.environ = {} if (environ is None) else environ
@@ -551,7 +550,6 @@ class Cluster(object):
                     else:
                         self._bash[id] = shell
         finally:
-
             cmd = self.command(
                 None,
                 f"{self.docker_compose} down -v --remove-orphans --timeout 60",

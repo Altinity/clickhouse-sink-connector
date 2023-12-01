@@ -367,7 +367,11 @@ def select(
         manual_output = mysql_output
 
     if with_final:
-        retry(node.query, timeout=timeout, delay=10,)(
+        retry(
+            node.query,
+            timeout=timeout,
+            delay=10,
+        )(
             # f"SELECT {statement} FROM test.{table_name}  FINAL WHERE {sign_column} != -1 FORMAT CSV",
             f"SELECT {statement} FROM test.{table_name} FINAL",
             # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
@@ -385,7 +389,11 @@ def select(
                 )
 
     else:
-        retry(node.query, timeout=timeout, delay=10,)(
+        retry(
+            node.query,
+            timeout=timeout,
+            delay=10,
+        )(
             # f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
             f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
             message=f"{manual_output}",
@@ -558,7 +566,6 @@ def update(
             time.sleep(delay)
         return r
     else:
-
         with Given(
             f"I update {last_update_id - first_update_id} rows of data in MySql table"
         ):
@@ -602,17 +609,29 @@ def concurrent_queries(
         )
 
     with When("I start concurrently insert, update and delete queries in MySql table"):
-        By("inserting data in MySql table", test=insert, parallel=True,)(
+        By(
+            "inserting data in MySql table",
+            test=insert,
+            parallel=True,
+        )(
             first_insert_id=first_insert_id,
             last_insert_id=last_insert_id,
             table_name=table_name,
         )
-        By("deleting data in MySql table", test=delete, parallel=True,)(
+        By(
+            "deleting data in MySql table",
+            test=delete,
+            parallel=True,
+        )(
             first_delete_id=first_delete_id,
             last_delete_id=last_delete_id,
             table_name=table_name,
         )
-        By("updating data in MySql table", test=update, parallel=True,)(
+        By(
+            "updating data in MySql table",
+            test=update,
+            parallel=True,
+        )(
             first_update_id=first_update_id,
             last_update_id=last_update_id,
             table_name=table_name,
