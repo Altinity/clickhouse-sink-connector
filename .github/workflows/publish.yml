@@ -80,6 +80,8 @@ jobs:
 
       - name: Upload jar file to release (Kafka)
         uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar.zip
@@ -88,6 +90,8 @@ jobs:
 
       - name: Upload jar file to release (Lightweight)
         uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
