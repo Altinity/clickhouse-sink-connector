@@ -58,7 +58,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     SNOWFLAKE_ID("snowflake.id"),
 
-    PERSIST_RAW_BYTES("persist.raw.bytes");
+    PERSIST_RAW_BYTES("persist.raw.bytes"),
+
+    CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone");
 
     private String label;
 

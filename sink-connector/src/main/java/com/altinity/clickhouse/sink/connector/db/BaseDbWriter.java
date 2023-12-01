@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.slf4j.Logger;
@@ -158,7 +159,22 @@ public class BaseDbWriter {
      * Function to return ClickHouse server timezone.
      * @return
      */
-    public ZoneId getServerTimeZone() {
+    public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
+
+        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
+                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+        // Validate if timezone string is valid.
+        ZoneId userProvidedTimeZoneId = null;
+        try {
+            userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+        } catch (Exception e){
+            log.error("**** Erorr parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+        }
+
+        if(userProvidedTimeZoneId != null) {
+            return userProvidedTimeZoneId;
+        }
         return this.serverTimeZone;
     }
 }

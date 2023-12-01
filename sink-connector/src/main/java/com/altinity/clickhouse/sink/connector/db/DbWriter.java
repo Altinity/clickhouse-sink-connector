@@ -525,7 +525,7 @@ public class DbWriter extends BaseDbWriter {
     public void insertPreparedStatement(Map<String, Integer> columnNameToIndexMap, PreparedStatement ps, List<Field> fields,
                                         ClickHouseStruct record, Struct struct, boolean beforeSection) throws Exception {
 
-        ZoneId serverTimeZone = this.getServerTimeZone();
+        ZoneId serverTimeZone = this.getServerTimeZone(this.config);
        // int index = 1;
         // Use this map's key natural ordering as the source of truth.
         for (Map.Entry<String, String> entry : this.columnNameToDataTypeMap.entrySet()) {
