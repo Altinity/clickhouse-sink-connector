@@ -15,8 +15,7 @@ from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
 from integration.tests.steps.steps_global import *
 
-ffails = {
-}
+ffails = {}
 
 
 @TestModule

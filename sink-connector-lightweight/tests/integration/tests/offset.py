@@ -16,7 +16,6 @@ def stop_start_parallel(self, services, loops=10):
     with Given("I create unique table name"):
         table_name = f"test{uid}"
 
-
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
             name=table_name,
@@ -104,12 +103,9 @@ def stop_start(self, services):
             delay=10,
         )(f"SELECT count(*) FROM test.{table_name}", message="4")
 
-
         for node in services:
             with Shell() as bash:
                 self.context.cluster.node(f"{node}").stop()
-
-
 
         for i2 in range(2):
             retry(
@@ -133,7 +129,7 @@ def stop_start(self, services):
         select(statement="count(*)", table_name=table_name, with_finale=True)
 
     with And("Drop system tables"):
-        clickhouse.query(F"DROP DATABASE altinity_sink_connector")
+        clickhouse.query(f"DROP DATABASE altinity_sink_connector")
 
 
 @TestSuite
