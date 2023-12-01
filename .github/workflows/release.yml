@@ -52,4 +52,4 @@ jobs:
     with:
       release_tag: ${{ inputs.release_tag }}
       prerelease: '${{ inputs.prerelease }}'
-      draft: '${{ inputs.draft }}''
+      draft: '${{ inputs.draft }}'
