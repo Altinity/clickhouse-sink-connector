@@ -22,6 +22,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - run: |
+          echo ${{ github.repository }}
+          echo ${{ github.repository != 'Altinity/clickhouse-sink-connector' }}
       - uses: actions/checkout@v2
 
       - name: Set up JDK 11
@@ -67,6 +70,8 @@ jobs:
         run: |
           docker build . --file docker/Dockerfile-sink-on-debezium-base-image --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-kafka | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-kafka.tar.gz
+
+
 
       - name: Upload Docker tar (Kafka)
         uses: actions/upload-artifact@v3
