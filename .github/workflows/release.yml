@@ -1,4 +1,4 @@
-name: Release
+name: Release Pipeline
 
 on: 
   workflow_dispatch:
