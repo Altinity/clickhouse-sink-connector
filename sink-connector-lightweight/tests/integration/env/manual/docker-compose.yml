@@ -27,8 +27,7 @@ services:
 
   debezium:
     hostname: debezium
-    image:  registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest
-
+    image:  ${SINK_CONNECTOR_IMAGE}
     restart: "no"
     expose:
       - "8083"

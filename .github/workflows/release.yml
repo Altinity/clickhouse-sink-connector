@@ -1,33 +1,30 @@
-name: Kafka Sink Connector - Pull Request Pipeline
+name: Release
 
-on:
-  pull_request:
+on: 
+  release:
     types:
-      - synchronize
-      - reopened
-      - opened
-    branches:
-      - '**'
+    - published
+    - prereleased
 
 jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
     with:
-      IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
+      IMAGE_TAG: ${{ github.event.release.tag_name }}-test
     secrets: inherit
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-kafka
     secrets: inherit
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.release.tag_name }}-test-lt
     secrets: inherit
 
   java-tests-kafka:
@@ -37,3 +34,7 @@ jobs:
   java-tests-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
+
+  publish:
+    needs: [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
+    uses: ./.github/workflows/publish.yml
