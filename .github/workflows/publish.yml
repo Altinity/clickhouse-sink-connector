@@ -75,8 +75,8 @@ jobs:
 
       - name: Zip jar files
         run: |
-          zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
-          zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+          zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar.zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
+          zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar.zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
 
       - name: Upload jar file to release (Kafka)
         uses: actions/upload-release-asset@v1
