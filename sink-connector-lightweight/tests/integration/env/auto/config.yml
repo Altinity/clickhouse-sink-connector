@@ -32,9 +32,9 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8198"
-offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
 schema.history.internal.jdbc.user: "root"
 schema.history.internal.jdbc.password: "root"
 schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
