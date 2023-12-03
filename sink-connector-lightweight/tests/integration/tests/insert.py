@@ -1,3 +1,5 @@
+from testflows.core import *
+
 from integration.tests.steps.sql import *
 from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
@@ -9,7 +11,7 @@ def simple_insert(
 ):
     """Check that simple insert to MySQL is properly propagated to the replicated ClickHouse table."""
 
-    table_name = f"insert_{getuid()}"
+    table_name = f"`insert_{getuid()}`"
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
