@@ -28,20 +28,20 @@ xfails = {
     "delete/no primary key": [(Fail, "doesn't work in raw")],
     "update/no primary key innodb": [(Fail, "makes delete")],
     "update/no primary key": [(Fail, "makes delete")],
-    "truncate/no primary key innodb": [(Fail, "doesn't work")],
-    "truncate/no primary key": [(Fail, "doesn't work")],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": [(Fail, "doesn't work")],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": [(Fail, "doesn't work")],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": [
         (Fail, "doesn't work")
     ],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/json": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/json/*": [
         (Fail, "doesn't work in raw")
     ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
     "delete/many partition many parts/*_no_primary_key": [
