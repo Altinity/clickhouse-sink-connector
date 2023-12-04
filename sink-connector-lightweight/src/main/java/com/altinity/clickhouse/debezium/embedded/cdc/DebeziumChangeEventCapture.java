@@ -506,9 +506,12 @@ public class DebeziumChangeEventCapture {
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
-        this.setupProcessingThread(config, ddlParserService);
-
-        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+        if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())) {
+            this.setupProcessingThread(config, ddlParserService);
+            setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+        } else {
+            log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() + " variable set to true, Replication is skipped, use sink-connector-client to start replication");
+        }
     }
 
     public void stop() throws IOException {

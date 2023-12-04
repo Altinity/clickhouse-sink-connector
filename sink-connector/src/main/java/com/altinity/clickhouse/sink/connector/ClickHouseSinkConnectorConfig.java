@@ -383,6 +383,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If set to true, replication is not started, the user is expected to start replication with the sink-connector-client program",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
 
                 // ToDo: Add JVM Proxy
                 ;

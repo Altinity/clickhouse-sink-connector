@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.debezium.antlr.CaseChangingCharStream;
 import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
@@ -24,10 +25,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Singleton
 public class MySQLDDLParserService implements DDLParserService {
-    private static final Logger log = LoggerFactory.getLogger(MySQLDDLParserService.class);
 
     private ClickHouseSinkConnectorConfig config;
 
+    @Inject
+    public MySQLDDLParserService() {
+
+    }
     public MySQLDDLParserService(ClickHouseSinkConnectorConfig config) {
         this.config = config;
     }
