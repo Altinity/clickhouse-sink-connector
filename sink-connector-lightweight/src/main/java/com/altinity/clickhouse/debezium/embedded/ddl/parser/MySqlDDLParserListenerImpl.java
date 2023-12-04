@@ -42,12 +42,16 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
         // Validate if timezone string is valid.
         ZoneId userProvidedTimeZoneId = null;
         try {
-            if(!userProvidedTimeZone.isEmpty())
+            if(!userProvidedTimeZone.isEmpty()) {
+
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+                if(userProvidedTimeZoneId != null) {
+                    log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+                }
+            }
         } catch (Exception e){
             log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
         }

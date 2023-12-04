@@ -172,9 +172,16 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
         embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                injector.getInstance(DDLParserService.class), props);
+                injector.getInstance(DDLParserService.class), props, false);
     }
 
+    /**
+     * Force start replication from REST API.
+     * @param injector
+     * @param props
+     * @return
+     * @throws InterruptedException
+     */
     public static CompletableFuture<String> startDebeziumEventLoop(Injector injector, Properties props) throws InterruptedException {
         CompletableFuture<String> cf = new CompletableFuture<>();
 
@@ -183,9 +190,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             Thread.sleep(500);
             embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
             embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                    injector.getInstance(DDLParserService.class), props);
+                    injector.getInstance(DDLParserService.class), props, true);
             return null;
         });
 
@@ -194,14 +200,14 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
     public void start(DebeziumRecordParserService recordParserService,
-                      DDLParserService ddlParserService, Properties props) throws Exception {
+                      DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
         // Define the configuration for the Debezium Engine with MySQL connector...
        // log.debug("Loading properties");
         //final Properties props = new ConfigLoader().load();
 
 
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
-        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService);
+        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
 
     }
 
@@ -212,7 +218,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
         log.debug("Loading properties");
 
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
-        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService);
+        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, false);
 
     }
 }

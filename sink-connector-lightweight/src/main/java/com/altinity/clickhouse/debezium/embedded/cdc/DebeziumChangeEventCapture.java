@@ -499,14 +499,15 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) throws IOException, ClassNotFoundException {
+                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
 
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
-        if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())) {
+        // Start debezium event loop if its requested from REST API.
+        if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString()) || forceStart) {
             this.setupProcessingThread(config, ddlParserService);
             setupDebeziumEventCapture(props, debeziumRecordParserService, config);
         } else {
