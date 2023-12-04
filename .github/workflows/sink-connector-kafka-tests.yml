@@ -1,4 +1,4 @@
-name: Kafka - Java tests
+name: Kafka - Java Tests
 
 on: 
   workflow_call:
