@@ -1,8 +1,22 @@
 name: Kafka - Java Tests
 
-on: 
+on:
   workflow_call:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Kafka connector docker image"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Kafka connector docker image"
+        required: true
+        type: string
 
+env:
+  SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
+        
 jobs:
   java-kafka:
     runs-on: ubuntu-latest
