@@ -138,6 +138,13 @@ public class DebeziumConverter {
             return Date.valueOf(d);
         }
 
+        /**
+         * Function to check if the data exceeds the range.
+         * Based on the Data types, the limits for Date and Date32 are checked and returned.
+         * @param epochInDays
+         * @param chDataType
+         * @return
+         */
         public static Integer checkIfDateExceedsSupportedRange(Integer epochInDays, ClickHouseDataType chDataType) {
 
             if(chDataType == ClickHouseDataType.Date32) {

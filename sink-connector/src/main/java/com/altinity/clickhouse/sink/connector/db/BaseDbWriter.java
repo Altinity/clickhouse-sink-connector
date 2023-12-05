@@ -168,7 +168,7 @@ public class BaseDbWriter {
         try {
             if(!userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-                log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
             }
         } catch (Exception e){
             log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());

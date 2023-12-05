@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
@@ -517,6 +518,23 @@ public class DbWriter extends BaseDbWriter {
         return matchingField;
     }
 
+    public ClickHouseDataType getClickHouseDataType(String columnName, Map<String, String> columnNameToDataTypeMap) {
+
+        ClickHouseDataType chDataType = null;
+        try {
+            String columnDataType = columnNameToDataTypeMap.get(columnName);
+            ClickHouseColumn column = ClickHouseColumn.of(columnName, columnDataType);
+
+            if(column != null) {
+                chDataType = column.getDataType();
+            }
+        } catch(Exception e) {
+            log.debug("Unknown data type ", chDataType);
+        }
+
+        return chDataType;
+    }
+
     /**
      * @param ps
      * @param fields
@@ -586,13 +604,8 @@ public class DbWriter extends BaseDbWriter {
                 schemaName = f.schema().valueSchema().type().name();
             }
             // This will throw an exception, unknown data type.
-            ClickHouseDataType chDataType = null;
+            ClickHouseDataType chDataType = getClickHouseDataType(colName, this.columnNameToDataTypeMap);
 
-            try {
-                chDataType = ClickHouseDataType.of(this.columnNameToDataTypeMap.get(colName));
-            } catch(Exception e) {
-                log.debug("Unknown data type ", chDataType);
-            }
             if(false == ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, this.config, chDataType, serverTimeZone)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));

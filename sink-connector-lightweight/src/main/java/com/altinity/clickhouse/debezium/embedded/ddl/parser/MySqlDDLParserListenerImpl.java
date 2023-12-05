@@ -49,7 +49,7 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
 
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
                 if(userProvidedTimeZoneId != null) {
-                    log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+                    //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
                 }
             }
         } catch (Exception e){
