@@ -12,28 +12,32 @@ on:
 jobs:
   build-kafka-lightweight:
     uses: ./.github/workflows/docker-build.yml
+    secrets: inherit
     with:
       IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
-    secrets: inherit
 
   testflows-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-kafka.yml
+    secrets: inherit
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
-    secrets: inherit
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
+    secrets: inherit
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
-    secrets: inherit
 
   java-tests-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml
-
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+      
   java-tests-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
