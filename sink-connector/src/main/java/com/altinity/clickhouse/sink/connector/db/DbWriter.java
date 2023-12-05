@@ -27,12 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -237,8 +232,8 @@ public class DbWriter extends BaseDbWriter {
      * @param records
      * @return
      */
-    public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
-                                                                        Map<MutablePair<String, Map<String, Integer>>,
+    public Map<TopicPartition, Long> groupQueryWithRecords(Collection<ClickHouseStruct> records,
+                                                           Map<MutablePair<String, Map<String, Integer>>,
                                                                                 List<ClickHouseStruct>> queryToRecordsMap) {
 
 
@@ -468,7 +463,9 @@ public class DbWriter extends BaseDbWriter {
                 success = true;
 
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
-                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + recordsList.size() + "************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
+                log.info("*************** EXECUTED BATCH Successfully "
+                        + "Topic: " + topicName + " "
+                        + "Records: " + recordsList.size() + " ************** task(" + taskId + ")"  + " Thread ID: " + Thread.currentThread().getName());
 
                 // ToDo: Clear is not an atomic operation.
                 //  It might delete the records that are inserted by the ingestion process.
