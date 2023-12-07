@@ -29,66 +29,29 @@ services:
       retries: 6
 
   clickhouse:
-    container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
-    restart: "no"
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      - CLICKHOUSE_USER=root
-      - CLICKHOUSE_PASSWORD=root
-      - CLICKHOUSE_DB=test
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0
-    ulimits:
-      nofile:
-        soft: "262144"
-        hard: "262144"
-    volumes:
-      -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
     depends_on:
       zookeeper:
         condition: service_healthy
 
   zookeeper:
-      image: zookeeper:3.6.2
-      expose:
-        - "2181"
-      environment:
-        ZOO_TICK_TIME: 500
-        ZOO_MY_ID: 1
-      healthcheck:
-        test: echo stat | nc localhost 2181
-        interval: 3s
-        timeout: 2s
-        retries: 5
-        start_period: 2s
-      security_opt:
-        - label:disable
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
 
   debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
-    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
-    restart: "no"
-    ports:
-      - "8083:8083"
-      - "5005:5005"
-      - "7000:7000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./config.yml:/config.yml
+    extends:
+      file: debezium-embedded-service.yml
+      service: debezium-embedded
 
 
   ### MONITORING ####
   prometheus:
-    container_name: prometheus
-    image: bitnami/prometheus:2.36.0
-    restart: "no"
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+    extends:
+      file: prometheus-service.yml
+      service: prometheus
 
   grafana:
     build:
