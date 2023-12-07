@@ -97,7 +97,7 @@ public class DebeziumChangeEventCapture {
         }
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService();
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
@@ -499,16 +499,20 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService) throws IOException, ClassNotFoundException {
+                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
 
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
-        this.setupProcessingThread(config, ddlParserService);
-
-        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+        // Start debezium event loop if its requested from REST API.
+        if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString()) || forceStart) {
+            this.setupProcessingThread(config, ddlParserService);
+            setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+        } else {
+            log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() + " variable set to true, Replication is skipped, use sink-connector-client to start replication");
+        }
     }
 
     public void stop() throws IOException {

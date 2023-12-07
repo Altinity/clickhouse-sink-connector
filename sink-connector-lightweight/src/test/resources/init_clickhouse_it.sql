@@ -52,9 +52,20 @@ SETTINGS index_granularity = 8198;
 USE employees;
 CREATE TABLE employees.dt
 (
-`timestamp` DateTime('Asia/Istanbul'),
+`timestamp` DateTime64(1, 'Asia/Istanbul'),
 `json` String,
 `event_id` UInt8,
-`sign` Int8
+`sign` Int8,
+`_version` UInt64
 )
-ENGINE = MergeTree() ORDER by event_id;
+ENGINE = ReplacingMergeTree(_version) ORDER by event_id;
+
+USE employees;
+CREATE TABLE employees.dt32
+(
+    `timestamp` DateTime(1, 'Asia/Istanbul'),
+    `json` String,
+    `event_id` UInt8,
+    `sign` Int8,
+    `_version` UInt64
+)ENGINE = ReplacingMergeTree(_version) ORDER by event_id;

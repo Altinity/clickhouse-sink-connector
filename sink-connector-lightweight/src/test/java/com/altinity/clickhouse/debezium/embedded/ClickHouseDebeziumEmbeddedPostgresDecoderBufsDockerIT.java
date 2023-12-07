@@ -4,20 +4,18 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -65,6 +63,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
+    @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to DecoderBufs")
     public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
 
@@ -81,7 +80,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService());
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

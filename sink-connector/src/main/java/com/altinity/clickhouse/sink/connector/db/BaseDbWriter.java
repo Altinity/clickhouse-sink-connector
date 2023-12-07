@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.slf4j.Logger;
@@ -8,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -21,6 +23,8 @@ public class BaseDbWriter {
     protected String database;
     private String userName;
     private String password;
+
+    private ZoneId serverTimeZone;
 
     private static final Logger log = LoggerFactory.getLogger(BaseDbWriter.class);
 
@@ -41,6 +45,7 @@ public class BaseDbWriter {
 
         String connectionUrl = getConnectionString(hostName, port, database);
         this.createConnection(connectionUrl, "Agent_1", userName, password);
+        this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
 
     public ClickHouseConnection getConnection() {
@@ -148,6 +153,31 @@ public class BaseDbWriter {
      */
     public String getClickHouseVersion() throws SQLException {
         return this.executeQuery("SELECT VERSION()");
+    }
+
+    /**
+     * Function to return ClickHouse server timezone.
+     * @return
+     */
+    public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
+
+        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
+                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        // Validate if timezone string is valid.
+        ZoneId userProvidedTimeZoneId = null;
+        try {
+            if(!userProvidedTimeZone.isEmpty()) {
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+            }
+        } catch (Exception e){
+            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+        }
+
+        if(userProvidedTimeZoneId != null) {
+            return userProvidedTimeZoneId;
+        }
+        return this.serverTimeZone;
     }
 }
 

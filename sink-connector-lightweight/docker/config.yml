@@ -44,3 +44,7 @@ schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector
 enable.snapshot.ddl: "true"
 persist.raw.bytes: "false"
 auto.create.tables: "true"
+#database.connectionTimeZone: "US/Samoa"
+#clickhouse.datetime.timezone: "UTC"
+#skip_replica_start: "false"
+#binary.handling.mode: "base64"

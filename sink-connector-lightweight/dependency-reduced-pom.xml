@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.altinity</groupId>
   <artifactId>clickhouse-debezium-embedded</artifactId>
-  <version>1.1-SNAPSHOT</version>
+  <version>0.0.4</version>
   <build>
     <extensions>
       <extension>
@@ -293,11 +293,12 @@
     <version.testcontainers>1.19.1</version.testcontainers>
     <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <sink-connector-library-version>0.0.5</sink-connector-library-version>
     <version.junit>5.9.1</version.junit>
-    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.source>17</maven.compiler.source>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
-    <maven.compiler.target>11</maven.compiler.target>
+    <maven.compiler.target>17</maven.compiler.target>
     <version.debezium>2.5.0.Alpha1</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>

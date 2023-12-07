@@ -9,8 +9,8 @@
     <version>0.0.4</version>
 
     <properties>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <version.debezium>2.5.0.Alpha1</version.debezium>
@@ -23,7 +23,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
-        <sink-connector-library-version>0.0.4</sink-connector-library-version>
+        <sink-connector-library-version>0.0.5</sink-connector-library-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -44,8 +44,15 @@
         <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
-            <version>5.1.0</version>
+            <version>6.0.0</version>
         </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+
 
         <!-- REST API SERVER -->
         <dependency>

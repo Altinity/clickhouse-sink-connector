@@ -4,8 +4,10 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -15,6 +17,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -62,6 +65,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
     }
 
     @Test
+    @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to PGOUTPUT")
     public void testPgOutputPlugin() throws Exception {
         Network network = Network.newNetwork();
 
@@ -78,7 +82,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService());
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

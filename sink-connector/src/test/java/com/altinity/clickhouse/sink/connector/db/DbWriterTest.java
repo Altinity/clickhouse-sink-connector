@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -243,6 +244,37 @@ public class DbWriterTest {
 
     }
 
+    @Test
+    public void testGetClickHouseDataType() {
+        String hostName = "remoteClickHouse";
+        Integer port = 8123;
+        String database = "test";
+        String userName = "root";
+        String password = "root";
+        String tableName = "employees";
+
+        String connectionUrl = writer.getConnectionString(hostName, port, database);
+        Properties properties = new Properties();
+        properties.setProperty("client_name", "Test_1");
+
+        HashMap<String, String> colNameToDataTypeMap = new HashMap<>();
+        colNameToDataTypeMap.put("Min_Date", "Nullable(Date)");
+        colNameToDataTypeMap.put("MinDateTime", "DateTime64(3, 'UTC')");
+        colNameToDataTypeMap.put("MaxDateTime", "Nullable(DateTime64(3))");
+
+
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+        ClickHouseDataType dt1 = dbWriter.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
+        Assert.assertTrue(dt1 == ClickHouseDataType.Date);
+
+        ClickHouseDataType dt2 = dbWriter.getClickHouseDataType("MinDateTime", colNameToDataTypeMap);
+        Assert.assertTrue(dt2 == ClickHouseDataType.DateTime64);
+
+        ClickHouseDataType dt3 = dbWriter.getClickHouseDataType("MaxDateTime", colNameToDataTypeMap);
+        Assert.assertTrue(dt3 == ClickHouseDataType.DateTime64);
+        System.out.println("");
+    }
     @Test
     @Tag("IntegrationTest")
     public void testBatchArrays() {

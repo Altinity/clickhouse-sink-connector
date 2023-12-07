@@ -11,14 +11,14 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Calendar;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
+
+import static java.time.Instant.ofEpochMilli;
 
 public class DebeziumConverter {
 
@@ -48,47 +48,72 @@ public class DebeziumConverter {
     }
 
     public static class MicroTimestampConverter {
-
+        // DATETIME(4), DATETIME(5), DATETIME(6)
+        // Represents the number of microseconds past the epoch and does not include time zone information.
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static Timestamp convert(Object value) {
-            Long microTimestamp = (Long) value;
+        public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
+            Long epochMicroSeconds = (Long) value;
 
+            //DateTime64 has a 8 digit precision.
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+            if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            }
             //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
             //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
-            Instant receivedDT = Instant.EPOCH.plus(microTimestamp, ChronoUnit.MICROS);
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, true);
+            long epochSeconds = epochMicroSeconds / 1_000_000L;
+            long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
+            Instant receivedDT = Instant.ofEpochSecond( epochSeconds, nanoOffset );
+            //Instant receivedDT = Instant.EPOCH.plus(instant, ChronoUnit.MICROS).atZone(serverTimezone).toInstant();
+            long result = receivedDT.atZone(serverTimezone).toEpochSecond();
 
-            return Timestamp.from(modifiedDT);
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, clickHouseDataType);
+            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
+            //return Timestamp.from(Instant.ofEpochSecond(result));
         }
     }
 
     public static class TimestampConverter {
 
         /**
-         * Function to convert Debezium Timestamp fields to DATETIME(0), DATETIME(1), DATETIME(2)
+         * Function to convert Debezium Timestamp fields to DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
+         * Input represents number of milliseconds from Epoch and does not include timezone information.
          * Timestamp does not have microseconds
          * ISO formatted String.
          * @param value
          * @return
          */
-        public static Long convert(Object value, boolean isDateTime64) {
-            Instant providedDT = Instant.ofEpochMilli((long) value);
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(providedDT, isDateTime64);
+            if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            }
 
-            return modifiedDT.toEpochMilli();
+            // Input is a long.
+            Instant i = ofEpochMilli((long) value);
+
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
-
-
     }
 
-    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, boolean isDateTime64) {
+    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType) {
 
-        if(providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME)) {
-            return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME;
-        } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME)){
-            return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME;
+        if(clickHouseDataType == ClickHouseDataType.DateTime ||
+                clickHouseDataType == ClickHouseDataType.DateTime32) {
+            if(providedDateTime.isBefore(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MIN)))) {
+                return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MIN);
+            } else if(providedDateTime.isAfter(Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX))) {
+                return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
+            }
+        } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {
+            if (providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64)) {
+                return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
+            } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64)) {
+                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64;
+            }
         }
 
         return providedDateTime;
@@ -103,7 +128,7 @@ public class DebeziumConverter {
          *
          * Function to convert Debezium Date fields
          * to java.sql.Date
-         * @param value
+         * @param value - NUMBER OF DAYS since epoch.
          * @return
          */
         public static Date convert(Object value, ClickHouseDataType chDataType) {
@@ -113,6 +138,13 @@ public class DebeziumConverter {
             return Date.valueOf(d);
         }
 
+        /**
+         * Function to check if the data exceeds the range.
+         * Based on the Data types, the limits for Date and Date32 are checked and returned.
+         * @param epochInDays
+         * @param chDataType
+         * @return
+         */
         public static Integer checkIfDateExceedsSupportedRange(Integer epochInDays, ClickHouseDataType chDataType) {
 
             if(chDataType == ClickHouseDataType.Date32) {
@@ -128,7 +160,7 @@ public class DebeziumConverter {
                     return BinaryStreamUtils.U_INT16_MAX;
                 }
             } else {
-                log.error("Unknown DATE field");
+                log.warn("Unknown DATE field:" + chDataType);
             }
 
             return epochInDays;
@@ -144,40 +176,48 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value) {
-
-//            TemporalAccessor parsedTime = ZonedTimestamp.FORMATTER.parse((String) value);
-//            DateTimeFormatter bqZonedTimestampFormat =
-//                    new DateTimeFormatterBuilder()
-//                            .append(DateTimeFormatter.ISO_LOCAL_DATE)
-//                            .appendLiteral(' ')
-//                            .append(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
-//                            .toFormatter();
-//            return bqZonedTimestampFormat.format(parsedTime);
+        public static String convert(Object value, ZoneId serverTimezone) {
 
             String result = "";
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
+                    .withZone(serverTimezone);
 
             // The order of this array matters,
             // for example you might truncate microseconds
             // to milliseconds(3) if .SSS is above .SSSSSS
             String[] date_formats = {
-                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.SS'Z'",
-                    "yyyy-MM-dd'T'HH:mm:ss.S'Z'"
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SXXX",
+                    "yyyy-MM-dd'T'HH:mm:ssXXX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSZ",
+                    "yyyy-MM-dd'T'HH:mm:ss.SZ",
+                    "yyyy-MM-dd'T'HH:mm:ssZ",
+                    "yyyy-MM-dd'T'HH:mm:ss"
             };
 
             boolean parsingSuccesful = false;
             for (String formatString : date_formats) {
                 try {
-                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString);
-                    LocalDateTime zd = LocalDateTime.parse((String) value, formatter);
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString).withZone(serverTimezone);
+                    ZonedDateTime zd = ZonedDateTime.parse((String) value, formatter.withZone(serverTimezone));
+
+                    long dateTimeInMs = zd.toInstant().toEpochMilli();
+                    if(dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX * 1000) {
+                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX), serverTimezone);
+                    } else if(dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN * 1000) {
+                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN), serverTimezone);
+                    }
                     result = zd.format(destFormatter);
-                    //result = removeTrailingZeros(result);
                     parsingSuccesful = true;
                     break;
                 } catch(Exception e) {

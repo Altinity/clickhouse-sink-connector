@@ -4,10 +4,12 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -19,6 +21,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -27,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 
 @Testcontainers
+@DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
     protected ClickHouseContainer clickHouseContainer;
@@ -76,7 +80,7 @@ public class TableOperationsIT {
 
                     engine.set(new DebeziumChangeEventCapture());
                     engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                            new MySQLDDLParserService());
+                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }

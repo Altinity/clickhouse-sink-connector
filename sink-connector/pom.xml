@@ -6,7 +6,7 @@
 
     <groupId>com.altinity</groupId>
     <artifactId>clickhouse-kafka-sink-connector</artifactId>
-    <version>0.0.4</version>
+    <version>0.0.5</version>
     <packaging>jar</packaging>
     <name>ClickHouse Kafka Sink Connector</name>
     <description>Sinks data from Kafka into ClickHouse</description>
@@ -38,8 +38,8 @@
 
     <!-- Set our Language Level to Java 11 -->
     <properties>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
     </properties>
 

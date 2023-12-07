@@ -19,6 +19,7 @@ services:
       - MYSQL_REPLICATION_MODE=master
       - MYSQL_REPLICATION_USER=repl_user
       - ALLOW_EMPTY_PASSWORD=yes
+      - TZ=US/Central
     volumes:
       - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
       - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
@@ -47,6 +48,7 @@ services:
         - MYSQL_MASTER_PORT_NUMBER=3306
         - MYSQL_MASTER_ROOT_PASSWORD=root
         - ALLOW_EMPTY_PASSWORD=yes
+        -  TZ=America/Samoa
       volumes:
         - ./mysqld-slave.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
       healthcheck:
@@ -77,6 +79,7 @@ services:
         hard: "262144"
     volumes:
       -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - ../clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
     depends_on:
       zookeeper:
         condition: service_healthy
