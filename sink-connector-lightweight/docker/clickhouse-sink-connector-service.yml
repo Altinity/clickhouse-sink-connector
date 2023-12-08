@@ -1,8 +1,8 @@
 version: "3.4"
 
 services:
-  sink-connector:
-    image: ${SINK_LIGHTWEIGHT_VERSION}
+  clickhouse-sink-connector:
+    image: ${SINK_CONNECTOR_IMAGE}
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
     restart: "no"
     ports:
