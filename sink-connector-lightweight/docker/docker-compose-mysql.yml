@@ -25,10 +25,10 @@ services:
       file: zookeeper-service.yml
       service: zookeeper
 
-  debezium-embedded:
+  sink-connector:
     extends:
-      file: debezium-embedded-service.yml
-      service: debezium-embedded
+      file: sink-connector-service.yml
+      service: sink-connector
 
 
   ### MONITORING ####
