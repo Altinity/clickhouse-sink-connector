@@ -38,18 +38,10 @@ services:
       service: prometheus
 
   grafana:
-    build:
-      context: ./config/grafana
-      args:
-        GRAFANA_VERSION: latest
-    restart: "no"
-    ports:
-      - "3000:3000"
-    environment:
-      - DS_PROMETHEUS=prometheus
-      - GF_USERS_DEFAULT_THEME=light
-      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
-      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    extends:
+      file: grafana-service.yml
+      service: grafana
     depends_on:
       - prometheus
+
     ## END OF MONITORING ###

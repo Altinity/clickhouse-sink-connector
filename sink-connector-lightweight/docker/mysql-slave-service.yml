@@ -2,10 +2,6 @@ version: "3.4"
 
 services:
   mysql-slave:
-    # mysql --host=127.0.0.1 --port=3306 --user=root --password=root --database=test
-    # SHOW VARIABLES LIKE 'server_id';
-    # SHOW VARIABLES LIKE 'log_bin';
-    # SHOW MASTER STATUS;
     container_name: mysql-slave
     image: docker.io/bitnami/mysql:8.0
     restart: "no"
