@@ -44,7 +44,7 @@ services:
       -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
 
   debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    image: altinityinfra/clickhouse-sink-connector:405-fe4aa9de369b639a59f579a81d0fdd5d3ac32f97-lt 
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
     restart: "no"
     ports:
@@ -53,8 +53,6 @@ services:
       - "7000:7000"
     depends_on:
       - clickhouse 
-    env_file:
-      - docker_postgres.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
