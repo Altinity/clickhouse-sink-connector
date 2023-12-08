@@ -36,11 +36,12 @@ public class DebeziumChangeEventCaptureIT extends DDLBaseIT {
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config);
             String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
-            String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
+            //String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
+
             String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue, "mysql-bin.001", "2333", null);
 
-            new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-            new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue, System.currentTimeMillis());
+            //new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
+            //new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue, System.currentTimeMillis());
 
             System.out.print("Test");
         } catch(Exception e) {

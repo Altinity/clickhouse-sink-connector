@@ -3,7 +3,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
-import org.apache.kafka.common.protocol.types.Field;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
