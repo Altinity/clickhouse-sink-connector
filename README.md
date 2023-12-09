@@ -4,6 +4,7 @@
 <a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
   <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
 </a>
+<img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/altinityinfra/clickhouse-sink-connector">
 
 # Altinity Sink Connector for ClickHouse
 
@@ -25,7 +26,8 @@ for analysis.
 * Multiple deployment models
   * Lightweight: single process that transfers from source to target (prod)
   * Kafka: separate source and target processes using Kafka as transport (experimental)
-* Distribution as Docker container
+* Distribution as [Docker](https://hub.docker.com/layers/altinityinfra/clickhouse-sink-connector/408-97b1d3d83ef93c1b76a2b1c4d9c544dc67fbbec3-lt/images/sha256-d134bc05e50df7f63025e776ab6e3216c6622cd159eb0f2d459ea2ce8975f396?context=explore)
+ container
 
 ## Getting Started
 
