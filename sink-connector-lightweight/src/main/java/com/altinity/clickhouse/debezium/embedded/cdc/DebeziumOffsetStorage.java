@@ -16,7 +16,7 @@ import java.util.UUID;
 public class DebeziumOffsetStorage {
 
     // MySQL parameters
-    public static final String BINLOG_POS = "binlog_pos";
+    public static final String BINLOG_POS = "binlog_position";
     public static final String BINLOG_FILE = "binlog_file";
 
     public static final String GTID = "gtid";
