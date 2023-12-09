@@ -67,7 +67,7 @@ services:
         - label:disable
 
   debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
+    image: altinityinfra/clickhouse-sink-connector:409-99c65c73fb059e0509b2ec7b33cfb414d3585b56-lt
     entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
     restart: "no"
     ports:
