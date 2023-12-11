@@ -534,7 +534,7 @@ def main():
     parser.add_argument('--clickhouse_password',
                         help='CH password (discouraged option use a configuration file)', required=False, default=None)
     parser.add_argument('--clickhouse_config_file',
-                        help='CH config file either xml or yaml', required=False, default='./clickhouse-client.xml')
+                        help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
     parser.add_argument('--clickhouse_port', type=int,
                         default=9000, help='ClickHouse port', required=False)
     parser.add_argument('--clickhouse_database',

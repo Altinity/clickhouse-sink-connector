@@ -248,7 +248,7 @@ def main():
     parser.add_argument('--mysql_password',
                         help='MySQL password, discouraged, please use a config file', required=False)
     parser.add_argument('--defaults_file',
-                        help='MySQL config file either xml or yaml', required=False, default='~/.my.cnf')
+                        help='MySQL config file default is ~/.my.cnf', required=False, default='~/.my.cnf')
     parser.add_argument('--mysql_database',
                         help='MySQL database', required=True)
     parser.add_argument('--mysql_port', help='MySQL port',
@@ -297,7 +297,7 @@ def main():
 
     mysql_user = args.mysql_user
     mysql_password = args.mysql_password
-    
+
     # check parameters
     if args.mysql_password:
         logging.warning("Using password on the command line is not secure, please specify a config file ")
