@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.debezium.antlr.CaseChangingCharStream;
 import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
@@ -23,8 +25,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Singleton
 public class MySQLDDLParserService implements DDLParserService {
-    private static final Logger log = LoggerFactory.getLogger(MySQLDDLParserService.class);
 
+    private ClickHouseSinkConnectorConfig config;
+
+    @Inject
+    public MySQLDDLParserService() {
+
+    }
+    public MySQLDDLParserService(ClickHouseSinkConnectorConfig config) {
+        this.config = config;
+    }
 
     @Override
     public String parseSql(String sql, String tableName, StringBuffer parsedQuery) {
@@ -40,7 +50,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -60,7 +70,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, this.config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 

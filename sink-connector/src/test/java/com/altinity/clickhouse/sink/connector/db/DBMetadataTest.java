@@ -10,7 +10,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.testcontainers.utility.MountableFile;
+
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.HashMap;
 
 @Testcontainers
@@ -19,7 +22,8 @@ public class DBMetadataTest {
 
     @Container
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-            .withInitScript("./init_clickhouse.sql");
+            .withInitScript("./init_clickhouse.sql").withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml");
+
     @Test
     public void testGetSignColumnForCollapsingMergeTree() {
 
@@ -112,4 +116,20 @@ public class DBMetadataTest {
         Assert.assertTrue(new DBMetadata().checkIfNewReplacingMergeTree(clickhouseVersion) == result);
     }
 
+    @Test
+    public void getTestGetServerTimeZone() {
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
+        String tableName = "employees";
+
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+        ZoneId serverTimeZone = new DBMetadata().getServerTimeZone(writer.getConnection());
+
+        Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
+
+    }
 }

@@ -1,7 +1,6 @@
 # python db_load/clickhouse_myloader.py --clickhouse_host localhost  --clickhouse_schema world --dump_dir $HOME/dbdumps/world --db_user root --db_password root --threads 16 --ch_module clickhouse-client-22.5.1.2079 --mysql_source_schema world
 from subprocess import Popen, PIPE
-from db_compare.mysql import is_binary_datatype
-from clickhouse_driver import connect
+from db.mysql import is_binary_datatype
 import argparse
 import sys
 import logging
@@ -18,13 +17,11 @@ from pathlib import Path
 import time
 import datetime
 import zoneinfo
+from db.clickhouse import *
 from db_load.mysql_parser.mysql_parser import convert_to_clickhouse_table_antlr
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
-
-from db_compare.mysql import is_binary_datatype
-from subprocess import Popen, PIPE
 
 
 def run_command(cmd):
@@ -61,30 +58,10 @@ def run_quick_command(cmd):
         logging.error("command failed : terminating")
     return rc, stdout
 
-def clickhouse_connection(host, database='default', user='default', port=9000, password=''):
-    conn = connect(host=host,
-                   user=user,
-                   password=password,
-                   port=port,
-                   database=database,
-                   connect_timeout=20,
-                   secure=False
-                   )
-    return conn
 
-
-def clickhouse_execute_conn(conn, sql):
-    logging.debug(sql)
-    cursor = conn.cursor()
-    cursor.execute(sql)
-    result = cursor.fetchall()
-    return result
-
-
-def get_connection(args, database='default'):
-
+def get_connection(args, clickhouse_user, clickhouse_password, database='default'):
     conn = clickhouse_connection(args.clickhouse_host, database=database,
-                                 user=args.clickhouse_user, password=args.clickhouse_password, port=args.clickhouse_port)
+                                 user=clickhouse_user, password=clickhouse_password, port=args.clickhouse_port)
     return conn
 
 
@@ -153,12 +130,12 @@ def find_partitioning_options(source):
 
 
 def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone):
-    
+
     # do we have a table in the source
-    
-    if not find_create_table(source) :
+
+    if not find_create_table(source):
         return ('', [])
-    
+
     primary_key = find_primary_key(source)
     if primary_key is None:
         logging.warning("No PK found for "+table_name +
@@ -186,15 +163,15 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
     src = re.sub(r'\stimestamp\s', ' DateTime64(3) ', src)
     src = re.sub(r'\stimestamp(.*?)\s', ' DateTime64\\1 ', src)
     src = re.sub(r'\spoint\s', ' Point ', src)
-    #src = re.sub(r'\sdouble\s', ' Decimal(38,10) ', src)
+    # src = re.sub(r'\sdouble\s', ' Decimal(38,10) ', src)
     src = re.sub(r'\sgeometry\s', ' Geometry ', src)
     # dangerous
     src = re.sub(r'\bDEFAULT\b.*,', ',', src)
     src = re.sub(r'\sCOLLATE\s(.*?)([\s,])', ' \\2', src, )
     src = re.sub(r'\sCHARACTER\sSET\s(.*?)([\s,])', ' \\2', src)
     # it is a challenge to convert MySQL expression in generated columns
-    src = re.sub(r'.*GENERATED ALWAYS AS.*',' ',src)
-    src = re.sub(r'\bVIRTUAL\b',' ', src)
+    src = re.sub(r'.*GENERATED ALWAYS AS.*', ' ', src)
+    src = re.sub(r'\bVIRTUAL\b', ' ', src)
     # ClickHouse does not support constraints, indices, primary and unique keys
     src = re.sub(r'.*\bCONSTRAINT\b.*', '', src)
     src = re.sub(r'.*\bPRIMARY KEY\b.*\(.*', '', src)
@@ -212,9 +189,9 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
     src = re.sub(r'\) ENGINE',
                  '  '+virtual_columns+') ENGINE', src)
 
-    rmt_engine = "ENGINE = ReplacingMergeTree(_version) " 
+    rmt_engine = "ENGINE = ReplacingMergeTree(_version) "
     if rmt_delete_support:
-       rmt_engine = "ENGINE = ReplacingMergeTree(_version, is_deleted) "
+        rmt_engine = "ENGINE = ReplacingMergeTree(_version, is_deleted) "
 
     src = re.sub(r'ENGINE=InnoDB[^;]*', rmt_engine +
                  partitioning_options + ' ORDER BY ('+primary_key+') SETTINGS '+settings, src)
@@ -235,12 +212,13 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
         match = re.match(columns_pattern, altered_line)
         if match:
             column_name = match.group(1)
-            datatype = match.group(2) 
-            nullable = False if "NOT NULL" in line else True 
+            datatype = match.group(2)
+            nullable = False if "NOT NULL" in line else True
             logging.info(f"{column_name} {datatype}")
-            columns.append({'column_name':column_name,'datatype':datatype,'nullable':nullable})
-            
-             # tables with no PK miss commas
+            columns.append({'column_name': column_name,
+                           'datatype': datatype, 'nullable': nullable})
+
+            # tables with no PK miss commas
             if altered_line.strip() != "" and not altered_line.endswith(',') and not altered_line.endswith(';'):
                 altered_line += ","
 
@@ -271,7 +249,7 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
         return ('', [])
 
     src = source
-    #if use_regexp_parser == True:
+    # if use_regexp_parser == True:
     #   return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone)
     # the progressive grammar trims the comment
     partition_options = find_partitioning_options(source)
@@ -304,14 +282,14 @@ def get_unix_timezone_from_mysql_timezone(timezone):
     return tz
 
 
-def load_schema(args, dry_run=False, datetime_timezone=None):
+def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=False, datetime_timezone=None):
 
     if args.mysqlshell:
-        return load_schema_mysqlshell(args,  dry_run=dry_run, datetime_timezone=datetime_timezone)
+        return load_schema_mysqlshell(args,   clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=dry_run, datetime_timezone=datetime_timezone)
 
     schema_map = {}
     # create database
-    with get_connection(args) as conn:
+    with get_connection(args, clickhouse_user, clickhouse_password) as conn:
 
         database_file = args.dump_dir + \
             f"/{args.mysql_source_database}-schema-create.sql.gz"
@@ -324,7 +302,7 @@ def load_schema(args, dry_run=False, datetime_timezone=None):
 
     # create tables
     timezone = None
-    with get_connection(args, args.clickhouse_database) as conn:
+    with get_connection(args, clickhouse_user, clickhouse_password, args.clickhouse_database) as conn:
 
         schema_file = args.dump_dir + '/*-schema.sql.gz'
 
@@ -334,7 +312,8 @@ def load_schema(args, dry_run=False, datetime_timezone=None):
             with gzip.open(file, "r") as schema_file:
                 source = schema_file.read().decode('UTF-8')
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
+                (table_source, columns) = convert_to_clickhouse_table(
+                    db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
                 timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -349,11 +328,11 @@ def load_schema(args, dry_run=False, datetime_timezone=None):
     return (tz, schema_map)
 
 
-def load_schema_mysqlshell(args, dry_run=False, datetime_timezone=None):
+def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=False, datetime_timezone=None):
 
     schema_map = {}
     # create database
-    with get_connection(args) as conn:
+    with get_connection(args, clickhouse_user, clickhouse_password) as conn:
 
         source = f"create database if not exists {args.clickhouse_database}"
         if not dry_run:
@@ -363,9 +342,10 @@ def load_schema_mysqlshell(args, dry_run=False, datetime_timezone=None):
                 logging.error(f"Database create error: {e}")
     # create tables
     timezone = '+00:00'
-    with get_connection(args, args.clickhouse_database) as conn:
+    with get_connection(args, clickhouse_user, clickhouse_password, args.clickhouse_database) as conn:
 
-        schema_file_wildcard = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
+        schema_file_wildcard = args.dump_dir + \
+            f"/{args.mysql_source_database}@*.sql"
         schema_files = glob.glob(schema_file_wildcard)
         if len(schema_files) == 0:
             logging.error("Cannot find schema files")
@@ -380,7 +360,8 @@ def load_schema_mysqlshell(args, dry_run=False, datetime_timezone=None):
             with open(file, "r") as schema_file:
                 source = schema_file.read()
                 logging.info(source)
-                (table_source, columns) = convert_to_clickhouse_table(db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
+                (table_source, columns) = convert_to_clickhouse_table(
+                    db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
                 # timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
@@ -422,14 +403,20 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
     return column_list
 
 
-def load_data(args, timezone, schema_map, dry_run=False):
+def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     if args.mysqlshell:
-        load_data_mysqlshell(args, timezone, schema_map, dry_run=False)
+        load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=False)
 
     clickhouse_host = args.clickhouse_host
     ch_schema = args.clickhouse_database
-    password= args.clickhouse_password
+    password = clickhouse_password
+    password_option = ""
+    if password is not None:
+        password_option= f"--password '{password}'"
+    config_file_option = ""
+    if args.clickhouse_config_file is not None:
+       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
     schema_file = args.dump_dir + '/*-schema.sql.gz'
     for files in glob.glob(schema_file):
         (schema, table_name) = parse_schema_path(files)
@@ -442,24 +429,34 @@ def load_data(args, timezone, schema_map, dry_run=False):
             schema_map, schema, table_name, args.virtual_columns, transform=True)
         for data_file in data_files:
             # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
-            structure = columns.replace(","," Nullable(String),")+" Nullable(String)"
-            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{args.clickhouse_user} --password '{password}' -mn """
+            structure = columns.replace(
+                ",", " Nullable(String),")+" Nullable(String)"
+            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client {config_file_option} --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{clickhouse_user} {password_option} -mn """
             execute_load(cmd)
+
 
 def execute_load(cmd):
     logging.info(cmd)
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
     if rc != '0':
-        raise AssertionError("command "+cmd+ " failed")
+        raise AssertionError("command "+cmd + " failed")
 
-def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
+
+def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     clickhouse_host = args.clickhouse_host
     ch_schema = args.clickhouse_database
 
     schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
-    password = args.clickhouse_password 
+    password = args.clickhouse_password
+    password_option = ""
+    if password is not None:
+        password_option= f"--password '{password}'"
+    config_file_option = ""
+    if args.clickhouse_config_file is not None:
+       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = []
         for file in glob.glob(schema_files):
@@ -482,25 +479,25 @@ def load_data_mysqlshell(args, timezone, schema_map, dry_run=False):
                 for column in column_metadata_list:
                     logging.info(str(column))
                     if column['column_name'] in args.virtual_columns:
-                        continue 
-                    column_name = column['column_name'].replace('`','\\`')
+                        continue
+                    column_name = column['column_name'].replace('`', '\\`')
                     if structure != "":
-                            structure += ", "
-                    structure +=" "+column_name + " "
+                        structure += ", "
+                    structure += " "+column_name + " "
                     datatype = column['datatype']
                     mysql_datetype = column['mysql_datatype']
                     if 'timestamp' in mysql_datetype.lower():
-                          if column['nullable'] == True:
-                            structure +=f" Nullable({datatype})"
-                          else:
-                            structure +=f" {datatype}"
+                        if column['nullable'] == True:
+                            structure += f" Nullable({datatype})"
+                        else:
+                            structure += f" {datatype}"
                     else:
-                      if column['nullable'] == True:
-                          structure +=" Nullable(String)"
-                      else:
-                          structure +=" String"
+                        if column['nullable'] == True:
+                            structure += " Nullable(String)"
+                        else:
+                            structure += " String"
 
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} --password '{password}' -mn """
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} {password_option} -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
@@ -533,11 +530,13 @@ def main():
    ''')
 
     parser.add_argument('--clickhouse_host', help='CH host', required=True)
-    parser.add_argument('--clickhouse_user', help='CH user', required=True)
+    parser.add_argument('--clickhouse_user', help='CH user', required=False)
     parser.add_argument('--clickhouse_password',
-                        help='CH password', required=True)
-    parser.add_argument('--clickhouse_port', type=int, default=9000,
-                        help='ClickHouse port', required=False)
+                        help='CH password (discouraged option use a configuration file)', required=False, default=None)
+    parser.add_argument('--clickhouse_config_file',
+                        help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
+    parser.add_argument('--clickhouse_port', type=int,
+                        default=9000, help='ClickHouse port', required=False)
     parser.add_argument('--clickhouse_database',
                         help='Clickhouse database name', required=True)
     parser.add_argument('--mysql_source_database',
@@ -552,23 +551,34 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--data_only', dest='data_only',
                         action='store_true', default=False)
-    parser.add_argument('--use_regexp_parser', 
+    parser.add_argument('--use_regexp_parser',
                         action='store_true', default=False)
 
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
-    parser.add_argument('--virtual_columns', help='virtual_columns', nargs='+', default=['`_sign`', '`_version`', '`is_deleted`'])
+    parser.add_argument('--virtual_columns', help='virtual_columns',
+                        nargs='+', default=['`_sign`', '`_version`', '`is_deleted`'])
     parser.add_argument('--mysqlshell', help='using a util.dumpSchemas', dest='mysqlshell',
                         action='store_true', default=False)
     parser.add_argument('--rmt_delete_support', help='Use RMT deletes', dest='rmt_delete_support',
                         action='store_true', default=False)
     parser.add_argument('--clickhouse_datetime_timezone',
-                        help='Timezone for CH date times', required=False, default=None) 
+                        help='Timezone for CH date times', required=False, default=None)
     args = parser.parse_args()
     schema = not args.data_only
     data = not args.schema_only
     timezone = None
     schema_map = {}
+    clickhouse_user = args.clickhouse_user
+    clickhouse_password = args.clickhouse_password
+
+    # check parameters
+    if args.clickhouse_password:
+        logging.warning("Using password on the command line is not secure, please specify a config file ")
+        assert args.clickhouse_user is not None, "--clickhouse_user must be specified"
+    else:
+        config_file = args.clickhouse_config_file
+        (clickhouse_user, clickhouse_password) = resolve_credentials_from_config(config_file)
 
     # check dependencies
     assert check_program_exists(
@@ -577,13 +587,14 @@ def main():
         'zstd'), "zstd should be in the PATH for util.dumpSchemas load"
 
     if schema:
-        (timezone, schema_map) = load_schema(args, dry_run=args.dry_run, datetime_timezone = args.clickhouse_datetime_timezone)
+        (timezone, schema_map) = load_schema(args,  clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=args.dry_run,
+                                             datetime_timezone=args.clickhouse_datetime_timezone)
     if data:
         if timezone is None:
-            (timezone, schema_map) = load_schema(args, dry_run=True)
+            (timezone, schema_map) = load_schema(args, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=True)
 
         logging.debug(str(schema_map))
-        load_data(args, timezone, schema_map, dry_run=args.dry_run)
+        load_data(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password,dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

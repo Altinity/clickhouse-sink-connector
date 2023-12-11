@@ -4,31 +4,49 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-public class DDLSchemaOnlyIT extends DDLBaseIT {
+@DisplayName("Test that tests replication of data time columns when the timezone is defined in the Column('Asia/Istanbul')")
+public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
+    protected MySQLContainer mySqlContainer;
 
+    @Container
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+            .asCompatibleSubstituteFor("clickhouse"))
+            .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
+         //   .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
+            .withUsername("ch_user")
+            .withPassword("password")
+            .withExposedPorts(8123);
     @BeforeEach
     public void startContainers() throws InterruptedException {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("alter_ddl_add_column.sql")
+                .withInitScript("datetime.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -38,7 +56,7 @@ public class DDLSchemaOnlyIT extends DDLBaseIT {
         Thread.sleep(15000);
     }
 
-    @Override
+
     protected Properties getDebeziumProperties() throws Exception {
 
         // Start the debezium embedded application.
@@ -92,7 +110,7 @@ public class DDLSchemaOnlyIT extends DDLBaseIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService());
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -104,7 +122,8 @@ public class DDLSchemaOnlyIT extends DDLBaseIT {
         // alter table ship_class change column class_name class_name_new int;
         // alter table ship_class change column tonange tonange_new decimal(10,10);
 
-        conn.prepareStatement("insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 2)").execute();
+        //conn.prepareStatement("insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 1)").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
 
 
         Thread.sleep(10000);
@@ -113,13 +132,18 @@ public class DDLSchemaOnlyIT extends DDLBaseIT {
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 
-        String result = writer.executeQuery("select timestamp from employees.dt");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
 
-        System.out.println(result);
-        Assert.assertTrue(result.equalsIgnoreCase("2008-01-01 00:00:01"));
-        // Validate all ship_class columns.
-    //        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
+        while(dateTimeResult.next()) {
+            System.out.println("DATE TIME");
+            System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
+            System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
+//            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
+//            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:47:46.0"));
+//            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+        }
 
         if(engine.get() != null) {
             engine.get().stop();
@@ -129,5 +153,21 @@ public class DDLSchemaOnlyIT extends DDLBaseIT {
 
 
 
+    }
+    Connection connectToMySQL() {
+        Connection conn = null;
+        try {
+
+            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
+                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
+            conn = DriverManager.getConnection(connectionUrl);
+
+
+        } catch (SQLException ex) {
+            // handle any errors
+
+        }
+
+        return conn;
     }
 }

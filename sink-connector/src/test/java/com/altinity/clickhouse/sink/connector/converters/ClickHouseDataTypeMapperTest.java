@@ -17,6 +17,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.ZoneId;
 import java.util.HashMap;
 
 @Testcontainers
@@ -73,7 +74,7 @@ public class ClickHouseDataTypeMapperTest {
         ps.setString(index++, "Test");
         ps.setDouble(index++, 0d);
         ps.setDouble(index++, 0d);
-        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps, new ClickHouseSinkConnectorConfig(new HashMap<String, String>()), ClickHouseDataType.Float32);
+        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps, new ClickHouseSinkConnectorConfig(new HashMap<String, String>()), ClickHouseDataType.Float32, ZoneId.of("UTC"));
         ps.setDouble(index, 1d);
         ps.setInt(index++,1);
         ps.setInt(index++, 12);
