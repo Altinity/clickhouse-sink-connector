@@ -6778,16 +6778,6 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
-    public void enterMathOperator(MySqlParser.MathOperatorContext mathOperatorContext) {
-
-    }
-
-    @Override
-    public void exitMathOperator(MySqlParser.MathOperatorContext mathOperatorContext) {
-
-    }
-
-    @Override
     public void enterJsonOperator(MySqlParser.JsonOperatorContext jsonOperatorContext) {
 
     }
