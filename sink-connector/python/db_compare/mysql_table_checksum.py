@@ -16,7 +16,7 @@ import re
 import os
 import hashlib
 import concurrent.futures
-from mysql import *
+from db.mysql import *
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -25,7 +25,7 @@ def compute_checksum(table, statements, conn):
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.mysql.txt"
-        #logging.info(f"Debug output to {out_file}")
+        # logging.info(f"Debug output to {out_file}")
         debug_out = open(out_file, 'w')
     try:
         for statement in statements:
@@ -58,11 +58,11 @@ def compute_checksum(table, statements, conn):
     finally:
         conn.close()
 
- 
+
 def get_table_checksum_query(table, conn, binary_encoding):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
-                                               args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
+                                       args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
 
     select = ""
     nullables = []
@@ -76,11 +76,11 @@ def get_table_checksum_query(table, conn, binary_encoding):
         is_nullable = row['is_nullable']
 
         if not first_column:
-            select += ","  
+            select += ","
 
         if is_nullable == 'YES':
             nullables.append(column_name)
-        if 'datetime' == data_type or 'datetime(1)'== data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
+        if 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
             select += f"case when {column_name} >  substr('{max_date_value} 23:59:59.999', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_date_value} 23:59:59.999' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
         elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
@@ -91,17 +91,19 @@ def get_table_checksum_query(table, conn, binary_encoding):
         elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
             select += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
         else:
-            if 'date' == data_type: # Date are converted to Date32 in CH
+            if 'date' == data_type:  # Date are converted to Date32 in CH
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
                 select += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
             else:
                 if is_binary_datatype(data_type):
-                  binary_encode = "lower(hex(cast("+column_name+"as binary)))"
-                  if binary_encoding == 'base64':
-                    binary_encode = "replace(to_base64(cast("+column_name+" as binary)),'\\n','')"
-                  select += binary_encode
+                    binary_encode = "lower(hex(cast(" + \
+                        column_name+"as binary)))"
+                    if binary_encoding == 'base64':
+                        binary_encode = "replace(to_base64(cast(" + \
+                            column_name+" as binary)),'\\n','')"
+                    select += binary_encode
                 else:
-                  select += column_name + ""
+                    select += column_name + ""
         first_column = False
         data_types[row['column_name']] = data_type
 
@@ -176,34 +178,33 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
-def get_tables_from_regex(strDSN):
+def get_tables_from_regex(conn, strDSN):
     if args.no_wc:
         return [[args.tables_regex]]
-
-    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
     schema = args.mysql_database
     strCommand = "select TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{d}' and table_name rlike '{t}' order by 1".format(
         d=schema, t=args.tables_regex)
     (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
     conn.close()
-    
+
     return x
 
 
-def calculate_sql_checksum(table):
-    conn = get_mysql_connection(args.mysql_host, args.mysql_user, args.mysql_password, args.mysql_port, args.mysql_database)
+def calculate_sql_checksum(conn, table):
+
     try:
         if args.ignore_tables_regex:
-            rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
+            rex_ignore_tables = re.compile(
+                args.ignore_tables_regex, re.IGNORECASE)
             if rex_ignore_tables.match(table):
                 logging.info("Ignoring "+table + " due to ignore_regex_tables")
                 return
 
         statements = []
-        
+
         (query, select_query, distributed_by,
-        external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
+         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types)
         compute_checksum(table, statements, conn)
@@ -211,7 +212,7 @@ def calculate_sql_checksum(table):
         conn.close()
 
 
-def calculate_checksum(mysql_table):
+def calculate_checksum(mysql_table, mysql_user, mysql_password):
     if args.ignore_tables_regex:
         rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex_ignore_tables.match(mysql_table):
@@ -220,7 +221,8 @@ def calculate_checksum(mysql_table):
             return
     statements = []
 
-    calculate_sql_checksum(mysql_table)
+    conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
+    calculate_sql_checksum(conn, mysql_table)
 
 
 # hack to add the user to the logger, which needs it apparently
@@ -242,9 +244,11 @@ def main():
           ''')
     # Required
     parser.add_argument('--mysql_host', help='MySQL host', required=True)
-    parser.add_argument('--mysql_user', help='MySQL user', required=True)
+    parser.add_argument('--mysql_user', help='MySQL user', required=False)
     parser.add_argument('--mysql_password',
-                        help='MySQL password', required=True)
+                        help='MySQL password, discouraged, please use a config file', required=False)
+    parser.add_argument('--defaults_file',
+                        help='MySQL config file default is ~/.my.cnf', required=False, default='~/.my.cnf')
     parser.add_argument('--mysql_database',
                         help='MySQL database', required=True)
     parser.add_argument('--mysql_port', help='MySQL port',
@@ -291,16 +295,29 @@ def main():
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
 
+    mysql_user = args.mysql_user
+    mysql_password = args.mysql_password
+
+    # check parameters
+    if args.mysql_password:
+        logging.warning("Using password on the command line is not secure, please specify a config file ")
+        assert args.mysql_user is not None, "--mysql_user must be specified"
+    else:
+        config_file = args.defaults_file
+        (mysql_user, mysql_password) = resolve_credentials_from_config(config_file)
+
     try:
-        tables = get_tables_from_regex(args.tables_regex)
+        conn = get_mysql_connection(args.mysql_host, mysql_user,
+                                mysql_password, args.mysql_port, args.mysql_database)
+        tables = get_tables_from_regex(conn, args.tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables.fetchall():
                 futures.append(executor.submit(
-                    calculate_sql_checksum, table['table_name']))
+                    calculate_checksum, table['table_name'], mysql_user, mysql_password))
             for future in concurrent.futures.as_completed(futures):
-                    if future.exception() is not None:
-                        raise future.exception()
+                if future.exception() is not None:
+                    raise future.exception()
 
     except (KeyboardInterrupt, SystemExit):
         logging.info("Received interrupt")
