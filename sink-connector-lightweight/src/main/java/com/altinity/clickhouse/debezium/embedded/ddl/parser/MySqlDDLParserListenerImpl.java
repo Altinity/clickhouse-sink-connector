@@ -6758,6 +6758,26 @@ public class MySqlDDLParserListenerImpl implements MySqlParserListener {
     }
 
     @Override
+    public void enterMultOperator(MySqlParser.MultOperatorContext multOperatorContext) {
+
+    }
+
+    @Override
+    public void exitMultOperator(MySqlParser.MultOperatorContext multOperatorContext) {
+
+    }
+
+    @Override
+    public void enterAddOperator(MySqlParser.AddOperatorContext addOperatorContext) {
+
+    }
+
+    @Override
+    public void exitAddOperator(MySqlParser.AddOperatorContext addOperatorContext) {
+
+    }
+
+    @Override
     public void enterMathOperator(MySqlParser.MathOperatorContext mathOperatorContext) {
 
     }
