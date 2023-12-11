@@ -111,7 +111,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-storage-jdbc</artifactId>
-            <version>2.4.0.Final</version>
+            <version>${version.debezium}</version>
          <!--    <scope>system</scope>
             <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
         </dependency>
