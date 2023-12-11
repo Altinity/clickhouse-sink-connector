@@ -25,10 +25,10 @@ services:
       file: zookeeper-service.yml
       service: zookeeper
 
-  clickhouse-sink-connector:
+  clickhouse-sink-connector-lt:
     extends:
-      file: clickhouse-sink-connector-service.yml
-      service: clickhouse-sink-connector
+      file: clickhouse-sink-connector-lt-service.yml
+      service: clickhouse-sink-connector-lt
 
 
   ### MONITORING ####
