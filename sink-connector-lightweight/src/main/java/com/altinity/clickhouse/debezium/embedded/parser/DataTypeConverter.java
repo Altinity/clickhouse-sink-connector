@@ -34,9 +34,8 @@ public class DataTypeConverter {
                 JdbcValueConverters.DecimalMode.PRECISE,
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
-                CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                MySqlValueConverters::adjustTemporal,
-                MySqlValueConverters::defaultParsingErrorHandler);
+                CommonConnectorConfig.BinaryHandlingMode.BYTES
+        );
 
 
         DataType dataType = initializeDataTypeResolver().resolveDataType(columnDefChild);
@@ -52,9 +51,8 @@ public class DataTypeConverter {
                 JdbcValueConverters.DecimalMode.PRECISE,
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
-                CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                MySqlValueConverters::adjustTemporal,
-                MySqlValueConverters::defaultParsingErrorHandler);
+                CommonConnectorConfig.BinaryHandlingMode.BYTES
+        );
 
 
         String convertedDataType = null;
