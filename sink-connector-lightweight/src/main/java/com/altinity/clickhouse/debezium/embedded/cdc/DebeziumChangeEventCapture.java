@@ -35,9 +35,7 @@ import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -191,17 +189,19 @@ public class DebeziumChangeEventCapture {
             } else {
                 ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
                 try {
-                    this.replicationLag = chStruct.getReplicationLag();
-                    this.binLogFile = chStruct.getFile();
-                    this.binLogPosition = String.valueOf(chStruct.getPos());
-                    this.gtid = String.valueOf(chStruct.getGtid());
+                    if(chStruct != null) {
+                        this.replicationLag = chStruct.getReplicationLag();
+                        this.binLogFile = chStruct.getFile();
+                        this.binLogPosition = String.valueOf(chStruct.getPos());
+                        this.gtid = String.valueOf(chStruct.getGtid());
+                    }
                 } catch(Exception e) {
-                    log.error("Error retrieving status metrics");
+                    log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-                ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
-                if (chStruct != null) {
-                    queue.add(chStruct);
-                }
+//                ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
+//                if (chStruct != null) {
+//                    queue.add(chStruct);
+//                }
                 synchronized (this.records) {
                     if (chStruct != null) {
                         addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
@@ -558,6 +558,7 @@ public class DebeziumChangeEventCapture {
         this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
         this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
+
 
     /**
      * Function to write the transformed

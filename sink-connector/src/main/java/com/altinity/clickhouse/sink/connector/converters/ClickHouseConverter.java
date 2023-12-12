@@ -400,23 +400,23 @@ public class ClickHouseConverter implements AbstractConverter {
         switch (type) {
             case ARRAY:
                 log.debug("ARRAY type");
-                break;
+                return object;
                 //return convertArray(kafkaConnectObject, kafkaConnectSchema);
             case MAP:
                 log.debug("MAP type");
-                break;
+                return object;
                 //return convertMap(kafkaConnectObject, kafkaConnectSchema);
             case STRUCT:
-                log.debug("STRUCT type");
-                break;
+                return object;
+                //log.debug("STRUCT type");
                 //return convertStruct(kafkaConnectObject, kafkaConnectSchema);
             case BYTES:
                 log.debug("BYTES type");
-                break;
+                return object;
                 //return convertBytes(kafkaConnectObject);
             case FLOAT64:
                 log.debug("FLOAT64 type");
-                break;
+                return object;
                 //return convertDouble((Double)kafkaConnectObject);
             case BOOLEAN:
             case FLOAT32:
