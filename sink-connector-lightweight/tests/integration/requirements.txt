@@ -1,3 +1,4 @@
 docker-compose==1.29.2
 testflows==2.1.5
 awscli
+docker==6.1.3
