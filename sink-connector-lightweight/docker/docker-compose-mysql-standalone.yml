@@ -1,39 +1,23 @@
 services:
-  debezium-embedded:
-    image: registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:${SINK_LIGHTWEIGHT_VERSION}
-    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
-    restart: "no"
-    ports:
-      - "8083:8083"
-      - "5005:5005"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./config.yml:/config.yml
+  clickhouse-sink-connector-lt:
+    extends:
+      file: clickhouse-sink-connector-lt-service.yml
+      service: clickhouse-sink-connector-lt
 
   ### MONITORING ####
   prometheus:
-    container_name: prometheus
-    image: bitnami/prometheus:2.36.0
-    restart: "no"
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+    extends:
+      file: prometheus-service.yml
+      service: prometheus
 
   grafana:
-    build:
-      context: ./config/grafana
-      args:
-        GRAFANA_VERSION: latest
-    restart: "no"
-    ports:
-      - "3000:3000"
-    environment:
-      - DS_PROMETHEUS=prometheus
-      - GF_USERS_DEFAULT_THEME=light
-      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
-      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    extends:
+      file: grafana-service.yml
+      service: grafana
+    volumes:
+      - ./config/grafana/config/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+      - ./config/grafana/config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./config/grafana/config/altinity_sink_connector.json:/var/lib/grafana/dashboards/altinity_sink_connector.json
     depends_on:
       - prometheus
     ## END OF MONITORING ###
