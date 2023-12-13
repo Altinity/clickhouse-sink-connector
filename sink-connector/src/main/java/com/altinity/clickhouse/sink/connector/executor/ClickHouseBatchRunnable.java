@@ -94,7 +94,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
                 return;
             } else {
-                log.info("**** Processing Batch of Records ****" + numRecords);
+                log.debug("**** Processing Batch of Records ****" + numRecords);
             }
 
             // Topic Name -> List of records

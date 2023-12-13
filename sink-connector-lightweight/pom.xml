@@ -493,6 +493,12 @@
                     <!-- <forkCount>10</forkCount> -->
                     <parallel>all</parallel>
                     <threadCount>10</threadCount>
+                    <properties>
+                        <property>
+                            <name>listener</name>
+                            <value>com.altinity.clickhouse.debezium.embedded.FailFastListener</value>
+                        </property>
+                    </properties>
                     <useUnlimitedThreads>true</useUnlimitedThreads>
                     <perCoreThreadCount>true</perCoreThreadCount>
                     <useSystemClassLoader>true</useSystemClassLoader>
