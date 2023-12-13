@@ -31,7 +31,7 @@ sudo apt install clickhouse-client
 Use Docker Compose to start containers. 
 ```
 cd sink-connector-lightweight/docker
-export SINK_LIGHTWEIGHT_VERSION=latest
+export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=latest
 docker compose -f docker-compose-mysql.yml up --renew-anon-volumes
 ```
 

@@ -1,0 +1,25 @@
+version: "3.4"
+
+services:
+  mysql-slave:
+    container_name: mysql-slave
+    image: docker.io/bitnami/mysql:8.0
+    restart: "no"
+    ports:
+      - "3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=slave
+      - MYSQL_REPLICATION_USER=repl_user
+      - MYSQL_MASTER_HOST=mysql-master
+      - MYSQL_MASTER_PORT_NUMBER=3306
+      - MYSQL_MASTER_ROOT_PASSWORD=root
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - ./mysqld-slave.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+    healthcheck:
+      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
