@@ -42,7 +42,7 @@ services:
 
   grafana:
     extends:
-      file: grafana-postgres-service.yml
+      file: grafana-service.yml
       service: grafana
     depends_on:
       - prometheus

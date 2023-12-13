@@ -41,6 +41,10 @@ services:
     extends:
       file: grafana-service.yml
       service: grafana
+    volumes:
+      - ./config/grafana/config/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+      - ./config/grafana/config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./config/grafana/config/altinity_sink_connector.json:/var/lib/grafana/dashboards/altinity_sink_connector.json
     depends_on:
       - prometheus
 
