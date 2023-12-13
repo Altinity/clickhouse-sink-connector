@@ -156,6 +156,12 @@ xfails = {
             "doesn't work without primary key as only last row of insert is replicated",
         )
     ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/insert/*": [
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
+    ],
     "types/enum": [(Fail, "doesn't create table")],
 }
 xflags = {}
