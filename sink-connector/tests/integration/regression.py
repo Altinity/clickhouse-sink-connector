@@ -20,7 +20,7 @@ xfails = {
         (Fail, "debezium data conflict crash")
     ],
     "schema changes/consistency": [(Fail, "doesn't finished")],
-    "primary keys/no primary key": [
+    "primary keys/no primary key/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     ],
     "delete/no primary key innodb/*": [(Fail, "doesn't work in raw")],
