@@ -198,10 +198,7 @@ public class DebeziumChangeEventCapture {
                 } catch(Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-//                ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
-//                if (chStruct != null) {
-//                    queue.add(chStruct);
-//                }
+
                 synchronized (this.records) {
                     if (chStruct != null) {
                         addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
@@ -559,6 +556,27 @@ public class DebeziumChangeEventCapture {
         this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Function to setup monitoring thread.
+     * @param config
+     */
+    private void setupMonitoringThread(ClickHouseSinkConnectorConfig config) {
+        long restartEventLoopTimeout = config.getLong(String.valueOf(ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT));
+        TimerTask timerTask = new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    stop();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+
+            }
+        };
+        //running timer task as daemon thread
+        Timer timer = new Timer(true);
+        timer.scheduleAtFixedRate(timerTask, 0, restartEventLoopTimeout);
+    }
 
     /**
      * Function to write the transformed
