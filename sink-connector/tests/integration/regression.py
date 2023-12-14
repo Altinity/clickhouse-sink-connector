@@ -23,6 +23,30 @@ xfails = {
     "primary keys/no primary key": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     ],
+    "/mysql to clickhouse replication/truncate/no primary key innodb/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/truncate/no primary key/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/delete/no primary key/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/delete/no primary key innodb/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/update/no primary key innodb/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/update/no primary key/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/primary keys/no primary key/*": [
+        (fail, "doesn't work in raw")
+    ],
+    "/mysql to clickhouse replication/types/bigint/*": [(fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")],
+    "/mysql to clickhouse replication/types/double/*": [(fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")],
+    "/mysql to clickhouse replication/types/json/*": [(fail, "doesn't work in raw")],
     "delete/no primary key innodb": [(Fail, "doesn't work in raw")],
     "delete/no primary key": [(Fail, "doesn't work in raw")],
     "update/no primary key innodb": [(Fail, "makes delete")],
@@ -56,7 +80,7 @@ xflags = {}
     ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
-    )
+    ),
 )
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
@@ -125,8 +149,7 @@ def regression(
         "multiple_tables",
         "virtual_columns",
         "partition_limits",
-        "columns_inconsistency"
-
+        "columns_inconsistency",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
