@@ -23,43 +23,19 @@ xfails = {
     "primary keys/no primary key": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     ],
-    "/mysql to clickhouse replication/truncate/no primary key innodb/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/truncate/no primary key/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/delete/no primary key/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/delete/no primary key innodb/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/update/no primary key innodb/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/update/no primary key/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/primary keys/no primary key/*": [
-        (fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/types/bigint/*": [(fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")],
-    "/mysql to clickhouse replication/types/double/*": [(fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")],
-    "/mysql to clickhouse replication/types/json/*": [(fail, "doesn't work in raw")],
-    "delete/no primary key innodb": [(Fail, "doesn't work in raw")],
-    "delete/no primary key": [(Fail, "doesn't work in raw")],
-    "update/no primary key innodb": [(Fail, "makes delete")],
-    "update/no primary key": [(Fail, "makes delete")],
-    "truncate/no primary key innodb": [(Fail, "doesn't work")],
-    "truncate/no primary key": [(Fail, "doesn't work")],
+    "delete/no primary key innodb/*": [(Fail, "doesn't work in raw")],
+    "delete/no primary key/*": [(Fail, "doesn't work in raw")],
+    "update/no primary key innodb/*": [(Fail, "makes delete")],
+    "update/no primary key/*": [(Fail, "makes delete")],
+    "truncate/no primary key innodb/*": [(Fail, "doesn't work")],
+    "truncate/no primary key/*": [(Fail, "doesn't work")],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "types/json": [(Fail, "doesn't work in raw")],
-    "types/double": [
+    "types/json/*": [(Fail, "doesn't work in raw")],
+    "types/double/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "types/bigint": [
+    "types/bigint/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
 }
