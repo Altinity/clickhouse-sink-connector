@@ -124,8 +124,8 @@ EOF"""
             "I start sink connector",
             description="""Sending sink settings push command on bash_tools""",
         ):
-            node.cmd(f"{sink_settings_transfer_command_confluent}")
-
+            command = node.cmd(f"{sink_settings_transfer_command_confluent}")
+            assert command.output.strip().startswith('{"name":"sink-connector"'), error()
         yield
     finally:
         with Finally("I delete sink and debezium connections"):
