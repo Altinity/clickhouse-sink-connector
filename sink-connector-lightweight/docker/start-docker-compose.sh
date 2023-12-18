@@ -4,9 +4,9 @@
 if [ -z $1 ]
 then
   echo 'Using the latest tag for Sink connector'
-  export SINK_LIGHTWEIGHT_VERSION='latest'
+  export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE='latest'
 else
-  export SINK_LIGHTWEIGHT_VERSION=$1
+  export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=$1
 fi
 
 ./stop-docker-compose.sh
