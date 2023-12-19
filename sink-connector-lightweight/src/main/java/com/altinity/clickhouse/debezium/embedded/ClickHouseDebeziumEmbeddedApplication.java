@@ -273,7 +273,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     } catch (Exception e) {
-                        throw new RuntimeException(e);N
+                        throw new RuntimeException(e);
                     }
 
                 }
