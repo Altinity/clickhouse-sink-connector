@@ -542,6 +542,10 @@ public class DebeziumChangeEventCapture {
         return this.replicationLag / 1000;
     }
 
+    public long getLastRecordTimestamp() {
+        return this.lastRecordTimestamp;
+    }
+
     public boolean isReplicationRunning() {
         return this.isReplicationRunning;
     }

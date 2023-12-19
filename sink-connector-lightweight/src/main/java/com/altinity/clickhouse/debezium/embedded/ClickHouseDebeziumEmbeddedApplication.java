@@ -255,10 +255,17 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         return;
                     }
                     try {
-                        if (debeziumChangeEventCapture.getReplicationLagInSecs() < restartEventLoopTimeout) {
+                        long lastRecordTimestamp = debeziumChangeEventCapture.getLastRecordTimestamp();
+                        if(lastRecordTimestamp == -1) {
                             return;
                         }
-                        log.info("Restarting Event Loop");
+                        // calculate delta.
+                        long deltaInSecs = (System.currentTimeMillis() - lastRecordTimestamp) / 1000;
+                        log.info("Last Record Timestamp: " + lastRecordTimestamp + " Delta: " + deltaInSecs + " Restart Event Loop Timeout: " + restartEventLoopTimeout);
+                        if (deltaInSecs < restartEventLoopTimeout) {
+                            return;
+                        }
+                        log.info("******* Restarting Event Loop ********");
                         debeziumChangeEventCapture.stop();
                         Thread.sleep(3000);
                         start(injector.getInstance(DebeziumRecordParserService.class),
@@ -266,7 +273,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     } catch (Exception e) {
-                        throw new RuntimeException(e);
+                        throw new RuntimeException(e);N
                     }
 
                 }
