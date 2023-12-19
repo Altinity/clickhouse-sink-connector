@@ -64,7 +64,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     SKIP_REPLICA_START("skip_replica_start"),
 
-    RESTART_EVENT_LOOP_TIMEOUT("restart_event_loop_timeout");
+    RESTART_EVENT_LOOP("restart.event.loop"),
+
+    RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period");
 
     private String label;
 
