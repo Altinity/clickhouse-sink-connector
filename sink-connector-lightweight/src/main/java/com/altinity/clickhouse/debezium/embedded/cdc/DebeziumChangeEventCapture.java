@@ -21,6 +21,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
+import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -65,6 +66,8 @@ public class DebeziumChangeEventCapture {
     static public boolean isNewReplacingMergeTreeEngine = true;
 
     private long replicationLag = 0;
+
+    private long lastRecordTimestamp = -1;
 
     private boolean isReplicationRunning = false;
 
@@ -191,6 +194,7 @@ public class DebeziumChangeEventCapture {
                 try {
                     if(chStruct != null) {
                         this.replicationLag = chStruct.getReplicationLag();
+                        this.lastRecordTimestamp = chStruct.getTs_ms();
                         this.binLogFile = chStruct.getFile();
                         this.binLogPosition = String.valueOf(chStruct.getPos());
                         this.gtid = String.valueOf(chStruct.getGtid());
@@ -438,6 +442,15 @@ public class DebeziumChangeEventCapture {
                 processEveryChangeRecord(props, record, debeziumRecordParserService, config);
 
             });
+//            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
+//                @Override
+//                public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
+//                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
+//                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
+//                        processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+//                    }
+//                }
+//            });
             this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
@@ -476,7 +489,9 @@ public class DebeziumChangeEventCapture {
                                     log.debug("Connector stopped");
                                 }
                             }
-                    ).build();
+                    )
+                    //.build();
+                    .using(OffsetCommitPolicy.always()).build();
             engine.run();
 
         } catch (Exception e) {
@@ -554,28 +569,6 @@ public class DebeziumChangeEventCapture {
         this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
         this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
         this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
-    }
-
-    /**
-     * Function to setup monitoring thread.
-     * @param config
-     */
-    private void setupMonitoringThread(ClickHouseSinkConnectorConfig config) {
-        long restartEventLoopTimeout = config.getLong(String.valueOf(ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT));
-        TimerTask timerTask = new TimerTask() {
-            @Override
-            public void run() {
-                try {
-                    stop();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-
-            }
-        };
-        //running timer task as daemon thread
-        Timer timer = new Timer(true);
-        timer.scheduleAtFixedRate(timerTask, 0, restartEventLoopTimeout);
     }
 
     /**
