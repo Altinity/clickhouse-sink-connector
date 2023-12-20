@@ -28,8 +28,12 @@ xfails = {
     "delete/no primary key": [(Fail, "doesn't work in raw")],
     "update/no primary key innodb": [(Fail, "makes delete")],
     "update/no primary key": [(Fail, "makes delete")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": [(Fail, "doesn't work")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": [(Fail, "doesn't work")],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": [
+        (Fail, "doesn't work")
+    ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": [
+        (Fail, "doesn't work")
+    ],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": [
         (Fail, "doesn't work")
     ],
@@ -43,6 +47,12 @@ xfails = {
     ],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
+    ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/date time/*": [
+        (
+            Fail,
+            "need to make the timezone of mysql server and clickhouse server the same, add more tests with scenarios that check different timezones.",
+        )
     ],
     "delete/many partition many parts/*_no_primary_key": [
         (
@@ -141,6 +151,12 @@ xfails = {
         )
     ],
     "insert/parallel/*_no_primary_key": [
+        (
+            Fail,
+            "doesn't work without primary key as only last row of insert is replicated",
+        )
+    ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/insert/*": [
         (
             Fail,
             "doesn't work without primary key as only last row of insert is replicated",

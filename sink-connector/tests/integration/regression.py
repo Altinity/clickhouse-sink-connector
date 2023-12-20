@@ -20,22 +20,22 @@ xfails = {
         (Fail, "debezium data conflict crash")
     ],
     "schema changes/consistency": [(Fail, "doesn't finished")],
-    "primary keys/no primary key": [
+    "primary keys/no primary key/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
     ],
-    "delete/no primary key innodb": [(Fail, "doesn't work in raw")],
-    "delete/no primary key": [(Fail, "doesn't work in raw")],
-    "update/no primary key innodb": [(Fail, "makes delete")],
-    "update/no primary key": [(Fail, "makes delete")],
-    "truncate/no primary key innodb": [(Fail, "doesn't work")],
-    "truncate/no primary key": [(Fail, "doesn't work")],
+    "delete/no primary key innodb/*": [(Fail, "doesn't work in raw")],
+    "delete/no primary key/*": [(Fail, "doesn't work in raw")],
+    "update/no primary key innodb/*": [(Fail, "makes delete")],
+    "update/no primary key/*": [(Fail, "makes delete")],
+    "truncate/no primary key innodb/*": [(Fail, "doesn't work")],
+    "truncate/no primary key/*": [(Fail, "doesn't work")],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "types/json": [(Fail, "doesn't work in raw")],
-    "types/double": [
+    "types/json/*": [(Fail, "doesn't work in raw")],
+    "types/double/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "types/bigint": [
+    "types/bigint/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
 }
@@ -56,7 +56,7 @@ xflags = {}
     ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
-    )
+    ),
 )
 @Specifications(SRS030_MySQL_to_ClickHouse_Replication)
 def regression(
@@ -125,8 +125,7 @@ def regression(
         "multiple_tables",
         "virtual_columns",
         "partition_limits",
-        "columns_inconsistency"
-
+        "columns_inconsistency",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))

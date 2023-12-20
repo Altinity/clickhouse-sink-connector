@@ -48,17 +48,9 @@ jobs:
         working-directory: sink-connector/tests/integration
         run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
 
-      - name: Install docker-compose
+      - name: Install all dependencies
         working-directory: sink-connector/tests/integration
-        run: pip3 install docker-compose==1.29.2
-
-      - name: Install testflows
-        working-directory: sink-connector/tests/integration
-        run: pip3 install testflows
-
-      - name: Install awscli
-        working-directory: sink-connector/tests/integration
-        run: pip3 install awscli
+        run: pip3 install -r requirements.txt
 
       - name: Get current date
         id: date

@@ -8,55 +8,26 @@ version: "3.4"
 
 services:
   postgres:
-    image: debezium/postgres:15-alpine
-    restart: always
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_PASSWORD=root
-      - POSTGRES_USER=root
-      - POSTGRES_DB=public
-    volumes:
-      - ../sql/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql
-    command:
-      - "postgres"
-      - "-c"
-      - "wal_level=logical"
+    extends:
+      file: postgres-service.yml
+      service: postgres
 
 
   clickhouse:
-    container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
-    restart: "no"
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      - CLICKHOUSE_USER=root
-      - CLICKHOUSE_PASSWORD=root
-      - CLICKHOUSE_DB=test
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0
-    ulimits:
-      nofile:
-        soft: "262144"
-        hard: "262144"
-    volumes:
-      -  ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
 
-  debezium-embedded:
-    image: altinityinfra/clickhouse-sink-connector:405-fe4aa9de369b639a59f579a81d0fdd5d3ac32f97-lt 
-    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
-    restart: "no"
-    ports:
-      - "8083:8083"
-      - "5005:5005"
-      - "7000:7000"
+  clickhouse-sink-connector-lt:
+    extends:
+      file: clickhouse-sink-connector-lt-service.yml
+      service: clickhouse-sink-connector-lt
     depends_on:
-      - clickhouse 
+      - clickhouse
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      JAVA_OPTS: > 
+      JAVA_OPTS: >
         -Xmx5G
         -Xms128m
     volumes:
@@ -64,27 +35,19 @@ services:
 
   ### MONITORING ####
   prometheus:
-    container_name: prometheus
-    image: bitnami/prometheus:2.36.0
-    restart: "no"
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+    extends:
+      file: prometheus-service.yml
+      service: prometheus
+
 
   grafana:
-    build:
-      context: ./config/grafana
-      args:
-        GRAFANA_VERSION: latest
-    restart: "no"
-    ports:
-      - "3000:3000"
-    environment:
-      - DS_PROMETHEUS=prometheus
-      - GF_USERS_DEFAULT_THEME=light
-      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
-      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+    extends:
+      file: grafana-service.yml
+      service: grafana
+    volumes:
+      - ./config/grafana/config/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+      - ./config/grafana/config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./config/grafana/config/altinity_sink_connector.json:/var/lib/grafana/dashboards/altinity_sink_connector.json
     depends_on:
       - prometheus
     ## END OF MONITORING ###
