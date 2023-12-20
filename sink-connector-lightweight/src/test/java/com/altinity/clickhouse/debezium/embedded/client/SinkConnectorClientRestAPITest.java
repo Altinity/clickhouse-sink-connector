@@ -16,6 +16,7 @@ import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.classic.m
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.HttpEntity;
+import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.io.entity.EntityUtils;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -166,8 +167,9 @@ public class SinkConnectorClientRestAPITest {
         CloseableHttpResponse httpResponse = HttpClientBuilder.create().build().execute( request );
         HttpEntity entity = httpResponse.getEntity();
         if(entity != null) {
-            String result = new String(entity.getContent().readAllBytes());
-            JSONArray resultArray = (JSONArray) new JSONParser().parse(result);
+            String json = EntityUtils.toString(entity);
+            //String result = new String(entity.getContent().readAllBytes());
+            JSONArray resultArray = (JSONArray) new JSONParser().parse(json);
 
             //[{"Seconds_Behind_Source":0},{"Replica_Running":true},{"Database":"datatypes"}]
             resultArray.forEach(item -> {
@@ -185,7 +187,7 @@ public class SinkConnectorClientRestAPITest {
                     Assert.assertTrue(resultMap.containsKey("Seconds_Behind_Source"));
                 }
             });
-            System.out.println(result);
+           // System.out.println(result);
         } else {
             // There should be a respond body.
             Assert.fail("There should be a respond body.");

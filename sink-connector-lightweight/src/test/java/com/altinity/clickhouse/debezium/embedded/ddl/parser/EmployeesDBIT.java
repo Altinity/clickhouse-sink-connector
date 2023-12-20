@@ -19,6 +19,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,6 +43,14 @@ public class EmployeesDBIT extends DDLBaseIT {
             BasicConfigurator.configure();
             mySqlContainer.start();
             Thread.sleep(15000);
+        }
+
+        @Override
+        protected Properties getDebeziumProperties() throws Exception {
+            Properties baseProps = super.getDebeziumProperties();
+            baseProps.put("buffer.max.records", "100");
+
+            return baseProps;
         }
 
         @Test
