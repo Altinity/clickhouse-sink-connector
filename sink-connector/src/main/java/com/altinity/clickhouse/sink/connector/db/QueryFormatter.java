@@ -104,7 +104,9 @@ public class QueryFormatter {
         if(colNamesToDataTypesIndex != -1)
             colNamesToDataTypes.deleteCharAt(colNamesToDataTypesIndex);
 
-        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')", tableName, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
+        String tableWithBackTicks = new StringBuffer().append("`").append(tableName).append(("`")).toString();
+
+        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
         MutablePair<String, Map<String, Integer>> response = new MutablePair<String, Map<String, Integer>>();
 
         response.left = insertQuery;
@@ -147,6 +149,8 @@ public class QueryFormatter {
                 colNamesToDataTypes.deleteCharAt(indexOfComma);
             }
         }
-        return String.format("insert into %s select %s from input('%s')", tableName, colNamesDelimited, colNamesToDataTypes);
+        String tableWithBackTicks = new StringBuffer().append("`").append(tableName).append(("`")).toString();
+
+        return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
     }
 }

@@ -317,7 +317,6 @@ public class ClickHouseConverter implements AbstractConverter {
                 log.error("NON STRUCT records ignored");
             } else {
                 // Convert STRUCT
-                log.debug("RECEIVED STRUCT");
                 result = convertStruct(obj, schema);
             }
         }
@@ -344,7 +343,6 @@ public class ClickHouseConverter implements AbstractConverter {
                 log.error("NON STRUCT records ignored");
             } else {
                 // Convert STRUCT
-                log.debug("RECEIVED STRUCT");
                 result = convertStruct(obj, schema);
             }
         }
@@ -402,18 +400,23 @@ public class ClickHouseConverter implements AbstractConverter {
         switch (type) {
             case ARRAY:
                 log.debug("ARRAY type");
+                return object;
                 //return convertArray(kafkaConnectObject, kafkaConnectSchema);
             case MAP:
                 log.debug("MAP type");
+                return object;
                 //return convertMap(kafkaConnectObject, kafkaConnectSchema);
             case STRUCT:
-                log.debug("STRUCT type");
+                return object;
+                //log.debug("STRUCT type");
                 //return convertStruct(kafkaConnectObject, kafkaConnectSchema);
             case BYTES:
                 log.debug("BYTES type");
+                return object;
                 //return convertBytes(kafkaConnectObject);
             case FLOAT64:
                 log.debug("FLOAT64 type");
+                return object;
                 //return convertDouble((Double)kafkaConnectObject);
             case BOOLEAN:
             case FLOAT32:
@@ -425,6 +428,7 @@ public class ClickHouseConverter implements AbstractConverter {
                 return object;
             default:
                 log.warn("Not supported type");
+                break;
                 // Throw error - unrecognized type.
                 //throw new ConversionConnectException("Unrecognized schema type: " + kafkaConnectSchemaType);
         }

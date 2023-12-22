@@ -21,6 +21,7 @@ import io.debezium.connector.postgresql.connection.PostgresConnection;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
+import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -35,9 +36,7 @@ import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -67,6 +66,8 @@ public class DebeziumChangeEventCapture {
     static public boolean isNewReplacingMergeTreeEngine = true;
 
     private long replicationLag = 0;
+
+    private long lastRecordTimestamp = -1;
 
     private boolean isReplicationRunning = false;
 
@@ -191,17 +192,17 @@ public class DebeziumChangeEventCapture {
             } else {
                 ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
                 try {
-                    this.replicationLag = chStruct.getReplicationLag();
-                    this.binLogFile = chStruct.getFile();
-                    this.binLogPosition = String.valueOf(chStruct.getPos());
-                    this.gtid = String.valueOf(chStruct.getGtid());
+                    if(chStruct != null) {
+                        this.replicationLag = chStruct.getReplicationLag();
+                        this.lastRecordTimestamp = chStruct.getTs_ms();
+                        this.binLogFile = chStruct.getFile();
+                        this.binLogPosition = String.valueOf(chStruct.getPos());
+                        this.gtid = String.valueOf(chStruct.getGtid());
+                    }
                 } catch(Exception e) {
-                    log.error("Error retrieving status metrics");
+                    log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-                ConcurrentLinkedQueue<ClickHouseStruct> queue = new ConcurrentLinkedQueue<ClickHouseStruct>();
-                if (chStruct != null) {
-                    queue.add(chStruct);
-                }
+
                 synchronized (this.records) {
                     if (chStruct != null) {
                         addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
@@ -441,6 +442,15 @@ public class DebeziumChangeEventCapture {
                 processEveryChangeRecord(props, record, debeziumRecordParserService, config);
 
             });
+//            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
+//                @Override
+//                public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
+//                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
+//                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
+//                        processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+//                    }
+//                }
+//            });
             this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
@@ -479,7 +489,9 @@ public class DebeziumChangeEventCapture {
                                     log.debug("Connector stopped");
                                 }
                             }
-                    ).build();
+                    )
+                    //.build();
+                    .using(OffsetCommitPolicy.always()).build();
             engine.run();
 
         } catch (Exception e) {
@@ -528,6 +540,10 @@ public class DebeziumChangeEventCapture {
 
     public long getReplicationLagInSecs() {
         return this.replicationLag / 1000;
+    }
+
+    public long getLastRecordTimestamp() {
+        return this.lastRecordTimestamp;
     }
 
     public boolean isReplicationRunning() {
