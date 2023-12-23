@@ -85,7 +85,6 @@ def generate_mysqlsh_dump_tables_clause(dump_dir,
                                         where,
                                         partition_map,
                                         threads):
-    # -e 'util.dumpTables("cryptobo_day2_prod", ["street_trade","street_position_exchange_v3","street_position_exchange_blob_v3","rec_trade_missing_street","rec_trade_missing_jump"], "/home/aadant/dbdumps/cryptobo_day2_prod", {"partitions" : { "cryptobo_day2_prod.street_trade":  ["p20230517"],"cryptobo_day2_prod.street_position_exchange_v3":  ["p20230517"], "cryptobo_day2_prod.street_position_exchange_blob_v3":  ["p20230519"], "cryptobo_day2_prod.rec_trade_missing_street":  ["p20230515"], "cryptobo_day2_prod.rec_trade_missing_jump":  ["p20230515"]}});';
     table_array_clause = tables_to_dump
     dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads}
     if partition_map:
