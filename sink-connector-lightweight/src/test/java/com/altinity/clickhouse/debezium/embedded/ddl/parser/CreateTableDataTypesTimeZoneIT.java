@@ -103,10 +103,10 @@ public class CreateTableDataTypesTimeZoneIT {
 
         // Validate timestamp records
         Assert.assertTrue(timestampTable.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(timestampTable.get("Minimum_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(3))"));
+        Assert.assertTrue(timestampTable.get("Minimum_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
 
         writer.getConnection().close();
         Thread.sleep(10000);
