@@ -231,7 +231,7 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
-def get_tables_from_regex(conn, strDSN):
+def get_tables_from_regex(conn):
     if args.no_wc:
         return [[args.tables_regex]]
 
@@ -367,7 +367,7 @@ def main():
         (clickhouse_user, clickhouse_password) = resolve_credentials_from_config(config_file)
     try:
         conn =  get_connection(clickhouse_user, clickhouse_password)
-        tables = get_tables_from_regex(conn, args.tables_regex)
+        tables = get_tables_from_regex(conn)
         # CH does not print decimal with trailing zero, we need a custom function
         execute_sql(conn, create_function_format_decimal)
 

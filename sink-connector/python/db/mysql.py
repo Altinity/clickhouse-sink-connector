@@ -24,6 +24,46 @@ def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql
     return conn
 
 
+def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False):
+    schema = mysql_database
+    exclude_regex_clause = ""
+    if exclude_tables_regex is not None:
+         exclude_regex_clause = f"and table_name not rlike '{exclude_tables_regex}'"
+    non_partitioned_tables_clause = ""
+    if non_partitioned_tables_only:
+        non_partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' group by table_schema, table_name having count(*) = 1 )"
+        
+    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{schema}' and table_name rlike '{include_tables_regex}' {exclude_regex_clause} {non_partitioned_tables_clause} order by 1"
+    return strCommand
+
+
+def get_tables_from_regex(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False):
+    if no_wc:
+        return [[tables_regex]]
+       
+    strCommand = get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only)
+    
+    (rowset, rowcount) = execute_mysql(conn, strCommand)
+    x = rowset
+
+    return x
+
+
+def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclude_tables_regex=None, include_partitions_regex=None, non_partitioned_tables_only=False):
+    
+    table_sql =  get_tables_from_regex_sql(conn, False,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only)
+    
+    include_regex_clause = ""
+    if include_partitions_regex is not None:
+         include_regex_clause = f"and partition_name rlike '{include_partitions_regex}'"
+         
+    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name, PARTITION_NAME as partition_name from information_schema.partitions where table_schema = '{mysql_database}' {include_regex_clause} and (table_schema, table_name) IN ({table_sql}) order by 1,2,3"
+    (rowset, rowcount) = execute_mysql(conn, strCommand)
+    x = rowset
+
+    return x
+
+
 def execute_mysql(conn, strSql):
     """
     # -- =======================================================================
@@ -54,5 +94,5 @@ def resolve_credentials_from_config(config_file):
     assert  'client' in config, f"Expected a [client] section in f{config_file}"
     mysql_user = config['client']['user']
     mysql_password = config['client']['password']
-    logging.debug(f"mysql_user {mysql_user} mysql_password {mysql_password}")
+    logging.debug(f"mysql_user {mysql_user} mysql_password ****")
     return (mysql_user, mysql_password)
