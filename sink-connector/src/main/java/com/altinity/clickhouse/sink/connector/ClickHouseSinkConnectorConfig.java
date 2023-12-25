@@ -393,6 +393,26 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If set to true, the event loop will be restarted after this timeout",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD.toString(),
+                        Type.LONG,
+                        0,
+                        Importance.HIGH,
+                        "Defines the time period for timeout, if the time from the last packet received from the source DB is longer than this timeout, the event loop is restarted",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD.toString())
 
                 // ToDo: Add JVM Proxy
                 ;

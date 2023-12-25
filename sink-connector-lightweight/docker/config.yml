@@ -4,7 +4,7 @@ database.port: "3306"
 database.user: "root"
 database.password: "root"
 database.server.name: "ER54"
-database.include.list: sbtest
+database.include.list: test
 #table.include.list=sbtest1
 clickhouse.server.url: "clickhouse"
 clickhouse.server.user: "root"
@@ -48,3 +48,6 @@ auto.create.tables: "true"
 #clickhouse.datetime.timezone: "UTC"
 #skip_replica_start: "false"
 #binary.handling.mode: "base64"
+#restart.event.loop: "true"
+#restart.event.loop.timeout.period.secs: "3000"
+#buffer.max.records: "10000"

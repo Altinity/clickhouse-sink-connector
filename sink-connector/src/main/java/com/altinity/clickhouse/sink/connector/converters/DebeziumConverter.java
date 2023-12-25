@@ -43,7 +43,6 @@ public class DebeziumConverter {
             String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
 
             return formattedSecondsTimestamp;
-            //return removeTrailingZeros(formattedSecondsTimestamp);
         }
     }
 
@@ -59,18 +58,12 @@ public class DebeziumConverter {
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
-            //Long milliTimestamp = microTimestamp / MICROS_IN_MILLI;
-            //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).plusNanos(microTimestamp%1_000);
-            //Instant receivedDT = Instant.ofEpochMilli(microTimestamp/MICROS_IN_MILLI).pl
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
             Instant receivedDT = Instant.ofEpochSecond( epochSeconds, nanoOffset );
-            //Instant receivedDT = Instant.EPOCH.plus(instant, ChronoUnit.MICROS).atZone(serverTimezone).toInstant();
-            long result = receivedDT.atZone(serverTimezone).toEpochSecond();
 
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, clickHouseDataType);
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
-            //return Timestamp.from(Instant.ofEpochSecond(result));
         }
     }
 

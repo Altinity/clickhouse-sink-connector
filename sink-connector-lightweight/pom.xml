@@ -13,7 +13,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <version.debezium>2.5.0.Alpha1</version.debezium>
+        <version.debezium>2.5.0.Beta1</version.debezium>
         <version.junit>5.9.1</version.junit>
         <version.testcontainers>1.19.1</version.testcontainers>
         <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
@@ -111,7 +111,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-storage-jdbc</artifactId>
-            <version>2.4.0.Final</version>
+            <version>${version.debezium}</version>
          <!--    <scope>system</scope>
             <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
         </dependency>
@@ -493,6 +493,12 @@
                     <!-- <forkCount>10</forkCount> -->
                     <parallel>all</parallel>
                     <threadCount>10</threadCount>
+                    <properties>
+                        <property>
+                            <name>listener</name>
+                            <value>com.altinity.clickhouse.debezium.embedded.FailFastListener</value>
+                        </property>
+                    </properties>
                     <useUnlimitedThreads>true</useUnlimitedThreads>
                     <perCoreThreadCount>true</perCoreThreadCount>
                     <useSystemClassLoader>true</useSystemClassLoader>

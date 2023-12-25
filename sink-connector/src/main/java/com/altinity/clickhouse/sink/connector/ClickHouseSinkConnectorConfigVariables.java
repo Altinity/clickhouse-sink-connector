@@ -62,7 +62,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
-    SKIP_REPLICA_START("skip_replica_start");
+    SKIP_REPLICA_START("skip_replica_start"),
+
+    RESTART_EVENT_LOOP("restart.event.loop"),
+
+    RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs");
 
     private String label;
 
