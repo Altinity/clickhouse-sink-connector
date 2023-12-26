@@ -38,6 +38,7 @@ xfails = {
     "types/bigint/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
     ],
+    "types/date time/*": [(Fail, "difference between timezones, tests need rework")],
 }
 xflags = {}
 
