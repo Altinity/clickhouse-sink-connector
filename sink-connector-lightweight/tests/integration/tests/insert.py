@@ -146,7 +146,6 @@ def one_partition_one_part(self, node=None):
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
-            pause()
             tables_names = define(
                 "List of tables for test",
                 create_tables(
