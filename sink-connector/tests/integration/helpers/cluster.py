@@ -136,7 +136,7 @@ class Node(object):
         self,
         cmd,
         message=None,
-        exitcode=None,
+        exitcode=0,
         steps=True,
         shell_command="bash --noediting",
         no_checks=False,
