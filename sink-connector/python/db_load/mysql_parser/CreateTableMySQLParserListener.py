@@ -17,6 +17,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         self.rmt_delete_support = rmt_delete_support
         self.partition_options = partition_options
         self.datatime_timezone = datetime_timezone
+        self.has_is_deleted_column = False
 
     def extract_original_text(self, ctx):
         token_source = ctx.start.getTokenSource()
@@ -63,6 +64,8 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         notNull = False
         notSymbol = True
         nullable = True
+        generated = False
+        generatedExpression = None
         for child in columnDefinition.getChildren():
             if child.getRuleIndex() == MySqlParser.RULE_columnConstraint:
 
@@ -87,12 +90,18 @@ class CreateTableMySQLParserListener(MySqlParserListener):
 
                 if isinstance(child, MySqlParser.PrimaryKeyColumnConstraintContext) and child.PRIMARY():
                     self.primary_key = column_name
+                if isinstance(child, MySqlParser.GeneratedColumnConstraintContext):
+                    expression = child.expression()
+                    text = self.extract_original_text(expression)
+                    generatedExpression =  " ALIAS " + text
+                    generated = True
         # column without nullable info are default nullable in MySQL, while they are not null in ClickHouse
         if not notNull:
             column_buffer += " NULL"
             nullable = True
-
-        return (column_buffer, dataType, nullable)
+        if generatedExpression:
+           column_buffer += generatedExpression
+        return (column_buffer, dataType, nullable, generated)
 
     def exitColumnDeclaration(self, ctx):
         column_text = self.extract_original_text(ctx)
@@ -107,15 +116,18 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         dataType = columnDefinition.dataType()
         originalDataTypeText = self.extract_original_text(dataType)
 
-        (columnDefinition_buffer, dataType, nullable) = self.translateColumnDefinition(
+        (columnDefinition_buffer, dataType, nullable, generated) = self.translateColumnDefinition(
             column_name, columnDefinition)
 
         column_buffer += columnDefinition_buffer
 
         self.columns.append(column_buffer)
         dataTypeText = self.convertDataType(dataType)
+        if column_name in ['is_deleted','`is_deleted`']:
+            self.has_is_deleted_column = True
         columnMap = {'column_name': column_name, 'datatype': dataTypeText,
-                     'nullable': nullable, 'mysql_datatype': originalDataTypeText}
+                'nullable': nullable, 'mysql_datatype': originalDataTypeText, 'generated': generated, 
+                'has_is_deleted_column':self.has_is_deleted_column}
         logging.info(str(columnMap))
         self.columns_map.append(columnMap)
 
@@ -143,9 +155,12 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         tableName = self.extract_original_text(ctx.tableName())
         self.buffer = f"CREATE TABLE {tableName} ("
         self.columns.append("`_version` UInt64 DEFAULT 0")
+        is_deleted_column = 'is_deleted'
+        if self.has_is_deleted_column:
+            is_deleted_column = '_is_deleted'
         # is_deleted and _sign are redundant, so exclusive in the schema
-        if self.rmt_delete_support:
-            self.columns.append("`is_deleted` UInt8 DEFAULT 0")
+        if self.rmt_delete_support: 
+            self.columns.append(f"`{is_deleted_column}` UInt8 DEFAULT 0")
         else:
             self.columns.append("`_sign` Int8 DEFAULT 1")
 
@@ -160,7 +175,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
             partition_by = f"partition by {self.partition_keys}"
         rmt_params = "_version"
         if self.rmt_delete_support:
-            rmt_params += ',is_deleted'
+            rmt_params += f",{is_deleted_column}"
 
         self.buffer += f") engine=ReplacingMergeTree({rmt_params}) {partition_by} order by " + \
             self.primary_key

@@ -333,7 +333,7 @@ def main():
                         action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='*', default=['_sign,_version,is_deleted'])
+                        nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
 

@@ -178,7 +178,7 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
-def get_tables_from_regex(conn, tables_regexp):
+def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
 
@@ -300,7 +300,7 @@ def main():
     try:
         conn = get_mysql_connection(args.mysql_host, mysql_user,
                                 mysql_password, args.mysql_port, args.mysql_database)
-        tables = get_tables_from_regex(conn, args.tables_regex)
+        tables = get_tables_from_regexp(conn, args.tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables.fetchall():
