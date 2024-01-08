@@ -383,7 +383,7 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
         column_list = ""
         first = True
         for column in columns:
-            if column['column_name'] not in virtual_columns:
+            if (column['column_name'] not in virtual_columns or (column['column_name'] == '`is_deleted`' and column['has_is_deleted_column'] )) and not column['generated']:
                 datatype = column['datatype']
                 column_name = column['column_name'].replace('`', '\\`')
 
@@ -478,7 +478,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                 structure = ""
                 for column in column_metadata_list:
                     logging.info(str(column))
-                    if column['column_name'] in args.virtual_columns:
+                    if (column['column_name'] in args.virtual_columns and not (column['column_name'] == '`is_deleted`' and column['has_is_deleted_column'] )) or column['generated']:
                         continue
                     column_name = column['column_name'].replace('`', '\\`')
                     if structure != "":
@@ -497,7 +497,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                         else:
                             structure += " String"
 
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{args.clickhouse_user} {password_option} -mn """
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
@@ -557,7 +557,7 @@ def main():
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
     parser.add_argument('--virtual_columns', help='virtual_columns',
-                        nargs='+', default=['`_sign`', '`_version`', '`is_deleted`'])
+                        nargs='+', default=['`_sign`', '`_version`', '`is_deleted`','`_is_deleted`'])
     parser.add_argument('--mysqlshell', help='using a util.dumpSchemas', dest='mysqlshell',
                         action='store_true', default=False)
     parser.add_argument('--rmt_delete_support', help='Use RMT deletes', dest='rmt_delete_support',

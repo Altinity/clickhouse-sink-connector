@@ -179,17 +179,8 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
-def get_tables_from_regex(conn, strDSN):
-    if args.no_wc:
-        return [[args.tables_regex]]
-    schema = args.mysql_database
-    strCommand = "select TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{d}' and table_name rlike '{t}' order by 1".format(
-        d=schema, t=args.tables_regex)
-    (rowset, rowcount) = execute_mysql(conn, strCommand)
-    x = rowset
-    conn.close()
-
-    return x
+def get_tables_from_regexp(conn, tables_regexp):
+    return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
 
 def calculate_sql_checksum(conn, table):
@@ -312,7 +303,7 @@ def main():
     try:
         conn = get_mysql_connection(args.mysql_host, mysql_user,
                                 mysql_password, args.mysql_port, args.mysql_database)
-        tables = get_tables_from_regex(conn, args.tables_regex)
+        tables = get_tables_from_regexp(conn, args.tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables.fetchall():
