@@ -3,7 +3,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
-import org.apache.kafka.common.protocol.types.Field;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -17,7 +16,7 @@ import java.util.UUID;
 public class DebeziumOffsetStorage {
 
     // MySQL parameters
-    public static final String BINLOG_POS = "binlog_pos";
+    public static final String BINLOG_POS = "binlog_position";
     public static final String BINLOG_FILE = "binlog_file";
 
     public static final String GTID = "gtid";

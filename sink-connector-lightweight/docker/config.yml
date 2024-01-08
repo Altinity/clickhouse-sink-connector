@@ -134,3 +134,12 @@ auto.create.tables: "true"
 
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
+
+# restart.event.loop: This will restart the CDC event loop if there are no messages received after timeout specified in restart.event.loop.timeout.period.secs
+#restart.event.loop: "true"
+
+# restart.event.loop.timeout.period.secs: Defines the restart timeout period.
+#restart.event.loop.timeout.period.secs: "3000"
+
+# Max number of records for the flush buffer.
+#buffer.max.records: "10000"

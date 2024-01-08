@@ -5,7 +5,15 @@ from integration.tests.steps.service_settings_steps import *
 
 @TestOutline
 def partition_limits(
-    self, input, max_insert_block_size, partitions, parts_per_partition, block_size,  mysql_columns, clickhouse_table, clickhouse_columns=None
+    self,
+    input,
+    max_insert_block_size,
+    partitions,
+    parts_per_partition,
+    block_size,
+    mysql_columns,
+    clickhouse_table,
+    clickhouse_columns=None,
 ):
     """Creating table and append it with partition limits setting"""
     table_name = f"partition_limits_{getuid()}"
@@ -13,7 +21,9 @@ def partition_limits(
     clickhouse = self.context.cluster.node("clickhouse")
     mysql = self.context.cluster.node("mysql-master")
 
-    init_sink_connector(auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}")
+    init_sink_connector(
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
+    )
 
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_to_clickhouse_replicated_table(
@@ -21,7 +31,7 @@ def partition_limits(
             mysql_columns=mysql_columns,
             clickhouse_table=clickhouse_table,
             clickhouse_columns=clickhouse_columns,
-            partition_by="id"
+            partition_by="id",
         )
 
     with When(
@@ -34,7 +44,7 @@ def partition_limits(
             partitions=partitions,
             parts_per_partition=parts_per_partition,
             block_size=block_size,
-            max_insert_block_size=max_insert_block_size
+            max_insert_block_size=max_insert_block_size,
         )
 
     with Then("I wait unique values from CLickHouse table equal to MySQL table"):
@@ -45,7 +55,11 @@ def partition_limits(
                     f"SELECT count(*) FROM {table_name}"
                 ).output.strip()[90:]
 
-                retry(clickhouse.query, timeout=50, delay=1,)(
+                retry(
+                    clickhouse.query,
+                    timeout=50,
+                    delay=1,
+                )(
                     f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",
                     message=mysql_count,
                 )

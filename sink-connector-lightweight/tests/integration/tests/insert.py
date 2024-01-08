@@ -11,7 +11,7 @@ def simple_insert(
 ):
     """Check that simple insert to MySQL is properly propagated to the replicated ClickHouse table."""
 
-    table_name = f"`insert_{getuid()}`"
+    table_name = f"tb_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
@@ -142,7 +142,7 @@ def use_select_from_table_as_value(
 @Name("one partition one part")
 def one_partition_one_part(self, node=None):
     """Check `INSERT` that creates one partition and one part."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -182,7 +182,7 @@ def one_partition_one_part(self, node=None):
 def one_partition_many_parts(self, node=None):
     """Check that `INSERT` that creates one partition with many parts to MySQL is properly propagated to the replicated
     ClickHouse table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -223,7 +223,7 @@ def one_partition_many_parts(self, node=None):
 def one_partition_mixed_parts(self, node=None):
     """Check that `INSERT` that creates one partition with one large part and many small parts to MySQL is properly
     propagated to the replicated ClickHouse table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -277,7 +277,7 @@ def one_partition_mixed_parts(self, node=None):
 def many_partitions_one_part(self, node=None):
     """Check that `INSERT` of many partitions and one part to MySQL is properly propagated to the replicated ClickHouse
     table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -323,7 +323,7 @@ def many_partitions_one_part(self, node=None):
 def many_partitions_many_parts(self, node=None):
     """Check that `INSERT` of many partitions and many parts to MySQL is properly propagated to the replicated ClickHouse
     table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -364,7 +364,7 @@ def many_partitions_many_parts(self, node=None):
 def many_partitions_mixed_parts(self, node=None):
     """Check that `INSERT` with of many partitions, each with one large part and many small parts to MySQL is properly
     propagated to the replicated ClickHouse table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -418,7 +418,7 @@ def many_partitions_mixed_parts(self, node=None):
 def one_million_datapoints(self, node=None):
     xfail("too big insert")
     """Check that `INSERT` of one million entries to MySQL is properly propagated to the replicated ClickHouse table."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):
@@ -461,7 +461,7 @@ def one_million_datapoints(self, node=None):
 @Name("parallel")
 def parallel(self):
     """Check that after different `INSERT` queries in parallel MySQL and Clickhouse has the same data."""
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Given("I create MySQL to ClickHouse replicated tables"):

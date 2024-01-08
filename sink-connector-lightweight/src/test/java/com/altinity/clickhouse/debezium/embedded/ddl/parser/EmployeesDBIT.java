@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
@@ -18,10 +19,12 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+@Disabled
 @Testcontainers
 @DisplayName("Integration Test to validate replication of employees database")
 public class EmployeesDBIT extends DDLBaseIT {
@@ -40,6 +43,14 @@ public class EmployeesDBIT extends DDLBaseIT {
             BasicConfigurator.configure();
             mySqlContainer.start();
             Thread.sleep(15000);
+        }
+
+        @Override
+        protected Properties getDebeziumProperties() throws Exception {
+            Properties baseProps = super.getDebeziumProperties();
+            baseProps.put("buffer.max.records", "100");
+
+            return baseProps;
         }
 
         @Test

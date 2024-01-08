@@ -16,77 +16,24 @@ import warnings
 import re
 import os
 import hashlib
-from clickhouse_driver import connect
 import concurrent.futures
-
+from db.clickhouse import *
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
-def clickhouse_connection(host, database='default', user='default', port=9000, password='',
-                          secure=False):
-    conn = connect(host=host,
-                   user=user,
-                   password=password,
-                   port=port,
-                   database=database,
-                   connect_timeout=20,
-                   secure=secure
-                   )
-    return conn
-
-
-def clickhouse_execute_conn(conn, sql):
-    logging.debug(sql)
-    cursor = conn.cursor()
-    cursor.execute(sql)
-    result = cursor.fetchall()
-    return result
-
-
-def get_connection():
+def get_connection(clickhouse_user, clickhouse_password):
 
     conn = clickhouse_connection(args.clickhouse_host, database=args.clickhouse_database,
-                                 user=args.clickhouse_user, password=args.clickhouse_password,
+                                 user=clickhouse_user, password=clickhouse_password,
                                  port=args.clickhouse_port,
                                  secure=args.secure)
     return conn
 
 
-def execute_sql(conn, strSql):
-    """
-    # -- =======================================================================
-    # -- Connect to the SQL server and execute the command
-    # -- =======================================================================
-    """
-    logging.debug("SQL="+strSql)
-    rowset = None
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
-        rowset = clickhouse_execute_conn(conn, strSql)
-        rowcount = len(rowset)
-    if len(w) > 0:
-        logging.warning("SQL warnings : "+str(len(w)))
-        logging.warning("first warning : "+str(w[0].message))
+def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
 
-    return (rowset, rowcount)
-
-
-def execute_statement(strSql):
-    """
-    # -- =======================================================================
-    # -- Connect to the SQL server and execute the command
-    # -- =======================================================================
-    """
-    conn = get_connection()
-    (rowset, rowcount) = execute_sql(conn, strSql)
-    conn.close()
-    return (rowset, rowcount)
-
-
-def compute_checksum(table, statements):
-
-    conn = get_connection()
+    conn = get_connection(clickhouse_user, clickhouse_password)
 
     debug_out = None
     if args.debug_output:
@@ -132,7 +79,7 @@ def compute_checksum(table, statements):
         conn.close()
 
 
-def get_primary_key_columns(table_schema, table_name):
+def get_primary_key_columns(conn, table_schema, table_name):
     sql = """
     SELECT
     name
@@ -140,7 +87,7 @@ def get_primary_key_columns(table_schema, table_name):
     WHERE (database = '{table_schema}') AND (table = '{table_name}') AND (is_in_primary_key = 1)
     ORDER BY position ASC
 """.format(table_schema=table_schema, table_name=table_name)
-    (rowset, count) = execute_statement(sql)
+    (rowset, count) = execute_sql(conn, sql)
     res = []
     for row in rowset:
         if row[0] is not None:
@@ -148,7 +95,7 @@ def get_primary_key_columns(table_schema, table_name):
     return res
 
 
-def get_table_checksum_query(table):
+def get_table_checksum_query(conn, table):
     #logging.info(f"Excluded columns before join, {args.exclude_columns}")
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
@@ -157,7 +104,7 @@ def get_table_checksum_query(table):
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' and name not in ("+ excluded_columns_str +") order by position"
 
-    (rowset, rowcount) = execute_statement(checksum_query)
+    (rowset, rowcount) = execute_sql(conn, checksum_query)
     #logging.info(f"CHECKSUM QUERY: {checksum_query}")
 
     select = ""
@@ -223,7 +170,7 @@ def get_table_checksum_query(table):
     query = "select "+select+"||','  as query from " + \
         args.clickhouse_database+"."+table
 
-    primary_key_columns = get_primary_key_columns(
+    primary_key_columns = get_primary_key_columns(conn,
         args.clickhouse_database, table)
     logging.debug(str(primary_key_columns))
     order_by_columns = ""
@@ -284,7 +231,7 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
-def get_tables_from_regex(strDSN):
+def get_tables_from_regex(conn, strDSN):
     if args.no_wc:
         return [[args.tables_regex]]
 
@@ -292,12 +239,12 @@ def get_tables_from_regex(strDSN):
     strCommand = "select name from system.tables where database = '{d}' and match(name,'{t}') order by 1".format(
         d=schema, t=args.tables_regex)
     logging.info(f"REGEX QUERY: {strCommand}")
-    (rowset, rowcount) = execute_statement(strCommand)
+    (rowset, rowcount) = execute_sql(conn, strCommand)
     x = rowset
     return x
 
 
-def calculate_checksum(table):
+def calculate_checksum(table, clickhouse_user, clickhouse_password):
     if args.ignore_tables_regex:
         rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex_ignore_tables.match(table):
@@ -316,7 +263,8 @@ def calculate_checksum(table):
     if args.where:
         sql = sql + " where " + args.where
 
-    (rowset, rowcount) = execute_statement(sql)
+    conn = get_connection(clickhouse_user, clickhouse_password)
+    (rowset, rowcount) = execute_sql(conn, sql)
     if rowcount == 0:
         logging.info("No rows in ClickHouse. Nothing to sync.")
         logging.info("Checksum for table {schema}.{table} = d41d8cd98f00b204e9800998ecf8427e count 0".format(
@@ -325,10 +273,10 @@ def calculate_checksum(table):
 
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
-     external_table_types) = get_table_checksum_query(table)
+     external_table_types) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
         table, query, select_query, distributed_by, external_table_types)
-    compute_checksum(table, statements)
+    compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
 # hack to add the user to the logger, which needs it apparently
@@ -356,9 +304,11 @@ def main():
     parser.add_argument('--clickhouse_host',
                         help='ClickHouse host', required=True)
     parser.add_argument('--clickhouse_user',
-                        help='ClickHouse user', required=True)
+                        help='ClickHouse user', required=False)
     parser.add_argument('--clickhouse_password',
-                        help='ClickHouse password', required=True)
+                        help='CH password (discouraged option use a configuration file)', required=False, default=None)
+    parser.add_argument('--clickhouse_config_file',
+                        help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
     parser.add_argument('--clickhouse_database',
                         help='ClickHouse database', required=True)
     parser.add_argument('--clickhouse_port',
@@ -405,17 +355,26 @@ def main():
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
 
-    thisScript = argv[0]
+    clickhouse_user = args.clickhouse_user
+    clickhouse_password = args.clickhouse_password
 
+    # check parameters
+    if args.clickhouse_password:
+        logging.warning("Using password on the command line is not secure, please specify a config file ")
+        assert args.clickhouse_user is not None, "--clickhouse_user must be specified"
+    else:
+        config_file = args.clickhouse_config_file
+        (clickhouse_user, clickhouse_password) = resolve_credentials_from_config(config_file)
     try:
-        tables = get_tables_from_regex(args.tables_regex)
+        conn =  get_connection(clickhouse_user, clickhouse_password)
+        tables = get_tables_from_regex(conn, args.tables_regex)
         # CH does not print decimal with trailing zero, we need a custom function
-        execute_statement(create_function_format_decimal)
+        execute_sql(conn, create_function_format_decimal)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables:
-              futures.append(executor.submit(calculate_checksum, table[0]))
+              futures.append(executor.submit(calculate_checksum, table[0], clickhouse_user, clickhouse_password))
             for future in concurrent.futures.as_completed(futures):
               if future.exception() is not None:
                 raise future.exception()
