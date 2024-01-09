@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -48,6 +49,24 @@ public class BaseDbWriter {
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
 
+    /**
+     * Function to split JDBC properties string into Properties object.
+     * @param jdbcProperties
+     * @return
+     */
+    public Properties splitJdbcProperties(String jdbcProperties) {
+        // Split JDBC properties(delimited by equal sign) string delimited by comma.
+        String[] splitProperties = jdbcProperties.split(",");
+
+        // Iterate through splitProperties and convert to Properties.
+        Properties properties = new Properties();
+        Arrays.stream(splitProperties).forEach(property -> {
+            String[] keyValue = property.split("=");
+            properties.setProperty(keyValue[0], keyValue[1]);
+        });
+
+        return properties;
+    }
     public ClickHouseConnection getConnection() {
         return this.conn;
     }
