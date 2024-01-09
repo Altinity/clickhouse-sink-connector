@@ -27,6 +27,8 @@ public class BaseDbWriter {
 
     private ZoneId serverTimeZone;
 
+    private ClickHouseSinkConnectorConfig config;
+
     private static final Logger log = LoggerFactory.getLogger(BaseDbWriter.class);
 
     public BaseDbWriter(
@@ -45,6 +47,7 @@ public class BaseDbWriter {
         this.password = password;
 
         String connectionUrl = getConnectionString(hostName, port, database);
+        this.config = config;
         this.createConnection(connectionUrl, "Agent_1", userName, password);
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
@@ -83,10 +86,17 @@ public class BaseDbWriter {
      * @param password   Password
      */
     protected void createConnection(String url, String clientName, String userName, String password) {
+        String jdbcParams = this.config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
             properties.setProperty("custom_settings", "allow_experimental_object_type=1");
+
+            if(!jdbcParams.isEmpty()) {
+                log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
+                Properties userProps = splitJdbcProperties(jdbcParams);
+                properties.putAll(userProps);
+            }
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
 
             this.conn = dataSource.getConnection(userName, password);
