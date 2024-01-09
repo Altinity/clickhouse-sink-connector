@@ -3,11 +3,9 @@ import logging
 import warnings
 import os
 import configparser
-config = configparser.ConfigParser()
 
 binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary', 'linestring',
                     'geomcollection', 'multilinestring', 'multipolygon', 'multipoint', 'polygon')
-
 
 def is_binary_datatype(datatype):
     if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
@@ -24,24 +22,27 @@ def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql
     return conn
 
 
-def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False):
+def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False, include_partitions_regex=None):
     schema = mysql_database
     exclude_regex_clause = ""
     if exclude_tables_regex is not None:
          exclude_regex_clause = f"and table_name not rlike '{exclude_tables_regex}'"
     non_partitioned_tables_clause = ""
     if non_partitioned_tables_only:
-        non_partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' group by table_schema, table_name having count(*) = 1 )"
+        non_partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' group by table_schema, table_name having count(*) = 1 )"   
+    partitioned_tables_clause = ''
+    if include_partitions_regex is not None:
+        partitioned_tables_clause = f" and (table_schema, table_name) in (select table_schema, table_name from information_schema.partitions where table_schema = '{schema}' and partition_name rlike '{include_partitions_regex}' group by table_schema, table_name having count(*) > 0 )"
         
-    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{schema}' and table_name rlike '{include_tables_regex}' {exclude_regex_clause} {non_partitioned_tables_clause} order by 1"
+    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name from information_schema.tables where table_type='BASE TABLE' and table_schema = '{schema}' and table_name rlike '{include_tables_regex}' {exclude_regex_clause} {non_partitioned_tables_clause} {partitioned_tables_clause} order by 1"
     return strCommand
 
 
-def get_tables_from_regex(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False):
+def get_tables_from_regex(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False,include_partitions_regex=None):
     if no_wc:
-        return [[tables_regex]]
+        return [[include_tables_regex]]
        
-    strCommand = get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only)
+    strCommand = get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only, include_partitions_regex=include_partitions_regex)
     
     (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
