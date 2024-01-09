@@ -8,12 +8,16 @@ def create_replicated_tables(
     self,
     name,
     clickhouse_table_engine,
-    node=None,
+    mysql_node=None,
+    clickhouse_node=None,
 ):
     """Outline to create MySQL to CLickHouse replicated table."""
 
-    if node is None:
-        node = self.context.cluster.node("mysql-master")
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
+
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
 
     name = name
 
@@ -31,14 +35,16 @@ def create_replicated_tables(
 
         for table_name in tables_names:
             with When(f"I insert some data into MySQL {table_name}"):
-                node.query(f"INSERT INTO {table_name} values (1,1);")
+                mysql_node.query(f"INSERT INTO {table_name} values (1,1);")
 
             with And(
                 f"I check that ClickHouse replicated table test.{table_name} was created"
             ):
-                retry(
-                    self.context.cluster.node("clickhouse").query, timeout=100, delay=5
-                )("SHOW TABLES FROM test", message=f"{table_name}")
+                for retry in retries(timeout=100, delay=5):
+                    with retry:
+                        clickhouse_node.query(
+                            "SHOW TABLES FROM test", message=f"{table_name}"
+                        )
 
     return tables_names
 
@@ -980,10 +986,68 @@ def drop_constraint(self, node=None):
                             node.query(f"ALTER TABLE {table_name} DROP CONSTRAINT;")
 
 
+@TestFeature
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename("1.0")
+)
+def rename_table(
+    self,
+    node=None,
+    mysql_node=None,
+    clickhouse_node=None,
+):
+    """Checking that usage of the RENAME TABLE in mysql is reflected on the ClickHouse side."""
+
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
+
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
+
+    table_name = f"tb_{getuid()}"
+    new_table_name = f"tb_{getuid()}"
+    for clickhouse_table_engine in self.context.clickhouse_table_engines:
+        with Given(
+            f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+            f"ClickHouse table creation method {self.context.env} "
+            f"and ClickHouse table engine {clickhouse_table_engine}"
+        ):
+            create_mysql_to_clickhouse_replicated_table(
+                name=f"{table_name}",
+                mysql_columns="x INT NOT NULL",
+                clickhouse_columns="x Int32",
+                clickhouse_table_engine=clickhouse_table_engine,
+            )
+
+        with And("I check that the table was replicated"):
+            for retry in retries(timeout=100, delay=5):
+                with retry:
+                    clickhouse_node.query(
+                        "SHOW TABLES FROM test", message=f"{table_name}"
+                    )
+
+        with When(
+            f"I perform `RENAME TABLE table_name` on replicated table {table_name}"
+        ):
+            mysql_node.query(f"RENAME TABLE {table_name} TO {new_table_name};")
+
+        with Then(
+            f"I check that table {table_name} was renamed to {new_table_name} on the ClickHouse side"
+        ):
+            for retry in retries(timeout=100, delay=5):
+                with retry:
+                    clickhouse_node.query(
+                        "SHOW TABLES FROM test", message=f"{table_name}"
+                    )
+
+
 @TestModule
 @Name("alter")
-def module(self):
+def module(self, clickhouse_node="clickhouse", mysql_node="mysql-master"):
     """Check simple `ALTER` queries for MySql to ClickHouse replication."""
+    self.context.clickhouse_node = clickhouse_node
+    self.context.mysql_node = mysql_node
+
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

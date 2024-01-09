@@ -284,7 +284,9 @@ def insert(
         f"I insert {first_insert_id - last_insert_id} rows of data in MySql table"
     ):
         for i in range(first_insert_id, last_insert_id + 1):
-            node.query(f"INSERT INTO `{table_name}` VALUES {insert_values}".format(x=i))
+            node.query(
+                f"INSERT INTO `{table_name}` VALUES {insert_values};".format(x=i)
+            )
 
 
 @TestStep(When)
@@ -318,13 +320,13 @@ def complex_insert(
             node.query,
             timeout=300,
             delay=10,
-        )(f"INSERT INTO {table_name} VALUES {insert_values_1}", exitcode=0)
+        )(f"INSERT INTO {table_name} VALUES {insert_values_1};", exitcode=0)
     else:
         retry(
             node.query,
             timeout=300,
             delay=10,
-        )(f"INSERT INTO {table_name} VALUES {insert_values_1}")
+        )(f"INSERT INTO {table_name} VALUES {insert_values_1};")
 
 
 @TestStep(Then)
