@@ -66,7 +66,8 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     RESTART_EVENT_LOOP("restart.event.loop"),
 
-    RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs");
+    RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
+    JDBC_PARAMETERS("jdbc.params");
 
     private String label;
 

@@ -413,6 +413,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         5,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "JDBC connection parameters, the parameters should be in this format socket_timeout=10000,connection_timeout=100, delimited by comma",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
 
                 // ToDo: Add JVM Proxy
                 ;
