@@ -90,7 +90,7 @@ public class TableOperationsIT {
 
             Thread.sleep(10000);
 
-            Connection conn = connectToMySQL();
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer);
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
             conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
@@ -213,23 +213,6 @@ public class TableOperationsIT {
             executorService.shutdown();
 
         }
-
-    Connection connectToMySQL() {
-        Connection conn = null;
-        try {
-
-            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
-                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
-            conn = DriverManager.getConnection(connectionUrl);
-
-
-        } catch (SQLException ex) {
-            // handle any errors
-
-        }
-
-        return conn;
-    }
 
 
 }

@@ -55,20 +55,7 @@ public class DDLBaseIT {
     }
 
     protected Connection connectToMySQL() {
-        Connection conn = null;
-        try {
-
-            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
-                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
-            conn = DriverManager.getConnection(connectionUrl);
-
-
-        } catch (SQLException ex) {
-            // handle any errors
-
-        }
-
-        return conn;
+        return ITCommon.connectToMySQL(mySqlContainer);
     }
 
     protected Properties getDebeziumProperties() throws Exception {

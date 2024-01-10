@@ -537,4 +537,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
     }
+
+    @Override
+    public void enterGeneratedColumnConstraint(MySqlParser.GeneratedColumnConstraintContext generatedColumnConstraintContext) {
+        System.out.println("Generated Column Constraint:" + generatedColumnConstraintContext.getText());
+    }
+
+    @Override
+    public void exitGeneratedColumnConstraint(MySqlParser.GeneratedColumnConstraintContext generatedColumnConstraintContext) {
+        System.out.println("Generated Column Constraint:" + generatedColumnConstraintContext.getText());
+    }
 }
