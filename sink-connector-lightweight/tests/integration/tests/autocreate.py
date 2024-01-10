@@ -12,7 +12,7 @@ def create_all_data_types(
     """
     table_name = f"autocreate_{getuid()}"
 
-    mysql = self.context.cluster.node("mysql-master")
+    mysql_node = self.context.mysql_node
 
     with Given(
         f"I create MySql to CH replicated table with all supported NOT NULL data types",
@@ -26,10 +26,10 @@ def create_all_data_types(
         )
 
     with When(f"I check MySql table {table_name} was created"):
-        mysql.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")
+        mysql_node.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")
 
     with Then(f"I make insert to create ClickHouse table"):
-        mysql.query(
+        mysql_node.query(
             f"INSERT INTO {table_name} VALUES (1,2/3,1.23,999.00009,'2012-12-12','2018-09-08 17:51:04.777','17:51:04.777','17:51:04.777',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,'x','some_text','IVAN','some_blob','x_Mediumblob','some_Longblobblobblob','a','IVAN')"
         )
 
@@ -50,7 +50,7 @@ def create_all_data_types_null_table(
     mysql_columns=all_mysql_datatypes,
     clickhouse_columns=all_ch_datatypes,
 ):
-    """Check all availabe methods and tables creation of replicated MySQL to Ch table that
+    """Check all available methods and tables creation of replicated MySQL to Ch table that
     contains all supported "NULL" data types.
     """
 
@@ -69,7 +69,7 @@ def create_all_data_types_not_null_table_manual(
     mysql_columns=all_nullable_mysql_datatypes,
     clickhouse_columns=all_nullable_ch_datatypes,
 ):
-    """Check all availabe methods and tables creation of replicated MySQL to CH table
+    """Check all available methods and tables creation of replicated MySQL to CH table
     which contains all supported "NOT NULL" data types.
     """
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
@@ -88,8 +88,10 @@ def create_all_data_types_not_null_table_manual(
     )
 )
 @Name("autocreate")
-def module(self):
+def module(self, mysql_node="mysql-master"):
     """Verify correct replication of all supported MySQL data types."""
+
+    self.context.mysql_node = mysql_node
 
     with Pool(1) as executor:
         try:

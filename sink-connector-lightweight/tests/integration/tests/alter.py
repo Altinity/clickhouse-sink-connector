@@ -1037,7 +1037,7 @@ def rename_table(
             for retry in retries(timeout=100, delay=5):
                 with retry:
                     clickhouse_node.query(
-                        "SHOW TABLES FROM test", message=f"{table_name}"
+                        "SHOW TABLES FROM test", message=f"{new_table_name}"
                     )
 
 
@@ -1045,8 +1045,8 @@ def rename_table(
 @Name("alter")
 def module(self, clickhouse_node="clickhouse", mysql_node="mysql-master"):
     """Check simple `ALTER` queries for MySql to ClickHouse replication."""
-    self.context.clickhouse_node = clickhouse_node
-    self.context.mysql_node = mysql_node
+    self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
+    self.context.mysql_node = self.context.cluster.node(mysql_node)
 
     with Pool(1) as executor:
         try:

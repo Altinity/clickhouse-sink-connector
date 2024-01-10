@@ -84,6 +84,7 @@ def create_mysql_to_clickhouse_replicated_table(
     sign_column="_sign",
     primary_key="id",
     partition_by=None,
+    partition_by_mysql=None,
     engine=True,
 ):
     """Create MySQL-to-ClickHouse replicated table.
@@ -91,7 +92,7 @@ def create_mysql_to_clickhouse_replicated_table(
     :param self:
     :param table_name: replicated table name
     :param mysql_columns: MySQL table columns
-    :param clickhouse_columns: coresponding ClickHouse columns
+    :param clickhouse_columns: corresponding ClickHouse columns
     :param clickhouse_table_engine: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
     :param mysql_node: MySql docker compose node
     :param clickhouse_node: CH docker compose node
@@ -105,9 +106,7 @@ def create_mysql_to_clickhouse_replicated_table(
 
     try:
         if self.context.env.endswith("auto"):
-            if clickhouse_table_engine == "ReplacingMergeTree":
-                pass
-            else:
+            if clickhouse_table_engine != "ReplacingMergeTree":
                 raise NotImplementedError(
                     f"table '{clickhouse_table_engine}' not supported"
                 )
@@ -158,13 +157,24 @@ def create_mysql_to_clickhouse_replicated_table(
             )
 
         with Given(f"I create MySQL table", description=name):
-            mysql_node.query(
-                f"CREATE TABLE IF NOT EXISTS {name} "
-                f"(id INT NOT NULL,"
-                f"{mysql_columns}"
-                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
-                f"{' ENGINE = InnoDB;' if engine else ''}",
+            query = (
+                f"CREATE TABLE IF NOT EXISTS {name} (id INT NOT NULL,{mysql_columns}"
             )
+
+            if primary_key is not None:
+                query += f", PRIMARY KEY ({primary_key}))"
+            else:
+                query += ")"
+
+            if engine:
+                query += f" ENGINE = InnoDB"
+
+            if partition_by_mysql:
+                query += f", PARTITION BY {partition_by_mysql}"
+
+            query += ";"
+
+            mysql_node.query(query)
 
         yield
     finally:
