@@ -5,7 +5,9 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLBaseIT;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +20,9 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -67,8 +71,6 @@ public class MySQLGenerateColumnsTest {
             try {
 
                 Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-                props.setProperty("database.include.list", "datatypes");
-                props.setProperty("clickhouse.server.database", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
@@ -83,10 +85,27 @@ public class MySQLGenerateColumnsTest {
         Connection conn = connectToMySQL(mySqlContainer);
 
         conn.prepareStatement("\n" +
-                "CREATE TABLE contacts (id INT AUTO_INCREMENT PRIMARY KEY,\n" +
+                "CREATE TABLE employees.contacts (id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
                 "first_name VARCHAR(50) NOT NULL,\n" +
                 "last_name VARCHAR(50) NOT NULL,\n" +
                 "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
                 "email VARCHAR(100) NOT NULL);\n").execute();
+
+        Thread.sleep(30000);
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        Map<String, String> columnsToDataTypeMap = writer.getColumnsDataTypesForTable("contacts");
+
+        Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
+        Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
+        Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
+
+        writer.getConnection().close();
+        Thread.sleep(10000);
+
+
     }
 }

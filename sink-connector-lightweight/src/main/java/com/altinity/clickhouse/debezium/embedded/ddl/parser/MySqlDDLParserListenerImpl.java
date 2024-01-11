@@ -139,6 +139,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         String columnName = null;
                         String colDataType = null;
                         boolean isNullColumn = true;
+                        boolean isGeneratedColumn = false;
+                        String generatedColumn = "";
+
                         for (ParseTree colDefTree : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
                             if (colDefTree instanceof MySqlParser.FullColumnNameContext) {
                                 columnName = colDefTree.getText();
@@ -162,12 +165,33 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                             orderByColumns.append(columnName);
                                             break;
                                         }
+                                    } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
+                                        for(ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
+                                            if(generatedColumnTree instanceof MySqlParser.ExpressionContext) {
+                                                isGeneratedColumn = true;
+                                                generatedColumn = generatedColumnTree.getText();
+                                                //this.query.append(Constants.AS).append(" ").append(expression);
+                                            }
+                                        }
+
                                     }
                                 }
+                                if(isGeneratedColumn) {
+                                    if(isNullColumn){
+                                        this.query.append(Constants.NULLABLE).append("(").append(colDataType)
+                                                .append(")");
+                                    } else
+                                        this.query.append(colDataType);
+
+                                    this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
+                                    continue;
+                                }
+
                                 if(isNullColumn) {
                                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                                             .append(")").append(",");
-                                } else {
+                                }
+                                else {
                                     this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
                                 }
                             }
@@ -536,15 +560,5 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.query.append(String.format(Constants.TRUNCATE_TABLE, child.getText()));
             }
         }
-    }
-
-    @Override
-    public void enterGeneratedColumnConstraint(MySqlParser.GeneratedColumnConstraintContext generatedColumnConstraintContext) {
-        System.out.println("Generated Column Constraint:" + generatedColumnConstraintContext.getText());
-    }
-
-    @Override
-    public void exitGeneratedColumnConstraint(MySqlParser.GeneratedColumnConstraintContext generatedColumnConstraintContext) {
-        System.out.println("Generated Column Constraint:" + generatedColumnConstraintContext.getText());
     }
 }

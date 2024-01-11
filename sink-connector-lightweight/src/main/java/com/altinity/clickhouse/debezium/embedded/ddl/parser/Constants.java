@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 public class Constants {
 
+    public static final String ALIAS = "ALIAS";
     public static final String PARTITION_BY = " PARTITION BY ";
     public static final String ORDER_BY = " ORDER BY ";
     public static final String ORDER_BY_TUPLE = " ORDER BY tuple()";
