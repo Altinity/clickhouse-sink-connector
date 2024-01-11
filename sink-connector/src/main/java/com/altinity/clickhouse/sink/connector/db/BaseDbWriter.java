@@ -86,7 +86,11 @@ public class BaseDbWriter {
      * @param password   Password
      */
     protected void createConnection(String url, String clientName, String userName, String password) {
-        String jdbcParams = this.config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+        String jdbcParams = "";
+        if(this.config != null) {
+            this.config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+        }
+
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);

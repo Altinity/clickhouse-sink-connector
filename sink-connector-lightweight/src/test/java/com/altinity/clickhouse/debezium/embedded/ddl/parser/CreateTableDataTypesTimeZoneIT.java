@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
@@ -65,12 +66,12 @@ public class CreateTableDataTypesTimeZoneIT {
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties();
+                Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 props.setProperty("database.include.list", "datatypes");
                 props.setProperty("clickhouse.server.database", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
                         new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -288,42 +289,4 @@ public class CreateTableDataTypesTimeZoneIT {
         writer.getConnection().close();
     }
 
-    protected Properties getDebeziumProperties() throws Exception {
-
-        // Start the debezium embedded application.
-
-        Properties defaultProps = new Properties();
-        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
-
-        defaultProps.putAll(defaultProperties);
-        Properties fileProps = new ConfigLoader().load("config.yml");
-        defaultProps.putAll(fileProps);
-
-        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user", "root");
-        defaultProps.setProperty("database.password", "adminpass");
-
-        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
-        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-
-        return defaultProps;
-
-    }
 }

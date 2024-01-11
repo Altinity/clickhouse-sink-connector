@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
@@ -79,7 +80,7 @@ public class TableOperationsIT {
                 try {
 
                     engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                    engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
                             new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -89,7 +90,7 @@ public class TableOperationsIT {
 
             Thread.sleep(10000);
 
-            Connection conn = connectToMySQL();
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer);
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
             conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
@@ -113,6 +114,13 @@ public class TableOperationsIT {
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
             Thread.sleep(10000);
 
+
+            conn.prepareStatement("\n" +
+                    "CREATE TABLE contacts (id INT AUTO_INCREMENT PRIMARY KEY,\n" +
+                    "first_name VARCHAR(50) NOT NULL,\n" +
+                    "last_name VARCHAR(50) NOT NULL,\n" +
+                    "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
+                    "email VARCHAR(100) NOT NULL);\n").execute();
 
             BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
@@ -206,60 +214,5 @@ public class TableOperationsIT {
 
         }
 
-    Connection connectToMySQL() {
-        Connection conn = null;
-        try {
-
-            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
-                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
-            conn = DriverManager.getConnection(connectionUrl);
-
-
-        } catch (SQLException ex) {
-            // handle any errors
-
-        }
-
-        return conn;
-    }
-
-    protected Properties getDebeziumProperties() throws Exception {
-
-        // Start the debezium embedded application.
-
-        Properties defaultProps = new Properties();
-        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
-
-        defaultProps.putAll(defaultProperties);
-        Properties fileProps = new ConfigLoader().load("config.yml");
-        defaultProps.putAll(fileProps);
-
-        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user", "root");
-        defaultProps.setProperty("database.password", "adminpass");
-
-        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
-        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-
-        return defaultProps;
-
-    }
 
 }

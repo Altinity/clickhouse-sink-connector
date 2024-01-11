@@ -581,6 +581,16 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE test_table to test_table_new"));
     }
 
+    @Test
+    public void testGeneratedColumn() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "CREATE TABLE employees.contacts (fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)), email VARCHAR(100) NOT NULL);";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.contacts(fullname Nullable(String) ALIAS CONCAT(first_name,' ',last_name),email String NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
+    }
+
     @ParameterizedTest
     @CsvSource({
             "ALTER TABLE test_table rename to test_table_new, false",
