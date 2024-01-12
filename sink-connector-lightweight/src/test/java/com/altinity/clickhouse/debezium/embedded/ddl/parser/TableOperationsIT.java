@@ -220,6 +220,7 @@ public class TableOperationsIT {
 
         conn.prepareStatement("insert into new_table values('test', 1, 22, 1)").execute();
         conn.close();
+        Thread.sleep(10000);
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
