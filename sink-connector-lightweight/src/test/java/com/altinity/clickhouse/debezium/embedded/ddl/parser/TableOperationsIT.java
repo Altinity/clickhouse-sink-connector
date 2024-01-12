@@ -21,6 +21,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
@@ -34,12 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
-    protected ClickHouseContainer clickHouseContainer;
-
-//    @Container
-//    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-//            .withInitScript("init_clickhouse.sql")
-//            .withExposedPorts(8123);
+    static ClickHouseContainer clickHouseContainer;
 
         @BeforeEach
         public void startContainers() throws InterruptedException {
@@ -56,14 +52,7 @@ public class TableOperationsIT {
             Thread.sleep(15000);
         }
 
-        @ParameterizedTest
-        @CsvSource({
-            "clickhouse/clickhouse-server:latest",
-            "clickhouse/clickhouse-server:22.3"
-        })
-        public void testTableOperations(String clickHouseServerVersion) throws Exception {
-                //,String rcxExpectedResult) throws Exception {
-
+        static {
             clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                     .asCompatibleSubstituteFor("clickhouse"))
                     .withInitScript("init_clickhouse_it.sql")
@@ -72,6 +61,14 @@ public class TableOperationsIT {
                     .withExposedPorts(8123);
 
             clickHouseContainer.start();
+        }
+        @ParameterizedTest
+        @CsvSource({
+            "clickhouse/clickhouse-server:latest",
+            "clickhouse/clickhouse-server:22.3"
+        })
+        @DisplayName("Test that validates DDL(Create, ALTER, RENAME)")
+        public void testTableOperations(String clickHouseServerVersion) throws Exception {
 
             AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
@@ -94,11 +91,7 @@ public class TableOperationsIT {
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
             conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
-
-            //conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
-
             conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, col3 int)").execute();
-
             conn.prepareStatement("CREATE TABLE members (\n" +
                             "    firstname VARCHAR(25) NOT NULL,\n" +
                             "    lastname VARCHAR(25) NOT NULL,\n" +
@@ -108,9 +101,7 @@ public class TableOperationsIT {
                             ")\n" +
                             "PARTITION BY KEY(joined)\n" +
                             "PARTITIONS 6;").execute();
-
             conn.prepareStatement("create table copied_table like new_table").execute();
-
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
             Thread.sleep(10000);
 
@@ -188,23 +179,7 @@ public class TableOperationsIT {
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
             }
-//            else {
-//                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-//                        "(\n" +
-//                        "    `a` Int32,\n" +
-//                        "    `b` Nullable(Int32),\n" +
-//                        "    `c` String,\n" +
-//                        "    `d` Int32,\n" +
-//                        "    `_sign` Int8,\n" +
-//                        "    `_version` UInt64\n" +
-//                        ")\n" +
-//                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-//                        "PARTITION BY (a, d, c)\n" +
-//                        "ORDER BY tuple()\n" +
-//                        "SETTINGS index_granularity = 8192"));
-//            }
 
-//            new com.altinity.clickhouse.sink.connector.db.DBMetadata().getTableEngine(writer.getConnection(), "employees", "rmt_test");
 
             if(engine.get() != null) {
                 engine.get().stop();
@@ -214,5 +189,54 @@ public class TableOperationsIT {
 
         }
 
+    @ParameterizedTest
+    @CsvSource({
+            "clickhouse/clickhouse-server:latest",
+            "clickhouse/clickhouse-server:22.3"
+    })
+    @DisplayName("Test that validates create table in CH when MySQL has is_deleted columns")
+    public void testIsDeleted(String clickHouseServerVersion) throws Exception {
 
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+
+        Thread.sleep(10000);
+        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+        conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int)").execute();
+
+        Thread.sleep(10000);
+
+        conn.prepareStatement("insert into new_table values('test', 1, 22, 1)").execute();
+        conn.close();
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        ResultSet rs = writer.executeQueryWithResultSet("select * from new_table");
+        boolean recordFound = false;
+        while(rs.next()) {
+            recordFound = true;
+            Assert.assertTrue(rs.getString("col1").equalsIgnoreCase("test"));
+            Assert.assertTrue(rs.getInt("col2") == 1);
+            Assert.assertTrue(rs.getInt("is_deleted") == 22);
+            Assert.assertTrue(rs.getInt("_sign") == 1);
+        }
+        Assert.assertTrue(recordFound);
+
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        executorService.shutdown();
+    }
 }
