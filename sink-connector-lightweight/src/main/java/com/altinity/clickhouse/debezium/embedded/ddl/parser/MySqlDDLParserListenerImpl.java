@@ -15,8 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.ZoneId;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * This class contains the only overridden functions from the generated parser.
@@ -92,11 +95,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterColumnCreateTable(MySqlParser.ColumnCreateTableContext columnCreateTableContext) {
         StringBuilder orderByColumns = new StringBuilder();
         StringBuilder partitionByColumn = new StringBuilder();
-        parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
+        Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
         //this.query.append(" Engine=")
+        String isDeletedColumn = IS_DELETED_COLUMN;
+        if(columnNames.contains(isDeletedColumn)) {
+            isDeletedColumn = "__" + IS_DELETED_COLUMN;
+        }
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
-            this.query.append("`").append(IS_DELETED_COLUMN).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+            this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
         } else {
             this.query.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
@@ -104,7 +111,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         this.query.append(")");
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
-            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(IS_DELETED_COLUMN).append(")");
+            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
         } else
             this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
 
@@ -119,10 +126,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
     }
 
-    private void parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
+    private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                   StringBuilder partitionByColumns) {
         List<ParseTree> pt = ctx.children;
-
+        Set<String> columnNames = new HashSet<>();
 
         this.query.append(Constants.CREATE_TABLE).append(" ");
         for (ParseTree tree : pt) {
@@ -136,66 +143,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     if (subtree instanceof TerminalNodeImpl) {
                        // this.query.append(subtree.getText());
                     } else if (subtree instanceof MySqlParser.ColumnDeclarationContext) {
-                        String columnName = null;
-                        String colDataType = null;
-                        boolean isNullColumn = true;
-                        boolean isGeneratedColumn = false;
-                        String generatedColumn = "";
-
-                        for (ParseTree colDefTree : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
-                            if (colDefTree instanceof MySqlParser.FullColumnNameContext) {
-                                columnName = colDefTree.getText();
-                                this.query.append(columnName).append(" ");
-                            } else if (colDefTree instanceof MySqlParser.ColumnDefinitionContext) {
-                                String colDataTypeDefinition = colDefTree.getText();
-
-                                colDataType = getClickHouseDataType(colDataTypeDefinition, colDefTree, columnName);
-                                // Null Column and DimensionDataType are children of ColumnDefinition
-                                for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
-                                    if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
-                                        if (colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL))
-                                            isNullColumn = false;
-                                    } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
-                                        if (colDefinitionChildTree.getText() != null) {
-
-                                        }
-                                    } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
-                                        for(ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
-                                            System.out.println(primaryKeyTree.getText());
-                                            orderByColumns.append(columnName);
-                                            break;
-                                        }
-                                    } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
-                                        for(ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
-                                            if(generatedColumnTree instanceof MySqlParser.ExpressionContext) {
-                                                isGeneratedColumn = true;
-                                                generatedColumn = generatedColumnTree.getText();
-                                                //this.query.append(Constants.AS).append(" ").append(expression);
-                                            }
-                                        }
-
-                                    }
-                                }
-                                if(isGeneratedColumn) {
-                                    if(isNullColumn){
-                                        this.query.append(Constants.NULLABLE).append("(").append(colDataType)
-                                                .append(")");
-                                    } else
-                                        this.query.append(colDataType);
-
-                                    this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
-                                    continue;
-                                }
-
-                                if(isNullColumn) {
-                                    this.query.append(Constants.NULLABLE).append("(").append(colDataType)
-                                            .append(")").append(",");
-                                }
-                                else {
-                                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
-                                }
-                            }
-                        }
+                        parseColumnDefinitions(subtree, orderByColumns, columnNames);
                     } else if(subtree instanceof MySqlParser.ConstraintDeclarationContext) {
                         for(ParseTree constraintTree: ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
                             if(constraintTree instanceof MySqlParser.PrimaryKeyTableConstraintContext) {
@@ -232,6 +180,79 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                     }
                 }
+            }
+        }
+
+        return columnNames;
+    }
+
+    /**
+     * Function to parse column definitions.
+     * @param subtree
+     * @param orderByColumns
+     *
+     * @return list of column names
+     */
+    private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames) {
+        String columnName = null;
+        String colDataType = null;
+        boolean isNullColumn = true;
+        boolean isGeneratedColumn = false;
+        String generatedColumn = "";
+
+        for (ParseTree colDefTree : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
+            if (colDefTree instanceof MySqlParser.FullColumnNameContext) {
+                columnName = colDefTree.getText();
+                this.query.append(columnName).append(" ");
+            } else if (colDefTree instanceof MySqlParser.ColumnDefinitionContext) {
+                String colDataTypeDefinition = colDefTree.getText();
+
+                colDataType = getClickHouseDataType(colDataTypeDefinition, colDefTree, columnName);
+                // Null Column and DimensionDataType are children of ColumnDefinition
+                for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
+                    if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
+                        if (colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL))
+                            isNullColumn = false;
+                    } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
+                        if (colDefinitionChildTree.getText() != null) {
+
+                        }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
+                        for(ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
+                            System.out.println(primaryKeyTree.getText());
+                            orderByColumns.append(columnName);
+                            break;
+                        }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
+                        for(ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
+                            if(generatedColumnTree instanceof MySqlParser.ExpressionContext) {
+                                isGeneratedColumn = true;
+                                generatedColumn = generatedColumnTree.getText();
+                                //this.query.append(Constants.AS).append(" ").append(expression);
+                            }
+                        }
+
+                    }
+                }
+                if(isGeneratedColumn) {
+                    if(isNullColumn){
+                        this.query.append(Constants.NULLABLE).append("(").append(colDataType)
+                                .append(")");
+                    } else
+                        this.query.append(colDataType);
+
+                    this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
+                    continue;
+                }
+
+                if(isNullColumn) {
+                    this.query.append(Constants.NULLABLE).append("(").append(colDataType)
+                            .append(")").append(",");
+                }
+                else {
+                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
+                }
+                columnNames.add(columnName);
             }
         }
     }
