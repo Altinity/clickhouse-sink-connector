@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
@@ -20,6 +21,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
@@ -33,12 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
-    protected ClickHouseContainer clickHouseContainer;
-
-//    @Container
-//    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-//            .withInitScript("init_clickhouse.sql")
-//            .withExposedPorts(8123);
+    static ClickHouseContainer clickHouseContainer;
 
         @BeforeEach
         public void startContainers() throws InterruptedException {
@@ -55,14 +52,7 @@ public class TableOperationsIT {
             Thread.sleep(15000);
         }
 
-        @ParameterizedTest
-        @CsvSource({
-            "clickhouse/clickhouse-server:latest",
-            "clickhouse/clickhouse-server:22.3"
-        })
-        public void testTableOperations(String clickHouseServerVersion) throws Exception {
-                //,String rcxExpectedResult) throws Exception {
-
+        static {
             clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                     .asCompatibleSubstituteFor("clickhouse"))
                     .withInitScript("init_clickhouse_it.sql")
@@ -71,6 +61,14 @@ public class TableOperationsIT {
                     .withExposedPorts(8123);
 
             clickHouseContainer.start();
+        }
+        @ParameterizedTest
+        @CsvSource({
+            "clickhouse/clickhouse-server:latest",
+            "clickhouse/clickhouse-server:22.3"
+        })
+        @DisplayName("Test that validates DDL(Create, ALTER, RENAME)")
+        public void testTableOperations(String clickHouseServerVersion) throws Exception {
 
             AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
@@ -79,7 +77,7 @@ public class TableOperationsIT {
                 try {
 
                     engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
+                    engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
                             new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -89,15 +87,11 @@ public class TableOperationsIT {
 
             Thread.sleep(10000);
 
-            Connection conn = connectToMySQL();
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer);
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
             conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
-
-            //conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
-
             conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, col3 int)").execute();
-
             conn.prepareStatement("CREATE TABLE members (\n" +
                             "    firstname VARCHAR(25) NOT NULL,\n" +
                             "    lastname VARCHAR(25) NOT NULL,\n" +
@@ -107,12 +101,17 @@ public class TableOperationsIT {
                             ")\n" +
                             "PARTITION BY KEY(joined)\n" +
                             "PARTITIONS 6;").execute();
-
             conn.prepareStatement("create table copied_table like new_table").execute();
-
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
             Thread.sleep(10000);
 
+
+            conn.prepareStatement("\n" +
+                    "CREATE TABLE contacts (id INT AUTO_INCREMENT PRIMARY KEY,\n" +
+                    "first_name VARCHAR(50) NOT NULL,\n" +
+                    "last_name VARCHAR(50) NOT NULL,\n" +
+                    "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
+                    "email VARCHAR(100) NOT NULL);\n").execute();
 
             BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
@@ -180,23 +179,7 @@ public class TableOperationsIT {
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
             }
-//            else {
-//                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-//                        "(\n" +
-//                        "    `a` Int32,\n" +
-//                        "    `b` Nullable(Int32),\n" +
-//                        "    `c` String,\n" +
-//                        "    `d` Int32,\n" +
-//                        "    `_sign` Int8,\n" +
-//                        "    `_version` UInt64\n" +
-//                        ")\n" +
-//                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-//                        "PARTITION BY (a, d, c)\n" +
-//                        "ORDER BY tuple()\n" +
-//                        "SETTINGS index_granularity = 8192"));
-//            }
 
-//            new com.altinity.clickhouse.sink.connector.db.DBMetadata().getTableEngine(writer.getConnection(), "employees", "rmt_test");
 
             if(engine.get() != null) {
                 engine.get().stop();
@@ -205,61 +188,5 @@ public class TableOperationsIT {
             executorService.shutdown();
 
         }
-
-    Connection connectToMySQL() {
-        Connection conn = null;
-        try {
-
-            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", mySqlContainer.getHost(), mySqlContainer.getFirstMappedPort(),
-                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
-            conn = DriverManager.getConnection(connectionUrl);
-
-
-        } catch (SQLException ex) {
-            // handle any errors
-
-        }
-
-        return conn;
-    }
-
-    protected Properties getDebeziumProperties() throws Exception {
-
-        // Start the debezium embedded application.
-
-        Properties defaultProps = new Properties();
-        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
-
-        defaultProps.putAll(defaultProperties);
-        Properties fileProps = new ConfigLoader().load("config.yml");
-        defaultProps.putAll(fileProps);
-
-        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user", "root");
-        defaultProps.setProperty("database.password", "adminpass");
-
-        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
-        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-
-        return defaultProps;
-
-    }
 
 }

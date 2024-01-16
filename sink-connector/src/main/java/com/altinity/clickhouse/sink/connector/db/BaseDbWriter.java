@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -25,6 +26,8 @@ public class BaseDbWriter {
     private String password;
 
     private ZoneId serverTimeZone;
+
+    private ClickHouseSinkConnectorConfig config;
 
     private static final Logger log = LoggerFactory.getLogger(BaseDbWriter.class);
 
@@ -44,10 +47,29 @@ public class BaseDbWriter {
         this.password = password;
 
         String connectionUrl = getConnectionString(hostName, port, database);
+        this.config = config;
         this.createConnection(connectionUrl, "Agent_1", userName, password);
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
 
+    /**
+     * Function to split JDBC properties string into Properties object.
+     * @param jdbcProperties
+     * @return
+     */
+    public Properties splitJdbcProperties(String jdbcProperties) {
+        // Split JDBC properties(delimited by equal sign) string delimited by comma.
+        String[] splitProperties = jdbcProperties.split(",");
+
+        // Iterate through splitProperties and convert to Properties.
+        Properties properties = new Properties();
+        Arrays.stream(splitProperties).forEach(property -> {
+            String[] keyValue = property.split("=");
+            properties.setProperty(keyValue[0], keyValue[1]);
+        });
+
+        return properties;
+    }
     public ClickHouseConnection getConnection() {
         return this.conn;
     }
@@ -64,10 +86,21 @@ public class BaseDbWriter {
      * @param password   Password
      */
     protected void createConnection(String url, String clientName, String userName, String password) {
+        String jdbcParams = "";
+        if(this.config != null) {
+            this.config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+        }
+
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
             properties.setProperty("custom_settings", "allow_experimental_object_type=1");
+
+            if(!jdbcParams.isEmpty()) {
+                log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
+                Properties userProps = splitJdbcProperties(jdbcParams);
+                properties.putAll(userProps);
+            }
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
 
             this.conn = dataSource.getConnection(userName, password);

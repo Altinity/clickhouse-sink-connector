@@ -143,3 +143,6 @@ auto.create.tables: "true"
 
 # Max number of records for the flush buffer.
 #buffer.max.records: "10000"
+
+# ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
+#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"

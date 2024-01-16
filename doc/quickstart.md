@@ -47,7 +47,7 @@ mysql --user=root --password=root --host=<your host>
 
 Enter SQL commands to Create a table in database sysbench and add data. 
 ```
-mysql> use sbtest
+mysql> use test
 mysql> CREATE TABLE foo (id int PRIMARY KEY, value VARCHAR(100));
 Query OK, 0 rows affected (0.12 sec)
 mysql> INSERT INTO foo VALUES (1, '25');

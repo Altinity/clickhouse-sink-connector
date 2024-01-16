@@ -101,7 +101,7 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     if self.context.stress:
         column_number = 64
@@ -319,7 +319,7 @@ def multiple_parallel_add_and_drop_column(self, column_number=5, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    name = f"{getuid()}"
+    name = f"tb_{getuid()}"
 
     if self.context.stress:
         column_number = 64
