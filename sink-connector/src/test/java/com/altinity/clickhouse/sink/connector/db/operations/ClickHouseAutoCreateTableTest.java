@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -113,7 +114,8 @@ public class ClickHouseAutoCreateTableTest {
 
     @Test
     public void getColumnNameToCHDataTypeMappingTest() {
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
         Field[] fields = createFields();
         Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields);
 
@@ -127,23 +129,54 @@ public class ClickHouseAutoCreateTableTest {
     public void testCreateTableSyntax() {
         ArrayList<String> primaryKeys = new ArrayList<>();
         primaryKeys.add("customerName");
-
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
-        System.out.println("QUERY" + query);
+        //System.out.println("QUERY " + query);
         Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
         //Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY (customerName)"));
     }
 
     @Test
-    public void testCreateTableEmptyPrimaryKey() {
+    public void testCreateTableSyntaxReplacingMergeTreeDeleteColumn() {
+        Map<String, String> properties = new HashMap<String, String>();
+        properties.put(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "row_is_deleted");
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(properties);
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
+
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
+        //System.out.println("QUERY " + query);
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`row_is_deleted` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+    }
+
+    @Test
+    public void testCreateTableSyntaxUseIsDeletedColumn() {
+        Map<String, String> properties = new HashMap<String, String>();
+        properties.put(ClickHouseSinkConnectorConfigVariables.USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN.toString(), "true");
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(properties);
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, true);
+
+        String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
+        //System.out.println("QUERY " + query);                                                
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`is_deleted` UInt8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version,is_deleted) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+    }
+
+    @Test
+    public void testCreateTableEmptyPrimaryKey() {
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
 
         String query = act.createTableSyntax(null, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
         String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        //System.out.println("QUERY " + query);
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -152,13 +185,14 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys.add("customer_id");
         primaryKeys.add("customer_name");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", createFields(), this.columnToDataTypesMap);
 
         String expectedQuery = "CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        //System.out.println("QUERY " + query);
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
-        System.out.println(query);
     }
 
     @Test
@@ -174,7 +208,8 @@ public class ClickHouseAutoCreateTableTest {
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
         ArrayList<String> primaryKeys = new ArrayList<>();
         primaryKeys.add("customerName");
 
@@ -195,7 +230,8 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys2.add("customerName2");
         primaryKeys2.add("id2");
 
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable(config, false);
 
         Map<String, String> columnToDataTypesMap = new HashMap<>();
         columnToDataTypesMap.put("customerName", ClickHouseDataType.String.name());

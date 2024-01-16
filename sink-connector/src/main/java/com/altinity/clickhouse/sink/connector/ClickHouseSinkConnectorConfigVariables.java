@@ -9,7 +9,6 @@ public enum ClickHouseSinkConnectorConfigVariables {
     DEDUPLICATION_POLICY("deduplication.policy"),
 
     CLICKHOUSE_TOPICS_TABLES_MAP("clickhouse.topic2table.map"),
-
     CLICKHOUSE_URL("clickhouse.server.url"),
     CLICKHOUSE_USER("clickhouse.server.user"),
     CLICKHOUSE_PASS("clickhouse.server.password"),
@@ -49,9 +48,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
     METRICS_ENDPOINT_PORT("metrics.port"),
 
     REPLACING_MERGE_TREE_DELETE_COLUMN("replacingmergetree.delete.column"),
+    USE_REPLACING_MERGE_TREE_IS_DELETED_COLUMN("use.replacingmergetree.is_deleted.column"),
 
     //Config variable for auto creating tables if they dont exist.
     AUTO_CREATE_TABLES("auto.create.tables"),
+    AUTO_CREATE_TABLES_REPLICATED("auto.create.tables.replicated"),
 
     // Config variable when set to true, columns will be added.
     ENABLE_SCHEMA_EVOLUTION("schema.evolution"),
