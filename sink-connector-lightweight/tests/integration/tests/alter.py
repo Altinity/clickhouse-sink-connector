@@ -635,7 +635,7 @@ def modify_column_with_all_datatypes(self):
         create_table_with_blob_column,
         create_table_with_medium_blob_column,
         create_table_with_long_blob_column,
-        create_table_with_long_binary_column,
+        create_table_with_binary_column,
         create_table_with_long_varbinary_column,
     ]
 
