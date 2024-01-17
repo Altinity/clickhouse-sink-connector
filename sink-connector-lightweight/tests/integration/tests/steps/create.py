@@ -19,7 +19,7 @@ def create_table_with_decimal_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="(1.2)",
+    values="(1, 1.2)",
 ):
     """Create a mysql to clickhouse replicated table with decimal column."""
     if mysql_node is None:
@@ -48,7 +48,7 @@ def create_table_with_double_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="(12345.6789)",
+    values="(1, 12345.6789)",
 ):
     """Create a mysql to clickhouse replicated table with double column."""
     if mysql_node is None:
@@ -77,7 +77,7 @@ def create_table_with_date_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('2024-01-17')",
+    values="(1, '2024-01-17')",
 ):
     """Create a mysql to clickhouse replicated table with date column."""
     if mysql_node is None:
@@ -106,7 +106,7 @@ def create_table_with_datetime_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('2024-01-17 12:34:56.123456')",
+    values="(1, '2024-01-17 12:34:56.123456')",
 ):
     """Create a mysql to clickhouse replicated table with datetime column."""
     if mysql_node is None:
@@ -135,7 +135,7 @@ def create_table_with_time_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('12:34:56')",
+    values="(1, '12:34:56')",
 ):
     """Create a mysql to clickhouse replicated table with time column."""
     if mysql_node is None:
@@ -164,7 +164,7 @@ def create_table_with_int_min_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('-2147483648')",
+    values="(1, '-2147483648')",
 ):
     """Create a mysql to clickhouse replicated table with int column that has minimal value."""
     if mysql_node is None:
@@ -193,7 +193,7 @@ def create_table_with_int_max_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('2147483647')",
+    values="(1, '2147483647')",
 ):
     """Create a mysql to clickhouse replicated table with int column that has maximal value."""
     if mysql_node is None:
@@ -217,7 +217,12 @@ def create_table_with_int_max_column(
 
 @TestStep(Given)
 def create_table_with_unsigned_int_min_column(
-    self, table_name, column_name, mysql_node=None, clickhouse_node=None, values="('0')"
+    self,
+    table_name,
+    column_name,
+    mysql_node=None,
+    clickhouse_node=None,
+    values="(1, '0')",
 ):
     """Create a mysql to clickhouse replicated table with unsigned int column that has minimal value."""
     if mysql_node is None:
@@ -246,7 +251,7 @@ def create_table_with_unsigned_int_max_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('4294967295')",
+    values="(1, '4294967295')",
 ):
     """Create a mysql to clickhouse replicated table with unsigned int column that has maximal value."""
     if mysql_node is None:
@@ -275,7 +280,7 @@ def create_table_with_bigint_min_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('–9223372036854775808')",
+    values="(1, '–9223372036854775808')",
 ):
     """Create a mysql to clickhouse replicated table with bigint column that has minimal value."""
     if mysql_node is None:
@@ -304,7 +309,7 @@ def create_table_with_bigint_max_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('9223372036854775807')",
+    values="(1, '9223372036854775807')",
 ):
     """Create a mysql to clickhouse replicated table with bigint column that has maximal value."""
     if mysql_node is None:
@@ -328,7 +333,12 @@ def create_table_with_bigint_max_column(
 
 @TestStep(Given)
 def create_table_with_unsigned_bigint_min_column(
-    self, table_name, column_name, mysql_node=None, clickhouse_node=None, values="('0')"
+    self,
+    table_name,
+    column_name,
+    mysql_node=None,
+    clickhouse_node=None,
+    values="(1, '0')",
 ):
     """Create a mysql to clickhouse replicated table with unsigned bigint column that has minimal value."""
     if mysql_node is None:
@@ -357,7 +367,7 @@ def create_table_with_unsigned_bigint_max_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('18446744073709551615')",
+    values="(1, '18446744073709551615')",
 ):
     """Create a mysql to clickhouse replicated table with unsigned bigint column that has maximal value."""
     if mysql_node is None:
@@ -381,7 +391,12 @@ def create_table_with_unsigned_bigint_max_column(
 
 @TestStep(Given)
 def create_table_with_char_column(
-    self, table_name, column_name, mysql_node=None, clickhouse_node=None, values="('A')"
+    self,
+    table_name,
+    column_name,
+    mysql_node=None,
+    clickhouse_node=None,
+    values="(1, 'A')",
 ):
     """Create a mysql to clickhouse replicated table with char column."""
     if mysql_node is None:
@@ -410,7 +425,7 @@ def create_table_with_text_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Sample Text')",
+    values="(1, 'Sample Text')",
 ):
     """Create a mysql to clickhouse replicated table with text column."""
     if mysql_node is None:
@@ -439,7 +454,7 @@ def create_table_with_varchar_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Text')",
+    values="(1, 'Text')",
 ):
     """Create a mysql to clickhouse replicated table with varchar column."""
     if mysql_node is None:
@@ -468,7 +483,7 @@ def create_table_with_blob_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Binary Data')",
+    values="(1, 'Binary Data')",
 ):
     """Create a mysql to clickhouse replicated table with blob column."""
     if mysql_node is None:
@@ -497,7 +512,7 @@ def create_table_with_medium_blob_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Medium Binary Data')",
+    values="(1, 'Medium Binary Data')",
 ):
     """Create a mysql to clickhouse replicated table with medium blob column."""
     if mysql_node is None:
@@ -526,7 +541,7 @@ def create_table_with_long_blob_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Long Binary Data')",
+    values="(1, 'Long Binary Data')",
 ):
     """Create a mysql to clickhouse replicated table with long blob column."""
     if mysql_node is None:
@@ -555,7 +570,7 @@ def create_table_with_binary_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('Binary')",
+    values="(1, 'Binary')",
 ):
     """Create a mysql to clickhouse replicated table with binary column."""
     if mysql_node is None:
@@ -584,7 +599,7 @@ def create_table_with_long_varbinary_column(
     column_name,
     mysql_node=None,
     clickhouse_node=None,
-    values="('VarBin')",
+    values="(1, 'VarBin')",
 ):
     """Create a mysql to clickhouse replicated table with varbinary column."""
     if mysql_node is None:
