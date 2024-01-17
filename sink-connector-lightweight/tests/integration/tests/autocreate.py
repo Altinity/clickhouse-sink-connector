@@ -91,7 +91,7 @@ def create_all_data_types_not_null_table_manual(
 def module(self, mysql_node="mysql-master"):
     """Verify correct replication of all supported MySQL data types."""
 
-    self.context.mysql_node = mysql_node
+    self.context.mysql_node = self.context.cluster.node(mysql_node)
 
     with Pool(1) as executor:
         try:
