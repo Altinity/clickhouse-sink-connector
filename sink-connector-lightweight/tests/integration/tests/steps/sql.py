@@ -76,7 +76,7 @@ def create_mysql_to_clickhouse_replicated_table(
     self,
     name,
     mysql_columns,
-    clickhouse_table_engine,
+    clickhouse_table_engine="ReplacingMergeTree",
     clickhouse_columns=None,
     mysql_node=None,
     clickhouse_node=None,
