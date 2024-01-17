@@ -1,7 +1,10 @@
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
+from integration.tests.steps.statements import (
+    all_mysql_datatypes_dict,
+    all_ch_datatypes_dict,
+)
 from integration.tests.steps.service_settings_steps import *
-
+from testflows.asserts import snapshot, values
 
 @TestOutline
 def create_replicated_tables(
@@ -571,6 +574,59 @@ def modify_column_first_after(self, node=None):
                         f"DESC test.{table_name} FORMAT CSV",
                         message='"id","Int32","","","","",""\n"x","Int32","","","","",""',
                     )
+
+
+@TestCheck
+def check_modify_column_for_all_datatypes(self, old_datatype, new_datatype, mysql_node=None, clickhouse_node=None):
+    """Check that after `MODIFY COLUMN column_name new_data_type` query MySQL and Clickhouse have the same column types."""
+
+    table_name = f"t{getuid()}"
+
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
+
+    if clickhouse_node is None:
+        clickhouse_node = self.context.clickhouse_node
+
+
+    with Given(
+        f"I create and insert data in different MySQL to ClickHouse replicated tables with "
+        f"ClickHouse table creation method {self.context.env} "
+        f"and ClickHouse table engine ReplacingMergeTree"
+    ):
+        create_mysql_to_clickhouse_replicated_table(
+            name=table_name,
+            mysql_columns=f"{old_datatype}  {all_mysql_datatypes_dict[old_datatype]}",
+            clickhouse_columns=all_ch_datatypes_dict[old_datatype],
+            clickhouse_table_engine="ReplacingMergeTree",
+        )
+
+    with When(f"I perform `MODIFY COLUMN data_type` on replicated table {table_name}"):
+        mysql_node.query(
+            f"ALTER TABLE {table_name} MODIFY COLUMN {old_datatype} {all_mysql_datatypes_dict[new_datatype]};"
+        )
+
+    with Then(
+        f"I check that Clickhouse replicated table {table_name} has the new column"
+    ):
+        for retry in retries(timeout=100, delay=5):
+            with retry:
+                clickhouse_node.query(f"DESCRIBE TABLE test.{table_name}")
+        pause()
+        # with values() as that:
+        #     assert that(
+        #         snapshot(
+        #
+        #         )
+        #     )
+
+@TestSketch(Feature)
+@Flags(TE)
+def modify_column_with_all_datatypes(self):
+    check_modify_column_for_all_datatypes(
+        old_datatype=either(*all_mysql_datatypes_dict),
+        new_datatype=either(*all_mysql_datatypes_dict),
+    )
 
 
 @TestFeature
