@@ -4,9 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -19,7 +17,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -88,8 +85,8 @@ public class AutoCreateTableIT {
         conn.prepareStatement("insert into `new-table` values('test', 1, 2)").execute();
         conn.close();
 
-//        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-//                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
 //
 //        conn.prepareStatement("create table new_table_copy like new_table").execute();
 //
