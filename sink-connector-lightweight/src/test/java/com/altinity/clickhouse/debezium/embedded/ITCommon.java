@@ -66,4 +66,15 @@ public class ITCommon {
         return defaultProps;
 
     }
+
+    static public Properties getDebeziumPropertiesForSchemaOnly(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
+
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+
+        props.replace("snapshot.mode", "schema_only");
+        props.replace("disable.drop.truncate", "true");
+        props.setProperty("disable.ddl", "true");
+
+        return props;
+    }
 }
