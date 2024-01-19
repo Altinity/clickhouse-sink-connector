@@ -217,24 +217,24 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void start(DebeziumRecordParserService recordParserService,
                              DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
 
+
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
 
-        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
 
     }
 
     public static void stop() throws IOException {
         debeziumChangeEventCapture.stop();
 
-        if(monitoringTimerTask != null) {
-            monitoringTimerTask.cancel();
-        }
-
-        if (monitoringTimer != null) {
-            monitoringTimer.cancel();
-            monitoringTimer.purge();
-        }
+//        if(monitoringTimerTask != null) {
+//            monitoringTimerTask.cancel();
+//        }
+//
+//        if (monitoringTimer != null) {
+//            monitoringTimer.cancel();
+//            monitoringTimer.purge();
+//        }
     }
 
     /**

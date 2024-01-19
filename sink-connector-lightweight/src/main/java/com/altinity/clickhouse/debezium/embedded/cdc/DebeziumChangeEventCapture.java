@@ -67,7 +67,7 @@ public class DebeziumChangeEventCapture {
 
     private boolean isReplicationRunning = false;
 
-    final ExecutorService singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+    final ExecutorService singleThreadDebeziumEventExecutor;
 
     private String binLogFile = "";
 
@@ -76,6 +76,10 @@ public class DebeziumChangeEventCapture {
     private String gtid = "";
 
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
+
+    public DebeziumChangeEventCapture() {
+        singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+    }
 
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
@@ -312,7 +316,10 @@ public class DebeziumChangeEventCapture {
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         if (writer == null) {
-            return "Error: Connection to ClickHouse is not established";
+            // Json error string
+            JSONObject error = new JSONObject();
+            error.put("Error", "Connection to ClickHouse is not established");
+            return error.toJSONString();
         }
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format("select * from %s limit 1", tableName);
@@ -447,6 +454,11 @@ public class DebeziumChangeEventCapture {
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(record -> {
                 processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+//                try {
+//                    Thread.sleep(1000000);
+//                } catch (InterruptedException e) {
+//                    throw new RuntimeException(e);
+//                }
 
             });
 //            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
@@ -506,6 +518,7 @@ public class DebeziumChangeEventCapture {
                 } catch (Exception e) {
                     log.error("Debezium event capture starting Exception", e);
                 }
+
             });
             //engine.run();
 
@@ -555,6 +568,7 @@ public class DebeziumChangeEventCapture {
         try {
             if (this.executor != null) {
                 this.executor.shutdown();
+                this.executor.awaitTermination(60, TimeUnit.SECONDS);
             }
         } catch(Exception e) {
             log.error("Error stopping executor", e);
@@ -563,6 +577,7 @@ public class DebeziumChangeEventCapture {
         try {
             if (this.singleThreadDebeziumEventExecutor != null) {
                 this.singleThreadDebeziumEventExecutor.shutdown();
+                this.singleThreadDebeziumEventExecutor.awaitTermination(60, TimeUnit.SECONDS);
             }
         } catch (Exception e) {
             log.error("Error stopping debezium event executor", e);
