@@ -148,7 +148,9 @@ public class DebeziumChangeEventCapture {
      */
     private void processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
                                           DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) {
+                                          ClickHouseSinkConnectorConfig config,
+                                          DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                                                  recordCommitter) {
         try {
 
             SourceRecord sr = record.value();
@@ -190,7 +192,7 @@ public class DebeziumChangeEventCapture {
                 }
 
             } else {
-                ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr);
+                ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr, recordCommitter);
                 try {
                     if(chStruct != null) {
                         this.replicationLag = chStruct.getReplicationLag();
@@ -438,19 +440,19 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
-            changeEventBuilder.notifying(record -> {
-                processEveryChangeRecord(props, record, debeziumRecordParserService, config);
-
-            });
-//            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
-//                @Override
-//                public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
-//                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
-//                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
-//                        processEveryChangeRecord(props, record, debeziumRecordParserService, config);
-//                    }
-//                }
+//            changeEventBuilder.notifying(record -> {
+//                processEveryChangeRecord(props, record, debeziumRecordParserService, config);
+//
 //            });
+            changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
+                @Override
+                public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
+                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
+                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
+                        processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter);
+                    }
+                }
+            });
             this.engine = changeEventBuilder
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override

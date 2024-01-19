@@ -4,6 +4,8 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
 import com.google.inject.Singleton;
+import io.debezium.engine.ChangeEvent;
+import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.json.simple.JSONObject;
@@ -25,7 +27,7 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
     private static final Logger log = LoggerFactory.getLogger(SourceRecordParserService.class);
 
     @Override
-    public ClickHouseStruct parse(SourceRecord sr) {
+    public ClickHouseStruct parse(SourceRecord sr, DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer) {
         Struct struct = (Struct) sr.value();
         ClickHouseStruct chStruct = null;
 

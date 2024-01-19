@@ -487,6 +487,13 @@ public class DbWriter extends BaseDbWriter {
                 long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** task(" + taskId + ")" + " Thread ID: " + Thread.currentThread().getName());
 
+                // Iterate through the records
+                // and use the record committer to commit the offsets.
+                for(ClickHouseStruct record: batch) {
+                    if (record.getCommitter() != null) {
+                        record.getCommitter().markProcessed(record.getSourceRecord());
+                    }
+                }
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error("******* ERROR inserting Batch *****************", e);
@@ -506,15 +513,11 @@ public class DbWriter extends BaseDbWriter {
                 }
             }
 
-        });
+            for(ClickHouseStruct record: batch) {
 
-        // Remove all records from batch if succeeded.
-        if(failedRecords.isEmpty()) {
-            entry.getValue().clear();
-        } else {
-            entry.getValue().clear();
-            entry.getValue().addAll(failedRecords);
-        }
+            }
+
+        });
     }
 
     /**
