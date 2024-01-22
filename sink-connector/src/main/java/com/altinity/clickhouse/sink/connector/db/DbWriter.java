@@ -492,7 +492,7 @@ public class DbWriter extends BaseDbWriter {
                 for(ClickHouseStruct record: batch) {
                     if (record.getCommitter() != null && record.getSourceRecord() != null) {
                         record.getCommitter().markProcessed(record.getSourceRecord());
-                        log.info("***** Record successfully marked as processed ****" + "Binlog file:" +
+                        log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
                                 record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
                     }
                 }
@@ -500,7 +500,7 @@ public class DbWriter extends BaseDbWriter {
                     ClickHouseStruct lastRecord = batch.get(batch.size() - 1);
                     if(lastRecord != null && lastRecord.getCommitter() != null)
                         lastRecord.getCommitter().markBatchFinished();
-                    log.info("***** BATCH marked as processed ****" + "Binlog file:" +
+                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                             lastRecord.getFile() + " Binlog position: " + lastRecord.getPos() + " GTID: " + lastRecord.getGtid());
                 }
             } catch (Exception e) {
