@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.model;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.source.SourceRecord;
 import lombok.Getter;
@@ -11,7 +12,6 @@ import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.xml.transform.Source;
 import java.util.*;
 
 import static com.altinity.clickhouse.sink.connector.model.SinkRecordColumns.*;
@@ -114,18 +114,19 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
-    DebeziumEngine.RecordCommitter<SourceRecord> committer;
+    DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer;
 
     @Getter
     @Setter
-    SourceRecord sourceRecord;
+    ChangeEvent<SourceRecord, SourceRecord> sourceRecord;
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,
                             Long timestamp, Struct beforeStruct, Struct afterStruct, Map<String, Object> metadata,
                             ClickHouseConverter.CDC_OPERATION operation,
-                            SourceRecord sourceRecord, DebeziumEngine.RecordCommitter<SourceRecord> committer) {
+                            ChangeEvent<SourceRecord, SourceRecord> sourceRecord,
+                            DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer) {
         this(kafkaOffset, topic, key, kafkaPartition, timestamp, beforeStruct, afterStruct, metadata, operation);
         this.setCommitter(committer);
         this.setSourceRecord(sourceRecord);

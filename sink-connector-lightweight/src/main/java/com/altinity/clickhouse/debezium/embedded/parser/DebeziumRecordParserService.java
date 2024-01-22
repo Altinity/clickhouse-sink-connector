@@ -6,5 +6,5 @@ import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.source.SourceRecord;
 
 public interface DebeziumRecordParserService {
-    ClickHouseStruct parse(SourceRecord record, DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer);
+    ClickHouseStruct parse(ChangeEvent<SourceRecord, SourceRecord> record, DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer);
 }

@@ -490,9 +490,18 @@ public class DbWriter extends BaseDbWriter {
                 // Iterate through the records
                 // and use the record committer to commit the offsets.
                 for(ClickHouseStruct record: batch) {
-                    if (record.getCommitter() != null) {
+                    if (record.getCommitter() != null && record.getSourceRecord() != null) {
                         record.getCommitter().markProcessed(record.getSourceRecord());
+                        log.info("***** Record successfully marked as processed ****" + "Binlog file:" +
+                                record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
                     }
+                }
+                if(!batch.isEmpty()) {
+                    ClickHouseStruct lastRecord = batch.get(batch.size() - 1);
+                    if(lastRecord != null && lastRecord.getCommitter() != null)
+                        lastRecord.getCommitter().markBatchFinished();
+                    log.info("***** BATCH marked as processed ****" + "Binlog file:" +
+                            lastRecord.getFile() + " Binlog position: " + lastRecord.getPos() + " GTID: " + lastRecord.getGtid());
                 }
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
@@ -512,11 +521,6 @@ public class DbWriter extends BaseDbWriter {
                     throw new RuntimeException(e);
                 }
             }
-
-            for(ClickHouseStruct record: batch) {
-
-            }
-
         });
     }
 

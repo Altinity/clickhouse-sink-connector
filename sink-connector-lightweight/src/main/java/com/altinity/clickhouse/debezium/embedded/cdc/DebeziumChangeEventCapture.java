@@ -192,7 +192,7 @@ public class DebeziumChangeEventCapture {
                 }
 
             } else {
-                ClickHouseStruct chStruct = debeziumRecordParserService.parse(sr, recordCommitter);
+                ClickHouseStruct chStruct = debeziumRecordParserService.parse(record, recordCommitter);
                 try {
                     if(chStruct != null) {
                         this.replicationLag = chStruct.getReplicationLag();
@@ -493,7 +493,8 @@ public class DebeziumChangeEventCapture {
                             }
                     )
                     //.build();
-                    .using(OffsetCommitPolicy.always()).build();
+                   // .using(OffsetCommitPolicy.always())
+                    .build();
             engine.run();
 
         } catch (Exception e) {
