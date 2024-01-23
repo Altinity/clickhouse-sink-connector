@@ -47,6 +47,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     private static Timer monitoringTimer;
 
+    private static TimerTask monitoringTimerTask;
+
     /**
      * Main Entry for the application
      * @param args arguments
@@ -202,7 +204,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             debeziumChangeEventCapture.stop();
 
             Thread.sleep(500);
-            embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+            // embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
             embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                     injector.getInstance(DDLParserService.class), props, true);
             return null;
@@ -215,20 +217,24 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void start(DebeziumRecordParserService recordParserService,
                              DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
 
+
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
 
-        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
 
     }
 
     public static void stop() throws IOException {
         debeziumChangeEventCapture.stop();
 
-        if (monitoringTimer != null) {
-            monitoringTimer.cancel();
-            monitoringTimer.purge();
-        }
+//        if(monitoringTimerTask != null) {
+//            monitoringTimerTask.cancel();
+//        }
+//
+//        if (monitoringTimer != null) {
+//            monitoringTimer.cancel();
+//            monitoringTimer.purge();
+//        }
     }
 
     /**
@@ -248,9 +254,10 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             long restartEventLoopTimeout = config.getLong(String.valueOf(ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD));
 
-            TimerTask timerTask = new TimerTask() {
+            monitoringTimerTask = new TimerTask() {
                 @Override
                 public void run() {
+                    Thread.currentThread().setName("Sink connector Monitoring thread");
                     if (debeziumChangeEventCapture == null) {
                         return;
                     }
@@ -280,7 +287,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             };
             //running timer task as daemon thread
             monitoringTimer = new Timer(true);
-            monitoringTimer.scheduleAtFixedRate(timerTask, 0, restartEventLoopTimeout * 1000);
+            monitoringTimer.scheduleAtFixedRate(monitoringTimerTask, 0, restartEventLoopTimeout * 1000);
 
         } catch (Exception e) {
             log.error("Error setting up monitoring thread", e);
