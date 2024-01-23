@@ -31,7 +31,7 @@ for analysis.
 
 ## Getting Started
 
-See [QuickStart Guide](doc/quickstart.md).
+See [QuickStart Guide(Lightweight)](doc/quickstart.md).
 
 ## Blog Articles
 
@@ -51,8 +51,8 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ### Installation
 
-* [Sink Connector Setup](doc/setup.md)
-* [Sink Connector Configuration](doc/configuration.md)
+* [Sink Connector Setup(Kafka)](doc/setup.md)
+* [Sink Connector Configuration(Kafka & Lightweight)](doc/configuration.md)
 * [Debezium Setup](doc/debezium_setup.md)
 
 ### Operations

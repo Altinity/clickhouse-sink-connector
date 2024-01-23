@@ -8,3 +8,12 @@ mysql> GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIE
 ```
 #### Debezium error: Handle Unable to register metrics as an old set with the same name exists
 For every connector the `database.server.name` should be unique.
+
+
+### High CPU usage.
+This can be caused by the high number of GC threads created by the JVM.
+This can be limited by passing this configuration parameter to the JVM:
+```bash
+#N can be 50.
+-XX:ParallelGCThreads=<N>.
+```

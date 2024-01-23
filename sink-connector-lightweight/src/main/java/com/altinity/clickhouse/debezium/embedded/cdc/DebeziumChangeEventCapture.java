@@ -15,9 +15,7 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.annotations.VisibleForTesting;
-import io.debezium.config.Configuration;
-import io.debezium.connector.postgresql.PostgresConnectorConfig;
-import io.debezium.connector.postgresql.connection.PostgresConnection;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
@@ -37,9 +35,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -71,6 +67,8 @@ public class DebeziumChangeEventCapture {
 
     private boolean isReplicationRunning = false;
 
+    final ExecutorService singleThreadDebeziumEventExecutor;
+
     private String binLogFile = "";
 
     private String binLogPosition = "";
@@ -79,12 +77,16 @@ public class DebeziumChangeEventCapture {
 
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
-    private void performDDLOperation(String DDL,  Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
+    public DebeziumChangeEventCapture() {
+        singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+    }
+
+    private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
 
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
-        if(writer == null) {
+        if (writer == null) {
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config);
@@ -92,7 +94,7 @@ public class DebeziumChangeEventCapture {
                 String clickHouseVersion = writer.getClickHouseVersion();
                 isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
                         .checkIfNewReplacingMergeTree(clickHouseVersion);
-            } catch(Exception e) {
+            } catch (Exception e) {
                 log.error("Error retrieving version");
             }
         }
@@ -102,7 +104,7 @@ public class DebeziumChangeEventCapture {
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
-        if(checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
+        if (checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
         } else {
@@ -186,7 +188,10 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
+                    ThreadFactory namedThreadFactory =
+                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
+
                     this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
@@ -310,6 +315,12 @@ public class DebeziumChangeEventCapture {
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
+        if (writer == null) {
+            // Json error string
+            JSONObject error = new JSONObject();
+            error.put("Error", "Connection to ClickHouse is not established");
+            return error.toJSONString();
+        }
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format("select * from %s limit 1", tableName);
         ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
@@ -330,7 +341,7 @@ public class DebeziumChangeEventCapture {
 
             JSONArray result = new JSONArray();
             JSONObject replicationLag = new JSONObject();
-            replicationLag.put("Seconds_Behind_Source", this.replicationLag/1000);
+            replicationLag.put("Seconds_Behind_Source", this.replicationLag / 1000);
             result.add(replicationLag);
 
             JSONObject replicationRunning = new JSONObject();
@@ -498,9 +509,17 @@ public class DebeziumChangeEventCapture {
                             }
                     )
                     //.build();
-                   // .using(OffsetCommitPolicy.always())
-                    .build();
-            engine.run();
+                    .using(OffsetCommitPolicy.always()).build();
+            singleThreadDebeziumEventExecutor.submit(() -> {
+                Thread.currentThread().setName("Sink connector Debezium Event Thread");
+                try {
+                    engine.run();
+                } catch (Exception e) {
+                    log.error("Debezium event capture starting Exception", e);
+                }
+
+            });
+            //engine.run();
 
         } catch (Exception e) {
             log.error("Exception", e);
@@ -536,9 +555,32 @@ public class DebeziumChangeEventCapture {
     }
 
     public void stop() throws IOException {
-        if(this.engine != null) {
-            this.engine.close();
+        try {
+            if (this.engine != null) {
+                this.engine.close();
+            }
+        } catch(Exception e) {
+            log.error("Error stopping debezium engine", e);
         }
+
+        try {
+            if (this.executor != null) {
+                this.executor.shutdown();
+                this.executor.awaitTermination(60, TimeUnit.SECONDS);
+            }
+        } catch(Exception e) {
+            log.error("Error stopping executor", e);
+        }
+
+        try {
+            if (this.singleThreadDebeziumEventExecutor != null) {
+                this.singleThreadDebeziumEventExecutor.shutdown();
+                this.singleThreadDebeziumEventExecutor.awaitTermination(60, TimeUnit.SECONDS);
+            }
+        } catch (Exception e) {
+            log.error("Error stopping debezium event executor", e);
+        }
+
         Metrics.stop();
     }
 
@@ -579,7 +621,9 @@ public class DebeziumChangeEventCapture {
         // Setup separate thread to read messages from shared buffer.
         this.records = new ConcurrentHashMap<>();
         this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
+        ThreadFactory namedThreadFactory =
+                new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
         this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
@@ -604,22 +648,4 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-
-    // db.items.insert({_id:ObjectId(), uuid:ObjectId(), price:22, name:"New record"});
-    private void trySomething(Configuration config){
-        PostgresConnectorConfig postgresConfig = new PostgresConnectorConfig(config);
-       // ConfigValue hostnameValue = (ConfigValue) configValues.get(RelationalDatabaseConnectorConfig.HOSTNAME.name());
-        PostgresConnection connection = new PostgresConnection(postgresConfig.getJdbcConfig(), "Debezium Validate Connection");
-
-        try {
-            try {
-                connection.connection(false);
-                connection.execute(new String[]{"SELECT version()"});
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-        } catch(Exception e) {
-
-        }
-    }
 }
