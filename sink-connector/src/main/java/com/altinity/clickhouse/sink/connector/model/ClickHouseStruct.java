@@ -120,16 +120,21 @@ public class ClickHouseStruct {
     @Setter
     ChangeEvent<SourceRecord, SourceRecord> sourceRecord;
 
+    @Getter
+    @Setter
+    boolean lastRecordInBatch;
+
     private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,
                             Long timestamp, Struct beforeStruct, Struct afterStruct, Map<String, Object> metadata,
                             ClickHouseConverter.CDC_OPERATION operation,
                             ChangeEvent<SourceRecord, SourceRecord> sourceRecord,
-                            DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer) {
+                            DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer, boolean lastRecordInBatch) {
         this(kafkaOffset, topic, key, kafkaPartition, timestamp, beforeStruct, afterStruct, metadata, operation);
         this.setCommitter(committer);
         this.setSourceRecord(sourceRecord);
+        this.setLastRecordInBatch(lastRecordInBatch);
     }
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,

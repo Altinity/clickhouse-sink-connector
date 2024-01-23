@@ -491,18 +491,25 @@ public class DbWriter extends BaseDbWriter {
                 // and use the record committer to commit the offsets.
                 for(ClickHouseStruct record: batch) {
                     if (record.getCommitter() != null && record.getSourceRecord() != null) {
+
                         record.getCommitter().markProcessed(record.getSourceRecord());
                         log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
                                 record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+
+                        if(record.isLastRecordInBatch()) {
+                            record.getCommitter().markBatchFinished();
+                            log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+                        }
                     }
                 }
-                if(!batch.isEmpty()) {
-                    ClickHouseStruct lastRecord = batch.get(batch.size() - 1);
-                    if(lastRecord != null && lastRecord.getCommitter() != null)
-                        lastRecord.getCommitter().markBatchFinished();
-                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            lastRecord.getFile() + " Binlog position: " + lastRecord.getPos() + " GTID: " + lastRecord.getGtid());
-                }
+//                if(!batch.isEmpty()) {
+//                    ClickHouseStruct lastRecord = batch.get(batch.size() - 1);
+//                    if(lastRecord != null && lastRecord.getCommitter() != null)
+//                        lastRecord.getCommitter().markBatchFinished();
+//                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+//                            lastRecord.getFile() + " Binlog position: " + lastRecord.getPos() + " GTID: " + lastRecord.getGtid());
+//                }
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error("******* ERROR inserting Batch *****************", e);

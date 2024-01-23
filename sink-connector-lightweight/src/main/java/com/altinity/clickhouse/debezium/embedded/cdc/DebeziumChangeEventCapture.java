@@ -150,7 +150,7 @@ public class DebeziumChangeEventCapture {
                                           DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config,
                                           DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
-                                                  recordCommitter) {
+                                                  recordCommitter, boolean lastRecordInBatch) {
         try {
 
             SourceRecord sr = record.value();
@@ -187,12 +187,11 @@ public class DebeziumChangeEventCapture {
 
                     performDDLOperation(DDL, props, sr, config);
                     this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()));
-
                     this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
-                ClickHouseStruct chStruct = debeziumRecordParserService.parse(record, recordCommitter);
+                ClickHouseStruct chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                 try {
                     if(chStruct != null) {
                         this.replicationLag = chStruct.getReplicationLag();
@@ -448,8 +447,14 @@ public class DebeziumChangeEventCapture {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
-                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
-                        processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter);
+//                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
+//                        processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter);
+//                    }
+                    for(int i = 0; i < list.size(); i++) {
+                        if(i == list.size() -1 )
+                            processEveryChangeRecord(props, list.get(i), debeziumRecordParserService, config, recordCommitter, true);
+                        else
+                            processEveryChangeRecord(props, list.get(i), debeziumRecordParserService, config, recordCommitter, false);
                     }
                 }
             });
