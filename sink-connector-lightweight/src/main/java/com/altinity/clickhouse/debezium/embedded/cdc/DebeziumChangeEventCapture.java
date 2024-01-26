@@ -370,18 +370,31 @@ public class DebeziumChangeEventCapture {
         return response;
     }
 
+    /**
+     * Function to get the latest timestamp from Debezium storage.
+     */
+    public void getLatestRecordTimestamp(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        DBCredentials dbCredentials = parseDBConfiguration(config);
 
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config);
+
+        String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
+        System.out.println("Latest record timestamp" + latestRecordTs);
+    }
     /**
      * Function to update the status of Debezium storage.
+     *
      * @param props
      * @param binlogFile
      * @param binLogPosition
      * @param gtid
      */
     public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String binlogFile, String binLogPosition, String gtid,
-                                            String sourceHost, String sourcePort, String sourceUsername,
-                                            String sourcePassword) throws SQLException, ParseException {
+                                            String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
 
 
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +

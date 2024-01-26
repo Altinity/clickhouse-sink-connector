@@ -406,7 +406,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD.toString(),
                         Type.LONG,
-                        0,
+                        120,
                         Importance.HIGH,
                         "Defines the time period for timeout, if the time from the last packet received from the source DB is longer than this timeout, the event loop is restarted",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

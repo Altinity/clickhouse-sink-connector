@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
+
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
@@ -96,7 +97,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             log.error("Error starting REST API server", e);
         }
 
-        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
         embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(DDLParserService.class), props, false);
@@ -163,7 +164,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             }
 
             debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
-                    gtid, sourceHost, sourcePort, sourceUser, sourcePassword);
+                    gtid);
             log.info("Received update-binlog request: " + body);
         });
 
@@ -241,7 +242,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * Function to setup monitoring thread.
      * @param config
      */
-    private static void setupMonitoringThread(ClickHouseSinkConnectorConfig config) {
+    private static void setupMonitoringThread(ClickHouseSinkConnectorConfig config, Properties props) {
 
         try {
             // Stop the timer, if its already running.
@@ -264,7 +265,10 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     try {
                         long lastRecordTimestamp = debeziumChangeEventCapture.getLastRecordTimestamp();
                         if(lastRecordTimestamp == -1) {
-                            return;
+                            // Check the last record timestamp from the table.
+                            debeziumChangeEventCapture.getLatestRecordTimestamp(config, props);
+
+                            // System.out.println("Last record timestamp from table" + lastRecordTimestampFromTable);
                         }
                         // calculate delta.
                         long deltaInSecs = (System.currentTimeMillis() - lastRecordTimestamp) / 1000;
