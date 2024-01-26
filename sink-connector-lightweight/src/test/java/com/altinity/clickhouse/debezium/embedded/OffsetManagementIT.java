@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorageIT;
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -22,6 +24,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -76,7 +79,7 @@ public class OffsetManagementIT {
             "clickhouse/clickhouse-server:latest",
             "clickhouse/clickhouse-server:22.3"
     })
-    @DisplayName("Test that validates auto create table when table name has dashes")
+    @DisplayName("Test that validates that the offset table is created and records are inserted into it.") test
     public void testAutoCreateTable(String clickHouseServerVersion) throws Exception {
 
         Thread.sleep(5000);
@@ -89,6 +92,7 @@ public class OffsetManagementIT {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+        Properties props = ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer);
         executorService.execute(() -> {
             try {
 
@@ -106,17 +110,11 @@ public class OffsetManagementIT {
 
         Thread.sleep(10000);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        DebeziumChangeEventCapture dec = engine.get();
+        String config = ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer).getProperty("database.server.name");
+        long getStoredRecordTs = engine.get().getLatestRecordTimestamp(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select count(*) from `new-table`");
-        boolean resultReceived = false;
-
-        while(dateTimeResult.next()) {
-            resultReceived = true;
-            Assert.assertEquals(1, dateTimeResult.getInt(1));
-        }
-        Assert.assertTrue(resultReceived);
+        Assert.assertTrue(getStoredRecordTs > 0);
 
         if(engine.get() != null) {
             engine.get().stop();

@@ -39,7 +39,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-
+import java.text.SimpleDateFormat;
 /**
  * Setup Debezium engine with the configuration passed by the user
  * Create a separate thread pool to read the records
@@ -373,9 +373,9 @@ public class DebeziumChangeEventCapture {
     /**
      * Function to get the latest timestamp from Debezium storage.
      */
-    public void getLatestRecordTimestamp(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+    public long getLatestRecordTimestamp(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+
+        long result = -1;
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
@@ -383,7 +383,22 @@ public class DebeziumChangeEventCapture {
                 dbCredentials.getPassword(), config);
 
         String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
-        System.out.println("Latest record timestamp" + latestRecordTs);
+
+        // Convert date string from  2024-01-26 21:57:47 format to milliseconds.
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        Date date = null;
+        try {
+            date = sdf.parse(latestRecordTs);
+            this.lastRecordTimestamp = date.getTime();
+        } catch ( java.text.ParseException e) {
+            log.error("Error parsing date", e);
+        }
+
+        // Convert from date to long milliseconds
+        if(date != null) {
+            result = date.getTime();
+        }
+        return result;
     }
     /**
      * Function to update the status of Debezium storage.
