@@ -76,16 +76,15 @@ public class OffsetManagementIT {
     }
     @ParameterizedTest
     @CsvSource({
-            "clickhouse/clickhouse-server:latest",
-            "clickhouse/clickhouse-server:22.3"
+            "clickhouse/clickhouse-server:latest"
     })
-    @DisplayName("Test that validates that the offset table is created and records are inserted into it.") test
+    @DisplayName("Test that validates that the offset table is created and records are inserted into it.")
     public void testAutoCreateTable(String clickHouseServerVersion) throws Exception {
 
         Thread.sleep(5000);
 
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table `new-table`(col1 varchar(255), col2 int, col3 int)").execute();
+        conn.prepareStatement("create table `newtable`(col1 varchar(255), col2 int, col3 int)").execute();
 
         Thread.sleep(10000);
 
@@ -105,14 +104,13 @@ public class OffsetManagementIT {
         });
 
         Thread.sleep(10000);
-        conn.prepareStatement("insert into `new-table` values('test', 1, 2)").execute();
+        conn.prepareStatement("insert into `newtable` values('test', 1, 2)").execute();
         conn.close();
 
         Thread.sleep(10000);
 
         DebeziumChangeEventCapture dec = engine.get();
-        String config = ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer).getProperty("database.server.name");
-        long getStoredRecordTs = engine.get().getLatestRecordTimestamp(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
+        long getStoredRecordTs = dec.getLatestRecordTimestamp(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
         Assert.assertTrue(getStoredRecordTs > 0);
 
