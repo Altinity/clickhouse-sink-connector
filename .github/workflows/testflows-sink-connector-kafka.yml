@@ -87,7 +87,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: testflows-artifacts-${{ steps.date.outputs.date }}
+          name: testflows-sink-connector-kafka-artefacts
           path: |
             sink-connector/tests/integration/logs/*.log
           if-no-files-found: error
