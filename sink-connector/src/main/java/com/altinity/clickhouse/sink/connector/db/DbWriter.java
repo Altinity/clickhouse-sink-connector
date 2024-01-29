@@ -278,8 +278,6 @@ public class DbWriter extends BaseDbWriter {
                 if(enableSchemaEvolution) {
                     try {
                         alterTable(record.getAfterStruct().schema().fields());
-                        this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
-
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
@@ -383,6 +381,7 @@ public class DbWriter extends BaseDbWriter {
                 } catch(Exception e) {
                     log.error(" **** ALTER TABLE EXCEPTION ", e);
                 }
+                this.columnNameToDataTypeMap = this.getColumnsDataTypesForTable(tableName);
             }
         }
     }
