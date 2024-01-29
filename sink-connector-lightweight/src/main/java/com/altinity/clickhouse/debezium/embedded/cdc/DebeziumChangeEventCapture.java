@@ -54,7 +54,7 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchRunnable runnable;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records;
 
 
     private BaseDbWriter writer = null;
@@ -495,6 +495,8 @@ public class DebeziumChangeEventCapture {
                         else
                             processEveryChangeRecord(props, list.get(i), debeziumRecordParserService, config, recordCommitter, false);
                     }
+
+                    log.debug("**** Records received from Debezium: " + list.size() + "****");
                 }
             });
             this.engine = changeEventBuilder

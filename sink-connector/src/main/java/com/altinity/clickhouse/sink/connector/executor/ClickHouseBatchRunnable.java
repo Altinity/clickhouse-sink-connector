@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseBatchRunnable implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records;
 
     private final ClickHouseSinkConnectorConfig config;
 
@@ -48,7 +48,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private DBCredentials dbCredentials;
 
-    public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records,
+    public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
         this.records = records;

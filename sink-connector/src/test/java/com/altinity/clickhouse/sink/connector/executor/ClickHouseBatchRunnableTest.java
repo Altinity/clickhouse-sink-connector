@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
-import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
@@ -11,7 +10,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -19,7 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class ClickHouseBatchRunnableTest {
 
 
-    ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>>
+    ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>
             records = new ConcurrentHashMap<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
@@ -36,15 +37,19 @@ public class ClickHouseBatchRunnableTest {
         ClickHouseStruct ch5 = new ClickHouseStruct(1400, "SERVER5432.test.products", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
         ClickHouseStruct ch6 = new ClickHouseStruct(1010, "SERVER5432.test.products", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
 
-        ConcurrentLinkedQueue<ClickHouseStruct> customersQueue = new ConcurrentLinkedQueue<>();
-        customersQueue.add(ch1);
-        customersQueue.add(ch2);
-        customersQueue.add(ch3);
+        ConcurrentLinkedQueue<List<ClickHouseStruct>> customersQueue = new ConcurrentLinkedQueue<>();
+        List<ClickHouseStruct> recordBatch1 = new ArrayList<>();
+        recordBatch1.add(ch1);
+        recordBatch1.add(ch2);
+        recordBatch1.add(ch3);
+        customersQueue.add(recordBatch1);
 
-        ConcurrentLinkedQueue<ClickHouseStruct> productsQueue = new ConcurrentLinkedQueue<>();
-        productsQueue.add(ch1);
-        productsQueue.add(ch2);
-        productsQueue.add(ch3);
+        ConcurrentLinkedQueue<List<ClickHouseStruct>> productsQueue = new ConcurrentLinkedQueue<>();
+        List<ClickHouseStruct> recordBatch2 = new ArrayList<>();
+        recordBatch2.add(ch1);
+        recordBatch2.add(ch2);
+        recordBatch2.add(ch3);
+        productsQueue.add(recordBatch2);
 
         records.put("SERVER5432.test.customers", customersQueue);
         records.put("SERVER5432.test.products", productsQueue);
