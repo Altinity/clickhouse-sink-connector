@@ -11,6 +11,7 @@ import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContex
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNodeImpl;
+import org.antlr.v4.runtime.ParserRuleContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -499,17 +500,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
 
     }
+
     @Override
     public void enterAlterByAddCheckTableConstraint(MySqlParser.AlterByAddCheckTableConstraintContext alterByAddCheckTableConstraintContext) {
         // log.info("Enter check table constraint: " + alterByAddCheckTableConstraintContext.getText() );
         this.query.append(" ");
         for (ParseTree tree : alterByAddCheckTableConstraintContext.children) {
-            if (tree instanceof MySqlParser.PredicateExpressionContext) {
-                this.query.append(tree.getText());
-            } else if (tree instanceof MySqlParser.UidContext) {
-                this.query.append(tree.getText()).append(" ");
-            } else if (tree instanceof TerminalNodeImpl) {
-                this.query.append(tree.getText()).append(" ");
+            this.parseTreeHelper(tree);
+        }
+    }
+
+    private void parseTreeHelper(ParseTree child) {
+        if (child instanceof MySqlParser.UidContext) {
+            this.query.append(child.getText()).append(" ");
+        } else if (child instanceof MySqlParser.ComparisonOperatorContext) {
+            this.query.append(child.getText());
+        } else if (child instanceof TerminalNodeImpl) {
+            this.query.append(child.getText()).append(" ");
+        } else if (child instanceof ParserRuleContext) {
+            for (ParseTree child2 : ((ParserRuleContext) child).children) {
+                this.parseTreeHelper(child2);
             }
         }
     }

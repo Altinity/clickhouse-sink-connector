@@ -447,8 +447,16 @@ public class MySqlDDLParserListenerImplTest {
 
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK (revenue >= 0);";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery2);
+    }
 
-
+    @Test
+    public void testAddConstraintsWithAnd() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( (revenue>=0 and revenue<1000) or (revenue>=2000) );";
+        String clickhouseExpectedQuery = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( ( revenue >=0 and revenue <1000 ) or ( revenue >=2000 ) ) ";
+        mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery);
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery.toString());
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
     }
 
     @Test
