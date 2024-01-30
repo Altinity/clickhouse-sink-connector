@@ -75,6 +75,8 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         conn.prepareStatement("alter table add_test add column col4 varchar(255);").execute();
         conn.prepareStatement("alter table add_test rename column col99 to col101;").execute();
         conn.prepareStatement(" alter table add_test drop column col101;").execute();
+        conn.prepareStatement(" alter table add_test add column col5 ENUM ('M','F');").execute();
+        conn.prepareStatement(" alter table add_test add column col6 JSON;").execute();
 
         Thread.sleep(25000);
 
@@ -98,6 +100,8 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("Nullable(String)"));
 
         if(engine.get() != null) {
             engine.get().stop();
