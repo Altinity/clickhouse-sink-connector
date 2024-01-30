@@ -639,6 +639,32 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
+    @Test
+    public void testAlterDatabaseAddColumnEnum() {
+        String clickhouseExpectedQuery = "ALTER TABLE employees ADD COLUMN gender String";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterDBAddColumn = "ALTER TABLE employees add column gender ENUM ('M','F') NOT NULL";
+        mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
+    @Test
+    public void testAlterDatabaseAddColumnJson() {
+        String clickhouseExpectedQuery = "ALTER TABLE employees ADD COLUMN data String";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterDBAddColumn = "ALTER TABLE employees add column data JSON NOT NULL";
+        mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";

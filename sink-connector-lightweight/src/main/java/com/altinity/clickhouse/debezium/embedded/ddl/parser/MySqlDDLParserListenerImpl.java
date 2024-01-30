@@ -395,16 +395,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
                         }
-                    } else if (columnDefChild instanceof MySqlParser.DimensionDataTypeContext || columnDefChild instanceof MySqlParser.SimpleDataTypeContext
-                            || columnDefChild instanceof MySqlParser.StringDataTypeContext) {
+                    } else {
                         columnType = (columnDefChild.getText());
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
-                           if (chDataType != null) {
-                                columnType = chDataType;
-                            }
-
+                        if (chDataType != null) {
+                            columnType = chDataType;
                         }
-
+                    }
                 }
             } else if (columnChild instanceof TerminalNodeImpl) {
                 String columnPosition = columnChild.getText();
