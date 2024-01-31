@@ -241,7 +241,7 @@ public class DbWriter extends BaseDbWriter {
      * @param records
      * @return
      */
-    public Map<TopicPartition, Long> groupQueryWithRecords(ConcurrentLinkedQueue<ClickHouseStruct> records,
+    public Map<TopicPartition, Long> groupQueryWithRecords(List<ClickHouseStruct> records,
                                                                         Map<MutablePair<String, Map<String, Integer>>,
                                                                                 List<ClickHouseStruct>> queryToRecordsMap) {
 
@@ -394,7 +394,7 @@ public class DbWriter extends BaseDbWriter {
      * @param records Records to be inserted into clickhouse
      * @return Tuple of minimum and maximum kafka offset
      */
-    public Map<TopicPartition, Long> insert(ConcurrentLinkedQueue<ClickHouseStruct> records,
+    public Map<TopicPartition, Long> insert(List<ClickHouseStruct> records,
                                             Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap) {
 
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<TopicPartition, Long>();

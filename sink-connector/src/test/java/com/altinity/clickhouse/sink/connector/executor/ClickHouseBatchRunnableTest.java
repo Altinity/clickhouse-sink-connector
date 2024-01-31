@@ -20,8 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class ClickHouseBatchRunnableTest {
 
 
-    ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>
-            records = new ConcurrentHashMap<>();
+    ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records = new ConcurrentHashMap<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
     @Before

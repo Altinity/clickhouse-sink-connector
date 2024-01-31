@@ -98,9 +98,16 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
 
             // Topic Name -> List of records
-            for (Map.Entry<String, ConcurrentLinkedQueue<ClickHouseStruct>> entry : this.records.entrySet()) {
+            for (Map.Entry<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> entry : this.records.entrySet()) {
                 if (entry.getValue().size() > 0) {
-                    processRecordsByTopic(entry.getKey(), entry.getValue());
+                    List<ClickHouseStruct> records = entry.getValue().poll();
+                    records.forEach(r -> {
+                        try {
+                            processRecordsByTopic(entry.getKey(), entry.getValue());
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
                 }
             }
         } catch(Exception e) {
@@ -143,11 +150,12 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param topicName
      * @param records
      */
-    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<ClickHouseStruct> records) throws Exception {
+    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<List<ClickHouseStruct>> records) throws Exception {
+        List<ClickHouseStruct> recordList = records.peek();
 
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
-        DbWriter writer = getDbWriterForTable(topicName, tableName, records.peek());
+        DbWriter writer = getDbWriterForTable(topicName, tableName, recordList.get(0));
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retry next time");
@@ -165,7 +173,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             topicToRecordsMap.put(topicName, queryToRecordsMap);
         }
 
-        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(records, queryToRecordsMap);
+        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(recordList, queryToRecordsMap);
         BlockMetaData bmd = new BlockMetaData();
 
         long maxBufferSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());

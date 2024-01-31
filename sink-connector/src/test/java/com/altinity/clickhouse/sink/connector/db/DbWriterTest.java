@@ -20,10 +20,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.PreparedStatement;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Testcontainers
@@ -181,8 +178,8 @@ public class DbWriterTest {
 
     }
 
-    public static ConcurrentLinkedQueue<ClickHouseStruct> getSampleRecords() {
-        ConcurrentLinkedQueue<ClickHouseStruct> records = new ConcurrentLinkedQueue<ClickHouseStruct>();
+    public static List<ClickHouseStruct> getSampleRecords() {
+        List<ClickHouseStruct> records = new ArrayList<>();
 
         ClickHouseStruct ch1 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
         ClickHouseStruct ch2 = new ClickHouseStruct(8, "topic_1", getKafkaStruct(), 2, System.currentTimeMillis() ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
