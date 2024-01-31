@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.debezium.embedded.offsets;
+package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import org.apache.commons.lang3.tuple.Pair;
 

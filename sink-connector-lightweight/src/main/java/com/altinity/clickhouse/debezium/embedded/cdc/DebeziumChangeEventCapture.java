@@ -148,11 +148,13 @@ public class DebeziumChangeEventCapture {
      *
      * @param record ChangeEvent Record
      */
-    private void processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
+    private ClickHouseStruct processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
                                           DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config,
                                           DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
                                                   recordCommitter, boolean lastRecordInBatch) {
+        ClickHouseStruct chStruct = null;
+
         try {
 
             SourceRecord sr = record.value();
@@ -160,7 +162,7 @@ public class DebeziumChangeEventCapture {
 
             if (struct == null) {
                 log.warn(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
-                return;
+                return null;
             }
             if (struct.schema() == null) {
                 log.error("SCHEMA EMPTY");
@@ -168,7 +170,7 @@ public class DebeziumChangeEventCapture {
 
             List<Field> schemaFields = struct.schema().fields();
             if (schemaFields == null) {
-                return;
+                return null;
             }
             Field matchingDDLField = schemaFields.stream()
                     .filter(f -> "DDL".equalsIgnoreCase(f.name()))
@@ -196,7 +198,7 @@ public class DebeziumChangeEventCapture {
                 }
 
             } else {
-                ClickHouseStruct chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                 try {
                     if(chStruct != null) {
                         this.replicationLag = chStruct.getReplicationLag();
@@ -208,12 +210,12 @@ public class DebeziumChangeEventCapture {
                 } catch(Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-
-                synchronized (this.records) {
-                    if (chStruct != null) {
-                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
-                    }
-                }
+//
+//                synchronized (this.records) {
+//                    if (chStruct != null) {
+//                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
+//                    }
+//                }
             }
 
             String value = String.valueOf(record.value());
@@ -221,6 +223,8 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Exception processing record", e);
         }
+
+        return chStruct;
     }
 
     @VisibleForTesting
@@ -478,25 +482,27 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
-//            changeEventBuilder.notifying(record -> {
-//                processEveryChangeRecord(props, record, debeziumRecordParserService, config);
-//
-//            });
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
-//                    for(ChangeEvent<SourceRecord, SourceRecord> record : list) {
-//                        processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter);
-//                    }
+
+                    List<ClickHouseStruct> batch = new ArrayList<ClickHouseStruct>();
                     for(int i = 0; i < list.size(); i++) {
-                        if(i == list.size() -1 )
-                            processEveryChangeRecord(props, list.get(i), debeziumRecordParserService, config, recordCommitter, true);
-                        else
-                            processEveryChangeRecord(props, list.get(i), debeziumRecordParserService, config, recordCommitter, false);
+                        ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
+                        boolean lastRecordInBatch = false;
+                        if(i == list.size() - 1) {
+                            lastRecordInBatch = true;
+                        }
+                        ClickHouseStruct chStruct = processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter, lastRecordInBatch);
+                        if(chStruct != null) {
+                            batch.add(chStruct);
+                        }
                     }
 
-                    log.debug("**** Records received from Debezium: " + list.size() + "****");
+                    if(batch.size() > 0) {
+                        appendToRecords(batch);
+                    }
                 }
             });
             this.engine = changeEventBuilder
@@ -657,25 +663,20 @@ public class DebeziumChangeEventCapture {
         this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
-    /**
-     * Function to write the transformed
-     * records to shared queue.
-     *
-     * @param topicName
-     * @param chs
-     */
-    private void addRecordsToSharedBuffer(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs;
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
 
-        if (this.records.containsKey(topicName)) {
-            structs = this.records.get(topicName);
-        } else {
-            structs = new ConcurrentLinkedQueue<>();
-        }
-        structs.add(chs);
         synchronized (this.records) {
-            this.records.put(topicName, structs);
+            //Iterate through convertedRecords and add to the records map.
+            convertedRecords.forEach(ClickHouseStruct -> {
+                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
+                if (this.records.containsKey(ClickHouseStruct.getTopic())) {
+                    structs = this.records.get(ClickHouseStruct.getTopic());
+                    structs.add(Arrays.asList(ClickHouseStruct));
+                } else {
+                    structs = new ConcurrentLinkedQueue<>();
+                    structs.add(Arrays.asList(ClickHouseStruct));
+                }
+            });
         }
     }
-
 }
