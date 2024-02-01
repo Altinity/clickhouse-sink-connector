@@ -63,9 +63,9 @@ def check_table_names(self, table_name):
             mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
-            for retry in retries(timeout=20):
+            for retry in retries(timeout=40, delay=1):
                 with retry:
-                    clickhouse_node.query(f"EXISTS {table_name}", message="1")
+                    clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
 
 
 @TestSketch(Scenario)
@@ -101,7 +101,5 @@ def module(
     self.context.table_names_count = table_names_count
     self.context.table_name_max_length = table_name_max_length
 
-
     for feature in loads(current_module(), Scenario):
         Scenario(test=feature)()
-
