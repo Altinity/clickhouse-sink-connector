@@ -864,6 +864,10 @@ class DatabaseNode(Node):
                     if raise_on_exception:
                         raise QueryRuntimeException(r.output)
                     assert False, error(r.output)
+                elif "ERROR" in r.output:
+                    if raise_on_exception:
+                        raise QueryRuntimeException(r.output)
+                    assert False, error(r.output)
 
         return r
 

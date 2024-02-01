@@ -25,11 +25,11 @@ def generate_table_names(size=64, count=10):
     # Generate names with special characters
     for _ in range(count // 3):
         name = (
-            "`"
+            "/`"
             + "".join(
                 random.choice(ascii_chars) for _ in range(random.randint(1, size - 2))
             )
-            + "`"
+            + "/`"
         )
         names.add(name)
 
@@ -38,22 +38,22 @@ def generate_table_names(size=64, count=10):
         reserved_keywords, min(len(reserved_keywords), count // 3)
     ):
         name = (
-            "`"
+            "/`"
             + keyword
             + "".join(random.choice(string.digits) for _ in range(random.randint(1, 3)))
-            + "`"
+            + "/`"
         )
         names.add(name)
 
     # Generate names starting with numbers and containing special characters
     while len(names) < count:
         name = (
-            "`"
+            "/`"
             + random.choice(string.digits)
             + "".join(
                 random.choice(ascii_chars) for _ in range(random.randint(1, size - 3))
             )
-            + "`"
+            + "/`"
         )
         names.add(name)
 
@@ -75,7 +75,7 @@ def check_table_names(self, table_name):
         )
 
         with And("I insert data into the table"):
-            mysql_node.query(f"INSERT INTO {table_name} VALUES (1)")
+            mysql_node.query(f"INSERT INTO {table_name} VALUES (1);")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
             for retry in retries(timeout=20):
