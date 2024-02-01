@@ -17,7 +17,7 @@ def check_is_deleted(self):
         )
 
     with When(f"I insert data into a {table_name} table"):
-        mysql_node.sql(f"INSERT INTO {table_name} VALUES ('test', 1, 2)")
+        mysql_node.query(f"INSERT INTO {table_name} VALUES ('test', 1, 2)")
 
     with Then("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
