@@ -59,13 +59,13 @@ def check_table_names(self, table_name):
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
-        with And("I insert data into the table"):
-            mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
+    with And("I insert data into the table"):
+        mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
 
-        with Check(f"I check that the {table_name} was created in the ClickHouse side"):
-            for retry in retries(timeout=40, delay=1):
-                with retry:
-                    clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+    with Check(f"I check that the {table_name} was created in the ClickHouse side"):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
 
 
 @TestSketch(Scenario)
