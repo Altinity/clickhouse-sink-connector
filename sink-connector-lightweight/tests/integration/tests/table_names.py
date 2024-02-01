@@ -78,7 +78,9 @@ def check_table_names(self, table_name):
             mysql_node.query(f"INSERT INTO {table_name} VALUES (1)")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
-            clickhouse_node.query(f"EXISTS {table_name}", message=1)
+            for retry in retries(timeout=20):
+                with retry:
+                    clickhouse_node.query(f"EXISTS {table_name}", message="1")
 
 
 @TestSketch(Scenario)
