@@ -7,12 +7,16 @@ import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateData
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -152,6 +156,8 @@ public class DbWriter extends BaseDbWriter {
 
         return result;
     }
+
+
 
     /**
      * Function to check if the column is of DateTime64

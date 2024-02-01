@@ -158,5 +158,34 @@ public class BaseDbWriter {
         return this.executeQuery("SELECT VERSION()");
     }
 
+
+    public Map<String, String> getColumnsDataTypesForTable(String tableName ) {
+
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        try {
+            if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
+
+            ResultSet columns = conn.getMetaData().getColumns(null, database,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+//                Object dataType = columns.getString("DATA_TYPE");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                result.put(columnName, typeName);
+            }
+        } catch (SQLException sq) {
+            log.error("Exception retrieving Column Metadata", sq);
+        }
+        return result;
+    }
+
 }
 

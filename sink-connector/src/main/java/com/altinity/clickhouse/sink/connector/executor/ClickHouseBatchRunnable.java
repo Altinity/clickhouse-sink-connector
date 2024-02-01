@@ -171,7 +171,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
         boolean result = new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, queryToRecordsMap,
-                partitionToOffsetMap, this.config,topicName, writer.getDatabaseName(), writer.getConnection(),
+                partitionToOffsetMap, this.config,tableName, writer.getDatabaseName(), writer.getConnection(),
                 writer.getColumnNameToDataTypeMap());
 
         BlockMetaData bmd = new BlockMetaData();
