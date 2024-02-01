@@ -45,7 +45,7 @@ def generate_table_names(num_names, max_length=64):
     return table_names
 
 
-@TestCheck
+@TestScenario
 def check_table_names(self, table_name):
     """Check that the table with the given name is replicated in ClickHouse."""
     mysql_node = self.context.mysql_node
@@ -62,22 +62,18 @@ def check_table_names(self, table_name):
     with And("I insert data into the table"):
         mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
 
-    with Check(f"I check that the {table_name} was created in the ClickHouse side"):
+    with Then(f"I check that the {table_name} was created in the ClickHouse side"):
         for retry in retries(timeout=40, delay=1):
             with retry:
                 clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
 
-
-@TestSketch(Scenario)
-@Flags(TE)
-def table_names(self):
-    table_names = generate_table_names(
-        num_names=self.context.table_names_count,
-        max_length=self.context.table_name_max_length,
-    )
-
-    for table_name in table_names:
-        check_table_names(table_name=table_name)
+    with And("I check that the data was inserted correctly into the ClickHouse table"):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"SELECT id,x FROM test.{table_name} FORMAT CSV"
+                )
+                assert clickhouse_data.output.strip() == "1,1", error()
 
 
 @TestModule
@@ -101,5 +97,10 @@ def module(
     self.context.table_names_count = table_names_count
     self.context.table_name_max_length = table_name_max_length
 
-    for feature in loads(current_module(), Scenario):
-        Scenario(test=feature)()
+    table_names = generate_table_names(
+        num_names=table_names_count,
+        max_length=table_name_max_length,
+    )
+
+    for table_name in table_names:
+        Scenario(tset=check_table_names)(table_name=table_name)
