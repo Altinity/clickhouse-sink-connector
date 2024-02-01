@@ -94,8 +94,6 @@ def module(
     """
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
-    self.context.table_names_count = table_names_count
-    self.context.table_name_max_length = table_name_max_length
 
     table_names = generate_table_names(
         num_names=table_names_count,
