@@ -4,6 +4,9 @@ from integration.tests.steps.service_settings_steps import *
 import string
 import random
 from keyword import iskeyword
+from integration.requirements.requirements import (
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid,
+)
 
 
 def generate_table_names(num_names, max_length=64):
@@ -78,6 +81,9 @@ def check_table_names(self, table_name):
 
 @TestModule
 @Name("table names")
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid("1.0")
+)
 def module(
     self,
     clickhouse_node="clickhouse",
