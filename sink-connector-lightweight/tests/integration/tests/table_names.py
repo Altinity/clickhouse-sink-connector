@@ -21,7 +21,7 @@ def generate_table_names(num_names, max_length=64):
     def generate_table_name(length):
         """Generate a random table name of a given length."""
         # Characters allowed in table names (excluding characters that require escaping)
-        allowed_chars = string.ascii_letters + string.digits + "_$"
+        allowed_chars = string.ascii_letters + string.digits
         return "".join(random.choice(allowed_chars) for _ in range(length))
 
     table_names = set()
