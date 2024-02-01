@@ -40,7 +40,7 @@ def generate_table_names(num_names, max_length=64):
             # Add backticks to handle these special cases
             name = f"{name}"
 
-        table_names.add(f"/`{name}/`")
+        table_names.add(f"{name}")
 
     return table_names
 
@@ -53,14 +53,14 @@ def check_table_names(self, table_name):
 
     with Given(f"I create the {table_name} table"):
         create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
+            name=f"/`{table_name}/`",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
         with And("I insert data into the table"):
-            mysql_node.query(f"INSERT INTO {table_name} VALUES (1);")
+            mysql_node.query(f"INSERT INTO /`{table_name}/` VALUES (1);")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
             for retry in retries(timeout=20):
