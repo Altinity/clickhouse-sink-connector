@@ -60,7 +60,7 @@ def check_table_names(self, table_name):
         )
 
         with And("I insert data into the table"):
-            mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1);")
+            mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
             for retry in retries(timeout=20):
