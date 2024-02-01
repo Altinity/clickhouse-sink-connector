@@ -225,8 +225,10 @@ public class DbWriterTest {
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
-        Map<TopicPartition, Long> result = dbWriter.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap);
+        Map<TopicPartition, Long> result = new HashMap<>();
+
+        boolean resultStatus =dbWriter.groupQueryWithRecords(getSampleRecords()
+                , queryToRecordsMap, result);
 
         Assert.assertTrue(result.isEmpty() == false);
 

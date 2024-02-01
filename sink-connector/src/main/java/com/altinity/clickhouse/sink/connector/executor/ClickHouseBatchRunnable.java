@@ -6,6 +6,8 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
+import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
@@ -44,7 +46,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
     // Map of topic name to buffered records.
-    Map<String, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> topicToRecordsMap;
+    //Map<String, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> topicToRecordsMap;
 
     private DBCredentials dbCredentials;
 
@@ -61,7 +63,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
-        this.topicToRecordsMap = new HashMap<>();
+        //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
 
@@ -97,17 +99,15 @@ public class ClickHouseBatchRunnable implements Runnable {
                 log.debug("**** Processing Batch of Records ****" + numRecords);
             }
 
-            // Topic Name -> List of records
+            // Poll from Queue until its empty.
             for (Map.Entry<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> entry : this.records.entrySet()) {
                 if (entry.getValue().size() > 0) {
-                    List<ClickHouseStruct> records = entry.getValue().poll();
-                    records.forEach(r -> {
-                        try {
-                            processRecordsByTopic(entry.getKey(), entry.getValue());
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
+
+                    ConcurrentLinkedQueue<List<ClickHouseStruct>> records = entry.getValue();
+                    while(records.size() > 0) {
+                        List<ClickHouseStruct> batch = records.poll();
+                        processRecordsByTopic(entry.getKey(), batch);
+                    }
                 }
             }
         } catch(Exception e) {
@@ -150,12 +150,16 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param topicName
      * @param records
      */
-    private void processRecordsByTopic(String topicName, ConcurrentLinkedQueue<List<ClickHouseStruct>> records) throws Exception {
-        List<ClickHouseStruct> recordList = records.peek();
+    private void processRecordsByTopic(String topicName, List<ClickHouseStruct> records) throws Exception {
 
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
-        DbWriter writer = getDbWriterForTable(topicName, tableName, recordList.get(0));
+        DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0));
+        PreparedStatementExecutor preparedStatementExecutor = new
+                PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
+                writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
+                writer.getConnection());
+
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retry next time");
@@ -164,20 +168,19 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Step 1: The Batch Insert with preparedStatement in JDBC
         // works by forming the Query and then adding records to the Batch.
         // This step creates a Map of Query -> Records(List of ClickHouseStruct)
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap;
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
+        boolean result = new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, queryToRecordsMap,
+                partitionToOffsetMap, this.config,topicName, writer.getDatabaseName(), writer.getConnection(),
+                writer.getColumnNameToDataTypeMap());
 
-        if(topicToRecordsMap.containsKey(topicName)) {
-            queryToRecordsMap = topicToRecordsMap.get(topicName);
-        } else {
-            queryToRecordsMap = new HashMap<>();
-            topicToRecordsMap.put(topicName, queryToRecordsMap);
-        }
-
-        Map<TopicPartition, Long> partitionToOffsetMap = writer.groupQueryWithRecords(recordList, queryToRecordsMap);
         BlockMetaData bmd = new BlockMetaData();
-
         long maxBufferSize = this.config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
-        if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd, maxBufferSize)) {
+
+        // Step 2: Create a PreparedStatement and add the records to the batch.
+        // In DBWriter, the queryToRecordsMap is converted to PreparedStatement and added to the batch.
+        // The batch is then executed and the records are flushed to ClickHouse.
+        if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd, maxBufferSize, preparedStatementExecutor)) {
             // Remove the entry.
             queryToRecordsMap.remove(topicName);
         }
@@ -202,12 +205,13 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return
      */
     private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd, long maxBufferSize) throws Exception {
+            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd, long maxBufferSize, PreparedStatementExecutor preparedStatementExecutor) throws Exception {
 
         boolean result = false;
 
         synchronized (queryToRecordsMap) {
-            writer.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd);
+            preparedStatementExecutor.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd, config, writer.getConnection(),
+                    writer.getTableName(), writer.getColumnNameToDataTypeMap(), writer.getEngine());
         }
         try {
             Metrics.updateMetrics(bmd);

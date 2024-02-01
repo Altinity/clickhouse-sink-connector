@@ -109,37 +109,7 @@ public class BaseDbWriter {
         }
     }
 
-    /**
-     * Function that uses the DatabaseMetaData JDBC functionality
-     * to get the column name and column data type as key/value pair.
-     */
-    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
 
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (this.conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = this.conn.getMetaData().getColumns(null, this.database,
-                     tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
-
-//                Object dataType = columns.getString("DATA_TYPE");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                result.put(columnName, typeName);
-            }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
-        }
-        return result;
-    }
 
     /**
      * Function to execute query.
@@ -188,29 +158,5 @@ public class BaseDbWriter {
         return this.executeQuery("SELECT VERSION()");
     }
 
-    /**
-     * Function to return ClickHouse server timezone.
-     * @return
-     */
-    public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
-
-        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
-                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if(!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
-            }
-        } catch (Exception e){
-            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
-        }
-
-        if(userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return this.serverTimeZone;
-    }
 }
 

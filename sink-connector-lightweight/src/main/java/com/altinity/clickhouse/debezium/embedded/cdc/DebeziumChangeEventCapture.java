@@ -676,6 +676,7 @@ public class DebeziumChangeEventCapture {
                     structs = new ConcurrentLinkedQueue<>();
                     structs.add(Arrays.asList(ClickHouseStruct));
                 }
+                this.records.put(ClickHouseStruct.getTopic(), structs);
             });
         }
     }

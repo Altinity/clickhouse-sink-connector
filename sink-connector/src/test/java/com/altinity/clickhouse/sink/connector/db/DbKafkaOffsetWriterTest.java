@@ -43,7 +43,8 @@ public class DbKafkaOffsetWriterTest {
                 new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
-        Map<TopicPartition, Long> result = writer.groupQueryWithRecords(DbWriterTest.getSampleRecords(), queryToRecordsMap);
+        Map<TopicPartition, Long> result = new HashMap<>();
+        boolean resultStatus = writer.groupQueryWithRecords(com.altinity.clickhouse.sink.connector.db.DbWriterTest.getSampleRecords(), queryToRecordsMap, result);
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);
         Map<TopicPartition, Long> offsetsMap = dbKafkaOffsetWriter.getStoredOffsets();
