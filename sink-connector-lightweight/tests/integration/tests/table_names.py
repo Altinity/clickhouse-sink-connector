@@ -62,7 +62,7 @@ def generate_table_names(size=64, count=10):
 
 @TestCheck
 def check_table_names(self, table_name):
-    """Check that the table partitioned by range created in mysql is correctly replicated on the ClickHouse side."""
+    """Check that the table with the given name is replicated in ClickHouse."""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
 
@@ -89,7 +89,7 @@ def table_names(self):
     )
 
     for table_name in table_names:
-        check_table_names(table_name)
+        check_table_names(table_name=table_name)
 
 
 @TestModule
