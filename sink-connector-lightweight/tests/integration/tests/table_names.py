@@ -53,14 +53,14 @@ def check_table_names(self, table_name):
 
     with Given(f"I create the {table_name} table"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"/`{table_name}/`",
+            name=f"\`{table_name}\`",
             mysql_columns="x INT",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
         with And("I insert data into the table"):
-            mysql_node.query(f"INSERT INTO /`{table_name}/` VALUES (1);")
+            mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1);")
 
         with Check(f"I check that the {table_name} was created in the ClickHouse side"):
             for retry in retries(timeout=20):
@@ -101,9 +101,7 @@ def module(
     self.context.table_names_count = table_names_count
     self.context.table_name_max_length = table_name_max_length
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Scenario):
-                Scenario(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+
+    for feature in loads(current_module(), Scenario):
+        Scenario(test=feature)()
+
