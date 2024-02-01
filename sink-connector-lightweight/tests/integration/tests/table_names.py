@@ -103,4 +103,4 @@ def module(
     )
 
     for table_name in table_names:
-        Scenario(tset=check_table_names)(table_name=table_name)
+        Scenario(test=check_table_names)(table_name=table_name)
