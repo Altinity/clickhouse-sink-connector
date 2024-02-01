@@ -3,11 +3,11 @@ from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
 import string
 import random
+from keyword import iskeyword
 
 
-def generate_table_names(size=64, count=10):
-    special_chars = "$%&*()-+={}|;:'\",<>./?"
-    ascii_chars = string.ascii_letters + string.digits + special_chars
+def generate_table_names(num_names, max_length=64):
+    """Generate a set of unique MySQL table names."""
     reserved_keywords = [
         "Select",
         "Insert",
@@ -18,46 +18,31 @@ def generate_table_names(size=64, count=10):
         "Transaction",
     ]
 
-    names = set()
+    def generate_table_name(length):
+        """Generate a random table name of a given length."""
+        # Characters allowed in table names (excluding characters that require escaping)
+        allowed_chars = string.ascii_letters + string.digits + "_$"
+        return "".join(random.choice(allowed_chars) for _ in range(length))
 
-    names.update(reserved_keywords)
+    table_names = set()
 
-    # Generate names with special characters
-    for _ in range(count // 3):
-        name = (
-            "/`"
-            + "".join(
-                random.choice(ascii_chars) for _ in range(random.randint(1, size - 2))
-            )
-            + "/`"
-        )
-        names.add(name)
+    table_names.update(reserved_keywords)
 
-    # Include reserved keywords with a twist
-    for keyword in random.sample(
-        reserved_keywords, min(len(reserved_keywords), count // 3)
-    ):
-        name = (
-            "/`"
-            + keyword
-            + "".join(random.choice(string.digits) for _ in range(random.randint(1, 3)))
-            + "/`"
-        )
-        names.add(name)
+    while len(table_names) < num_names:
+        # Randomly choose the length of the table name, ensuring it's at least 1 character
+        length = random.randint(1, max_length)
 
-    # Generate names starting with numbers and containing special characters
-    while len(names) < count:
-        name = (
-            "/`"
-            + random.choice(string.digits)
-            + "".join(
-                random.choice(ascii_chars) for _ in range(random.randint(1, size - 3))
-            )
-            + "/`"
-        )
-        names.add(name)
+        # Generate a random table name
+        name = generate_table_name(length)
 
-    return names
+        # Check if the name is a reserved keyword or starts with a number
+        if iskeyword(name) or name[0] in string.digits:
+            # Add backticks to handle these special cases
+            name = f"{name}"
+
+        table_names.add(f"/`{name}/`")
+
+    return table_names
 
 
 @TestCheck
@@ -87,7 +72,8 @@ def check_table_names(self, table_name):
 @Flags(TE)
 def table_names(self):
     table_names = generate_table_names(
-        size=self.context.table_name_max_length, count=self.context.table_names_count
+        num_names=self.context.table_names_count,
+        max_length=self.context.table_name_max_length,
     )
 
     for table_name in table_names:
@@ -103,7 +89,13 @@ def module(
     table_names_count=100,
     table_name_max_length=64,
 ):
-    """Check tables with PARTITION BY for MySql to ClickHouse replication."""
+    """
+    Check replication of tables with different name combinations.
+        - Names starting with a number
+        - Names containing spaces
+        - Names using reserved keywords
+        - Names with mixed alphanumeric characters and safe symbols
+    """
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
     self.context.table_names_count = table_names_count
