@@ -128,7 +128,7 @@ def check_is_deleted_datatypes(self, datatype):
                 ), error()
 
 
-@TestSketch(Scenario)
+@TestScenario
 def is_deleted_different_datatypes(self):
     """Check that the table is replicated when the is_deleted column on the source table was created
     with all possible MySQL datatypes."""
@@ -136,7 +136,8 @@ def is_deleted_different_datatypes(self):
         all_mysql_datatypes_dict[datatype] for datatype in all_mysql_datatypes_dict
     ]
 
-    check_is_deleted_datatypes(datatype=either(*datatypes))
+    for datatype in datatypes:
+        check_is_deleted_datatypes(datatype=datatype)
 
 
 @TestModule
