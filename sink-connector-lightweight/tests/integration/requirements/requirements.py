@@ -1551,10 +1551,37 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid = Requirem
     description=(
         "[Altinity Sink Connector] SHALL not support replication and SHALL output an error when trying to replicate a table with a name which [ClickHouse] does not support.\n"
         "\n"
+        "\n"
     ),
     link=None,
     level=4,
     num="3.21.2.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support replication from the source tables that have special column names.\n"
+        "\n"
+        "For example,\n"
+        "\n"
+        "If we create a source table that contains the column with the `is_deleted` name,\n"
+        "\n"
+        "```sql\n"
+        "CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)\n"
+        "```\n"
+        "\n"
+        "The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.\n"
+        "\n"
+    ),
+    link=None,
+    level=5,
+    num="3.22.1.0.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
@@ -1577,7 +1604,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=3,
-    num="3.22.1",
+    num="3.23.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -2103,11 +2130,20 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=4,
             num="3.21.2.1",
         ),
-        Heading(name="Prometheus ", level=2, num="3.22"),
+        Heading(name="Column Names", level=2, num="3.22"),
+        Heading(
+            name="Replicate Tables With Special Column Names", level=3, num="3.22.1"
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special",
+            level=5,
+            num="3.22.1.0.1",
+        ),
+        Heading(name="Prometheus ", level=2, num="3.23"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
             level=3,
-            num="3.22.1",
+            num="3.23.1",
         ),
     ),
     requirements=(
@@ -2194,6 +2230,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Settings_Topic2TableMap,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
     ),
     content="""
@@ -2368,8 +2405,11 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             * 3.21.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Valid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesvalid)
         * 3.21.2 [Invalid](#invalid)
             * 3.21.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Invalid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesinvalid)
-    * 3.22 [Prometheus ](#prometheus-)
-        * 3.22.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+    * 3.22 [Column Names](#column-names)
+        * 3.22.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
+                * 3.22.1.0.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
+    * 3.23 [Prometheus ](#prometheus-)
+        * 3.23.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -3369,6 +3409,26 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL not support replication and SHALL output an error when trying to replicate a table with a name which [ClickHouse] does not support.
+
+
+### Column Names
+
+#### Replicate Tables With Special Column Names
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from the source tables that have special column names.
+
+For example,
+
+If we create a source table that contains the column with the `is_deleted` name,
+
+```sql
+CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)
+```
+
+The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.
 
 ### Prometheus 
 

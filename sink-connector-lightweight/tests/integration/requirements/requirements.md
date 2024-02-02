@@ -169,8 +169,11 @@
             * 3.21.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Valid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesvalid)
         * 3.21.2 [Invalid](#invalid)
             * 3.21.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Invalid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesinvalid)
-    * 3.22 [Prometheus ](#prometheus-)
-        * 3.22.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+    * 3.22 [Column Names](#column-names)
+        * 3.22.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
+                * 3.22.1.0.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
+    * 3.23 [Prometheus ](#prometheus-)
+        * 3.23.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -1170,6 +1173,26 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL not support replication and SHALL output an error when trying to replicate a table with a name which [ClickHouse] does not support.
+
+
+### Column Names
+
+#### Replicate Tables With Special Column Names
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from the source tables that have special column names.
+
+For example,
+
+If we create a source table that contains the column with the `is_deleted` name,
+
+```sql
+CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)
+```
+
+The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.
 
 ### Prometheus 
 
