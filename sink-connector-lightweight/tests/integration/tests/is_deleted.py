@@ -93,7 +93,7 @@ def remove_is_deleted_column(self):
                 assert clickhouse_data.output.strip() == "6", error()
 
 
-@TestCheck
+@TestOutline
 def check_is_deleted_datatypes(self, datatype):
     """Check that the source table is replicated on ClickHouse side when it contains the is_deleted column with different mysql datatypes."""
     clickhouse_node = self.context.clickhouse_node
@@ -108,7 +108,7 @@ def check_is_deleted_datatypes(self, datatype):
             table_name=table_name, datatype=datatype, data=values
         )
 
-    with Check(
+    with Then(
         f"I check the table replication with is_deleted column and {datatype} datatype"
     ):
         for retry in retries(timeout=40, delay=1):
