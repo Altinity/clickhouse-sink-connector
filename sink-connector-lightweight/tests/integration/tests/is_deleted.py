@@ -99,7 +99,7 @@ def check_is_deleted_datatypes(self, datatype):
     clickhouse_node = self.context.clickhouse_node
     table_name = "tb_" + getuid()
 
-    values = generate_sample_mysql_value(datatype)
+    values = generate_sample_mysql_value(data_type=datatype)
 
     with Given(
         f"I create a {table_name} with is_deleted column that has {datatype} datatype"
