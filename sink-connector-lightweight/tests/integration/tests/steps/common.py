@@ -4,7 +4,7 @@ from testflows.core import *
 
 
 @TestStep(When)
-def generate_sample_mysql_value(data_type):
+def generate_sample_mysql_value(self, data_type):
     """Generate a sample MySQL value for the provided datatype."""
     if data_type.startswith("DECIMAL"):
         precision, scale = map(
