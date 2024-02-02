@@ -22,7 +22,8 @@ def check_is_deleted(self):
     with Then("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
             with retry:
-                clickhouse_node.query(f"SELECT * FROM test.{table_name} FORMAT CSV")
+                clickhouse_node.query(f"SELECT * FROM test.{table_name}")
+                clickhouse_node.query(f"DESCRIBE TABLE test.{table_name}")
 
 
 @TestModule
