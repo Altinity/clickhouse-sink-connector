@@ -260,6 +260,8 @@ def regression(
         "snowflake_id",
         # "offset",
         "databases",
+        "table_names",
+        "is_deleted"
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
