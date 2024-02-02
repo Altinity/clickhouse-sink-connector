@@ -17,7 +17,7 @@ def check_is_deleted(self):
         )
 
     with When(f"I insert data into a {table_name} table"):
-        mysql_node.query(f"INSERT INTO {table_name} VALUES ('test', 1, 2)")
+        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, 'test', 1, 2)")
 
     with Then("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
@@ -34,8 +34,6 @@ def module(
     self,
     clickhouse_node="clickhouse",
     mysql_node="mysql-master",
-    table_names_count=100,
-    table_name_max_length=64,
 ):
     """
     Check that the table is replicated when teh source table has a column named is_deleted.
