@@ -74,10 +74,11 @@ public class DbWriter extends BaseDbWriter {
             String userName,
             String password,
             ClickHouseSinkConnectorConfig config,
-            ClickHouseStruct record
+            ClickHouseStruct record,
+            ClickHouseConnection connection
     )  {
         // Base class initiates connection using JDBC.
-        super(hostName, port, database, userName, password, config);
+        super(hostName, port, database, userName, password, config, connection);
         this.tableName = tableName;
 
         this.config = config;

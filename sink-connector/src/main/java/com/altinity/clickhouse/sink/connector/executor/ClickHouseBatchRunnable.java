@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -11,6 +12,8 @@ import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.clickhouse.jdbc.ClickHouseConnection;
+import com.codahale.metrics.MetricRegistryListener;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
@@ -34,6 +37,8 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private final ClickHouseSinkConnectorConfig config;
 
+    //ToDo: Later this can be moved to one connection per application.
+    private final ClickHouseConnection conn;
 
     /**
      * Data structures with state
@@ -44,9 +49,6 @@ public class ClickHouseBatchRunnable implements Runnable {
     // Map of topic name to CLickHouseConnection instance(DbWriter)
     private Map<String, DbWriter> topicToDbWriterMap;
 
-
-    // Map of topic name to buffered records.
-    //Map<String, Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> topicToRecordsMap;
 
     private DBCredentials dbCredentials;
 
@@ -66,7 +68,14 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
+        String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
+                this.dbCredentials.getPort(), this.dbCredentials.getDatabase());
 
+        this.conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
+                this.dbCredentials.getPassword(), config);
+        new BaseDbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
+                this.dbCredentials.getDatabase(), this.dbCredentials.getUserName(),
+                this.dbCredentials.getPassword(), this.config, this.conn);
     }
 
     private DBCredentials parseDBConfiguration() {
@@ -134,12 +143,13 @@ public class ClickHouseBatchRunnable implements Runnable {
         return tableName;
     }
 
-    public DbWriter getDbWriterForTable(String topicName, String tableName, ClickHouseStruct record) {
+    public DbWriter getDbWriterForTable(String topicName, String tableName,
+                                        ClickHouseStruct record, ClickHouseConnection connection) {
         DbWriter writer = null;
 
         writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
                     this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
-                    this.dbCredentials.getPassword(), this.config, record);
+                    this.dbCredentials.getPassword(), this.config, record, connection);
         this.topicToDbWriterMap.put(topicName, writer);
         return writer;
     }
@@ -154,7 +164,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
-        DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0));
+        DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
@@ -188,7 +198,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
             DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(), dbCredentials.getPort(), dbCredentials.getDatabase(),
-                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config);
+                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config, this.conn);
             try {
                 dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
             } catch (SQLException e) {

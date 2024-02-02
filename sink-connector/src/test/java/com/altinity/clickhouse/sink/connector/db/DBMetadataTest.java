@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -68,8 +69,11 @@ public class DBMetadataTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
 
         // Default database exists.
         boolean result = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "default");
@@ -125,8 +129,10 @@ public class DBMetadataTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         ZoneId serverTimeZone = new DBMetadata().getServerTimeZone(writer.getConnection());
 
         Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));

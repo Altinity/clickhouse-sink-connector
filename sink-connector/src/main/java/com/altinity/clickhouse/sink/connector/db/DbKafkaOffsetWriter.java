@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,10 +29,11 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
             String tableName,
             String userName,
             String password,
-            ClickHouseSinkConnectorConfig config
+            ClickHouseSinkConnectorConfig config,
+            ClickHouseConnection connection
     ) {
 
-        super(hostName, port, database, userName, password, config);
+        super(hostName, port, database, userName, password, config, connection);
 
         createOffsetTable();
         this.columnNamesToDataTypesMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.getConnection(),

@@ -14,6 +14,8 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.clickhouse.jdbc.ClickHouseConnection;
+import com.codahale.metrics.MetricRegistryListener;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -76,6 +78,9 @@ public class DebeziumChangeEventCapture {
     private String gtid = "";
 
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
+
+    // Keep one clickhouse connection.
+    private ClickHouseConnection conn;
 
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
@@ -287,6 +292,7 @@ public class DebeziumChangeEventCapture {
         try {
             DBCredentials dbCredentials = parseDBConfiguration(config);
             if (writer == null) {
+                BaseDbWriter.
                 writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase(), dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config);
@@ -654,6 +660,7 @@ public class DebeziumChangeEventCapture {
      * @param config
      */
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
+
         // Setup separate thread to read messages from shared buffer.
         this.records = new ConcurrentHashMap<>();
         this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
@@ -665,9 +672,10 @@ public class DebeziumChangeEventCapture {
 
     private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
 
+        String topicName = convertedRecords.get(0).getTopic();
         synchronized (this.records) {
             //Iterate through convertedRecords and add to the records map.
-            convertedRecords.forEach(ClickHouseStruct -> {
+
                 ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
                 if (this.records.containsKey(ClickHouseStruct.getTopic())) {
                     structs = this.records.get(ClickHouseStruct.getTopic());
@@ -677,7 +685,6 @@ public class DebeziumChangeEventCapture {
                     structs.add(Arrays.asList(ClickHouseStruct));
                 }
                 this.records.put(ClickHouseStruct.getTopic(), structs);
-            });
         }
     }
 }
