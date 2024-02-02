@@ -19,7 +19,7 @@ def create_table_with_is_deleted(self, table_name, datatype="int", data="5"):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=f"\`{table_name}\`",
-            mysql_columns="col1 varchar(255), col2 int, is_deleted int",
+            mysql_columns=f"col1 varchar(255), col2 int, is_deleted {datatype}",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
