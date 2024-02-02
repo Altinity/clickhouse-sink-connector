@@ -1,35 +1,99 @@
 from integration.tests.steps.sql import *
 from integration.tests.steps.statements import *
 from integration.tests.steps.service_settings_steps import *
+from integration.requirements.requirements import (
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
+)
 
 
-@TestScenario
-def check_is_deleted(self):
+@TestStep(Given)
+def create_table_with_is_deleted(self, table_name, datatype="int", data="5"):
+    """Create mysql table that contains the column with the name 'is_deleted'"""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
-    table_name = "tb_" + getuid()
 
-    with Given(f"I create the {table_name} table"):
+    with By(
+        f"creating a {table_name} table with is_deleted column and {datatype} datatype"
+    ):
         create_mysql_to_clickhouse_replicated_table(
             name=f"\`{table_name}\`",
             mysql_columns="col1 varchar(255), col2 int, is_deleted int",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
-    with When(f"I insert data into a {table_name} table"):
-        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, 'test', 1, 2)")
+    with And(f"inserting data into the {table_name} table"):
+        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, 'test', 1, {data})")
+
+    with And("I make sure that the table was replicated on the ClickHouse side"):
+        for retry in retries(timeout=40):
+            with retry:
+                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+
+
+@TestScenario
+def check_is_deleted(self):
+    """Check that when creating a mysql table with is_deleted column when the ReplacingMergeTree table on the
+    ClickHouse side already has that column, the column in ClickHouse is renamed to __is_deleted and new is_deleted
+    column is created."""
+
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    with Given(f"I create the {table_name} table and populate it with data"):
+        create_table_with_is_deleted(table_name=table_name)
 
     with Then("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
             with retry:
-                clickhouse_node.query(f"SELECT * FROM test.{table_name}")
-                clickhouse_node.query(f"DESCRIBE TABLE test.{table_name}")
+                clickhouse_data = clickhouse_node.query(
+                    f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
+                )
+                assert (
+                    "__is_deleted" and "is_deleted" in clickhouse_data.output.strip()
+                ), error()
+
+
+@TestScenario
+def remove_is_deleted_column(self):
+    """Check that after removing the is deleted column from the mysql table and creating it again, the schema is preserved on the ClickHouse side."""
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    with Given(f"I create the {table_name} table and populate it with data"):
+        create_table_with_is_deleted(table_name=table_name)
+
+    with When(
+        "I remove column from the source table and makes sure it is remove from ClickHouse"
+    ):
+        mysql_node.query(f"ALTER TABLE {table_name} DROP COLUMN is_deleted")
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_node.query(
+                    f"SELECT is_deleted FROM test.{table_name}",
+                    message="DB::Exception: Missing columns: 'is_deleted' while processing query",
+                )
+
+    with And("I create the is_deleted column on the source table"):
+        mysql_node.query(f"ALTER TABLE {table_name} ADD COLUMN is_deleted INT")
+        mysql_node.query(f"INSERT INTO {table_name} VALUES (3, 'test2', 1, 6)")
+
+    with Then(
+        "I check that the is_deleted column is created again and the __is_deleted column is still present"
+    ):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"SELECT is_deleted FROM test.{table_name} WHERE id == 3 FORMAT CSV"
+                )
+                assert clickhouse_data.output.strip() == "6", error()
 
 
 @TestModule
 @Name("is deleted")
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid("1.0")
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special("1.0")
 )
 def module(
     self,
@@ -43,4 +107,5 @@ def module(
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 
-    Scenario(run=check_is_deleted)
+    for scenario in loads(current_module(), Scenario):
+        Scenario(run=scenario)
