@@ -1,6 +1,8 @@
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
+from integration.tests.steps.statements import all_mysql_datatypes_dict
 from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.alter import drop_column
+from integration.tests.steps.common import generate_sample_mysql_value
 from integration.requirements.requirements import (
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
 )
@@ -67,7 +69,8 @@ def remove_is_deleted_column(self):
     with When(
         "I remove column from the source table and makes sure it is remove from ClickHouse"
     ):
-        mysql_node.query(f"ALTER TABLE {table_name} DROP COLUMN is_deleted")
+        drop_column(table_name=table_name, column_name="is_deleted")
+
         for retry in retries(timeout=40, delay=1):
             with retry:
                 clickhouse_node.query(
@@ -90,6 +93,52 @@ def remove_is_deleted_column(self):
                 assert clickhouse_data.output.strip() == "6", error()
 
 
+@TestCheck
+def check_is_deleted_datatypes(self, datatype):
+    """Check that the source table is replicated on ClickHouse side when it contains the is_deleted column with different mysql datatypes."""
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    values = generate_sample_mysql_value(datatype)
+
+    with Given(
+        f"I create a {table_name} with is_deleted column that has {datatype} datatype"
+    ):
+        create_table_with_is_deleted(
+            table_name=table_name, datatype=datatype, data=values
+        )
+
+    with Check(
+        f"I check the table replication with is_deleted column and {datatype} datatype"
+    ):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"SELECT is_deleted FROM test.{table_name} FORMAT CSV"
+                )
+
+                assert clickhouse_data.output.strip() == f"{values}", error()
+
+                describe_clickhouse_table = clickhouse_node.query(
+                    f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
+                )
+                assert (
+                    "__is_deleted"
+                    and "is_deleted" in describe_clickhouse_table.output.strip()
+                ), error()
+
+
+@TestSketch(Scenario)
+def is_deleted_different_datatypes(self):
+    """Check that the table is replicated when the is_deleted column on the source table was created
+    with all possible MySQL datatypes."""
+    datatypes = [
+        all_mysql_datatypes_dict[datatype] for datatype in all_mysql_datatypes_dict
+    ]
+
+    check_is_deleted_datatypes(datatype=either(*datatypes))
+
+
 @TestModule
 @Name("is deleted")
 @Requirements(
@@ -102,6 +151,7 @@ def module(
 ):
     """
     Check that the table is replicated when teh source table has a column named is_deleted.
+
     """
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
