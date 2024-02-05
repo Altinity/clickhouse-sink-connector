@@ -109,6 +109,6 @@ public class MySQLGenerateColumnsTest {
         writer.getConnection().close();
         Thread.sleep(10000);
 
-
+        engine.get().stop();
     }
 }
