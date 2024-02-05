@@ -89,6 +89,11 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         if (writer == null) {
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        dbCredentials.getDatabase());
+            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config, this.conn);
@@ -675,8 +680,11 @@ public class DebeziumChangeEventCapture {
 
     private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
 
-        String topicName = convertedRecords.get(0).getTopic();
         synchronized (this.records) {
+            this.records.add(convertedRecords);
+        }
+        //String topicName = convertedRecords.get(0).getTopic();
+     //   synchronized (this.records) {
             //Iterate through convertedRecords and add to the records map.
 
 //                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
@@ -688,6 +696,6 @@ public class DebeziumChangeEventCapture {
 //                    structs.add(Arrays.asList(ClickHouseStruct));
 //                }
 //                this.records.put(ClickHouseStruct.getTopic(), structs);
-        }
+       // }
     }
 }

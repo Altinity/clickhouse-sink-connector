@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLBaseIT;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.collect.Maps;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import static org.junit.Assert.assertTrue;
@@ -32,9 +33,14 @@ public class DebeziumChangeEventCaptureIT extends DDLBaseIT {
                     JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
             DBCredentials dbCredentials = dec.parseDBConfiguration(config);
 
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    dbCredentials.getDatabase());
+            ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(),
+                    dbCredentials.getPassword(), config);
+
             BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config);
+                    dbCredentials.getPassword(), config, connection);
             String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
             //String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
 
