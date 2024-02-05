@@ -91,7 +91,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         Thread.sleep(50000);
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
+                "public");
         ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
