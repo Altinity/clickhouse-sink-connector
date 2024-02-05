@@ -103,9 +103,10 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
 
         writer.getConnection().close();
         Thread.sleep(10000);
+        ClickHouseConnection conn2 = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
          writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn1);
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
 
         /**
          * DATE TIME
