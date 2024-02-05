@@ -13,13 +13,13 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import com.codahale.metrics.MetricRegistryListener;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseBatchRunnable implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records;
+    private final ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
 
     private final ClickHouseSinkConnectorConfig config;
 
@@ -52,7 +52,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private DBCredentials dbCredentials;
 
-    public ClickHouseBatchRunnable(ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records,
+    public ClickHouseBatchRunnable(ConcurrentLinkedQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
         this.records = records;
@@ -109,16 +109,31 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
 
             // Poll from Queue until its empty.
-            for (Map.Entry<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> entry : this.records.entrySet()) {
-                if (entry.getValue().size() > 0) {
-
-                    ConcurrentLinkedQueue<List<ClickHouseStruct>> records = entry.getValue();
-                    while(records.size() > 0) {
-                        List<ClickHouseStruct> batch = records.poll();
-                        processRecordsByTopic(entry.getKey(), batch);
+            while(records.size() > 0) {
+                List<ClickHouseStruct> batch = records.poll();
+                // Group records by topic name.
+                // Create a new map of topic name to list of records.
+                Map<String, List<ClickHouseStruct>> topicToRecordsMap = new ConcurrentHashMap<>();
+                batch.forEach(record -> {
+                    String topicName = record.getTopic();
+                    // If the topic name is not present, create a new list and add the record.
+                    if (topicToRecordsMap.containsKey(topicName) == false) {
+                        List<ClickHouseStruct> recordsList = new ArrayList<>();
+                        recordsList.add(record);
+                        topicToRecordsMap.put(topicName, recordsList);
+                    } else {
+                        // If the topic name is present, add the record to the list.
+                        List<ClickHouseStruct> recordsList = topicToRecordsMap.get(topicName);
+                        recordsList.add(record);
+                        topicToRecordsMap.put(topicName, recordsList);
                     }
+                });
+                // For each topic, process the records.
+                for (Map.Entry<String, List<ClickHouseStruct>> entry : topicToRecordsMap.entrySet()) {
+                    processRecordsByTopic(entry.getKey(), entry.getValue());
                 }
             }
+
         } catch(Exception e) {
             log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
         }

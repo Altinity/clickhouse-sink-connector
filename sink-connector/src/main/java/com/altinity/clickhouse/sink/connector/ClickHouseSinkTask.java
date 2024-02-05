@@ -39,7 +39,7 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchExecutor executor;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records;
+    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
@@ -66,7 +66,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
-        this.records = new ConcurrentHashMap<>();
+        this.records = new ConcurrentLinkedQueue();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
@@ -103,44 +103,40 @@ public class ClickHouseSinkTask extends SinkTask {
         log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
-        Map<String, List<ClickHouseStruct>> convertedRecords = new HashMap<String, List<ClickHouseStruct>>();
+        List<ClickHouseStruct> batch = new ArrayList<>();
         for (SinkRecord record : records) {
             if (this.deduplicator.isNew(record.topic(), record)) {
                 ClickHouseStruct c = converter.convert(record);
+                if (c != null) {
+                    batch.add(c);
+                }
                 //Update the hashmap with the topic name and the list of records.
-                if (convertedRecords.containsKey(record.topic())) {
-                    convertedRecords.get(record.topic()).add(c);
-                } else {
-                    List<ClickHouseStruct> list = new ArrayList<>();
-                    list.add(c);
-                    convertedRecords.put(record.topic(), list);
-                }
-            } else {
-                log.info("skip already seen record: " + record);
             }
         }
-        appendToRecords(convertedRecords);
-    }
-
-    private void appendToRecords(Map<String, List<ClickHouseStruct>> convertedRecords) {
-        ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
-
         synchronized (this.records) {
-            //Iterate through convertedRecords and add to the records map.
-            for (Map.Entry<String, List<ClickHouseStruct>> entry : convertedRecords.entrySet()) {
-                if (this.records.containsKey(entry.getKey())) {
-                    structs = this.records.get(entry.getKey());
-                    structs.add(entry.getValue());
-
-                } else {
-                    structs = new ConcurrentLinkedQueue<>();
-                    structs.add(entry.getValue());
-                }
-                this.records.put(entry.getKey(), structs);
-
-            }
+            this.records.add(batch);
         }
     }
+//
+//    private void appendToRecords(Map<String, List<ClickHouseStruct>> convertedRecords) {
+//        ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
+//
+//        synchronized (this.records) {
+//            //Iterate through convertedRecords and add to the records map.
+//            for (Map.Entry<String, List<ClickHouseStruct>> entry : convertedRecords.entrySet()) {
+//                if (this.records.containsKey(entry.getKey())) {
+//                    structs = this.records.get(entry.getKey());
+//                    structs.add(entry.getValue());
+//
+//                } else {
+//                    structs = new ConcurrentLinkedQueue<>();
+//                    structs.add(entry.getValue());
+//                }
+//                this.records.put(entry.getKey(), structs);
+//
+//            }
+//        }
+//    }
 
     /**
      * preCommit() is a something like a replacement for flush - takes the same parameters

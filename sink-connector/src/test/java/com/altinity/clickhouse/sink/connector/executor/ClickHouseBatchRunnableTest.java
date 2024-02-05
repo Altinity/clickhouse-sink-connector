@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class ClickHouseBatchRunnableTest {
 
 
-    ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records = new ConcurrentHashMap<>();
+    ConcurrentLinkedQueue<List<ClickHouseStruct>> records = new ConcurrentLinkedQueue<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
     @Before
@@ -50,8 +50,8 @@ public class ClickHouseBatchRunnableTest {
         recordBatch2.add(ch3);
         productsQueue.add(recordBatch2);
 
-        records.put("SERVER5432.test.customers", customersQueue);
-        records.put("SERVER5432.test.products", productsQueue);
+        records.add(recordBatch1);
+        records.add(recordBatch2);
 
         this.topic2TableMap.put("SERVER5432.test.customers", "customers");
         this.topic2TableMap.put("SERVER5432.test.products", "products");

@@ -15,7 +15,6 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import com.codahale.metrics.MetricRegistryListener;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -56,7 +55,7 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchRunnable runnable;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<List<ClickHouseStruct>>> records;
+    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
 
 
     private BaseDbWriter writer = null;
@@ -88,13 +87,11 @@ public class DebeziumChangeEventCapture {
 
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
-
-
         DBCredentials dbCredentials = parseDBConfiguration(config);
         if (writer == null) {
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config);
+                    dbCredentials.getPassword(), config, this.conn);
             try {
                 String clickHouseVersion = writer.getClickHouseVersion();
                 isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
@@ -292,10 +289,9 @@ public class DebeziumChangeEventCapture {
         try {
             DBCredentials dbCredentials = parseDBConfiguration(config);
             if (writer == null) {
-                BaseDbWriter.
-                writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                        dbCredentials.getPassword(), config);
+                        dbCredentials.getPassword(), config, conn);
             }
 
             String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
@@ -390,7 +386,7 @@ public class DebeziumChangeEventCapture {
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config);
+                dbCredentials.getPassword(), config, this.conn);
 
         String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
 
@@ -428,7 +424,7 @@ public class DebeziumChangeEventCapture {
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config);
+                dbCredentials.getPassword(), config, this.conn);
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
 
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
@@ -459,7 +455,7 @@ public class DebeziumChangeEventCapture {
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config);
+                dbCredentials.getPassword(), config, this.conn);
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
 
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
@@ -622,6 +618,13 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error stopping debezium event executor", e);
         }
+        try {
+            if (this.conn != null) {
+                this.conn.close();
+            }
+        } catch(Exception e) {
+            log.error("Error closing clickhouse connection", e);
+        }
 
         Metrics.stop();
     }
@@ -662,7 +665,7 @@ public class DebeziumChangeEventCapture {
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
 
         // Setup separate thread to read messages from shared buffer.
-        this.records = new ConcurrentHashMap<>();
+        this.records = new ConcurrentLinkedQueue<>();
         this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
@@ -676,15 +679,15 @@ public class DebeziumChangeEventCapture {
         synchronized (this.records) {
             //Iterate through convertedRecords and add to the records map.
 
-                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
-                if (this.records.containsKey(ClickHouseStruct.getTopic())) {
-                    structs = this.records.get(ClickHouseStruct.getTopic());
-                    structs.add(Arrays.asList(ClickHouseStruct));
-                } else {
-                    structs = new ConcurrentLinkedQueue<>();
-                    structs.add(Arrays.asList(ClickHouseStruct));
-                }
-                this.records.put(ClickHouseStruct.getTopic(), structs);
+//                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
+//                if (this.records.containsKey(ClickHouseStruct.getTopic())) {
+//                    structs = this.records.get(ClickHouseStruct.getTopic());
+//                    structs.add(Arrays.asList(ClickHouseStruct));
+//                } else {
+//                    structs = new ConcurrentLinkedQueue<>();
+//                    structs.add(Arrays.asList(ClickHouseStruct));
+//                }
+//                this.records.put(ClickHouseStruct.getTopic(), structs);
         }
     }
 }
