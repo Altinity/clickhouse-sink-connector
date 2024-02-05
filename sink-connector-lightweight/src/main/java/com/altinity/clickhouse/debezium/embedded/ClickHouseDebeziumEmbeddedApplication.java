@@ -85,16 +85,17 @@ public class ClickHouseDebeziumEmbeddedApplication {
         }
 
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-        try {
-            DebeziumEmbeddedRestApi.startRestApi(props, injector, debeziumChangeEventCapture, userProperties);
-        } catch(Exception e) {
-            log.error("Error starting REST API server", e);
-        }
 
         setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
         embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(DDLParserService.class), props, false);
+
+        try {
+            DebeziumEmbeddedRestApi.startRestApi(props, injector, debeziumChangeEventCapture, userProperties);
+        } catch(Exception e) {
+            log.error("Error starting REST API server", e);
+        }
     }
 
     /**

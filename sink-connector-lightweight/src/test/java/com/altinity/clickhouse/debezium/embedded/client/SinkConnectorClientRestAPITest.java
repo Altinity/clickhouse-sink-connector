@@ -134,11 +134,12 @@ public class SinkConnectorClientRestAPITest {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
                     ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-                    DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
-                            , new Properties());
+
             try {
                 clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(DDLParserService.class), props, false);
+                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
+                        , new Properties());
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
