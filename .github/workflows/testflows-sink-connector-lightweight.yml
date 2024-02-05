@@ -1,5 +1,5 @@
 name: Lightweight - TestFlows Tests 
-run-name: ${{ inputs.custom_run_name || "Lightweight - TestFlows Tests" }}
+run-name: ${{ inputs.custom_run_name || 'Lightweight - TestFlows Tests' }}
 
 on:    
   workflow_call:
