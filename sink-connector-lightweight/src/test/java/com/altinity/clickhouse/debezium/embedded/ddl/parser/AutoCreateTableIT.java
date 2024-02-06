@@ -99,7 +99,8 @@ public class AutoCreateTableIT {
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 
-            ResultSet dateTimeResult = writer.executeQueryWithResultSet("select count(*) from `new-table`");
+        Thread.sleep(10000);
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select count(*) from `new-table`");
         boolean resultReceived = false;
 
         while(dateTimeResult.next()) {
