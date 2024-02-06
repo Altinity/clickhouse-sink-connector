@@ -126,8 +126,9 @@ public class BaseDbWriter {
     public String executeQuery(String sql) throws SQLException {
         String result = null;
         if(this.conn == null) {
-            String connectionUrl = getConnectionString(hostName, port, database);
-            //this.createConnection(connectionUrl, "Agent_1", userName, password);
+            String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port,
+                    database);
+            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", userName, password, config);
         }
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         if(rs != null) {

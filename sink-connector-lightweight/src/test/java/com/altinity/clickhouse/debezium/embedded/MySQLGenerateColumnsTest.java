@@ -107,8 +107,13 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
         writer.getConnection().close();
+
         Thread.sleep(10000);
 
-        engine.get().stop();
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
     }
 }
