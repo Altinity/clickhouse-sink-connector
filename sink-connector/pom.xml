@@ -6,7 +6,7 @@
 
     <groupId>com.altinity</groupId>
     <artifactId>clickhouse-kafka-sink-connector</artifactId>
-    <version>0.0.5</version>
+    <version>0.0.6</version>
     <packaging>jar</packaging>
     <name>ClickHouse Kafka Sink Connector</name>
     <description>Sinks data from Kafka into ClickHouse</description>

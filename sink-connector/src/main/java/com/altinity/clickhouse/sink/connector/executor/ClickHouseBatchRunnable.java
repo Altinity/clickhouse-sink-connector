@@ -111,6 +111,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Poll from Queue until its empty.
             while(records.size() > 0) {
                 List<ClickHouseStruct> batch = records.poll();
+                log.info("****** Thread: " + Thread.currentThread().getId() + " Batch Size: " + batch.size() + " ******");
                 // Group records by topic name.
                 // Create a new map of topic name to list of records.
                 Map<String, List<ClickHouseStruct>> topicToRecordsMap = new ConcurrentHashMap<>();
