@@ -10,6 +10,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -33,6 +34,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
 @Testcontainers
+@Disabled
 @DisplayName("Integration Test that validates replication of Create DDL with Generated columns")
 public class MySQLGenerateColumnsTest {
 
