@@ -44,7 +44,7 @@ def calculated_column_creation(self):
 
         for retry in retries(timeout=40):
             with retry:
-                data = clickhouse_node.query(f"SELECT * FROM {table_name} FORMAT CSV")
+                data = clickhouse_node.query(f"SELECT * FROM test.{table_name} FORMAT CSV")
                 assert "test@gmail.com" in data.output.strip(), error()
 
 
