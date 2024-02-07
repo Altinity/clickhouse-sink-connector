@@ -16,9 +16,8 @@ def create_table_partitioned_by_range(self):
                 name=f"{table_name}",
                 mysql_columns="order_id INT AUTO_INCREMENT, order_date DATE, total_amount DECIMAL(10, 2)",
                 primary_key="order_id, order_date",
-                clickhouse_columns="order_id Int32, order_date Date32, total_amount Decimal(10,2)",
                 clickhouse_table_engine=clickhouse_table_engine,
-                partition_by_mysql="RANGE (YEAR(order_date)) (PARTITION p1 VALUES LESS THAN (2020));",
+                partition_by_mysql="RANGE (YEAR(order_date)) (PARTITION p1 VALUES LESS THAN (2020))",
             )
 
             with And("I check that the table was replicated"):
