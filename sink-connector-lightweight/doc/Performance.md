@@ -44,3 +44,35 @@ Sysbench: 8000 QPS
 
 
 ```
+
+### Sysbench test results(Heap usage)
+
+OLTP_INSERT
+![Heap usage](Lightweight_heap_usage.png)
+
+MySQL
+```
+mysql> select count(*) from sbtest1;
++----------+
+| count(*) |
++----------+
+|  2090669 |
++----------+
+1 row in set (0.31 sec)
+```
+
+ClickHouse
+```
+f6c822876a5f :) select count(*) from sbtest1 final;
+
+SELECT count(*)
+FROM sbtest1
+FINAL
+
+Query id: 2287b058-33b9-4114-8a3e-970ce6c74ecc
+
+┌─count()─┐
+│ 2090669 │
+└─────────┘
+
+```

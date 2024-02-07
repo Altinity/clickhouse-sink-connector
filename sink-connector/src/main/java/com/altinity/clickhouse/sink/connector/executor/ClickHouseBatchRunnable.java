@@ -111,7 +111,9 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Poll from Queue until its empty.
             while(records.size() > 0) {
                 List<ClickHouseStruct> batch = records.poll();
-                log.info("****** Thread: " + Thread.currentThread().getId() + " Batch Size: " + batch.size() + " ******");
+
+                ///// ***** START PROCESSING BATCH **************************
+                log.info("****** Thread: " + Thread.currentThread().getName() + " Batch Size: " + batch.size() + " ******");
                 // Group records by topic name.
                 // Create a new map of topic name to list of records.
                 Map<String, List<ClickHouseStruct>> topicToRecordsMap = new ConcurrentHashMap<>();
@@ -129,14 +131,46 @@ public class ClickHouseBatchRunnable implements Runnable {
                         topicToRecordsMap.put(topicName, recordsList);
                     }
                 });
+                boolean result = true;
                 // For each topic, process the records.
                 for (Map.Entry<String, List<ClickHouseStruct>> entry : topicToRecordsMap.entrySet()) {
-                    processRecordsByTopic(entry.getKey(), entry.getValue());
+                    result = processRecordsByTopic(entry.getKey(), entry.getValue());
+                    if(result == false) {
+                        log.error("Error processing records for topic: " + entry.getKey());
+                        break;
+                    }
                 }
+
+                if(result)
+                    acknowledgeRecords(batch);
+                ///// ***** END PROCESSING BATCH **************************
+
             }
 
         } catch(Exception e) {
             log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
+        }
+    }
+
+    private void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
+        // Acknowledge the records.
+
+        // acknowledge records
+        // Iterate through the records
+        // and use the record committer to commit the offsets.
+        for(ClickHouseStruct record: batch) {
+            if (record.getCommitter() != null && record.getSourceRecord() != null) {
+
+                record.getCommitter().markProcessed(record.getSourceRecord());
+                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
+                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+
+                if(record.isLastRecordInBatch()) {
+                    record.getCommitter().markBatchFinished();
+                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+                }
+            }
         }
     }
 
@@ -176,8 +210,9 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param topicName
      * @param records
      */
-    private void processRecordsByTopic(String topicName, List<ClickHouseStruct> records) throws Exception {
+    private boolean processRecordsByTopic(String topicName, List<ClickHouseStruct> records) throws Exception {
 
+        boolean result = false;
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
@@ -189,14 +224,14 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retry next time");
-            return;
+            return false;
         }
         // Step 1: The Batch Insert with preparedStatement in JDBC
         // works by forming the Query and then adding records to the Batch.
         // This step creates a Map of Query -> Records(List of ClickHouseStruct)
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
-        boolean result = new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, queryToRecordsMap,
+        result = new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, queryToRecordsMap,
                 partitionToOffsetMap, this.config,tableName, writer.getDatabaseName(), writer.getConnection(),
                 writer.getColumnNameToDataTypeMap());
 
@@ -206,7 +241,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Step 2: Create a PreparedStatement and add the records to the batch.
         // In DBWriter, the queryToRecordsMap is converted to PreparedStatement and added to the batch.
         // The batch is then executed and the records are flushed to ClickHouse.
-        if(flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd, maxBufferSize, preparedStatementExecutor)) {
+        result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap, bmd, maxBufferSize, preparedStatementExecutor);
+
+        if(result) {
             // Remove the entry.
             queryToRecordsMap.remove(topicName);
         }
@@ -221,6 +258,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                 log.error("Error persisting offsets to CH", e);
             }
         }
+
+        return result;
     }
 
     /**
@@ -236,15 +275,16 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = false;
 
         synchronized (queryToRecordsMap) {
-            preparedStatementExecutor.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd, config, writer.getConnection(),
+            result = preparedStatementExecutor.addToPreparedStatementBatch(topicName, queryToRecordsMap, bmd, config, writer.getConnection(),
                     writer.getTableName(), writer.getColumnNameToDataTypeMap(), writer.getEngine());
+
         }
         try {
             Metrics.updateMetrics(bmd);
         } catch(Exception e) {
             log.error("****** Error updating Metrics ******");
         }
-        result = true;
+        //result = true;
 
         return result;
     }

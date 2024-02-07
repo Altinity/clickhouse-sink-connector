@@ -21,7 +21,7 @@ database.server.name: "ER54"
 
 # database.include.list An optional list of regular expressions that match database names to be monitored;
 # any database name not included in the whitelist will be excluded from monitoring. By default all databases will be monitored.
-database.include.list: test
+database.include.list: sbtest
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
 table.include.list: ""
@@ -139,7 +139,7 @@ auto.create.tables: "true"
 #restart.event.loop: "true"
 
 # restart.event.loop.timeout.period.secs: Defines the restart timeout period.
-#restart.event.loop.timeout.period.secs: "3000"
+restart.event.loop.timeout.period.secs: "30"
 
 # Max number of records for the flush buffer.
 #buffer.max.records: "10000"

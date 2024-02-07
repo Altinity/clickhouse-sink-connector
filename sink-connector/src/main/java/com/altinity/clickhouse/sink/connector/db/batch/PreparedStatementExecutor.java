@@ -28,10 +28,8 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
@@ -67,7 +65,7 @@ public class PreparedStatementExecutor {
      *
      * @param queryToRecordsMap
      */
-    public BlockMetaData addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
+    public boolean addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
             List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
                                                      ClickHouseSinkConnectorConfig config,
                                                      ClickHouseConnection conn,
@@ -75,6 +73,7 @@ public class PreparedStatementExecutor {
                                                      Map<String, String> columnToDataTypeMap,
                                                      DBMetadata.TABLE_ENGINE engine) throws Exception {
 
+        boolean result = false;
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
         while(iter.hasNext()) {
             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
@@ -83,7 +82,13 @@ public class PreparedStatementExecutor {
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
 
-            executePreparedStatement(insertQuery, topicName, entry, bmd, config, conn, tableName, columnToDataTypeMap, engine);
+            if(false == executePreparedStatement(insertQuery, topicName, entry, bmd, config, conn, tableName, columnToDataTypeMap, engine)) {
+                log.error("**** ERROR: executing prepared statement");
+                result = false;
+                break;
+            } else {
+                result = true;
+            }
             if(entry.getValue().isEmpty()) {
                 // All records were processed.
                 iter.remove();
@@ -92,15 +97,16 @@ public class PreparedStatementExecutor {
 
         }
 
-        return bmd;
+        return result;
     }
 
-    private void executePreparedStatement(String insertQuery, String topicName,
+    private boolean executePreparedStatement(String insertQuery, String topicName,
                                           Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
                                           ClickHouseConnection conn, String tableName, Map<String, String> columnToDataTypeMap,
                                           DBMetadata.TABLE_ENGINE engine) {
 
+        AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
         List<ClickHouseStruct> failedRecords = new ArrayList<>();
 
@@ -143,27 +149,15 @@ public class PreparedStatementExecutor {
                     ps.addBatch();
                 }
 
-                int[] result = ps.executeBatch();
+                // ToDo: should we check for EXECUTE_FAILED
+                int[] batchResult = ps.executeBatch();
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
-                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** task(" + taskId + ")" + " Thread ID: " + Thread.currentThread().getName());
+                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
+                        "task(" + taskId + ")" + " Thread ID: " + Thread.currentThread().getName() + " Result: " +
+                        batchResult.toString());
+                result.set(true);
 
-                // Iterate through the records
-                // and use the record committer to commit the offsets.
-                for(ClickHouseStruct record: batch) {
-                    if (record.getCommitter() != null && record.getSourceRecord() != null) {
-
-                        record.getCommitter().markProcessed(record.getSourceRecord());
-                        log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-                                record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
-
-                        if(record.isLastRecordInBatch()) {
-                            record.getCommitter().markBatchFinished();
-                            log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                                    record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
-                        }
-                    }
-                }
 
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
@@ -184,6 +178,8 @@ public class PreparedStatementExecutor {
                 }
             }
         });
+
+        return result.get();
     }
 
 

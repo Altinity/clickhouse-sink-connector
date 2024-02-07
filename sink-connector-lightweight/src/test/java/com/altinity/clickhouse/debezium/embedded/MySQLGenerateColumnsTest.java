@@ -34,7 +34,6 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
 @Testcontainers
-@Disabled
 @DisplayName("Integration Test that validates replication of Create DDL with Generated columns")
 public class MySQLGenerateColumnsTest {
 
