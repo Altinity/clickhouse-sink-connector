@@ -131,7 +131,9 @@ def is_deleted_different_datatypes(self):
     ]
 
     for datatype in datatypes:
-        check_is_deleted_datatypes(datatype=datatype)
+        Check(
+            name=f"check is_deleted with {datatype}", test=check_is_deleted_datatypes
+        )(datatype=datatype)
 
 
 @TestModule
