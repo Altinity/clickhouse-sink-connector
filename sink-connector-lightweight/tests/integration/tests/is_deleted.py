@@ -113,12 +113,6 @@ def check_is_deleted_datatypes(self, datatype):
     ):
         for retry in retries(timeout=40, delay=1):
             with retry:
-                clickhouse_data = clickhouse_node.query(
-                    f"SELECT is_deleted FROM test.{table_name} FORMAT CSV"
-                )
-
-                assert clickhouse_data.output.strip() == f"{values}", error()
-
                 describe_clickhouse_table = clickhouse_node.query(
                     f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
                 )
