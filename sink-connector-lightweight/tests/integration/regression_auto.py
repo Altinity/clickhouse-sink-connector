@@ -268,7 +268,8 @@ def regression(
         "databases",
         "table_names",
         "is_deleted",
-        "calculated_columns"
+        "calculated_columns",
+        "partitions"
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
