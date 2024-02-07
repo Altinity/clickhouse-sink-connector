@@ -88,7 +88,7 @@ def module(
     self,
     clickhouse_node="clickhouse",
     mysql_node="mysql-master",
-    table_names_count=100,
+    table_names_count=50,
     table_name_max_length=64,
 ):
     """
