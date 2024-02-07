@@ -22,8 +22,10 @@ def create_table_with_calculated_column(self, table_name, datatype="int", data="
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
-    # with And(f"inserting data into the {table_name} table"):
-    #     mysql_node.query(f"INSERT INTO {table_name} (id, first_name, ) VALUES (1, 'test', 1, {data})")
+    with And(f"inserting data into the {table_name} table"):
+        mysql_node.query(
+            f"INSERT INTO {table_name} (id, first_name, last_name, email) VALUES (1, 'test', 'test2', 'test@gmail.com')"
+        )
 
     with And("I make sure that the table was replicated on the ClickHouse side"):
         for retry in retries(timeout=40):
@@ -39,6 +41,12 @@ def calculated_column_creation(self):
 
     with Given("I create a table with calculated columns"):
         create_table_with_calculated_column(table_name=table_name)
+
+        for retry in retries(timeout=40):
+            with retry:
+                data = clickhouse_node.query(f"SELECT * FROM {table_name} FORMAT CSV")
+                assert "test@gmail.com" in data.output.strip(), error()
+
 
 @TestModule
 @Name("calculated columns")
