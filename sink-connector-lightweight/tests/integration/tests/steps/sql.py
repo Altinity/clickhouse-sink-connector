@@ -85,7 +85,7 @@ def create_mysql_to_clickhouse_replicated_table(
     primary_key="id",
     partition_by=None,
     engine=True,
-    partition_by_mysql=False
+    partition_by_mysql=False,
 ):
     """Create MySQL-to-ClickHouse replicated table.
 

@@ -78,7 +78,6 @@ def stop_start(self, services):
 
     with Given("I create unique table name"):
         table_name = f"test{getuid()}"
-        # table_name = "testd06864ef_f576_11ed_afcb_fb89cf2d4539"
 
     with Given(f"I create MySQL table {table_name}"):
         create_mysql_table(
