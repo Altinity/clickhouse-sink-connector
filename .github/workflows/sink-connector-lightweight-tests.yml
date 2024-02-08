@@ -19,7 +19,7 @@ env:
 
 jobs:
   java-lightweight:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce ]
     steps:
       - uses: actions/checkout@v2
       - name: Set up JDK 17
