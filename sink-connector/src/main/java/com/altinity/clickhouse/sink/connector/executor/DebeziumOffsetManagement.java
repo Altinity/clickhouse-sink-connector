@@ -5,6 +5,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,9 +19,9 @@ public class DebeziumOffsetManagement {
     private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetManagement.class);
 
     // A list of minimum , maximum timestamps of batches in flight
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches;
+    static Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new HashMap<>();
 
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches;
+    static Map<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches = new HashMap<>();
 
     public DebeziumOffsetManagement(Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches) {
         this.inFlightBatches = inFlightBatches;
