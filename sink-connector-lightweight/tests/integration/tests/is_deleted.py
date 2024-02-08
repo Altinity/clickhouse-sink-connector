@@ -9,7 +9,7 @@ from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 
 @TestStep(Given)
-def create_table_with_is_deleted(self, table_name, datatype="int", data="5"):
+def create_table_with_is_deleted(self, table_name, datatype="int", data="5", column="is_deleted"):
     """Create mysql table that contains the column with the name 'is_deleted'"""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
@@ -19,7 +19,7 @@ def create_table_with_is_deleted(self, table_name, datatype="int", data="5"):
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int, is_deleted {datatype}",
+            mysql_columns=f"col1 varchar(255), col2 int, {column} {datatype}",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
@@ -55,6 +55,27 @@ def check_is_deleted(self):
                     "__is_deleted" and "is_deleted" in clickhouse_data.output.strip()
                 ), error()
 
+
+@TestScenario
+def check_is_deleted_with_underscore(self):
+    """Check that when creating a mysql table with __is_deleted column it is replicated to the ClickHouse table."""
+
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    with Given(f"I create the {table_name} table and populate it with data"):
+        create_table_with_is_deleted(table_name=table_name, column="__is_deleted")
+
+    with Then("I check that the data was inserted correctly into the ClickHouse table"):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
+                )
+                assert (
+                    "_is_deleted" and "is_deleted" in clickhouse_data.output.strip()
+                ), error()
 
 @TestScenario
 def remove_is_deleted_column(self):
