@@ -85,6 +85,7 @@ def create_mysql_to_clickhouse_replicated_table(
     primary_key="id",
     partition_by=None,
     engine=True,
+    partition_by_mysql=False,
 ):
     """Create MySQL-to-ClickHouse replicated table.
 
@@ -158,13 +159,24 @@ def create_mysql_to_clickhouse_replicated_table(
             )
 
         with Given(f"I create MySQL table", description=name):
-            mysql_node.query(
-                f"CREATE TABLE IF NOT EXISTS {name} "
-                f"(id INT NOT NULL,"
-                f"{mysql_columns}"
-                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''}) "
-                f"{' ENGINE = InnoDB;' if engine else ''}",
+            query = (
+                f"CREATE TABLE IF NOT EXISTS {name} (id INT NOT NULL,{mysql_columns}"
             )
+
+            if primary_key is not None:
+                query += f", PRIMARY KEY ({primary_key}))"
+            else:
+                query += ")"
+
+            if engine:
+                query += f" ENGINE = InnoDB"
+
+            if partition_by_mysql:
+                query += f", PARTITION BY {partition_by_mysql}"
+
+            query += ";"
+
+            mysql_node.query(query)
 
         yield
     finally:

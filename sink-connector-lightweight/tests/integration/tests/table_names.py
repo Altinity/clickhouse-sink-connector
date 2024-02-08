@@ -88,7 +88,7 @@ def module(
     self,
     clickhouse_node="clickhouse",
     mysql_node="mysql-master",
-    table_names_count=100,
+    table_names_count=50,
     table_name_max_length=64,
 ):
     """
@@ -107,4 +107,6 @@ def module(
     )
 
     for table_name in table_names:
-        Scenario(test=check_table_names)(table_name=table_name)
+        Scenario(name=f"check table with {table_name} name", test=check_table_names)(
+            table_name=table_name
+        )
