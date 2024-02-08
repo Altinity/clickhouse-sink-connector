@@ -38,7 +38,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     private final ClickHouseSinkConnectorConfig config;
 
     //ToDo: Later this can be moved to one connection per application.
-    private final ClickHouseConnection conn;
+    private ClickHouseConnection conn;
 
     /**
      * Data structures with state
@@ -68,14 +68,15 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
+        createConnection();
+    }
+
+    private void createConnection() {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), this.dbCredentials.getDatabase());
 
         this.conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), config);
-        new BaseDbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
-                this.dbCredentials.getDatabase(), this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), this.config, this.conn);
     }
 
     private DBCredentials parseDBConfiguration() {
@@ -183,6 +184,11 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         ClickHouseStruct record, ClickHouseConnection connection) {
         DbWriter writer = null;
 
+        if (this.topicToDbWriterMap.containsKey(topicName)) {
+            writer = this.topicToDbWriterMap.get(topicName);
+            return writer;
+        }
+
         writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
                     this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record, connection);
@@ -201,6 +207,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = false;
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
+        if(this.conn == null) {
+            createConnection();
+        }
         DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
