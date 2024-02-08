@@ -168,6 +168,12 @@ xfails = {
             "The issue where for some reason the column is shown twice on clickhouse side until you specific finally on select",
         )
     ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/calculated columns/*": [
+        (
+            Fail,
+            "https://github.com/Altinity/clickhouse-sink-connector/issues/459",
+        )
+    ],
     "types/enum": [(Fail, "doesn't create table")],
 }
 xflags = {}
@@ -269,7 +275,7 @@ def regression(
         "table_names",
         "is_deleted",
         "calculated_columns",
-        "partitions"
+        "partitions",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))

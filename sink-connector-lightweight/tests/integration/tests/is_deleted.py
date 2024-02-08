@@ -9,7 +9,9 @@ from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 
 @TestStep(Given)
-def create_table_with_is_deleted(self, table_name, datatype="int", data="5", column="is_deleted"):
+def create_table_with_is_deleted(
+    self, table_name, datatype="int", data="5", column="is_deleted"
+):
     """Create mysql table that contains the column with the name 'is_deleted'"""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
@@ -76,6 +78,7 @@ def check_is_deleted_with_underscore(self):
                 assert (
                     "_is_deleted" and "is_deleted" in clickhouse_data.output.strip()
                 ), error()
+
 
 @TestScenario
 def remove_is_deleted_column(self):

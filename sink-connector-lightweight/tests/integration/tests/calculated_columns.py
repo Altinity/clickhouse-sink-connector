@@ -47,7 +47,7 @@ def calculated_column_creation(self):
                 data = clickhouse_node.query(
                     f"SELECT * FROM test.{table_name} FORMAT CSV"
                 )
-                assert "test@gmail.com" in data.output.strip(), error()
+                assert "test test2" in data.output.strip(), error()
 
 
 @TestModule
