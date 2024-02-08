@@ -297,7 +297,7 @@ public class DebeziumChangeEventCapture {
                 String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase());
                 conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase(), dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
             }
