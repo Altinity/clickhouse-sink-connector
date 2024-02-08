@@ -83,6 +83,12 @@ public class DebeziumOffsetManagement {
         // which is lower than the current batch.
         for (Map.Entry<Pair<Long, Long>, List<ClickHouseStruct>> entry : inFlightBatches.entrySet()) {
             Pair<Long, Long> key = entry.getKey();
+
+            // Ignore the same batch
+            if (pair.getLeft().longValue() == key.getLeft().longValue() && pair.getRight().longValue() == key.getRight().longValue()) {
+                continue;
+            }
+
             // If the min timestamp of the batch is lower than the current batch
             if (pair.getLeft() < key.getRight()) {
                 log.error("*********** Batch is within the range of the in flight batch ***********");
@@ -112,6 +118,7 @@ public class DebeziumOffsetManagement {
                     } catch (InterruptedException e) {
                         throw new RuntimeException(e);
                     }
+                completedBatches.remove(k);
                 }
             });
         }
