@@ -22,10 +22,12 @@ public class DebeziumOffsetManagementTest {
         // Create batch timestamps map.
         Map<Pair<Long, Long>, List<ClickHouseStruct>> batchTimestamps = new HashMap();
         List<ClickHouseStruct> clickHouseStructs = new ArrayList<>();
-        ClickHouseStruct ch1 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ClickHouseStruct ch2 = new ClickHouseStruct(8, "SERVER5432.test.customers", getKafkaStruct(), 2, System.currentTimeMillis() ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, System.currentTimeMillis(), null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch1 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 1L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch2 = new ClickHouseStruct(8, "SERVER5432.test.customers", getKafkaStruct(), 2, 22L ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 33L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
         clickHouseStructs.add(ch1);
+        clickHouseStructs.add(ch2);
+        clickHouseStructs.add(ch3);
 
         batchTimestamps.put(Pair.of(1L, 2L), clickHouseStructs);
 

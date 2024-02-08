@@ -113,6 +113,9 @@ public class ClickHouseBatchRunnable implements Runnable {
                 List<ClickHouseStruct> batch = records.poll();
 
                 ///// ***** START PROCESSING BATCH **************************
+                // Step 1: Add to Inflight batches.
+                DebeziumOffsetManagement.addToBatchTimestamps(batch);
+
                 log.info("****** Thread: " + Thread.currentThread().getName() + " Batch Size: " + batch.size() + " ******");
                 // Group records by topic name.
                 // Create a new map of topic name to list of records.
@@ -141,8 +144,11 @@ public class ClickHouseBatchRunnable implements Runnable {
                     }
                 }
 
-                if(result)
-                    acknowledgeRecords(batch);
+                if(result) {
+                    // Step 2: Check if the batch can be committed.
+                    DebeziumOffsetManagement.checkIfBatchCanBeCommitted(batch);
+                }
+                    //acknowledgeRecords(batch);
                 ///// ***** END PROCESSING BATCH **************************
 
             }
@@ -152,27 +158,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
     }
 
-    private void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
-        // Acknowledge the records.
 
-        // acknowledge records
-        // Iterate through the records
-        // and use the record committer to commit the offsets.
-        for(ClickHouseStruct record: batch) {
-            if (record.getCommitter() != null && record.getSourceRecord() != null) {
-
-                record.getCommitter().markProcessed(record.getSourceRecord());
-                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
-
-                if(record.isLastRecordInBatch()) {
-                    record.getCommitter().markBatchFinished();
-                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
-                }
-            }
-        }
-    }
 
     /**
      * Function to retrieve table name from topic name
