@@ -99,7 +99,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            properties.setProperty("custom_settings", "allow_experimental_object_type=1");
+            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
 
             if(!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);

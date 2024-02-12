@@ -23,7 +23,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
-        <sink-connector-library-version>0.0.6</sink-connector-library-version>
+        <sink-connector-library-version>0.0.7</sink-connector-library-version>
     </properties>
     <dependencyManagement>
         <dependencies>

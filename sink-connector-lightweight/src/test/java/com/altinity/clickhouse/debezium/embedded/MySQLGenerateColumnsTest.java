@@ -112,15 +112,15 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
         ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from contacts");
-//        boolean insertCheck = false;
-//        while (resultSet.next()) {
-//                insertCheck = true;
-//                String fullname = resultSet.getString("fullname");
-//                Assert.assertTrue(fullname.equalsIgnoreCase("John Doe"));
-//        }
-//        Thread.sleep(10000);
-//
-//        Assert.assertTrue(insertCheck);
+        boolean insertCheck = false;
+        while (resultSet.next()) {
+                insertCheck = true;
+                String fullname = resultSet.getString("fullname");
+                Assert.assertTrue(fullname.equalsIgnoreCase("John Doe"));
+        }
+        Thread.sleep(10000);
+
+        Assert.assertTrue(insertCheck);
         writer.getConnection().close();
 
         Thread.sleep(10000);

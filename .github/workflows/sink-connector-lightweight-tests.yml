@@ -32,7 +32,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y maven
       - name: Build Library with Maven
         working-directory: sink-connector
-        run: mvn install -DskipTests=true
+        run: mvn clean install -DskipTests=true
       - name: Build Replicator with Maven
         working-directory: sink-connector-lightweight
         run: mvn --quiet surefire-report:report
