@@ -299,11 +299,19 @@ public class DBMetadata {
                 String columnName = columns.getString("COLUMN_NAME");
                 String typeName = columns.getString("TYPE_NAME");
 
-//                Object dataType = columns.getString("DATA_TYPE");
+                String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
+                String columnDefinition = columns.getString("COLUMN_DEF");
+                String sqlDataType = columns.getString("SQL_DATA_TYPE");
+                String dataType = columns.getString("DATA_TYPE");
+               // String typeName = columns.getString("TYPE_NAME");
 //                String columnSize = columns.getString("COLUMN_SIZE");
 //                String isNullable = columns.getString("IS_NULLABLE");
 //                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
 
+                // Skip generated columns.
+                if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                    continue;
+                }
                 result.put(columnName, typeName);
             }
         } catch (SQLException sq) {

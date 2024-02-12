@@ -94,6 +94,10 @@ public class MySQLGenerateColumnsTest {
                 "email VARCHAR(100) NOT NULL);\n").execute();
 
         Thread.sleep(30000);
+
+        conn.prepareStatement("insert into contacts(first_name, last_name, email) values('John', 'Doe', 'john.doe@gmail.com')").execute();
+        Thread.sleep(20000);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
         ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
@@ -107,6 +111,16 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
+        ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from contacts");
+        boolean insertCheck = false;
+        while (resultSet.next()) {
+                insertCheck = true;
+                String fullname = resultSet.getString("fullname");
+                Assert.assertTrue(fullname.equalsIgnoreCase("John Doe"));
+        }
+        Thread.sleep(10000);
+
+        Assert.assertTrue(insertCheck);
         writer.getConnection().close();
 
         Thread.sleep(10000);
