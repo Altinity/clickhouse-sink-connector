@@ -78,7 +78,7 @@ public class AutoCreateTableIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
                         new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
