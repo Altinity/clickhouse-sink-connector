@@ -82,7 +82,7 @@ public class IsDeletedColumnsIT {
         });
 
 
-        Thread.sleep(10000);
+        Thread.sleep(30000);
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int)").execute();
 
