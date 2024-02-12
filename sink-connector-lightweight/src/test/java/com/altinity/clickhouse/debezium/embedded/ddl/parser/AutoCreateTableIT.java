@@ -69,7 +69,7 @@ public class AutoCreateTableIT {
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("create table `new-table`(col1 varchar(255), col2 int, col3 int)").execute();
 
-        Thread.sleep(10000);
+        Thread.sleep(20000);
 
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
@@ -85,7 +85,7 @@ public class AutoCreateTableIT {
             }
         });
 
-        Thread.sleep(10000);
+        Thread.sleep(30000);
         conn.prepareStatement("insert into `new-table` values('test', 1, 2)").execute();
         conn.close();
 
