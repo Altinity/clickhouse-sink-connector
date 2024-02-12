@@ -79,12 +79,12 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
     `record_insert_seq` UInt64,
     `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
-SETTINGS index_granularity = 8198"
+ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8198"
 
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
-offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.offset.table.delete: "select * from %s"
+
+offset.storage.jdbc.offset.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
 
 # schema.history.internal: The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
