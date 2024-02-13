@@ -206,6 +206,11 @@ public class SinkConnectorClientRestAPITest {
         }
 
         // Validate the stop call.
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
 
 
     }
