@@ -3,7 +3,7 @@ version: "3.4"
 services:
   mysql-master:
     container_name: mysql-master
-    image: docker.io/bitnami/mysql:latest
+    image: docker.io/bitnami/mysql:8.0
     restart: "no"
     ports:
       - "3306:3306"
@@ -13,6 +13,7 @@ services:
       - MYSQL_REPLICATION_MODE=master
       - MYSQL_REPLICATION_USER=repl_user
       - ALLOW_EMPTY_PASSWORD=yes
+      - TZ=US/Central
     volumes:
       - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
       - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql

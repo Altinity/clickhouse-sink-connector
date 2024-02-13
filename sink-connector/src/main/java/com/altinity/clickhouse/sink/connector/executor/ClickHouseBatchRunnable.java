@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -19,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,6 +53,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
     private DBCredentials dbCredentials;
+
 
     public ClickHouseBatchRunnable(ConcurrentLinkedQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
@@ -197,6 +200,30 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * Function to return ClickHouse server timezone.
+     * @return
+     */
+    public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
+
+        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
+                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        // Validate if timezone string is valid.
+        ZoneId userProvidedTimeZoneId = null;
+        try {
+            if(!userProvidedTimeZone.isEmpty()) {
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+            }
+        } catch (Exception e){
+            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+        }
+
+        if(userProvidedTimeZoneId != null) {
+            return userProvidedTimeZoneId;
+        }
+        return new DBMetadata().getServerTimeZone(this.conn);
+    }
+    /**
      * Function to process records
      *
      * @param topicName
@@ -214,7 +241,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
-                writer.getConnection());
+                writer.getConnection(), getServerTimeZone(this.config));
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {

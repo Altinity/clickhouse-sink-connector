@@ -263,20 +263,7 @@ public class DBMetadata {
     }
 
 
-    /**
-     * Function to get the ClickHouse server timezone(Defaults to UTC)
-     */
-    public ZoneId getServerTimeZone(ClickHouseConnection conn) {
-        ZoneId result = ZoneId.of("UTC");
-        if(conn != null) {
-            TimeZone serverTimeZone = conn.getServerTimeZone();
-            if(serverTimeZone != null) {
-                result = serverTimeZone.toZoneId();
-            }
-        }
 
-        return result;
-    }
 
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
@@ -319,5 +306,18 @@ public class DBMetadata {
         }
         return result;
     }
+    /**
+     * Function to get the ClickHouse server timezone(Defaults to UTC)
+     */
+    public ZoneId getServerTimeZone(ClickHouseConnection conn) {
+        ZoneId result = ZoneId.of("UTC");
+        if(conn != null) {
+            TimeZone serverTimeZone = conn.getServerTimeZone();
+            if(serverTimeZone != null) {
+                result = serverTimeZone.toZoneId();
+            }
+        }
 
+        return result;
+    }
 }

@@ -115,10 +115,11 @@ persist.raw.bytes: "false"
 auto.create.tables: "true"
 
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
-#database.connectionTimeZone: "US/Samoa"
+database.connectionTimeZone: "UTC"
+database.serverTimezone: "UTC"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
-#clickhouse.datetime.timezone: "UTC"
+clickhouse.datetime.timezone: "UTC"
 
 # skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
 #skip_replica_start: "false"

@@ -6,6 +6,7 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
@@ -47,14 +48,16 @@ public class PreparedStatementExecutor {
     public PreparedStatementExecutor(String replacingMergeTreeDeleteColumn,
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
-                                     ClickHouseConnection conn) {
+                                     ClickHouseConnection conn, ZoneId serverTimeZone) {
         this.replacingMergeTreeDeleteColumn = replacingMergeTreeDeleteColumn;
         this.replacingMergeTreeWithIsDeletedColumn = replacingMergeTreeWithIsDeletedColumn;
 
         this.signColumn = signColumn;
         this.versionColumn = versionColumn;
 
-        serverTimeZone = new DBMetadata().getServerTimeZone(conn);
+        this.serverTimeZone = serverTimeZone;
+      //  serverTimeZone = BaseDbWriter.
+        //serverTimeZone = new DBMetadata().getServerTimeZone(conn);
     }
 
     private static final Logger log = LoggerFactory.getLogger(PreparedStatementExecutor.class);
