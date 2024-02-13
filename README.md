@@ -5,6 +5,12 @@
   <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
 </a>
 <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/altinityinfra/clickhouse-sink-connector">
+### Latest Releases
+| Component            | Docker Tag                                                                              |
+|----------------------|-----------------------------------------------------------------------------------------|
+| Kafka Sink Connector | altinity/clickhouse-sink-connector:latest                                               |
+| Lightweight          | altinityinfra/clickhouse-sink-connector:408-97b1d3d83ef93c1b76a2b1c4d9c544dc67fbbec3-lt |
+|                      |                                                                                         |
 
 # Altinity Sink Connector for ClickHouse
 

@@ -1,4 +1,5 @@
 name: Lightweight - TestFlows Tests 
+run-name: ${{ inputs.custom_run_name || 'Lightweight - TestFlows Tests' }}
 
 on:    
   workflow_call:
@@ -22,6 +23,13 @@ on:
         description: "Lightweight connector docker image"
         required: true
         type: string
+      extra_args:
+        description: "Specific Suite To Run (Default * to run everything)."
+        required: false
+        type: string
+      custom_run_name:
+        description: 'Custom run name (optional)'
+        required: false
 
 env:
   SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
@@ -63,7 +71,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: sink-connector-lightweight/tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/mysql to clickhouse replication auto/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:23.3 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/mysql to clickhouse replication auto/${{ inputs.extra_args != '' && inputs.extra_args || '*' }}" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:23.3 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
       - name: Create tfs results report
         if: always()
@@ -87,7 +95,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: testflows-artifacts-${{ steps.date.outputs.date }}
+          name: testflows-sink-connector-lightweight-artefacts
           path: |
             sink-connector-lightweight/tests/integration/logs/*.log
           if-no-files-found: error
