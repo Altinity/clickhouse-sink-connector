@@ -82,7 +82,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         String DATETIME_MIN = "1900-01-01 00:00:00.0";
         String DATETIME_MID = "2022-09-29 01:47:46.0";
-        String DATETIME_MAX = "2299-12-31 23:59:59.0'";
+        String DATETIME_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME1_MIN = "1900-01-01 00:00:00.0";
         String DATETIME1_MID = "2022-09-29 01:48:25.1";
