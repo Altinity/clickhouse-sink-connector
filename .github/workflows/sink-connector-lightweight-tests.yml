@@ -28,6 +28,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
+      - name: Display hostname of runner
+        run: echo $(hostname -I | cut -d ' ' -f 1)
       - name: Install maven
         run: sudo apt-get update && sudo apt-get install -y maven
       - name: Build Library with Maven
