@@ -456,8 +456,8 @@
                         <include>**/*IT.java</include>
                     </includes>
                     <!-- <forkCount>10</forkCount> -->
-                    <parallel>all</parallel>
-                    <threadCount>10</threadCount>
+                    <!-- <parallel>all</parallel>
+                    <threadCount>10</threadCount> -->
                     <properties>
                         <property>
                             <name>listener</name>
