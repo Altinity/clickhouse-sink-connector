@@ -69,9 +69,6 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties();
-
-
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
                         new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
@@ -82,17 +79,34 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         Thread.sleep(30000);
         Connection conn = connectToMySQL();
-        // alter table ship_class change column class_name class_name_new int;
-        // alter table ship_class change column tonange tonange_new decimal(10,10);
 
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME1` VALUES ('DATETIME(1)-INSERT','1000-01-01 00:00:00.0','2022-09-29 01:48:25.1','9999-12-31 23:59:59.9','9999-12-31 23:59:59');").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME2` VALUES ('DATETIME(2)-INSERT','1000-01-01 00:00:00.00','2022-09-29 01:49:05.12','9999-12-31 23:59:59.99','9999-12-31 23:59:59');\n").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME3` VALUES ('DATETIME(3)-INSERT','1000-01-01 00:00:00.000','2022-09-29 01:49:22.123','9999-12-31 23:59:59.999',NULL)").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME4` VALUES ('DATETIME(4)-INSERT','1000-01-01 00:00:00.0000','2022-09-29 01:50:12.1234','9999-12-31 23:59:59.9999',NULL)").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME5` VALUES ('DATETIME(5)-INSERT','1000-01-01 00:00:00.00000','2022-09-29 01:50:28.12345','9999-12-31 23:59:59.99999',NULL)").execute();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME6` VALUES ('DATETIME(6)-INSERT','1000-01-01 00:00:00.000000','2022-09-29 01:50:56.123456','9999-12-31 23:59:59.999999',NULL)").execute();
-    //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
+        String DATETIME_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME_MID = "2022-09-29 01:47:46.0";
+        String DATETIME_MAX = "2299-12-31 23:59:59.0'";
+
+        String DATETIME1_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME1_MID = "2022-09-29 01:48:25.1";
+        String DATETIME1_MAX = "2299-12-31 23:59:59.9";
+
+        String DATETIME2_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME2_MID = "2022-09-29 01:49:05.12";
+        String DATETIME2_MAX = "2299-12-31 23:59:59.99";
+
+        String DATETIME3_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME3_MID = "2022-09-29 01:49:22.123";
+        String DATETIME3_MAX = "2299-12-31 23:59:59.999";
+
+        String DATETIME4_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME4_MID = "2022-09-29 01:50:12.1234";
+        String DATETIME4_MAX = "2299-12-31 23:59:59.9999";
+
+        String DATETIME5_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME5_MID = "2022-09-29 01:50:28.12345";
+        String DATETIME5_MAX = "2299-12-31 23:59:59.99999";
+
+        String DATETIME6_MIN = "1900-01-01 00:00:00.0";
+        String DATETIME6_MID = "2022-09-29 01:50:56.123456";
+        String DATETIME6_MAX = "2299-12-31 23:59:59.999999";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");
@@ -103,11 +117,26 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 
 
-//        writer.getConnection().close();
-//        Thread.sleep(10000);
-//
-//         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-//                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+        // Validate that the MySQL server is set to Central timezone.
+        ResultSet mySqlTimeZoneRS = conn.createStatement().executeQuery("select @@system_time_zone\n");
+        boolean mySqlTimeZoneValidated = false;
+        while(mySqlTimeZoneRS.next()) {
+            mySqlTimeZoneValidated = true;
+            System.out.println("MySQL Timezone: " + mySqlTimeZoneRS.getString(1));
+            Assert.assertTrue(mySqlTimeZoneRS.getString(1).equalsIgnoreCase("CST"));
+        }
+
+        Assert.assertTrue(mySqlTimeZoneValidated);
+
+        // Validate that Clickhouse server is set to Central timezone.
+        ResultSet chTimeZoneRS = writer.getConnection().prepareStatement("select timezone()").executeQuery();
+        boolean chTimeZoneValidated = false;
+        while(chTimeZoneRS.next()) {
+            chTimeZoneValidated = true;
+            System.out.println("ClickHouse Timezone: " + chTimeZoneRS.getString(1));
+            Assert.assertTrue(chTimeZoneRS.getString(1).equalsIgnoreCase("America/Chicago"));
+        }
+        Assert.assertTrue(chTimeZoneValidated);
 
         /**
          * DATE TIME
@@ -131,10 +160,10 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
-//
-//            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
-//            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
-//            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.0"));
+
+            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME_MIN));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME_MID));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME_MAX));
             break;
         }
 
@@ -146,9 +175,9 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult1.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult1.getTimestamp("Maximum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
-//            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.9"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME1_MIN));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME1_MID));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME1_MAX));
         }
 
         // DATETIME2
@@ -159,9 +188,9 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult2.getTimestamp("Maximum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.12"));
-//            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.99"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME2_MIN));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME2_MID));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME2_MAX));
         }
 
          //DATETIME3
@@ -173,9 +202,10 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult3.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:22.0"));
-//            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
-//            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 18:00:00.0"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME3_MID));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME3_MAX));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME3_MIN));
+
         }
 
 
@@ -188,10 +218,9 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult4.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:12.1234"));
-//            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.9999"));
-//            Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
-
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME4_MID));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME4_MAX));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME4_MIN));
         }
 
 
@@ -204,9 +233,9 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult5.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:28.12345"));
-//            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.99999"));
-//            Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME5_MID));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME5_MAX));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME5_MIN));
 
         }
 
@@ -219,9 +248,9 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             System.out.println(dateTimeResult6.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
 
-//            Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
-//            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
-//            Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:09:24.0"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase(DATETIME6_MID));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DATETIME6_MAX));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DATETIME6_MIN));
             break;
         }
 
