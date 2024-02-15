@@ -64,7 +64,7 @@ def check_datetime_column(self, precision, data):
                     assert clickhouse_values.output.strip() == data, error()
 
 
-@TestSketch
+@TestSketch(Scenario)
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime("1.0")
 )
