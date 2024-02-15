@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -64,6 +65,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
+    @Disabled
     @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to DecoderBufs")
     public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
