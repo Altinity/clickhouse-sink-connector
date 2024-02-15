@@ -49,19 +49,25 @@ def check_datetime_column(self, precision, data):
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
-                    assert clickhouse_values.output.strip().replace('"', '') == "1900-01-01 00:00:00", error()
+                    assert (
+                        clickhouse_values.output.strip().replace('"', "")
+                        == "1900-01-01 00:00:00"
+                    ), error()
                 elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert (
-                        clickhouse_values.output.strip().replace('"', '') == "2299-12-31 23:59:59"
+                        clickhouse_values.output.strip().replace('"', "")
+                        == "2299-12-31 23:59:59"
                     ), error()
                 else:
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
-                    assert clickhouse_values.output.strip().replace('"', '') == data, error()
+                    assert (
+                        clickhouse_values.output.strip().replace('"', "") == data
+                    ), error()
 
 
 @TestSketch(Scenario)
@@ -71,7 +77,18 @@ def check_datetime_column(self, precision, data):
 @Flags(TE)
 def datetime(self):
     """Validate that the table in MySQL is replicated to ClickHouse when it contains datetime columns with different
-    value and precision combinations."""
+    value and precision combinations.
+
+    Combinations used are related to:
+
+    - DATETIME precision values in range of 1-6
+    - Different DATETIME values like:
+        - min/max MySQL values,
+        - min/max ClickHouse DateTime64 values,
+        - NOW() function,
+        - Leap year like 2024
+        - Non leap year like 2023
+    """
     precision_values = ["0", "1", "2", "3", "4", "5", "6"]
     data = [
         "1000-01-01 00:00:00",
@@ -104,16 +121,6 @@ def module(
 ):
     """
     Check that the table is replicated with all MySQL DataTypes.
-
-    Combinations used are related to:
-
-    - DATETIME precision values in range of 1-6
-    - Different DATETIME values like:
-        - min/max MySQL values,
-        - min/max ClickHouse DateTime64 values,
-        - NOW() function,
-        - Leap year like 2024
-        - Non leap year like 2023
     """
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
