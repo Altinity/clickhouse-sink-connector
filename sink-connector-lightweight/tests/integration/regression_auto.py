@@ -276,6 +276,7 @@ def regression(
         "is_deleted",
         "calculated_columns",
         "partitions",
+        "datatypes"
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
