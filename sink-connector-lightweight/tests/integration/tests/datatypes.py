@@ -83,7 +83,10 @@ def datetime(self):
         "2023-02-28 23:59:59",
     ]
 
-    check_datetime_column(precision=either(*precision_values), data=either(*data))
+    check_datetime_column(
+        precision=either(*precision_values, i="precision values"),
+        data=either(*data, i="data values"),
+    )
 
 
 @TestModule
