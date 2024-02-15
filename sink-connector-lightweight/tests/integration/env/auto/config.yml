@@ -43,3 +43,6 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
 replacingmergetree.delete.column: "_sign"
 enable.snapshot.ddl: "true"
+database.connectionTimeZone: "UTC"
+database.serverTimezone: "UTC"
+clickhouse.datetime.timezone: "UTC"
