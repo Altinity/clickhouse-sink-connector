@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -107,8 +108,13 @@ public class TableOperationsIT {
                     "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
                     "email VARCHAR(100) NOT NULL);\n").execute();
 
+            String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                    "employees");
+            ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                    clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
             BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                    "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+                    "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 

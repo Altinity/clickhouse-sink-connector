@@ -19,7 +19,7 @@ env:
 
 jobs:
   java-lightweight:
-    runs-on: ubuntu-latest
+    runs-on: [ self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce ]
     steps:
       - uses: actions/checkout@v2
       - name: Set up JDK 17
@@ -28,11 +28,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: maven
+      - name: Display hostname of runner
+        run: echo $(hostname -I | cut -d ' ' -f 1)
       - name: Install maven
         run: sudo apt-get update && sudo apt-get install -y maven
       - name: Build Library with Maven
         working-directory: sink-connector
-        run: mvn install -DskipTests=true
+        run: mvn clean install -DskipTests=true
       - name: Build Replicator with Maven
         working-directory: sink-connector-lightweight
-        run: mvn test
+        run: mvn --quiet surefire-report:report
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4
+        if: success() || failure() # always run even if the previous step fails
+        with:
+          report_paths: 'sink-connector-lightweight/target/surefire-reports/TEST-*.xml'

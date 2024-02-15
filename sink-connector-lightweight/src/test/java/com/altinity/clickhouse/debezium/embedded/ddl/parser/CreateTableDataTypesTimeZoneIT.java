@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -80,9 +81,14 @@ public class CreateTableDataTypesTimeZoneIT {
 
         Thread.sleep(30000);
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees");
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
 
         Map<String, String> decimalTable = writer.getColumnsDataTypesForTable("numeric_types_DECIMAL_65_30");
         Map<String, String> dateTimeTable = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
@@ -112,8 +118,11 @@ public class CreateTableDataTypesTimeZoneIT {
         writer.getConnection().close();
         Thread.sleep(10000);
 
+        ClickHouseConnection conn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
          writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
         // Validate temporal_types_DATE data.
         ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
         boolean dateResultValueChecked = false;

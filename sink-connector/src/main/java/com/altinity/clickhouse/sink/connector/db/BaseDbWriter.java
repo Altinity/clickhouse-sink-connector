@@ -37,7 +37,8 @@ public class BaseDbWriter {
             String database,
             String userName,
             String password,
-            ClickHouseSinkConnectorConfig config
+            ClickHouseSinkConnectorConfig config,
+            ClickHouseConnection conn
     ) {
 
         this.hostName = hostName;
@@ -46,9 +47,9 @@ public class BaseDbWriter {
         this.userName = userName;
         this.password = password;
 
-        String connectionUrl = getConnectionString(hostName, port, database);
         this.config = config;
-        this.createConnection(connectionUrl, "Agent_1", userName, password);
+        this.conn = conn;
+        //this.createConnection(connectionUrl, "Agent_1", userName, password);
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
 
@@ -57,7 +58,7 @@ public class BaseDbWriter {
      * @param jdbcProperties
      * @return
      */
-    public Properties splitJdbcProperties(String jdbcProperties) {
+    public static Properties splitJdbcProperties(String jdbcProperties) {
         // Split JDBC properties(delimited by equal sign) string delimited by comma.
         String[] splitProperties = jdbcProperties.split(",");
 
@@ -70,10 +71,11 @@ public class BaseDbWriter {
 
         return properties;
     }
+
     public ClickHouseConnection getConnection() {
         return this.conn;
     }
-    public String getConnectionString(String hostName, Integer port, String database) {
+    public static String getConnectionString(String hostName, Integer port, String database) {
         return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port, database);
     }
 
@@ -85,16 +87,19 @@ public class BaseDbWriter {
      * @param userName   UserName
      * @param password   Password
      */
-    protected void createConnection(String url, String clientName, String userName, String password) {
+    public static ClickHouseConnection createConnection(String url, String clientName, String userName, String password,
+                                 ClickHouseSinkConnectorConfig config) {
+
         String jdbcParams = "";
-        if(this.config != null) {
-            this.config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+        ClickHouseConnection conn = null;
+        if(config != null) {
+            config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
         }
 
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            properties.setProperty("custom_settings", "allow_experimental_object_type=1");
+            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
 
             if(!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
@@ -102,44 +107,15 @@ public class BaseDbWriter {
                 properties.putAll(userProps);
             }
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
-
-            this.conn = dataSource.getConnection(userName, password);
+            conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
             log.error("Error creating ClickHouse connection" + e);
         }
+
+        return conn;
     }
 
-    /**
-     * Function that uses the DatabaseMetaData JDBC functionality
-     * to get the column name and column data type as key/value pair.
-     */
-    public Map<String, String> getColumnsDataTypesForTable(String tableName) {
 
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (this.conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = this.conn.getMetaData().getColumns(null, this.database,
-                     tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
-
-//                Object dataType = columns.getString("DATA_TYPE");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                result.put(columnName, typeName);
-            }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
-        }
-        return result;
-    }
 
     /**
      * Function to execute query.
@@ -150,8 +126,9 @@ public class BaseDbWriter {
     public String executeQuery(String sql) throws SQLException {
         String result = null;
         if(this.conn == null) {
-            String connectionUrl = getConnectionString(hostName, port, database);
-            this.createConnection(connectionUrl, "Agent_1", userName, password);
+            String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port,
+                    database);
+            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", userName, password, config);
         }
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         if(rs != null) {
@@ -172,7 +149,7 @@ public class BaseDbWriter {
     public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
         if(this.conn == null) {
             String connectionUrl = getConnectionString(hostName, port, database);
-            this.createConnection(connectionUrl, "Agent_1", userName, password);
+            //this.createConnection(connectionUrl, "Agent_1", userName, password);
         }
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         return rs;
@@ -188,29 +165,34 @@ public class BaseDbWriter {
         return this.executeQuery("SELECT VERSION()");
     }
 
-    /**
-     * Function to return ClickHouse server timezone.
-     * @return
-     */
-    public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
 
-        String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
-                .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
+    public Map<String, String> getColumnsDataTypesForTable(String tableName ) {
+
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
-            if(!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
+            if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
             }
-        } catch (Exception e){
-            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
-        }
 
-        if(userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
+            ResultSet columns = conn.getMetaData().getColumns(null, database,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+//                Object dataType = columns.getString("DATA_TYPE");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                result.put(columnName, typeName);
+            }
+        } catch (SQLException sq) {
+            log.error("Exception retrieving Column Metadata", sq);
         }
-        return this.serverTimeZone;
+        return result;
     }
+
 }
 

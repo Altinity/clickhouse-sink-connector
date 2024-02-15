@@ -3,7 +3,7 @@ version: "3.4"
 services:
   clickhouse:
     container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:23.8.5
     restart: "no"
     ports:
       - "8123:8123"
@@ -19,3 +19,4 @@ services:
         hard: "262144"
     volumes:
       - ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - ../clickhouse/config.xml:/etc/clickhouse-server/conf.d/config.xml

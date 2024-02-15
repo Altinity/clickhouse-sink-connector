@@ -51,6 +51,21 @@ public class DebeziumOffsetStorage {
         writer.executeQuery(debeziumStorageStatusQuery);
     }
 
+    /**
+     * Function to get the latest timestamp of the record in the table
+     * @param props
+     * @param writer
+     * @return
+     * @throws SQLException
+     */
+    public String getDebeziumLatestRecordTimestamp(Properties props, BaseDbWriter writer) throws SQLException {
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+
+        String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s" , tableName);
+        return writer.executeQuery(debeziumLatestRecordTimestampQuery);
+    }
+
     public String getDebeziumStorageStatusQuery(
                                                 Properties props, BaseDbWriter writer) throws SQLException {
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +

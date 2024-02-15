@@ -16,9 +16,7 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ThreadFactory;
@@ -41,7 +39,7 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchExecutor executor;
 
     // Records grouped by Topic Name
-    private ConcurrentHashMap<String, ConcurrentLinkedQueue<ClickHouseStruct>> records;
+    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
@@ -68,7 +66,7 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
-        this.records = new ConcurrentHashMap<>();
+        this.records = new ConcurrentLinkedQueue();
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
@@ -105,32 +103,40 @@ public class ClickHouseSinkTask extends SinkTask {
         log.debug("******** CLICKHOUSE received records **** " + totalRecords + " Task Id: " + taskId);
         ClickHouseConverter converter = new ClickHouseConverter();
 
+        List<ClickHouseStruct> batch = new ArrayList<>();
         for (SinkRecord record : records) {
             if (this.deduplicator.isNew(record.topic(), record)) {
-                //if (true) {
                 ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
-                    this.appendToRecords(c.getTopic(), c);
+                    batch.add(c);
                 }
-            } else {
-                log.info("skip already seen record: " + record);
+                //Update the hashmap with the topic name and the list of records.
             }
         }
-    }
-
-    private void appendToRecords(String topicName, ClickHouseStruct chs) {
-        ConcurrentLinkedQueue<ClickHouseStruct> structs;
-
-        if(this.records.containsKey(topicName)) {
-            structs = this.records.get(topicName);
-        } else {
-            structs = new ConcurrentLinkedQueue<>();
-        }
-        structs.add(chs);
         synchronized (this.records) {
-            this.records.put(topicName, structs);
+            this.records.add(batch);
         }
     }
+//
+//    private void appendToRecords(Map<String, List<ClickHouseStruct>> convertedRecords) {
+//        ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
+//
+//        synchronized (this.records) {
+//            //Iterate through convertedRecords and add to the records map.
+//            for (Map.Entry<String, List<ClickHouseStruct>> entry : convertedRecords.entrySet()) {
+//                if (this.records.containsKey(entry.getKey())) {
+//                    structs = this.records.get(entry.getKey());
+//                    structs.add(entry.getValue());
+//
+//                } else {
+//                    structs = new ConcurrentLinkedQueue<>();
+//                    structs.add(entry.getValue());
+//                }
+//                this.records.put(entry.getKey(), structs);
+//
+//            }
+//        }
+//    }
 
     /**
      * preCommit() is a something like a replacement for flush - takes the same parameters

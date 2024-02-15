@@ -40,7 +40,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
         this(newConfigDef(), properties);
     }
 
-    protected ClickHouseSinkConnectorConfig(ConfigDef config, Map<String, String> properties) {
+    public ClickHouseSinkConnectorConfig(ConfigDef config, Map<String, String> properties) {
         super(config, properties, false);
     }
 
@@ -406,7 +406,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP_TIMEOUT_PERIOD.toString(),
                         Type.LONG,
-                        0,
+                        3000,
                         Importance.HIGH,
                         "Defines the time period for timeout, if the time from the last packet received from the source DB is longer than this timeout, the event loop is restarted",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

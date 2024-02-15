@@ -23,7 +23,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
-        <sink-connector-library-version>0.0.5</sink-connector-library-version>
+        <sink-connector-library-version>0.0.7</sink-connector-library-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -318,6 +318,12 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>3.12.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.12.0</version>
         </dependency>
 
         <dependency>
@@ -450,8 +456,8 @@
                         <include>**/*IT.java</include>
                     </includes>
                     <!-- <forkCount>10</forkCount> -->
-                    <parallel>all</parallel>
-                    <threadCount>10</threadCount>
+                    <!-- <parallel>all</parallel>
+                    <threadCount>10</threadCount> -->
                     <properties>
                         <property>
                             <name>listener</name>
@@ -490,6 +496,15 @@
                 <skipITs>false</skipITs>
                 <quarkus.package.type>native</quarkus.package.type>
             </properties>
+            <reporting>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-report-plugin</artifactId>
+                        <version>2.22.2</version>
+                    </plugin>
+                </plugins>
+            </reporting>
         </profile>
     </profiles>
 </project>
