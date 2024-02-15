@@ -45,12 +45,12 @@ def check_datetime_column(self, precision, data):
     with Then(f"I check that the data is replicated to ClickHouse and is not lost"):
         for retry in retries(timeout=30):
             with retry:
-                if data == "1000-01-01 00:00:00" and data == "1900-01-01 00:00:00":
+                if data == "1000-01-01 00:00:00" or data == "1900-01-01 00:00:00":
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert clickhouse_values.output.strip() == "1900-01-01", error()
-                elif data == "9999-12-31 23:59:59" and data == "2299-12-31 23:59:59":
+                elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
