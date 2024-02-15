@@ -139,7 +139,7 @@ auto.create.tables: "true"
 restart.event.loop: "true"
 
 #restart.event.loop.timeout.period.secs: Defines the restart timeout period.
-restart.event.loop.timeout.period.secs: "30000"
+restart.event.loop.timeout.period.secs: "3000"
 
 # Max number of records for the flush buffer.
 #buffer.max.records: "10000"
