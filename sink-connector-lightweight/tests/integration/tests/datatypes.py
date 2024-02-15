@@ -10,7 +10,7 @@ from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 
 @TestStep(Given)
-def create_table_with_datetime_column(self, table_name, precision=0, data=None):
+def create_table_with_datetime_column(self, table_name, data, precision):
     """Create MySQL table that contains the datetime column."""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
@@ -72,8 +72,8 @@ def check_datetime_column(self, precision, data):
 def datetime(self):
     """Validate that the table in MySQL is replicated to ClickHouse when it contains datetime columns with different
     value and precision combinations."""
-    precision_values = [i for i in range(0, 6 + 1)]
-    data = {
+    precision_values = ["0", "1", "2", "3", "4", "5", "6"]
+    data = [
         "1000-01-01 00:00:00",
         "9999-12-31 23:59:59",
         "1900-01-01 00:00:00",
@@ -81,7 +81,7 @@ def datetime(self):
         "NOW()",
         "2024-02-29 00:00:00",
         "2023-02-28 23:59:59",
-    }
+    ]
 
     check_datetime_column(precision=either(*precision_values), data=either(*data))
 
