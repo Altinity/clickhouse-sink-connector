@@ -67,7 +67,6 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
     }
 
     @Test
-    @Disabled
     @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to PGOUTPUT")
     public void testPgOutputPlugin() throws Exception {
         Network network = Network.newNetwork();

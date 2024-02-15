@@ -65,7 +65,6 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
-    @Disabled
     @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to DecoderBufs")
     public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
