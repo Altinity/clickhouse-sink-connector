@@ -23,7 +23,7 @@ def create_table_with_datetime_column(self, table_name, precision=0, data=None):
         )
 
     with And(f"inserting data to MySQL {table_name} table"):
-        mysql_node.query(f"INSERT INTO {table_name} VALUES ('{data}')")
+        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, '{data}');")
 
 
 @TestCheck
@@ -47,19 +47,19 @@ def check_datetime_column(self, precision, data):
             with retry:
                 if data == "1000-01-01 00:00:00" and data == "1900-01-01 00:00:00":
                     clickhouse_values = clickhouse_node.query(
-                        f"SELECT * FROM {self.context.database}.{table_name} FORMAT CSV"
+                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert clickhouse_values.output.strip() == "1900-01-01", error()
                 elif data == "9999-12-31 23:59:59" and data == "2299-12-31 23:59:59":
                     clickhouse_values = clickhouse_node.query(
-                        f"SELECT * FROM {self.context.database}.{table_name} FORMAT CSV"
+                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert (
                         clickhouse_values.output.strip() == "2299-12-31 23:59:59"
                     ), error()
                 else:
                     clickhouse_values = clickhouse_node.query(
-                        f"SELECT * FROM {self.context.database}.{table_name} FORMAT CSV"
+                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert clickhouse_values.output.strip() == data, error()
 
@@ -68,6 +68,7 @@ def check_datetime_column(self, precision, data):
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime("1.0")
 )
+@Flags(TE)
 def datetime(self):
     """Validate that the table in MySQL is replicated to ClickHouse when it contains datetime columns with different
     value and precision combinations."""
