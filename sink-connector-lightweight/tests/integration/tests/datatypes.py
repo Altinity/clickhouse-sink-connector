@@ -49,19 +49,19 @@ def check_datetime_column(self, precision, data):
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
-                    assert clickhouse_values.output.strip() == "1900-01-01", error()
+                    assert clickhouse_values.output.strip().replace('"', '') == "1900-01-01 00:00:00", error()
                 elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
                     assert (
-                        clickhouse_values.output.strip() == "2299-12-31 23:59:59"
+                        clickhouse_values.output.strip().replace('"', '') == "2299-12-31 23:59:59"
                     ), error()
                 else:
                     clickhouse_values = clickhouse_node.query(
                         f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
                     )
-                    assert clickhouse_values.output.strip() == data, error()
+                    assert clickhouse_values.output.strip().replace('"', '') == data, error()
 
 
 @TestSketch(Scenario)
@@ -75,10 +75,15 @@ def datetime(self):
     precision_values = ["0", "1", "2", "3", "4", "5", "6"]
     data = [
         "1000-01-01 00:00:00",
+        "1000-01-01 00:00:00.000000",
         "9999-12-31 23:59:59",
+        "9999-12-31 23:59:59.999999",
         "1900-01-01 00:00:00",
+        "1900-01-01 00:00:00.1234",
         "2299-12-31 23:59:59",
+        "2299-12-31 23:59:59.1234",
         "NOW()",
+        "2024-02-29 00:00:00",
         "2024-02-29 00:00:00",
         "2023-02-28 23:59:59",
     ]
