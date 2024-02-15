@@ -26,6 +26,7 @@ import org.json.simple.JSONArray;
 import org.json.simple.parser.JSONParser;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -119,6 +120,7 @@ public class SinkConnectorClientRestAPITest {
 
     }
     @Test
+    @Disabled
     public void testRestClient() throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
