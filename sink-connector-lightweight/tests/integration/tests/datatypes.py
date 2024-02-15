@@ -42,7 +42,7 @@ def check_datetime_column(self, precision, data):
             table_name=table_name, precision=precision, data=data
         )
 
-    with Check(f"I check that the data is replicated to ClickHouse and is not lost"):
+    with Then(f"I check that the data is replicated to ClickHouse and is not lost"):
         for retry in retries(timeout=30):
             with retry:
                 if data == "1000-01-01 00:00:00" and data == "1900-01-01 00:00:00":
