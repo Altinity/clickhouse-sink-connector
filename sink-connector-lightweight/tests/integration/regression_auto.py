@@ -162,12 +162,12 @@ xfails = {
             "doesn't work without primary key as only last row of insert is replicated",
         )
     ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/snowflake id/*": [
-        (
-            Fail,
-            "The issue where for some reason the column is shown twice on clickhouse side until you specific finally on select",
-        )
-    ],
+    # "/mysql to clickhouse replication/mysql to clickhouse replication auto/snowflake id/*": [
+    #     (
+    #         Fail,
+    #         "The issue where for some reason the column is shown twice on clickhouse side until you specific finally on select",
+    #     )
+    # ],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/datatypes/datetime/*": [
         (
             Fail,
