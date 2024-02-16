@@ -16,6 +16,7 @@ services:
       - MYSQL_MASTER_PORT_NUMBER=3306
       - MYSQL_MASTER_ROOT_PASSWORD=root
       - ALLOW_EMPTY_PASSWORD=yes
+      - TZ=US/Central
     volumes:
       - ./mysqld-slave.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
     healthcheck:

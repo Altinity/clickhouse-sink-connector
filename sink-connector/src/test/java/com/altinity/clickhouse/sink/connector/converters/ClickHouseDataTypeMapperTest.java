@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.data.ClickHouseDataType;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.VariableScaleDecimal;
 import io.debezium.time.Date;
 import io.debezium.time.Time;
@@ -64,8 +65,11 @@ public class ClickHouseDataTypeMapperTest {
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
         BaseDbWriter dbWriter = new BaseDbWriter(dbHostName, port,
-                database, userName, password, null);
+                database, userName, password, null, conn);
 
         PreparedStatement ps = dbWriter.getConnection().prepareStatement("insert into datatypes.numeric_types_DOUBLE (Type, Minimum_Value, " +
                         "Zero_Value, Maximum_Value, _sign, _version) values(?, ?, ?, ?, ?)");

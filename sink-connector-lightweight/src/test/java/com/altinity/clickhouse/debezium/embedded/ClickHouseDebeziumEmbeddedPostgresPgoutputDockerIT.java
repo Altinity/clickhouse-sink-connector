@@ -6,7 +6,9 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserServic
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -90,8 +92,14 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
         Thread.sleep(50000);
 
+        // Create connection.
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "public");
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
         Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
         Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
@@ -107,6 +115,12 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         }
 
         Assert.assertTrue(tmCount == 2);
+
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
 
     }
 }

@@ -12,6 +12,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.TimeZone;
 
 public class DBMetadata {
@@ -261,6 +263,49 @@ public class DBMetadata {
     }
 
 
+
+
+    /**
+     * Function that uses the DatabaseMetaData JDBC functionality
+     * to get the column name and column data type as key/value pair.
+     */
+    public Map<String, String> getColumnsDataTypesForTable(String tableName,
+                                                           ClickHouseConnection conn,
+                                                           String database) {
+
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        try {
+            if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
+
+            ResultSet columns = conn.getMetaData().getColumns(null, database,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+                String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
+                String columnDefinition = columns.getString("COLUMN_DEF");
+                String sqlDataType = columns.getString("SQL_DATA_TYPE");
+                String dataType = columns.getString("DATA_TYPE");
+               // String typeName = columns.getString("TYPE_NAME");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                // Skip generated columns.
+                if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                    continue;
+                }
+                result.put(columnName, typeName);
+            }
+        } catch (SQLException sq) {
+            log.error("Exception retrieving Column Metadata", sq);
+        }
+        return result;
+    }
     /**
      * Function to get the ClickHouse server timezone(Defaults to UTC)
      */

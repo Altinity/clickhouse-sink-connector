@@ -1,7 +1,9 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.Assert;
@@ -36,14 +38,21 @@ public class DbKafkaOffsetWriterTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
 
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
-        Map<TopicPartition, Long> result = writer.groupQueryWithRecords(DbWriterTest.getSampleRecords(), queryToRecordsMap);
+        Map<TopicPartition, Long> result = new HashMap<>();
+        GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
+
+        boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(com.altinity.clickhouse.sink.connector.db.DbWriterTest.getSampleRecords()
+                , queryToRecordsMap, result, new ClickHouseSinkConnectorConfig(new HashMap<>()), tableName, database, writer.getConnection(), writer.getColumnsDataTypesForTable(tableName));
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);
         Map<TopicPartition, Long> offsetsMap = dbKafkaOffsetWriter.getStoredOffsets();

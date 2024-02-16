@@ -250,7 +250,9 @@ public class DebeziumConverterTest {
         properties.setProperty("client_name", "Test_1");
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+        String jdbcUrl = DbWriter.getConnectionString(hostName, port, database);
+        ClickHouseConnection conn1 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn1);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
         String insertQueryTemplate = "insert into test_ch_jdbc_complex_2(col1, col2, col3, col4, col5, col6) values(?, ?, ?, ?, ?, ?)";

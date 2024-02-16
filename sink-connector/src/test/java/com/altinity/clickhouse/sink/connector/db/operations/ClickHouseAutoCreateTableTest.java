@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -51,7 +52,11 @@ public class ClickHouseAutoCreateTableTest {
         String tableName = "auto_create_table";
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
-        DbWriter writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null);
+
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        DbWriter writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
 
         conn = writer.getConnection();
 
@@ -160,8 +165,12 @@ public class ClickHouseAutoCreateTableTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null);
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
         ArrayList<String> primaryKeys = new ArrayList<>();

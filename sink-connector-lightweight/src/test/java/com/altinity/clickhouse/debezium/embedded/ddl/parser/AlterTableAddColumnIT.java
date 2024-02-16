@@ -4,9 +4,11 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -20,8 +22,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+@DisplayName("Integration Test that validates handling of ALTER table(Add Column) DDL received from MYSQL")
 @Testcontainers
-public class AddColumnIT extends DDLBaseIT {
+public class AlterTableAddColumnIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
@@ -75,9 +78,11 @@ public class AddColumnIT extends DDLBaseIT {
 
         Thread.sleep(25000);
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
+        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null);
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
 
         Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");

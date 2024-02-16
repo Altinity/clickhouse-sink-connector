@@ -1,23 +1,76 @@
+#### Some of the properties are part of Debezium MYSQL Connector
+#### https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-connector-properties
+
+# Unique name for the connector. Attempting to register again with the same name will fail.
+name: "company-1"
+
+# IP address or hostname of the MySQL database server.
 database.hostname: "localhost"
+
+# Integer port number of the MySQL database server listening for client connections.
 database.port: "3306"
+
+# Name of the MySQL database user to be used when connecting to the database.
 database.user: "root"
+
+# Password of the MySQL database user to be used when connecting to the database.
 database.password: "root"
+
+# The name of the MySQL database from which events are to be captured when not using snapshot mode.
+database.server.name: "ER54"
+
+# database.include.list An optional list of regular expressions that match database names to be monitored;
+# any database name not included in the whitelist will be excluded from monitoring. By default all databases will be monitored.
 database.include.list: sbtest
-#table.include.list=sbtest1
+
+# table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
+table.include.list: ""
+
+# Clickhouse Server URL, Specify only the hostname.
 clickhouse.server.url: "localhost"
+
+# Clickhouse Server User
 clickhouse.server.user: "root"
+
+#Clickhouse Server Password
 clickhouse.server.password: "root"
+
+# Clickhouse Server Port
 clickhouse.server.port: "8123"
+
+# Clickhouse Server Database
 clickhouse.server.database: "test"
+
+# database.allowPublicKeyRetrieval: "true" https://rmoff.net/2019/10/23/debezium-mysql-v8-public-key-retrieval-is-not-allowed/
 database.allowPublicKeyRetrieval: "true"
-snapshot.mode: "schema_only"
+
+# snapshot.mode: Debezium can use different modes when it runs a snapshot. The snapshot mode is determined by the snapshot.mode configuration property.
+# The default value of the property is initial. You can customize the way that the connector creates snapshots by changing the value of the snapshot.mode property
+snapshot.mode: "initial"
+
+# offset.flush.interval.ms: The number of milliseconds to wait before flushing recent offsets to Kafka. This ensures that offsets are committed within the specified time interval.
+offset.flush.interval.ms: 5000
+
+# connector.class: The Java class for the connector. This must be set to io.debezium.connector.mysql.MySqlConnector.
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
+
+# offset.storage: The Java class that implements the offset storage strategy. This must be set to io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore.
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
-offset.storage.offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
-offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123"
+
+# offset.storage.jdbc.offset.table.name: The name of the database table where connector offsets are to be stored.
+offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+
+# offset.storage.jdbc.url: The JDBC URL for the database where connector offsets are to be stored.
+offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
+
+# offset.storage.jdbc.user: The name of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.user: "root"
+
+# offset.storage.jdbc.password: The password of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.password: "root"
-offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+
+# offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)
+offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 (
     `id` String,
     `offset_key` String,
@@ -26,15 +79,71 @@ offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists
     `record_insert_seq` UInt64,
     `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
-SETTINGS index_granularity = 8198"
-offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8198"
+
+# offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
+offset.storage.jdbc.offset.table.delete: "select * from %s"
+
+offset.storage.jdbc.offset.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
+
+# schema.history.internal: The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://localhost:8123"
+
+# schema.history.internal.jdbc.url: The JDBC URL for the database where connector schema history is to be stored.
+schema.history.internal.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
+
+# schema.history.internal.jdbc.user: The name of the database user to be used when connecting to the database where connector schema history is to be stored.
 schema.history.internal.jdbc.user: "root"
+
+# schema.history.internal.jdbc.password: The password of the database user to be used when connecting to the database where connector schema history is to be stored.
 schema.history.internal.jdbc.password: "root"
+
+# schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
 schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
-schema.history.internal.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+# schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+
+# enable.snapshot.ddl: If set to true, the connector will parse the DDL statements from the initial load
+enable.snapshot.ddl: "true"
+
+# persist.raw.bytes: If set to true, the connector will persist raw bytes as received in a String column.
+persist.raw.bytes: "false"
+
+# auto.create.tables: If set to true, the connector will create tables in the target based on the schema received in the incoming message.
+auto.create.tables: "true"
+
+# database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
+database.connectionTimeZone: "UTC"
+database.serverTimezone: "UTC"
+
+# clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
+clickhouse.datetime.timezone: "UTC"
+
+# skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
+#skip_replica_start: "false"
+
+# binary.handling.mode: The mode for handling binary values. Possible values are bytes, base64, and decode. The default is bytes.
+#binary.handling.mode: "base64"
+
+# ignore_delete: If set to true, the connector will ignore delete events. The default is false.
+#ignore_delete: "true"
+
+#disable.ddl: If set to true, the connector will ignore DDL events. The default is false.
+#disable.ddl: "false"
+
+#disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
+#disable.drop.truncate: "false"
+
+# restart.event.loop: This will restart the CDC event loop if there are no messages received after timeout specified in restart.event.loop.timeout.period.secs
+#restart.event.loop: "true"
+
+# restart.event.loop.timeout.period.secs: Defines the restart timeout period.
+restart.event.loop.timeout.period.secs: "30"
+
+# Max number of records for the flush buffer.
+#buffer.max.records: "10000"
+
+# ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
+#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"

@@ -1,25 +1,20 @@
 package com.altinity.clickhouse.debezium.embedded;
 
+import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
-import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import io.javalin.Javalin;
-import io.javalin.http.HttpStatus;
 import org.apache.log4j.ConsoleAppender;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.PatternLayout;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,104 +85,17 @@ public class ClickHouseDebeziumEmbeddedApplication {
         }
 
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-        try {
-            embeddedApplication.startRestApi(props, injector);
-        } catch(Exception e) {
-            log.error("Error starting REST API server", e);
-        }
 
-        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+        setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
         embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(DDLParserService.class), props, false);
-    }
 
-    public void startRestApi(Properties props, Injector injector) {
-        String cliPort = props.getProperty(SinkConnectorLightWeightConfig.CLI_PORT);
-        if(cliPort == null || cliPort.isEmpty()) {
-            cliPort = "7000";
+        try {
+            DebeziumEmbeddedRestApi.startRestApi(props, injector, debeziumChangeEventCapture, userProperties);
+        } catch(Exception e) {
+            log.error("Error starting REST API server", e);
         }
-
-        Javalin app = Javalin.create().start(Integer.parseInt(cliPort));
-        app.get("/", ctx -> {
-            ctx.result("Hello World");
-        });
-        app.get("/stop", ctx -> {
-            stop();
-        });
-        Properties finalProps1 = props;
-        app.get("/status", ctx -> {
-            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
-
-            ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
-
-        });
-
-        app.post("/binlog", ctx -> {
-            if(debeziumChangeEventCapture.isReplicationRunning()) {
-                ctx.status(HttpStatus.BAD_REQUEST);
-                return;
-            }
-            String body = ctx.body();
-            JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String binlogFile = (String) jsonObject.get(BINLOG_FILE);
-            String binlogPosition = (String) jsonObject.get(BINLOG_POS);
-            String gtid = (String) jsonObject.get(GTID);
-
-            String sourceHost = (String) jsonObject.get(SOURCE_HOST);
-            String sourcePort = (String) jsonObject.get(SOURCE_PORT);
-            String sourceUser = (String) jsonObject.get(SOURCE_USER);
-            String sourcePassword = (String) jsonObject.get(SOURCE_PASSWORD);
-
-            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
-
-            if(sourceHost != null && !sourceHost.isEmpty()) {
-                userProperties.setProperty("database.hostname", sourceHost);
-            }
-
-            if(sourcePort != null && !sourcePort.isEmpty()) {
-                userProperties.setProperty("database.port", sourcePort);
-            }
-
-            if(sourceUser != null && !sourceUser.isEmpty()) {
-                userProperties.setProperty("database.user", sourceUser);
-            }
-
-            if(sourcePassword != null && !sourcePassword.isEmpty()) {
-                userProperties.setProperty("database.password", sourcePassword);
-            }
-
-            if(userProperties.size() > 0) {
-                log.info("User Overridden properties: " + userProperties);
-
-            }
-
-            debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
-                    gtid, sourceHost, sourcePort, sourceUser, sourcePassword);
-            log.info("Received update-binlog request: " + body);
-        });
-
-        app.post("/lsn", ctx -> {
-            String body = ctx.body();
-            JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String lsn = (String) jsonObject.get(LSN);
-
-            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
-
-            debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, lsn);
-            log.info("Received update-binlog request: " + body);
-        });
-
-        Properties finalProps = props;
-        app.get("/start", ctx -> {
-            finalProps.putAll(userProperties);
-            CompletableFuture<String> cf = startDebeziumEventLoop(injector, finalProps);
-            ctx.result("Started Replication....");
-        });
-
-        // app.get("/updateBinLogStatus", ctx -> {
-        //debeziumChangeEventCapture.updateDebeziumStorageStatus()
-        //});
     }
 
     /**
@@ -227,25 +135,16 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void stop() throws IOException {
         debeziumChangeEventCapture.stop();
 
-//        if(monitoringTimerTask != null) {
-//            monitoringTimerTask.cancel();
-//        }
-//
-//        if (monitoringTimer != null) {
-//            monitoringTimer.cancel();
-//            monitoringTimer.purge();
-//        }
     }
 
     /**
      * Function to setup monitoring thread.
      * @param config
      */
-    private static void setupMonitoringThread(ClickHouseSinkConnectorConfig config) {
+    private static void setupMonitoringThread(ClickHouseSinkConnectorConfig config, Properties props) {
 
         try {
             // Stop the timer, if its already running.
-
             boolean restartEventLoop = config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.RESTART_EVENT_LOOP));
 
             if (!restartEventLoop) {
@@ -264,7 +163,11 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     try {
                         long lastRecordTimestamp = debeziumChangeEventCapture.getLastRecordTimestamp();
                         if(lastRecordTimestamp == -1) {
-                            return;
+                            // Check the last record timestamp from the table.
+                            long storedOffsetsInTable = debeziumChangeEventCapture.getLatestRecordTimestamp(config, props);
+                            if(storedOffsetsInTable == -1) {
+                                lastRecordTimestamp = storedOffsetsInTable;
+                            }
                         }
                         // calculate delta.
                         long deltaInSecs = (System.currentTimeMillis() - lastRecordTimestamp) / 1000;
@@ -294,5 +197,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
         }
 
     }
-}
 
+    public DebeziumChangeEventCapture getDebeziumEventCapture() {
+        return debeziumChangeEventCapture;
+    }
+}
