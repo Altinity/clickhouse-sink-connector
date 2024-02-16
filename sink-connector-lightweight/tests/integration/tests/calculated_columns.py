@@ -28,10 +28,10 @@ def check_replication(self, table_name, actual_data, columns, clickhouse_node=No
 
 
 @TestScenario
-def string_concatenation(self, table_name):
+def string_concatenation(self):
     """Create mysql table that contains the calculated column values."""
     mysql_node = self.context.mysql_node
-    clickhouse_node = self.context.clickhouse_node
+    table_name = "table_" + getuid()
 
     with Given(
         f"I create a {table_name} table with calculated column with string concatenation"
@@ -54,10 +54,10 @@ def string_concatenation(self, table_name):
 
 
 @TestScenario
-def basic_arithmetic_operations(self, table_name):
+def basic_arithmetic_operations(self):
     """Create mysql table that contains the calculated column values with basic arithmetic operations."""
     mysql_node = self.context.mysql_node
-    clickhouse_node = self.context.clickhouse_node
+    table_name = "table_" + getuid()
 
     a = 5
     b = 4
@@ -81,10 +81,10 @@ def basic_arithmetic_operations(self, table_name):
 
 
 @TestScenario
-def complex_expressions(self, table_name):
+def complex_expressions(self):
     """Create mysql table that contains the calculated column values with complex expressions."""
     mysql_node = self.context.mysql_node
-    clickhouse_node = self.context.clickhouse_node
+    table_name = "table_" + getuid()
 
     base_salary = "350.32"
     bonus_rate = "520.65"
@@ -113,7 +113,7 @@ def complex_expressions(self, table_name):
 def nested(self, table_name):
     """Create mysql table that contains nested column with calculated values."""
     mysql_node = self.context.mysql_node
-    clickhouse_node = self.context.clickhouse_node
+    table_name = "table_" + getuid()
 
     a = "1"
     b = "2"
