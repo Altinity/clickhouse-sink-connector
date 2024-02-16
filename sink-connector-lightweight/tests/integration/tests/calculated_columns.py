@@ -1,24 +1,18 @@
-from integration.requirements.requirements import (
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
-)
-from integration.tests.steps.alter import drop_column
-from integration.tests.steps.common import generate_sample_mysql_value
-from integration.tests.steps.service_settings_steps import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 
 @TestStep(Then)
 def check_replication(self, table_name, actual_data, columns, clickhouse_node=None):
+    """Check that the created table in MySQL exists in ClickHouse and the data is correct."""
     if clickhouse_node is None:
         clickhouse_node = self.context.clickhouse_node
 
-    with And("I make sure that the table was replicated on the ClickHouse side"):
+    with By("making sure that the table was replicated on the ClickHouse side"):
         for retry in retries(timeout=40):
             with retry:
                 clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
 
-    with Then("I check that the calculated values are replicated in ClickHouse"):
+    with And("checking that the calculated values are replicated in ClickHouse"):
         for retry in retries(timeout=40):
             with retry:
                 data = clickhouse_node.query(
@@ -110,7 +104,7 @@ def complex_expressions(self):
 
 
 @TestScenario
-def nested(self, table_name):
+def nested(self):
     """Create mysql table that contains nested column with calculated values."""
     mysql_node = self.context.mysql_node
     table_name = "table_" + getuid()
