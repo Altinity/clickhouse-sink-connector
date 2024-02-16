@@ -8,13 +8,34 @@ from integration.tests.steps.sql import *
 from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 
-@TestStep(Given)
-def create_table_with_calculated_column(self, table_name, datatype="int", data="5"):
+@TestStep(Then)
+def check_replication(self, table_name, actual_data, columns, clickhouse_node=None):
+    if clickhouse_node is None:
+        clickhouse_node = self.context.clickhouse_node
+
+    with And("I make sure that the table was replicated on the ClickHouse side"):
+        for retry in retries(timeout=40):
+            with retry:
+                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+
+    with Then("I check that the calculated values are replicated in ClickHouse"):
+        for retry in retries(timeout=40):
+            with retry:
+                data = clickhouse_node.query(
+                    f"SELECT {columns} FROM test.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                )
+                assert actual_data in data.output.strip(), error()
+
+
+@TestScenario
+def string_concatenation(self, table_name):
     """Create mysql table that contains the calculated column values."""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
 
-    with By(f"creating a {table_name} table with calculated column"):
+    with Given(
+        f"I create a {table_name} table with calculated column with string concatenation"
+    ):
         create_mysql_to_clickhouse_replicated_table(
             name=f"\`{table_name}\`",
             mysql_columns=f"first_name VARCHAR(50) NOT NULL,last_name VARCHAR(50) NOT NULL,fullname varchar(101) "
@@ -27,27 +48,92 @@ def create_table_with_calculated_column(self, table_name, datatype="int", data="
             f"INSERT INTO {table_name} (id, first_name, last_name, email) VALUES (1, 'test', 'test2', 'test@gmail.com')"
         )
 
-    with And("I make sure that the table was replicated on the ClickHouse side"):
-        for retry in retries(timeout=40):
-            with retry:
-                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+    check_replication(
+        table_name=table_name, columns="fullname", actual_data="test test2"
+    )
 
 
 @TestScenario
-def calculated_column_creation(self):
+def basic_arithmetic_operations(self, table_name):
+    """Create mysql table that contains the calculated column values with basic arithmetic operations."""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
-    table_name = "tb_" + getuid()
 
-    with Given("I create a table with calculated columns"):
-        create_table_with_calculated_column(table_name=table_name)
+    a = 5
+    b = 4
 
-        for retry in retries(timeout=40):
-            with retry:
-                data = clickhouse_node.query(
-                    f"SELECT fullname FROM test.{table_name} FORMAT CSV"
-                )
-                assert "test test2" in data.output.strip(), error()
+    with Given(f"I create a {table_name} table with calculated column"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"\`{table_name}\`",
+            mysql_columns=f"a INT, b INT, sum_col INT AS (a + b), diff_col INT AS (a - b), prod_col INT AS (a * b), div_col DOUBLE AS (a / b)",
+            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        )
+
+    with And(f"inserting data into the {table_name} table"):
+        mysql_node.query(f"INSERT INTO {table_name} (id, a, b) VALUES (1, {a}, {b});")
+
+    with Then("I check that the data was replicated correctly"):
+        check_replication(
+            table_name=table_name,
+            columns="sum_col, diff_col, prod_col, div_col",
+            actual_data="9,1,20,1.25",
+        )
+
+
+@TestScenario
+def complex_expressions(self, table_name):
+    """Create mysql table that contains the calculated column values with complex expressions."""
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+
+    base_salary = "350.32"
+    bonus_rate = "520.65"
+
+    with Given(f"I create a {table_name} table with calculated column"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"\`{table_name}\`",
+            mysql_columns=f"base_salary DECIMAL(10,2), bonus_rate DECIMAL(5,2), total_compensation DECIMAL(12,2) AS (base_salary + (base_salary * bonus_rate / 100))",
+            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        )
+
+    with And(f"inserting data into the {table_name} table"):
+        mysql_node.query(
+            f"INSERT INTO {table_name} (id, base_salary, bonus_rate) VALUES (1, {base_salary}, {bonus_rate});"
+        )
+
+    with Then("I check that the data was replicated correctly"):
+        check_replication(
+            table_name=table_name,
+            columns="total_compensation",
+            actual_data="2174.26",
+        )
+
+
+@TestScenario
+def nested(self, table_name):
+    """Create mysql table that contains nested column with calculated values."""
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+
+    a = "1"
+    b = "2"
+
+    with Given(f"I create a {table_name} table with calculated column"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"\`{table_name}\`",
+            mysql_columns=f"a INT, b INT, c INT AS (a + b), d INT AS (c * 2)",
+            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        )
+
+    with And(f"inserting data into the {table_name} table"):
+        mysql_node.query(f"INSERT INTO {table_name} (id, a, b) VALUES (1, {a}, {b});")
+
+    with Then("I check that the data was replicated correctly"):
+        check_replication(
+            table_name=table_name,
+            columns="a,b,c,d",
+            actual_data="1,2,3,6",
+        )
 
 
 @TestModule
@@ -62,6 +148,13 @@ def module(
 ):
     """
     Check that the table is replicated when the source table has a calculated columns.
+
+    Types of calculated columns:
+
+    - string concatenation
+    - basic arithmetic operations
+    - complex expressions
+    - nested columns
     """
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
