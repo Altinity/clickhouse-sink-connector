@@ -55,6 +55,8 @@ public class ClickHouseBatchRunnable implements Runnable {
     private DBCredentials dbCredentials;
 
 
+    private List<ClickHouseStruct> currentBatch = null;
+
     public ClickHouseBatchRunnable(ConcurrentLinkedQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
@@ -104,27 +106,31 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
-            int numRecords = records.size();
-            if (numRecords <= 0) {
-                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
-                return;
-            } else {
-                log.debug("**** Processing Batch of Records ****" + numRecords);
-            }
+//            int numRecords = records.size();
+//            if (numRecords <= 0) {
+//                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
+//                return;
+//            } else {
+//                log.debug("**** Processing Batch of Records ****" + numRecords);
+//            }
 
             // Poll from Queue until its empty.
-            while(records.size() > 0) {
-                List<ClickHouseStruct> batch = records.poll();
+            while(records.size() > 0 || currentBatch != null) {
+                if(currentBatch == null) {
+                    currentBatch = records.poll();
+                } else {
+                    log.debug("***** RETRYING the same batch again");
 
+                }
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
-                DebeziumOffsetManagement.addToBatchTimestamps(batch);
+                DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
 
-                log.info("****** Thread: " + Thread.currentThread().getName() + " Batch Size: " + batch.size() + " ******");
+                log.info("****** Thread: " + Thread.currentThread().getName() + " Batch Size: " + currentBatch.size() + " ******");
                 // Group records by topic name.
                 // Create a new map of topic name to list of records.
                 Map<String, List<ClickHouseStruct>> topicToRecordsMap = new ConcurrentHashMap<>();
-                batch.forEach(record -> {
+                currentBatch.forEach(record -> {
                     String topicName = record.getTopic();
                     // If the topic name is not present, create a new list and add the record.
                     if (topicToRecordsMap.containsKey(topicName) == false) {
@@ -150,7 +156,9 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 if(result) {
                     // Step 2: Check if the batch can be committed.
-                    DebeziumOffsetManagement.checkIfBatchCanBeCommitted(batch);
+                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
+                        currentBatch = null;
+                    }
                 }
                     //acknowledgeRecords(batch);
                 ///// ***** END PROCESSING BATCH **************************
@@ -159,6 +167,11 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         } catch(Exception e) {
             log.error(String.format("ClickHouseBatchRunnable exception - Task(%s)", taskId), e);
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException ex) {
+                throw new RuntimeException(ex);
+            }
         }
     }
 

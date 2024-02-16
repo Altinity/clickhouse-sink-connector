@@ -74,7 +74,7 @@ public class PreparedStatementExecutor {
                                                      ClickHouseConnection conn,
                                                      String tableName,
                                                      Map<String, String> columnToDataTypeMap,
-                                                     DBMetadata.TABLE_ENGINE engine) throws Exception {
+                                                     DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
 
         boolean result = false;
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
@@ -107,7 +107,7 @@ public class PreparedStatementExecutor {
                                           Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
                                           ClickHouseConnection conn, String tableName, Map<String, String> columnToDataTypeMap,
-                                          DBMetadata.TABLE_ENGINE engine) {
+                                          DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
 
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
@@ -166,6 +166,7 @@ public class PreparedStatementExecutor {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error("******* ERROR inserting Batch *****************", e);
                 failedRecords.addAll(batch);
+                throw new RuntimeException(e);
             }
             if (!truncatedRecords.isEmpty()) {
                 PreparedStatement ps = null;

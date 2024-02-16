@@ -99,7 +99,9 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static public void checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+    static public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+        boolean result = false;
+
         if(true == checkIfThereAreInflightRequests(batch)) {
             // Remove the record from inflightBatches
             // and move it to completedBatches.
@@ -109,7 +111,7 @@ public class DebeziumOffsetManagement {
         } else {
             // Acknowledge current batch
             acknowledgeRecords(batch);
-
+            result = true;
             // Check if completed batch can also be acknowledged.
             completedBatches.forEach((k, v) -> {
                 if(false == checkIfThereAreInflightRequests(v)) {
@@ -122,6 +124,8 @@ public class DebeziumOffsetManagement {
                 }
             });
         }
+
+        return true;
     }
 
     static void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
