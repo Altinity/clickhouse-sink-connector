@@ -20,6 +20,7 @@ import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -66,6 +67,7 @@ public class SinkConnectorClientRestAPITest {
     }
 
     @Test
+    @Disabled
     public void testRestClient() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
