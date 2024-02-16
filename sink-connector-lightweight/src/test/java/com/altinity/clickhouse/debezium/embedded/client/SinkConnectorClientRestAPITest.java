@@ -7,9 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -22,8 +20,6 @@ import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.io.entity.E
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
-import org.json.simple.JSONArray;
-import org.json.simple.parser.JSONParser;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
@@ -36,7 +32,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -123,20 +118,17 @@ public class SinkConnectorClientRestAPITest {
     @Disabled
     public void testRestClient() throws Exception {
 
-        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
         Injector injector = Guice.createInjector(new AppInjector());
 
         Properties props = getDebeziumProperties();
         props.setProperty("database.include.list", "datatypes");
         props.setProperty("clickhouse.server.database", "datatypes");
         // Override clickhouse server timezone.
+        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
-                    ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
             try {
                 clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
                 injector.getInstance(DDLParserService.class), props, false);
@@ -151,10 +143,6 @@ public class SinkConnectorClientRestAPITest {
         Thread.sleep(40000);//
 
         Connection conn = connectToMySQL();
-        // alter table ship_class change column class_name class_name_new int;
-        // alter table ship_class change column tonange tonange_new decimal(10,10);
-
-        //conn.prepareStatement("insert into dt values('2008-01-01 00:00:01', 'this is a test', 11, 1)").execute();
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
 
 
@@ -207,12 +195,7 @@ public class SinkConnectorClientRestAPITest {
             Assert.fail("There should be a respond body.");
         }
 
-        // Validate the stop call.
-        if(engine.get() != null) {
-            engine.get().stop();
-        }
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
 
 
     }
