@@ -174,7 +174,7 @@ xfails = {
             "https://github.com/Altinity/clickhouse-sink-connector/issues/459",
         )
     ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/datatypes/*": [
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/datatypes/datetime/*": [
         (
             Fail,
             "https://github.com/Altinity/clickhouse-sink-connector/issues/462",
