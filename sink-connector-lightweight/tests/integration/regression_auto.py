@@ -168,12 +168,6 @@ xfails = {
             "The issue where for some reason the column is shown twice on clickhouse side until you specific finally on select",
         )
     ],
-    # "/mysql to clickhouse replication/mysql to clickhouse replication auto/calculated columns/*": [
-    #     (
-    #         Fail,
-    #         "https://github.com/Altinity/clickhouse-sink-connector/issues/459",
-    #     )
-    # ],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/datatypes/datetime/*": [
         (
             Fail,
