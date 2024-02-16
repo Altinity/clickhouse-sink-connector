@@ -174,6 +174,12 @@ xfails = {
             "https://github.com/Altinity/clickhouse-sink-connector/issues/459",
         )
     ],
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/datatypes/*": [
+        (
+            Fail,
+            "https://github.com/Altinity/clickhouse-sink-connector/issues/462",
+        )
+    ],
     "types/enum": [(Fail, "doesn't create table")],
 }
 xflags = {}
