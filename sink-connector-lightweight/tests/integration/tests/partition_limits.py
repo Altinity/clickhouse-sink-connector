@@ -15,7 +15,7 @@ def partition_limits(
     clickhouse_table_engine,
     clickhouse_columns=None,
 ):
-    """Creating table and append it with partition limits setting"""
+    """Creating table and append it with partition limits setting."""
     table_name = f"partition_limits_{getuid()}"
 
     clickhouse = self.context.cluster.node("clickhouse")
