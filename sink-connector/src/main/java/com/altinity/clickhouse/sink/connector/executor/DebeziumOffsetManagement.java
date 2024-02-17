@@ -27,9 +27,6 @@ public class DebeziumOffsetManagement {
         this.inFlightBatches = inFlightBatches;
     }
 
-    public void addToBatchTimestamps(Pair<Long, Long> pair, List<ClickHouseStruct> clickHouseStructs) {
-        inFlightBatches.put(pair, clickHouseStructs);
-    }
 
     public static void addToBatchTimestamps(List<ClickHouseStruct> batch) {
         Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
@@ -125,7 +122,7 @@ public class DebeziumOffsetManagement {
             });
         }
 
-        return true;
+        return result;
     }
 
     static void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {

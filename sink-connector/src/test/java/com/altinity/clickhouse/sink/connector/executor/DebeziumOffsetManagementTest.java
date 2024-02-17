@@ -7,6 +7,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -37,6 +38,41 @@ public class DebeziumOffsetManagementTest {
         DebeziumOffsetManagement dom = new DebeziumOffsetManagement(batchTimestamps);
         Pair<Long, Long> pair = Pair.of(1L, 2L);
       //  boolean result = DebeziumOffsetManagement.checkIfBatchCanBeCommitted();
+
+    }
+
+    @Test
+    public void testCalculateMinMaxTimestampFromBatch() {
+        // Test to validate DebeziumOffsetManagement calculateMinMaxTimestampFromBatch function
+        // Create batch timestamps map.
+        Map<Pair<Long, Long>, List<ClickHouseStruct>> batchTimestamps = new HashMap();
+        List<ClickHouseStruct> clickHouseStructs = new ArrayList<>();
+        ClickHouseStruct ch1 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch1.setDebezium_ts_ms(21L);
+
+        ClickHouseStruct ch4 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 433L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch4.setDebezium_ts_ms(433L);
+
+        ClickHouseStruct ch2 = new ClickHouseStruct(8, "SERVER5432.test.customers", getKafkaStruct(), 2, 22L ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch2.setDebezium_ts_ms(22L);
+
+        ClickHouseStruct ch6 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 3L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch6.setDebezium_ts_ms(3L);
+
+        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 33L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch3.setDebezium_ts_ms(33L);
+
+        clickHouseStructs.add(ch1);
+        clickHouseStructs.add(ch2);
+        clickHouseStructs.add(ch3);
+
+        clickHouseStructs.add(ch4);
+        clickHouseStructs.add(ch6);
+
+
+        Pair<Long, Long> result = DebeziumOffsetManagement.calculateMinMaxTimestampFromBatch(clickHouseStructs);
+        Assert.assertTrue(result.getLeft() == 3L);
+        Assert.assertTrue(result.getRight() == 433L);
 
     }
     public static Struct getKafkaStruct() {
