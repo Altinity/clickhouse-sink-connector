@@ -72,9 +72,9 @@ public class DebeziumOffsetManagement {
      * current batch.
      * @param batch
      */
-    static boolean checkIfThereAreInflightRequests(List<ClickHouseStruct> batch) {
+    static boolean checkIfThereAreInflightRequests(List<ClickHouseStruct> currentBatch) {
         boolean result = false;
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
+        Pair<Long, Long> currentBatchPair = calculateMinMaxTimestampFromBatch(currentBatch);
 
         //Iterate through inFlightBatches and check if there is any batch
         // which is lower than the current batch.
@@ -82,13 +82,13 @@ public class DebeziumOffsetManagement {
             Pair<Long, Long> key = entry.getKey();
 
             // Ignore the same batch
-            if (pair.getLeft().longValue() == key.getLeft().longValue() && pair.getRight().longValue() == key.getRight().longValue()) {
+            if (currentBatchPair.getLeft().longValue() == key.getLeft().longValue() &&
+                    currentBatchPair.getRight().longValue() == key.getRight().longValue()) {
                 continue;
             }
 
-            // If the min timestamp of the batch is lower than the current batch
-            if (pair.getLeft() < key.getRight()) {
-                log.error("*********** Batch is within the range of the in flight batch ***********");
+            // Check if max of current batch is greater than min of inflight batch
+            if(currentBatchPair.getRight().longValue() > key.getLeft().longValue()) {
                 result = true;
                 break;
             }
