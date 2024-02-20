@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
+import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -278,7 +279,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }  // datetime(6)
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") &&
-                (parsedDataType.contains("datetime") || parsedDataType.contains("timestamp"))){
+                (containsIgnoreCase(parsedDataType, "datetime") || containsIgnoreCase(parsedDataType, "timestamp"))){
             try {
                 precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(")")));
             } catch(Exception e) {
