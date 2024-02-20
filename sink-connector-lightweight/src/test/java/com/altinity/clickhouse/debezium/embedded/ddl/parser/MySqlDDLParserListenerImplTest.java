@@ -189,6 +189,27 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("Auto create table with user provided clickhouse timezone and uppercase datetime columns")
+    public void testAutoCreateTableWithCHTimezoneUpperCaseDateTime() {
+        String createQuery6 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
+                "  `Type` varchar(50) NOT NULL,\n" +
+                "  `Minimum_Value` DATETIME(1) NOT NULL,\n" +
+                "  `Mid_Value` DATETIME(2) NOT NULL,\n" +
+                "  `Maximum_Value` DATETIME(3) NOT NULL,\n" +
+                "  `Null_Value` DATETIME(4) DEFAULT NULL,\n" +
+                "  PRIMARY KEY (`Type`)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        HashMap<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "UTC");
+
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props));
+        mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(3,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        log.info("Create table " + clickHouseQuery);
+    }
+
+    @Test
     public void testCreateTableAutoIncrement() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
