@@ -86,18 +86,14 @@ public class Utils {
      * @return Table Name
      */
     public static String getTableNameFromTopic(String topicName) {
-        String tableName = null;
+         String tableName = null;
 
+             // get last element after deviding topicName by "." as tableName
+             String[] splitName = topicName.split("\\.");
+             tableName = splitName[splitName.length - 1];
 
-            // topic names is of the following format.
-            // hostname.dbName.tableName
-            String[] splitName = topicName.split("\\.");
-            if(splitName.length == 3) {
-                tableName = splitName[2];
-            }
-
-        return tableName;
-    }
+         return tableName;
+     }
     /**
      * Function to valid table name passed in settings
      * //ToDO: Implement the function.
