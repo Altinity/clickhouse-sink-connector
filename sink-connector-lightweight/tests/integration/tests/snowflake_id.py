@@ -47,12 +47,12 @@ def mysql_to_clickhouse_snowflake(
     with And("I check that Clickhouse replication tables have correct snowflake data"):
         row_one_version = (
             self.context.cluster.node("clickhouse")
-            .query(f"SELECT _version FROM test.{table_name} WHERE id == 1")
+            .query(f"SELECT _version FROM test.{table_name} FINAL WHERE id == 1")
             .output.strip()
         )
         row_two_version = (
             self.context.cluster.node("clickhouse")
-            .query(f"SELECT _version FROM test.{table_name} WHERE id == 2")
+            .query(f"SELECT _version FROM test.{table_name} FINAL WHERE id == 2")
             .output.strip()
         )
 
@@ -137,12 +137,16 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
         ):
             row_one_version = (
                 self.context.cluster.node("clickhouse")
-                .query(f"SELECT _version FROM test.{table_name} WHERE id == {i}+1")
+                .query(
+                    f"SELECT _version FROM test.{table_name} FINAL WHERE id == {i}+1"
+                )
                 .output.strip()
             )
             row_two_version = (
                 self.context.cluster.node("clickhouse")
-                .query(f"SELECT _version FROM test.{table_name} WHERE id == {i}+2")
+                .query(
+                    f"SELECT _version FROM test.{table_name} FINAL WHERE id == {i}+2"
+                )
                 .output.strip()
             )
 

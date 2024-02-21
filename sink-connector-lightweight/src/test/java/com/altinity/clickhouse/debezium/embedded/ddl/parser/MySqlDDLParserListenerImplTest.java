@@ -484,8 +484,16 @@ public class MySqlDDLParserListenerImplTest {
 
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK (revenue >= 0);";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery2);
+    }
 
-
+    @Test
+    public void testAddConstraintsWithAnd() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( (revenue>=0 and revenue<1000) or (revenue>=2000) );";
+        String clickhouseExpectedQuery = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( ( revenue >=0 and revenue <1000 ) or ( revenue >=2000 ) ) ";
+        mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery);
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery.toString());
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
     }
 
     @Test
@@ -693,6 +701,31 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery, isDropOrTruncate);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
 
+    }
+    @Test
+    public void testAlterDatabaseAddColumnEnum() {
+        String clickhouseExpectedQuery = "ALTER TABLE employees ADD COLUMN gender String";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterDBAddColumn = "ALTER TABLE employees add column gender ENUM ('M','F') NOT NULL";
+        mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
+    @Test
+    public void testAlterDatabaseAddColumnJson() {
+        String clickhouseExpectedQuery = "ALTER TABLE employees ADD COLUMN data String";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterDBAddColumn = "ALTER TABLE employees add column data JSON NOT NULL";
+        mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
     }
 
 //    @Test
