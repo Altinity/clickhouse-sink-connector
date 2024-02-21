@@ -258,8 +258,17 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error("*** TABLE METADATA not retrieved, retry next time");
-            return false;
+            log.error("*** TABLE METADATA not retrieved, retrying");
+            if(writer == null) {
+                writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
+            }
+            if(writer.wasTableMetaDataRetrieved() == false)
+                writer.updateColumnNameToDataTypeMap();
+
+            if(writer == null || writer.wasTableMetaDataRetrieved() == false ) {
+                log.error("*** TABLE METADATA not retrieved, retrying on next attempt");
+                return false;
+            }
         }
         // Step 1: The Batch Insert with preparedStatement in JDBC
         // works by forming the Query and then adding records to the Batch.

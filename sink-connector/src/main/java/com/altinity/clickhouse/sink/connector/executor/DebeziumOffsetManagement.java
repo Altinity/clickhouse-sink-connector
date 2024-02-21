@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class is used to manage the state of the offsets from
@@ -19,11 +20,11 @@ public class DebeziumOffsetManagement {
     private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetManagement.class);
 
     // A list of minimum , maximum timestamps of batches in flight
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new HashMap<>();
+    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new ConcurrentHashMap<>();
 
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches = new HashMap<>();
+    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches = new ConcurrentHashMap<>();
 
-    public DebeziumOffsetManagement(Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches) {
+    public DebeziumOffsetManagement(ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches) {
         this.inFlightBatches = inFlightBatches;
     }
 
@@ -96,7 +97,7 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
         boolean result = false;
 
         if(true == checkIfThereAreInflightRequests(batch)) {
@@ -125,7 +126,7 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
         // Acknowledge the records.
 
         // acknowledge records

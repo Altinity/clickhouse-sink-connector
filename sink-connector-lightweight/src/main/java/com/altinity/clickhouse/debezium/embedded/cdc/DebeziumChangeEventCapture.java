@@ -55,7 +55,7 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchRunnable runnable;
 
     // Records grouped by Topic Name
-    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
+    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records = new ConcurrentLinkedQueue<>();
 
 
     private BaseDbWriter writer = null;
@@ -197,11 +197,11 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    ThreadFactory namedThreadFactory =
-                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-
-                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+                    setupProcessingThread(config, new MySQLDDLParserService(config));
+//                    ThreadFactory namedThreadFactory =
+//                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+//                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
+//                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
@@ -673,12 +673,15 @@ public class DebeziumChangeEventCapture {
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
 
         // Setup separate thread to read messages from shared buffer.
-        this.records = new ConcurrentLinkedQueue<>();
-        this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
+        // this.records = new ConcurrentLinkedQueue<>();
+        //this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
         this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-        this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
+            this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        }
+        //this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
     private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
