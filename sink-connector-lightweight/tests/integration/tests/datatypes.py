@@ -42,7 +42,10 @@ def create_table_with_datetime_column(self, table_name, data, precision):
         )
 
     with And(f"inserting data to MySQL {table_name} table"):
-        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, '{data}');")
+        if data != "NOW()":
+            mysql_node.query(f"INSERT INTO {table_name} VALUES (1, '{data}');")
+        else:
+            mysql_node.query(f"INSERT INTO {table_name} VALUES (1, {data});")
 
 
 @TestCheck
@@ -66,35 +69,42 @@ def check_datetime_column(self, precision, data):
     with Then(f"I check that the data is replicated to ClickHouse and is not lost"):
         for retry in retries(timeout=30):
             with retry:
-                if data == "NOW()":
-                    clickhouse_values = clickhouse_node.query(
-                        f"SELECT count(date) FROM {self.context.database}.{table_name} FORMAT CSV"
-                    )
-                    assert clickhouse_values.output.strip() != "0", error()
+                clickhouse_values = clickhouse_node.query(
+                    f"SELECT count(date) FROM {self.context.database}.{table_name} FORMAT CSV"
+                )
 
-                elif data == "1000-01-01 00:00:00" or data == "1900-01-01 00:00:00":
-                    clickhouse_values = clickhouse_node.query(
-                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-                    )
-                    assert (
-                        clickhouse_values.output.strip().replace('"', "")
-                        == "1900-01-01 00:00:00"
-                    ), error()
-                elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
-                    clickhouse_values = clickhouse_node.query(
-                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-                    )
-                    assert (
-                        clickhouse_values.output.strip().replace('"', "")
-                        == "2299-12-31 23:59:59"
-                    ), error()
-                else:
-                    clickhouse_values = clickhouse_node.query(
-                        f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-                    )
-                    assert (
-                        clickhouse_values.output.strip().replace('"', "") == data
-                    ), error()
+                assert clickhouse_values.output.strip() != "0", error()
+
+        if data == "NOW()":
+            clickhouse_values = clickhouse_node.query(
+                f"SELECT count(date) FROM {self.context.database}.{table_name} FORMAT CSV"
+            )
+            assert clickhouse_values.output.strip() != "0", error()
+
+        elif data == "1000-01-01 00:00:00" or data == "1900-01-01 00:00:00":
+            clickhouse_values = clickhouse_node.query(
+                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
+            )
+            assert clickhouse_values.output.strip().replace(
+                '"', ""
+            ) == adjust_precision(
+                datetime_str="1900-01-01 00:00:00", precision=precision
+            ), error()
+
+        elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
+            clickhouse_values = clickhouse_node.query(
+                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
+            )
+            assert clickhouse_values.output.strip().replace(
+                '"', ""
+            ) == adjust_precision(
+                datetime_str="2299-12-31 23:59:59", precision=precision
+            ), error()
+        else:
+            clickhouse_values = clickhouse_node.query(
+                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
+            )
+            assert clickhouse_values.output.strip().replace('"', "") == data, error()
 
 
 @TestSketch(Scenario)
