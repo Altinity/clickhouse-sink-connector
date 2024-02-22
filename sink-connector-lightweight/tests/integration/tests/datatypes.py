@@ -81,7 +81,7 @@ def check_datetime_column(self, precision, data):
             )
             assert clickhouse_values.output.strip() != "0", error()
 
-        elif data == "1000-01-01 00:00:00" or data == "1900-01-01 00:00:00":
+        elif data[:19] == "1000-01-01 00:00:00" or data[:19] == "1900-01-01 00:00:00":
             clickhouse_values = clickhouse_node.query(
                 f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
             )
@@ -91,7 +91,7 @@ def check_datetime_column(self, precision, data):
                 datetime_str="1900-01-01 00:00:00", precision=precision
             ), error()
 
-        elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
+        elif data[:19] == "9999-12-31 23:59:59" or data[:19] == "2299-12-31 23:59:59":
             clickhouse_values = clickhouse_node.query(
                 f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
             )
