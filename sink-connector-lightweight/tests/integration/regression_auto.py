@@ -45,9 +45,9 @@ xfails = {
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double/*": [
         (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
     ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
-    ],
+    # "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
+    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
+    # ],
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/date time/*": [
         (
             Fail,
