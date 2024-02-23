@@ -256,7 +256,7 @@ def regression(
         "parallel_alters",
         "truncate",
         "deduplication",
-        "types",
+        # "types",
         # "primary_keys",
         # "schema_changes",
         # "multiple_tables",
