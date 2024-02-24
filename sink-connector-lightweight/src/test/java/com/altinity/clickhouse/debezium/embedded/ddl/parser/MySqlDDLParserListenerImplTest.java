@@ -604,6 +604,14 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+
+        String multipleDropColumnsSql = "ALTER TABLE fffe3e80f_d197_11ee_836a_19710b02e0b5 DROP COLUMN new_col1, DROP COLUMN new_col2, DROP COLUMN new_col3";
+
+        StringBuffer multipleDropColumnCHQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(multipleDropColumnsSql, "", multipleDropColumnCHQuery);
+
+        Assert.assertTrue(multipleDropColumnCHQuery.toString().equalsIgnoreCase(multipleDropColumnsSql));
+
     }
 
     @Test

@@ -146,3 +146,6 @@ restart.event.loop.timeout.period.secs: "3000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
 #clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+
+# Maximum number of threads in the thread pool for processing CDC records.
+#thread.pool.size: 10

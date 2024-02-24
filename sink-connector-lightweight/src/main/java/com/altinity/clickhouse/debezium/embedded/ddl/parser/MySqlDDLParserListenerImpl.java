@@ -472,6 +472,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByDropColumnContext) {
+                // Drop Column.
+                this.query.append(" ");
+                for (ParseTree dropColumnTree : ((MySqlParser.AlterByDropColumnContext) (tree)).children) {
+                    if (dropColumnTree instanceof MySqlParser.UidContext) {
+                        for(ParseTree dropColumnChild: ((MySqlParser.UidContext) dropColumnTree).children) {
+                            if(dropColumnChild instanceof MySqlParser.SimpleIdContext) {
+                                this.query.append(String.format(Constants.DROP_COLUMN, dropColumnChild.getText()));
+                            }
+                        }
+                       // this.query.append(String.format(Constants.DROP_COLUMN, ((MySqlParser.AlterByDropColumnContext) tree).uid()));
+                    }
+                }
             } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
                 parseRenameColumn(tree);
             } else if (tree instanceof MySqlParser.AlterByAddPrimaryKeyContext) {
@@ -525,15 +537,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
     }
 
-    @Override
-    public void enterAlterByDropColumn(MySqlParser.AlterByDropColumnContext alterByDropColumnContext) {
-        this.query.append(" ");
-        for (ParseTree tree : alterByDropColumnContext.children) {
-            if (tree instanceof MySqlParser.UidContext) {
-                this.query.append(String.format(Constants.DROP_COLUMN, tree.getText()));
-            }
-        }
-    }
+//    @Override
+//    public void enterAlterByDropColumn(MySqlParser.AlterByDropColumnContext alterByDropColumnContext) {
+//        this.query.append(" ");
+//        for (ParseTree tree : alterByDropColumnContext.children) {
+//            if (tree instanceof MySqlParser.UidContext) {
+//                this.query.append(String.format(Constants.DROP_COLUMN, tree.getText()));
+//            }
+//        }
+//    }
 
     @Override
     public void enterDropTable(MySqlParser.DropTableContext dropTableContext) {
