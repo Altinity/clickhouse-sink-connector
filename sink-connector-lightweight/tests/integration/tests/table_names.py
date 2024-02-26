@@ -32,15 +32,11 @@ def generate_table_names(num_names, max_length=64):
     table_names.update(reserved_keywords)
 
     while len(table_names) < num_names:
-        # Randomly choose the length of the table name, ensuring it's at least 1 character
         length = random.randint(1, max_length)
 
-        # Generate a random table name
         name = generate_table_name(length)
 
-        # Check if the name is a reserved keyword or starts with a number
         if iskeyword(name) or name[0] in string.digits:
-            # Add backticks to handle these special cases
             name = f"{name}"
 
         table_names.add(f"{name}")
