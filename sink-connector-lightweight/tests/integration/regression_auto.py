@@ -39,21 +39,6 @@ xfails = {
     ],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/json/*": [
-        (Fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
-    ],
-    # "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
-    #     (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
-    # ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/date time/*": [
-        (
-            Fail,
-            "need to make the timezone of mysql server and clickhouse server the same, add more tests with scenarios that check different timezones.",
-        )
-    ],
     "delete/many partition many parts/*_no_primary_key": [
         (
             Fail,
@@ -168,7 +153,6 @@ xfails = {
             "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
         )
     ],
-    "types/enum": [(Fail, "doesn't create table")],
 }
 xflags = {}
 
@@ -244,7 +228,7 @@ def regression(
         create_database(name="test")
         time.sleep(30)
 
-    with Pool(2) as executor:
+    with Pool(1) as executor:
         Feature(
             run=load("tests.sanity", "module"),
             parallel=True,
