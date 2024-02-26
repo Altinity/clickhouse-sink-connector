@@ -23,8 +23,8 @@ services:
       retries: 6
 
 
-  debezium:
-    hostname: debezium
+  clickhouse-sink-connector-lt:
+    hostname: clickhouse-sink-connector-lt
     image:  ${SINK_CONNECTOR_IMAGE}
     restart: "no"
     expose:

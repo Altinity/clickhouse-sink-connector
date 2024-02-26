@@ -75,35 +75,36 @@ def check_datetime_column(self, precision, data):
 
                 assert clickhouse_values.output.strip() != "0", error()
 
+        clickhouse_values = clickhouse_node.query(
+            f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
+        )
+
         if data == "NOW()":
             clickhouse_values = clickhouse_node.query(
                 f"SELECT count(date) FROM {self.context.database}.{table_name} FORMAT CSV"
             )
             assert clickhouse_values.output.strip() != "0", error()
 
-        elif data == "1000-01-01 00:00:00" or data == "1900-01-01 00:00:00":
-            clickhouse_values = clickhouse_node.query(
-                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-            )
+        elif data[:19] == "1000-01-01 00:00:00" or data[:19] == "1900-01-01 00:00:00":
             assert clickhouse_values.output.strip().replace(
                 '"', ""
             ) == adjust_precision(
                 datetime_str="1900-01-01 00:00:00", precision=precision
             ), error()
-
-        elif data == "9999-12-31 23:59:59" or data == "2299-12-31 23:59:59":
-            clickhouse_values = clickhouse_node.query(
-                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-            )
+        elif (
+            data[:21] == "9999-12-31 23:59:59.9" or data[:19] == "2299-12-31 23:59:59.9"
+        ):
+            assert (
+                clickhouse_values.output.strip().replace('"', "")
+                == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+            ), error()
+        elif data[:19] == "9999-12-31 23:59:59" or data[:19] == "2299-12-31 23:59:59":
             assert clickhouse_values.output.strip().replace(
                 '"', ""
             ) == adjust_precision(
                 datetime_str="2299-12-31 23:59:59", precision=precision
             ), error()
         else:
-            clickhouse_values = clickhouse_node.query(
-                f"SELECT date FROM {self.context.database}.{table_name} FORMAT CSV"
-            )
             assert clickhouse_values.output.strip().replace('"', "") == data, error()
 
 
@@ -133,9 +134,9 @@ def datetime(self):
         "9999-12-31 23:59:59",
         "9999-12-31 23:59:59.999999",
         "1900-01-01 00:00:00",
-        "1900-01-01 00:00:00.1234",
+        "1900-01-01 00:00:00.000000",
         "2299-12-31 23:59:59",
-        "2299-12-31 23:59:59.1234",
+        "2299-12-31 23:59:59.999999",
         "NOW()",
         "2024-02-29 00:00:00",
         "2024-02-29 00:00:00",

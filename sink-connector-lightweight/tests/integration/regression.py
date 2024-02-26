@@ -37,6 +37,7 @@ def regression(
         "clickhouse_binary_path": clickhouse_binary_path,
         "clickhouse_version": clickhouse_version,
         "stress": stress,
+        "collect_service_logs": collect_service_logs,
     }
 
     self.context.stress = stress
