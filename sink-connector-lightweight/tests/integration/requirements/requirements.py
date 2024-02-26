@@ -222,8 +222,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes = Requirement(
         "\n"
     ),
     link=None,
-    level=3,
-    num="10.2.1",
+    level=2,
+    num="10.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requirement(
@@ -255,7 +255,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requ
     ),
     link=None,
     level=3,
-    num="10.3.1",
+    num="10.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal = Requirement(
@@ -281,7 +281,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal = Requireme
     ),
     link=None,
     level=3,
-    num="10.4.1",
+    num="10.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double = Requirement(
@@ -304,7 +304,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double = Requiremen
     ),
     link=None,
     level=3,
-    num="10.5.1",
+    num="10.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime = Requirement(
@@ -332,7 +332,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime = Requirem
     ),
     link=None,
     level=3,
-    num="10.6.1",
+    num="10.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Binary = Requirement(
@@ -356,7 +356,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Binary = Requiremen
     ),
     link=None,
     level=3,
-    num="10.7.1",
+    num="10.6.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_String = Requirement(
@@ -382,7 +382,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_String = Requiremen
     ),
     link=None,
     level=3,
-    num="10.8.1",
+    num="10.7.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes = Requirement(
@@ -411,7 +411,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes = Require
     ),
     link=None,
     level=3,
-    num="10.9.1",
+    num="10.8.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirement(
@@ -431,7 +431,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirem
     ),
     link=None,
     level=3,
-    num="10.10.1",
+    num="10.9.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requirement(
@@ -454,7 +454,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requir
     ),
     link=None,
     level=3,
-    num="10.11.1",
+    num="10.10.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requirement(
@@ -477,7 +477,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requ
     ),
     link=None,
     level=3,
-    num="10.11.2",
+    num="10.10.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
@@ -500,7 +500,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
     ),
     link=None,
     level=3,
-    num="10.12.1",
+    num="10.11.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
@@ -523,7 +523,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
     ),
     link=None,
     level=3,
-    num="10.13.1",
+    num="10.12.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement(
@@ -547,7 +547,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement
     ),
     link=None,
     level=3,
-    num="10.14.1",
+    num="10.13.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement(
@@ -1706,85 +1706,85 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name="Data Types", level=1, num="10"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes",
-            level=3,
-            num="10.2.1",
+            level=2,
+            num="10.1",
         ),
-        Heading(name="Integer Types", level=2, num="10.3"),
+        Heading(name="Integer Types", level=2, num="10.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes",
             level=3,
-            num="10.3.1",
+            num="10.2.1",
         ),
-        Heading(name="Decimal", level=2, num="10.4"),
+        Heading(name="Decimal", level=2, num="10.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal",
             level=3,
-            num="10.4.1",
+            num="10.3.1",
         ),
-        Heading(name="Double", level=2, num="10.5"),
+        Heading(name="Double", level=2, num="10.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double",
             level=3,
-            num="10.5.1",
+            num="10.4.1",
         ),
-        Heading(name="DateTime", level=2, num="10.6"),
+        Heading(name="DateTime", level=2, num="10.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime",
             level=3,
-            num="10.6.1",
+            num="10.5.1",
         ),
-        Heading(name="Binary", level=2, num="10.7"),
+        Heading(name="Binary", level=2, num="10.6"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary",
             level=3,
-            num="10.7.1",
+            num="10.6.1",
         ),
-        Heading(name="String", level=2, num="10.8"),
+        Heading(name="String", level=2, num="10.7"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String",
             level=3,
-            num="10.8.1",
+            num="10.7.1",
         ),
-        Heading(name="Blob Types", level=2, num="10.9"),
+        Heading(name="Blob Types", level=2, num="10.8"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes",
             level=3,
-            num="10.9.1",
+            num="10.8.1",
         ),
-        Heading(name="Nullable", level=2, num="10.10"),
+        Heading(name="Nullable", level=2, num="10.9"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable",
             level=3,
-            num="10.10.1",
+            num="10.9.1",
         ),
-        Heading(name="Enum", level=2, num="10.11"),
+        Heading(name="Enum", level=2, num="10.10"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
             level=3,
-            num="10.11.1",
+            num="10.10.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString",
             level=3,
-            num="10.11.2",
+            num="10.10.2",
         ),
-        Heading(name="JSON", level=2, num="10.12"),
+        Heading(name="JSON", level=2, num="10.11"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON",
             level=3,
-            num="10.12.1",
+            num="10.11.1",
         ),
-        Heading(name="Year", level=2, num="10.13"),
+        Heading(name="Year", level=2, num="10.12"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year",
             level=3,
-            num="10.13.1",
+            num="10.12.1",
         ),
-        Heading(name="Bytes", level=2, num="10.14"),
+        Heading(name="Bytes", level=2, num="10.13"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes",
             level=3,
-            num="10.14.1",
+            num="10.13.1",
         ),
         Heading(name="Queries", level=1, num="11"),
         Heading(name="Test Feature Diagram", level=2, num="11.1"),
@@ -2276,32 +2276,32 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 9.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
         * 9.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
 * 10 [Data Types](#data-types)
-        * 10.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypes)
-    * 10.3 [Integer Types](#integer-types)
-        * 10.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
-    * 10.4 [Decimal](#decimal)
-        * 10.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdecimal)
-    * 10.5 [Double](#double)
-        * 10.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdouble)
-    * 10.6 [DateTime](#datetime)
-        * 10.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdatetime)
-    * 10.7 [Binary](#binary)
-        * 10.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbinary)
-    * 10.8 [String](#string)
-        * 10.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
-    * 10.9 [Blob Types](#blob-types)
-        * 10.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
-    * 10.10 [Nullable](#nullable)
-        * 10.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
-    * 10.11 [Enum](#enum)
-        * 10.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
-        * 10.11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
-    * 10.12 [JSON](#json)
-        * 10.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
-    * 10.13 [Year](#year)
-        * 10.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
-    * 10.14 [Bytes](#bytes)
-        * 10.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
+    * 10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypes)
+    * 10.2 [Integer Types](#integer-types)
+        * 10.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
+    * 10.3 [Decimal](#decimal)
+        * 10.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdecimal)
+    * 10.4 [Double](#double)
+        * 10.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdouble)
+    * 10.5 [DateTime](#datetime)
+        * 10.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdatetime)
+    * 10.6 [Binary](#binary)
+        * 10.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbinary)
+    * 10.7 [String](#string)
+        * 10.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
+    * 10.8 [Blob Types](#blob-types)
+        * 10.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
+    * 10.9 [Nullable](#nullable)
+        * 10.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+    * 10.10 [Enum](#enum)
+        * 10.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
+        * 10.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
+    * 10.11 [JSON](#json)
+        * 10.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
+    * 10.12 [Year](#year)
+        * 10.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 10.13 [Bytes](#bytes)
+        * 10.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
 * 11 [Queries](#queries)
     * 11.1 [Test Feature Diagram](#test-feature-diagram)
     * 11.2 [Inserts](#inserts)
@@ -2597,7 +2597,7 @@ version: 1.0
 
 ## Data Types
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes
 version: 1.0
 
 [Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables with any datatypes that [MySQL] supports.
