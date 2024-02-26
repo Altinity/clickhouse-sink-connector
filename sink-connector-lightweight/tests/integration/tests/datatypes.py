@@ -91,19 +91,28 @@ def check_datetime_column(self, precision, data):
             ) == adjust_precision(
                 datetime_str="1900-01-01 00:00:00", precision=precision
             ), error()
-        elif (
-            data[:21] == "9999-12-31 23:59:59.9" or data[:21] == "2299-12-31 23:59:59.9"
-        ):
-            assert (
-                clickhouse_values.output.strip().replace('"', "")
-                == f"2299-12-31 23:59:59.{'9'*int(precision)}"
-            ), error()
-        elif data[:19] == "9999-12-31 23:59:59" or data[:19] == "2299-12-31 23:59:59":
-            assert clickhouse_values.output.strip().replace(
-                '"', ""
-            ) == adjust_precision(
-                datetime_str="2299-12-31 23:59:59", precision=precision
-            ), error()
+        elif data[:19] == "9999-12-31 23:59:59":
+            if precision != "0":
+                assert (
+                    clickhouse_values.output.strip().replace('"', "")
+                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                ), error()
+            else:
+                assert (
+                    clickhouse_values.output.strip().replace('"', "")
+                    == "2299-12-31 23:59:59"
+                ), error()
+        elif data[:19] == "2299-12-31 23:59:59.9":
+            if precision != "0":
+                assert (
+                    clickhouse_values.output.strip().replace('"', "")
+                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                ), error()
+            else:
+                assert (
+                    clickhouse_values.output.strip().replace('"', "")
+                    == "2299-12-31 23:59:59"
+                ), error()
         else:
             assert clickhouse_values.output.strip().replace('"', "") == data, error()
 
