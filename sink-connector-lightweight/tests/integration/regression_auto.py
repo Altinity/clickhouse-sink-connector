@@ -244,129 +244,110 @@ def regression(
         create_database(name="test")
         time.sleep(30)
 
-    modules = [
-        "sanity",
-        "autocreate",
-        "insert",
-        "alter",
-        "compound_alters",
-        "parallel_alters",
-        "truncate",
-        "deduplication",
-        "types",
-        "virtual_columns",
-        "columns_inconsistency",
-        "snowflake_id",
-        "databases",
-        "table_names",
-        "is_deleted",
-        "calculated_columns",
-        "datatypes"
-    ]
-
     with Pool(2) as executor:
-        Module(
+        Feature(
             run=load("tests.sanity", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.autocreate", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.insert", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.alter", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.compound_alters", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.parallel_alters", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.truncate", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.deduplication", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.types", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.virtual_columns", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.columns_inconsistency", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.snowflake_id", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.databases", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.table_names", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.is_deleted", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.calculated_columns", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
-        Module(
+        Feature(
             run=load("tests.datatypes", "module"),
             parallel=True,
             executor=executor,
             flags=parallel,
         )
+        join()
 
 if __name__ == "__main__":
     regression()
