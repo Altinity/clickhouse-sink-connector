@@ -563,7 +563,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement
     ),
     link=None,
     level=3,
-    num="11.2.1",
+    num="11.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimits = Requirement(
@@ -581,7 +581,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimi
     ),
     link=None,
     level=4,
-    num="11.2.1.1",
+    num="11.1.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates = Requirement(
@@ -597,7 +597,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates = Requirement
     ),
     link=None,
     level=3,
-    num="11.3.1",
+    num="11.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes = Requirement(
@@ -613,7 +613,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes = Requirement
     ),
     link=None,
     level=3,
-    num="11.4.1",
+    num="11.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation = Requirement(
@@ -1787,29 +1787,28 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             num="10.13.1",
         ),
         Heading(name="Queries", level=1, num="11"),
-        Heading(name="Test Feature Diagram", level=2, num="11.1"),
-        Heading(name="Inserts", level=2, num="11.2"),
+        Heading(name="Inserts", level=2, num="11.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts",
             level=3,
-            num="11.2.1",
+            num="11.1.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits",
             level=4,
-            num="11.2.1.1",
+            num="11.1.1.1",
         ),
-        Heading(name="Updates", level=2, num="11.3"),
+        Heading(name="Updates", level=2, num="11.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates",
             level=3,
-            num="11.3.1",
+            num="11.2.1",
         ),
-        Heading(name="Deletes", level=2, num="11.4"),
+        Heading(name="Deletes", level=2, num="11.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes",
             level=3,
-            num="11.4.1",
+            num="11.3.1",
         ),
         Heading(name="Table Schema Creation", level=1, num="12"),
         Heading(
@@ -2303,14 +2302,13 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 10.13 [Bytes](#bytes)
         * 10.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
 * 11 [Queries](#queries)
-    * 11.1 [Test Feature Diagram](#test-feature-diagram)
-    * 11.2 [Inserts](#inserts)
-        * 11.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
-            * 11.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
-    * 11.3 [Updates](#updates)
-        * 11.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
-    * 11.4 [Deletes](#deletes)
-        * 11.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesdeletes)
+    * 11.1 [Inserts](#inserts)
+        * 11.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
+            * 11.1.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
+    * 11.2 [Updates](#updates)
+        * 11.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
+    * 11.3 [Deletes](#deletes)
+        * 11.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesdeletes)
 * 12 [Table Schema Creation](#table-schema-creation)
     * 12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreation)
     * 12.2 [Auto Create](#auto-create)
@@ -2808,60 +2806,6 @@ Data types connection table:
 
 
 ## Queries
-
-### Test Feature Diagram
-
-```mermaid
-flowchart TB;
-
-  classDef yellow fill:#ffff33,stroke:#333,stroke-width:4px,color:black;
-  classDef yellow2 fill:#ffff33,stroke:#333,stroke-width:4px,color:red;
-  classDef green fill:#00ff33,stroke:#333,stroke-width:4px,color:black;
-  classDef red fill:red,stroke:#333,stroke-width:4px,color:black;
-  classDef blue fill:blue,stroke:#333,stroke-width:4px,color:white;
-  
-  subgraph O["Queries Test Feature Diagram"]
-  A-->D-->C-->B
-
-  1A---2A---3A
-  1D---2D
-  1C---2C---3C
-  1B---2B---3B---4B---5B---6B---7B
-  
-    subgraph A["User input MySQL"]
-
-        1A["INSERT"]:::green
-                2A["DELETE"]:::green
-                        3A["UPDATE"]:::green
-
-    end
-    
-    subgraph D["Engines"]
-        1D["with table Engine"]:::yellow
-        2D["without table Engine"]:::yellow
-    end
-    
-    subgraph C["Different primary keys"]
-        1C["simple primary key"]:::blue
-        2C["composite primary key"]:::blue
-        3C["no primary key"]:::blue
-    end
-    
-    subgraph B["Different cases"]
-        1B["one part one partition"]:::green
-        2B["multiple parts one partition"]:::green
-        3B["multiple partitions"]:::green
-        4B["very large data set"]:::green
-        5B["lots of small data sets"]:::green
-        6B["table with large number of partitions"]:::green
-        7B["table with large number of parts in partition"]:::green
-    end
-    
-
-    
-
-  end
-```
 
 ### Inserts
 
