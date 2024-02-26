@@ -498,20 +498,21 @@ class Cluster(object):
     def __exit__(self, type, value, traceback):
         try:
             with Finally("I clean up"):
-                with Finally("collect service logs"):
-                    with Shell() as bash:
-                        bash(f"cd {self.docker_compose_project_dir}", timeout=1000)
-                        for service_list in self.nodes:
-                            for service_node in self.nodes[service_list]:
-                                with By(f"getting log for {service_node}"):
-                                    log_path = f"../../logs/"
-                                    snode = bash(
-                                        f"docker-compose logs {service_node} "
-                                        f"> {log_path}{service_node}.log",
-                                        timeout=1000,
-                                    )
-                                    if snode.exitcode != 0:
-                                        break
+                if self.collect_service_logs:
+                    with Finally("collect service logs"):
+                        with Shell() as bash:
+                            bash(f"cd {self.docker_compose_project_dir}", timeout=1000)
+                            for service_list in self.nodes:
+                                for service_node in self.nodes[service_list]:
+                                    with By(f"getting log for {service_node}"):
+                                        log_path = f"../../logs/"
+                                        snode = bash(
+                                            f"docker-compose logs {service_node} "
+                                            f"> {log_path}{service_node}.log",
+                                            timeout=1000,
+                                        )
+                                        if snode.exitcode != 0:
+                                            break
                 self.down()
         finally:
             with self.lock:
