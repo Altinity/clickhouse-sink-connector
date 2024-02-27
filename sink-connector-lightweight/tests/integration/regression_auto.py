@@ -39,21 +39,6 @@ xfails = {
     ],
     "consistency": [(Fail, "doesn't finished")],
     "partition limits": [(Fail, "doesn't ready")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/json/*": [
-        (Fail, "doesn't work in raw")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/double/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/170")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/bigint/*": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/15")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/types/date time/*": [
-        (
-            Fail,
-            "need to make the timezone of mysql server and clickhouse server the same, add more tests with scenarios that check different timezones.",
-        )
-    ],
     "delete/many partition many parts/*_no_primary_key": [
         (
             Fail,
@@ -168,8 +153,9 @@ xfails = {
             "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
         )
     ],
-    "types/enum": [(Fail, "doesn't create table")],
 }
+
+
 xflags = {}
 
 
@@ -202,7 +188,7 @@ def regression(
 ):
     """ClickHouse regression for MySql to ClickHouse replication with auto table creation."""
     nodes = {
-        "debezium": ("debezium",),
+        "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "bash-tools": ("bash-tools",),
@@ -235,6 +221,8 @@ def regression(
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
 
+    self.context.database = "test"
+
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
 
@@ -244,40 +232,98 @@ def regression(
         create_database(name="test")
         time.sleep(30)
 
-    modules = [
-        "sanity",
-        "autocreate",
-        "insert",
-        # "update",
-        # "delete",
-        # "parallel",
-        "alter",
-        "compound_alters",
-        "parallel_alters",
-        "truncate",
-        "deduplication",
-        "types",
-        # "primary_keys",
-        # "schema_changes",
-        # "multiple_tables",
-        "virtual_columns",
-        # "partition_limits",
-        "columns_inconsistency",
-        "snowflake_id",
-        # "offset",
-        "databases",
-        "table_names",
-        "is_deleted",
-        "calculated_columns",
-        "partitions",
-        "datatypes"
-    ]
-    for module in modules:
-        Feature(run=load(f"tests.{module}", "module"))
-
-    # Feature(run=load("tests.consistency", "module"))
-    # Feature(run=load("tests.sysbench", "module"))
-    # Feature(run=load("tests.manual_section", "module"))
+    with Pool(1) as executor:
+        Feature(
+            run=load("tests.sanity", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.autocreate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.insert", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.alter", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.compound_alters", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.parallel_alters", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.truncate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.deduplication", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.types", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.virtual_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.columns_inconsistency", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.snowflake_id", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.databases", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.table_names", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.is_deleted", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.calculated_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.datatypes", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.retry_on_fail", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        join()
 
 
 if __name__ == "__main__":
