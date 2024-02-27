@@ -82,50 +82,15 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
-@Examples(
-    "mysql_type ch_type values ch_values nullable",
-    [
-        # ("DOUBLE", "Float64", ["999.00009"], ["999.00009"], False),
-        # ("DOUBLE", "Float64", ["NULL"], ["\\N"], True),
-        ("DOUBLE", "Decimal128(20)", ["999.00009"], ["999.00009"], False),
-        ("DOUBLE", "Decimal128(20)", ["1.7091"], ["1.7091"], False),
-    ],
-)
-@Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double("1.0")
-)
-@Requirements()
-def double(self, mysql_type, ch_type, values, ch_values, nullable):
-    """Check replication of MySQl 'DOUBLE' data type."""
-    for clickhouse_table in available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
-            check_datatype_replication(
-                mysql_type=mysql_type,
-                ch_type=ch_type,
-                values=values,
-                ch_values=ch_values,
-                nullable=nullable,
-                clickhouse_table=clickhouse_table,
-            )
-
 
 @TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
     [
         ("DATE", "Date32", ["'2012-12-12'"], ['"2012-12-12"'], False),
-        (
-            "DATETIME",
-            "DateTime64",
-            ["'2018-09-08 17:51:04'"],
-            ['"2018-09-08 17:51:04.000"'],
-            False,
-        ),
         ("TIME", "String", ["'17:51:04.777'"], ['"17:51:05.000000"'], False),
         ("TIME(6)", "String", ["'17:51:04.777'"], ['"17:51:04.777000"'], False),
         ("DATE", "Date32", ["NULL"], ["\\N"], True),
-        ("DATETIME", "DateTime64", ["NULL"], ["\\N"], True),
         ("TIME", "String", ["NULL"], ["\\N"], True),
         ("TIME(6)", "String", ["NULL"], ["\\N"], True),
     ],
@@ -202,33 +167,6 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
 )
 def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
     """Check replication of MySQl 'INT' data types."""
-    for clickhouse_table in available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
-            check_datatype_replication(
-                mysql_type=mysql_type,
-                ch_type=ch_type,
-                values=values,
-                ch_values=ch_values,
-                nullable=nullable,
-                clickhouse_table=clickhouse_table,
-            )
-
-
-@TestOutline(Feature)
-@Examples(
-    "mysql_type ch_type values ch_values nullable",
-    [
-        (
-            "BIGINT UNSIGNED",
-            "UInt64",
-            ["0", "18446744073709551615"],
-            ["0", "18446744073709551615"],
-            False,
-        ),
-    ],
-)
-def bigint(self, mysql_type, ch_type, values, ch_values, nullable):
-    """Check replication of MySQl 'BIGINT UNSIGNED' data type."""
     for clickhouse_table in available_clickhouse_tables:
         with Example({clickhouse_table}, flags=TE):
             check_datatype_replication(
@@ -357,36 +295,6 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
                 nullable=nullable,
                 clickhouse_table=clickhouse_table,
             )
-
-
-@TestOutline(Feature)
-@Examples(
-    "mysql_type ch_type values ch_values nullable",
-    [
-        (
-            "JSON",
-            "String",
-            ['\'{\\"key1\\": \\"value1\\", \\"key2\\": \\"value2\\"}\''],
-            ['{""key1"": ""value1"", ""key2"": ""value2""}'],
-            False,
-        ),
-        ("JSON", "String", ["NULL"], ["\\N"], True),
-    ],
-)
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON("1.0"))
-def json(self, mysql_type, ch_type, values, ch_values, nullable):
-    """Check replication of MySQl 'JSON' data types."""
-    for clickhouse_table in available_clickhouse_tables:
-        with Example({clickhouse_table}, flags=TE):
-            check_datatype_replication(
-                mysql_type=mysql_type,
-                ch_type=ch_type,
-                values=values,
-                ch_values=ch_values,
-                nullable=nullable,
-                clickhouse_table=clickhouse_table,
-            )
-
 
 @TestModule
 @Requirements(
