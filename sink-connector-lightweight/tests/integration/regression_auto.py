@@ -219,6 +219,8 @@ def regression(
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
 
+    self.context.database = "test"
+
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
 
@@ -311,6 +313,11 @@ def regression(
         )
         Feature(
             run=load("tests.datatypes", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.retry_on_fail", "module"),
             parallel=True,
             executor=executor,
         )
