@@ -1583,6 +1583,22 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special = Require
     num="26.1.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL retry replication if the ClickHouse instance is stopped/killed during the active replication from source to destination tables. [Altinity Sink Connector] SHALL continue to retry to replicate data into a source table until the ClickHouse instance is not available again.\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="27.1.1",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
     version="1.0",
@@ -1603,7 +1619,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=2,
-    num="27.1",
+    num="28.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -2144,11 +2160,22 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=3,
             num="26.1.1",
         ),
-        Heading(name="Prometheus ", level=1, num="27"),
+        Heading(name="Replication Interruption", level=1, num="27"),
+        Heading(
+            name="Retry Replication When ClickHouse Instance Is Not Active",
+            level=2,
+            num="27.1",
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped",
+            level=3,
+            num="27.1.1",
+        ),
+        Heading(name="Prometheus ", level=1, num="28"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
             level=2,
-            num="27.1",
+            num="28.1",
         ),
     ),
     requirements=(
@@ -2238,6 +2265,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
     ),
     content="""
@@ -2415,8 +2443,11 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
 * 26 [Column Names](#column-names)
     * 26.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
         * 26.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
-* 27 [Prometheus ](#prometheus-)
-    * 27.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 27 [Replication Interruption](#replication-interruption)
+    * 27.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
+        * 27.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
+* 28 [Prometheus ](#prometheus-)
+    * 28.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -3272,6 +3303,15 @@ CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)
 ```
 
 The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.
+
+## Replication Interruption
+
+### Retry Replication When ClickHouse Instance Is Not Active
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped
+version: 1.0
+
+[Altinity Sink Connector] SHALL retry replication if the ClickHouse instance is stopped/killed during the active replication from source to destination tables. [Altinity Sink Connector] SHALL continue to retry to replicate data into a source table until the ClickHouse instance is not available again.
 
 ## Prometheus 
 
