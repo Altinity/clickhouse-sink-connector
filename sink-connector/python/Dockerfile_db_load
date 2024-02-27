@@ -1,0 +1,19 @@
+# Use the official MySQL image as the base image
+FROM mysql:latest
+
+# Install ClickHouse client
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends apt-transport-https ca-certificates && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv E0C56BD4 && \
+    echo "deb https://repo.clickhouse.tech/deb/stable/ main/" | tee /etc/apt/sources.list.d/clickhouse.list && \
+    apt-get update && \
+    apt-get install -y clickhouse-client && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install MySQL shell
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends mysql-shell && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set the entry point to start MySQL shell by default
+ENTRYPOINT ["mysqlsh"]

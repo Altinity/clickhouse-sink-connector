@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-@DisplayName("Integration Test that validates replication of DateTime columns when the clickhouse schema has columns with timezone.")
+@DisplayName("Integration Test that validates replication of DateTime columns when the clickhouse schema has columns with timezone. Test to cover when MySQL has 2 digit year")
 public class DateTimeWithTimeZoneSchemaOnlyIT {
     protected MySQLContainer mySqlContainer;
 
@@ -92,7 +92,9 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME4` VALUES ('DATETIME(4)-INSERT','1000-01-01 00:00:00.0000','2022-09-29 01:50:12.1234','9999-12-31 23:59:59.9999',NULL)").execute();
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME5` VALUES ('DATETIME(5)-INSERT','1000-01-01 00:00:00.00000','2022-09-29 01:50:28.12345','9999-12-31 23:59:59.99999',NULL)").execute();
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME6` VALUES ('DATETIME(6)-INSERT','1000-01-01 00:00:00.000000','2022-09-29 01:50:56.123456','9999-12-31 23:59:59.999999',NULL)").execute();
-    //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME6` VALUES ('DATETIME(7)-INSERT','0099-01-01 00:00:00.000000','2022-09-29 01:50:56.123456','9999-12-31 23:59:59.999999',NULL)").execute();
+
+        //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
         ClickHouseConnection conn1 = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
@@ -209,7 +211,7 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6 where Type = 'DATETIME(6)-INSERT'");
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -220,7 +222,22 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
+            break;
+        }
 
+        // DATETIME6 with 2 digit year
+        ResultSet dateTimeResult7 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6 where Type = 'DATETIME(7)-INSERT'");
+        while(dateTimeResult7.next()) {
+            System.out.println("DATE TIME 7");
+
+            System.out.println(dateTimeResult7.getTimestamp("Mid_Value").toString());
+            System.out.println(dateTimeResult7.getTimestamp("Maximum_Value").toString());
+            System.out.println(dateTimeResult7.getTimestamp("Minimum_Value").toString());
+
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
+            break;
         }
 
         if(engine.get() != null) {
@@ -272,6 +289,7 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
+        defaultProps.setProperty("enable.time.adjuster", "false");
 
         return defaultProps;
 

@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.debezium.embedded.client;
+package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
@@ -9,12 +9,6 @@ import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserServ
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.classic.methods.HttpGet;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.classic.methods.HttpUriRequest;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.HttpEntity;
-import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.io.entity.EntityUtils;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -37,10 +31,13 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-@Testcontainers
-@DisplayName("Test that validates the REST API calls used by sink connector client")
-public class SinkConnectorClientRestAPITest {
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumPropertiesForSchemaOnly;
 
+@Testcontainers
+@Disabled
+@DisplayName("Test that validates if the sink connector does not have issues connecting if ClickHouse is slow to start")
+public class ClickHouseDelayedStartIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
@@ -67,23 +64,20 @@ public class SinkConnectorClientRestAPITest {
     }
 
     @Test
-    @Disabled
-    public void testRestClient() throws Exception {
+    public void testClickHouseDelayedStart() throws Exception {
+        clickHouseContainer.getDockerClient().pauseContainerCmd(clickHouseContainer.getContainerId()).exec();
 
         Injector injector = Guice.createInjector(new AppInjector());
 
-        Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("database.include.list", "datatypes");
-        props.setProperty("clickhouse.server.database", "datatypes");
+        Properties props = getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer);
         // Override clickhouse server timezone.
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
                 clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                injector.getInstance(DDLParserService.class), props, false);
+                        injector.getInstance(DDLParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -91,63 +85,43 @@ public class SinkConnectorClientRestAPITest {
             }
 
         });
-
-        Thread.sleep(40000);//
-
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
+        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT55','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
+        Thread.sleep(35000);
+        // Give time for Sink connector to catch up.
+        Thread.sleep(15000);
+        clickHouseContainer.getDockerClient().unpauseContainerCmd(clickHouseContainer.getContainerId()).exec();
+        boolean insertCheck = false;
 
+        while (true) {
+            // Check if Batch was inserted.
+            String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                    "employees");
+            ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                    clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        Thread.sleep(10000);
-
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
-
-
-        HttpUriRequest request = new HttpGet("http://localhost:7000/status");
-
-        // Validate the status call.
-        CloseableHttpResponse httpResponse = HttpClientBuilder.create().build().execute( request );
-        HttpEntity entity = httpResponse.getEntity();
-        if(entity != null) {
-            String json = EntityUtils.toString(entity);
-            Assert.assertTrue(json.contains("Replica_Running"));
-            Assert.assertTrue(json.contains("Database"));
-            Assert.assertTrue(json.contains("Seconds_Behind_Source"));
-
-            //String result = new String(entity.getContent().readAllBytes());
-           // JSONArray resultArray = (JSONArray) new JSONParser().parse(json);
-
-            //[{"Seconds_Behind_Source":0},{"Replica_Running":true},{"Database":"datatypes"}]
-//            resultArray.forEach(item -> {
-//                HashMap<String, Object> resultMap = (HashMap<String, Object>) item;
-//                if(resultMap.containsKey("Replica_Running")) {
-//                    Assert.assertTrue(resultMap.containsKey("Replica_Running"));
-//                    Assert.assertTrue(resultMap.get("Replica_Running").equals(true));
-//                }
-//
-//                if(resultMap.containsKey("Database")) {
-//                    Assert.assertTrue(resultMap.containsKey("Database"));
-//                    Assert.assertTrue(resultMap.get("Database").equals("datatypes"));
-//                }
-//                if(resultMap.containsKey("Seconds_Behind_Source")){
-//                    Assert.assertTrue(resultMap.containsKey("Seconds_Behind_Source"));
-//                }
-//            });
-           // System.out.println(result);
-        } else {
-            // There should be a respond body.
-            Assert.fail("There should be a respond body.");
+            BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                    "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+            try {
+                ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
+                while (dateTimeResult.next()) {
+                    insertCheck = true;
+                    Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
+                    break;
+                }
+            } catch (Exception e) {
+                Thread.sleep(10000);
+            }
+            if (insertCheck) {
+                break;
+            }
         }
+        Assert.assertTrue(clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().numRetries > 0);
+        Assert.assertTrue(insertCheck);
 
+        // Close connection.
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
-
     }
+
 }

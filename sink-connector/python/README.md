@@ -42,8 +42,8 @@ python db_load/clickhouse_loader.py --clickhouse_host localhost  --clickhouse_da
 If you loaded the same data in MySQL, you can then run checksums (see test_db.sh)
 
 ## Table checksums
-
-Credits : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/
+**Note**: Only `Python 3.10` is supported\
+**Credits** : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/
 
 Compute the checksum of one table 
 
@@ -53,6 +53,12 @@ python db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --cli
 
 python db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user root --mysql_password root  --mysql_database menagerie --tables_regex ^pet --threads 4
 2022-09-11 19:39:49,148 - INFO - ThreadPoolExecutor-0_0 - Checksum for table menagerie.pet = 3d19b8b13cf29b5192068278123c5059 count 9
+```
+
+## Compute table Checksum on ReplacingMergeTree tables with is_deleted columns
+```
+python db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --clickhouse_user root --clickhouse_password root  --clickhouse_database test --tables_regex . --threads 4 
+--exclude_columns=is_deleted,_version --sign_column ""
 ```
 
 ## Connecting to secure ClickHouse

@@ -24,7 +24,7 @@ supported_test_names+=('oltp_update_non_index')
 supported_test_names+=('oltp_insert_truncate')
 
 ### Sysbench configuration
-num_threads=500
+num_threads=1000
 time=500 # IN Seconds
 
 mysql_host=127.0.0.1

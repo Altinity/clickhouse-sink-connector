@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class is used to manage the state of the offsets from
@@ -19,17 +20,14 @@ public class DebeziumOffsetManagement {
     private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetManagement.class);
 
     // A list of minimum , maximum timestamps of batches in flight
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new HashMap<>();
+    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new ConcurrentHashMap<>();
 
-    static Map<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches = new HashMap<>();
+    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> completedBatches = new ConcurrentHashMap<>();
 
-    public DebeziumOffsetManagement(Map<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches) {
+    public DebeziumOffsetManagement(ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches) {
         this.inFlightBatches = inFlightBatches;
     }
 
-    public void addToBatchTimestamps(Pair<Long, Long> pair, List<ClickHouseStruct> clickHouseStructs) {
-        inFlightBatches.put(pair, clickHouseStructs);
-    }
 
     public static void addToBatchTimestamps(List<ClickHouseStruct> batch) {
         Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
@@ -75,9 +73,9 @@ public class DebeziumOffsetManagement {
      * current batch.
      * @param batch
      */
-    static boolean checkIfThereAreInflightRequests(List<ClickHouseStruct> batch) {
+    static boolean checkIfThereAreInflightRequests(List<ClickHouseStruct> currentBatch) {
         boolean result = false;
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
+        Pair<Long, Long> currentBatchPair = calculateMinMaxTimestampFromBatch(currentBatch);
 
         //Iterate through inFlightBatches and check if there is any batch
         // which is lower than the current batch.
@@ -85,13 +83,13 @@ public class DebeziumOffsetManagement {
             Pair<Long, Long> key = entry.getKey();
 
             // Ignore the same batch
-            if (pair.getLeft().longValue() == key.getLeft().longValue() && pair.getRight().longValue() == key.getRight().longValue()) {
+            if (currentBatchPair.getLeft().longValue() == key.getLeft().longValue() &&
+                    currentBatchPair.getRight().longValue() == key.getRight().longValue()) {
                 continue;
             }
 
-            // If the min timestamp of the batch is lower than the current batch
-            if (pair.getLeft() < key.getRight()) {
-                log.error("*********** Batch is within the range of the in flight batch ***********");
+            // Check if max of current batch is greater than min of inflight batch
+            if(currentBatchPair.getRight().longValue() > key.getLeft().longValue()) {
                 result = true;
                 break;
             }
@@ -99,7 +97,9 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static public void checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+        boolean result = false;
+
         if(true == checkIfThereAreInflightRequests(batch)) {
             // Remove the record from inflightBatches
             // and move it to completedBatches.
@@ -109,7 +109,7 @@ public class DebeziumOffsetManagement {
         } else {
             // Acknowledge current batch
             acknowledgeRecords(batch);
-
+            result = true;
             // Check if completed batch can also be acknowledged.
             completedBatches.forEach((k, v) -> {
                 if(false == checkIfThereAreInflightRequests(v)) {
@@ -122,9 +122,11 @@ public class DebeziumOffsetManagement {
                 }
             });
         }
+
+        return result;
     }
 
-    static void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
         // Acknowledge the records.
 
         // acknowledge records

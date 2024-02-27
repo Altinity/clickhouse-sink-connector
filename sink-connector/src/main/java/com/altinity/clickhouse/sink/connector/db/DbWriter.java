@@ -116,15 +116,16 @@ public class DbWriter extends BaseDbWriter {
                         }
 
                         act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);
-                        this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
-                        response = metadata.getTableEngine(this.conn, database, tableName);
-                        this.engine = response.getLeft();
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
                     }
                 } else {
                     log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
                 }
+
+                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
+                response = metadata.getTableEngine(this.conn, database, tableName);
+                this.engine = response.getLeft();
             }
 
             if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
@@ -146,6 +147,12 @@ public class DbWriter extends BaseDbWriter {
         } catch(Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
+    }
+
+    public void updateColumnNameToDataTypeMap() throws SQLException {
+        this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> response = new DBMetadata().getTableEngine(this.conn, database, tableName);
+        this.engine = response.getLeft();
     }
 
     public boolean wasTableMetaDataRetrieved() {
