@@ -142,9 +142,5 @@ def complex_primary_key_innodb(self):
 def module(self):
     """'ALTER TRUNCATE' query tests."""
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for feature in loads(current_module(), Feature):
+        Feature(test=feature)()

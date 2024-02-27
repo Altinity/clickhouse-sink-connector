@@ -392,9 +392,5 @@ def json(self, mysql_type, ch_type, values, ch_values, nullable):
 def module(self):
     """Verify correct replication of all supported MySQL data types."""
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for feature in loads(current_module(), Feature):
+        Feature(test=feature)()
