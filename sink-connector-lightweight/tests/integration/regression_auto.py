@@ -153,7 +153,7 @@ xfails = {
             "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
         )
     ],
-    "types/bigint/mysql_type='BIGINT UNSIGNED', ch_type='UInt64', values=['0', '18446744073709551615'], ch_values=['0', '18446744073709551615'], nullable=False/{'ReplacingMergeTree'}": [
+    "types/bigint": [
         (
             Fail,
             "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
