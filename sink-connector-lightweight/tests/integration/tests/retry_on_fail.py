@@ -44,7 +44,9 @@ def retry_on_fail(self):
             f"SELECT retry FROM {self.context.database}.{table_name} FORMAT CSV"
         )
 
-        assert clickhouse_data.output.strip() == "retry on fail", error()
+        assert (
+            clickhouse_data.output.strip().replace('"', "") == "retry on fail"
+        ), error()
 
 
 @TestModule
