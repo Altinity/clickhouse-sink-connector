@@ -64,13 +64,13 @@ def check_table_names(self, table_name):
     with Then(f"I check that the {table_name} was created in the ClickHouse side"):
         for retry in retries(timeout=40, delay=1):
             with retry:
-                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+                clickhouse_node.query(f"EXISTS test.\`{table_name}\`", message="1")
 
     with And("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
             with retry:
                 clickhouse_data = clickhouse_node.query(
-                    f"SELECT id,x FROM test.{table_name} FORMAT CSV"
+                    f"SELECT id,x FROM test.\`{table_name}\` FORMAT CSV"
                 )
                 assert clickhouse_data.output.strip() == "1,1", error()
 
