@@ -36,7 +36,8 @@ for analysis.
 
 ## Getting Started
 
-[QuickStart Guide(Lightweight)](doc/quickstart.md).\
+[QuickStart Guide MySQL(Lightweight)](doc/quickstart.md).\
+[QuickStart Guide PostgreSQL(Lightweight)](doc/quickstart_postgres.md).\
 [QuickStart Guide(Kafka)](doc/quickstart_kafka.md).
 
 ## Blog Articles
