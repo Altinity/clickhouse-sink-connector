@@ -145,3 +145,6 @@ schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sin
 ## References:
 1. [Sink Connector Configuration ](configuration.md)
 2. [PostgreSQL Setup](https://debezium.io/documentation/reference/2.5/connectors/postgresql.html#setting-up-postgresql)
+3. For AWS RDS users, you might need to add heartbeat interval and query to avoid WAL logs constantly growing in size.
+   https://stackoverflow.com/questions/76415644/postgresql-wal-log-limiting-rds
+   https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-wal-disk-space
