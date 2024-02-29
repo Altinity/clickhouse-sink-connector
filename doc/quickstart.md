@@ -135,3 +135,8 @@ clickhouse.server.url: "https://cloud_url"
 offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
 schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
 ```
+
+## References:
+1. [Sink Connector Configuration ](doc/configuration.md)
+2. [MySQL Topologies supported](https://debezium.io/documentation/reference/2.5/connectors/mysql.html#setting-up-mysql)
+3. [MySQL Setup](https://debezium.io/documentation/reference/2.5/connectors/mysql.html#setting-up-mysql)

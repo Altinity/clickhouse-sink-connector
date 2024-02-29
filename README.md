@@ -36,9 +36,9 @@ for analysis.
 
 ## Getting Started
 
-[QuickStart Guide MySQL(Lightweight)](doc/quickstart.md).\
-[QuickStart Guide PostgreSQL(Lightweight)](doc/quickstart_postgres.md).\
-[QuickStart Guide(Kafka)](doc/quickstart_kafka.md).
+[QuickStart Guide MySQL (Lightweight)](doc/quickstart.md).\
+[QuickStart Guide PostgreSQL (Lightweight)](doc/quickstart_postgres.md).\
+[QuickStart Guide (Kafka)](doc/quickstart_kafka.md).
 
 ## Blog Articles
 
@@ -55,12 +55,6 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Architecture Overview](doc/architecture.md)
 * [Lightweight Sink Connect CLI](doc/sink_connector_cli.md)
 * [Mutable Data Handling](doc/mutable_data.md)
-
-### Installation
-
-* [Sink Connector Setup(Kafka)](doc/setup.md)
-* [Sink Connector Configuration(Kafka & Lightweight)](doc/configuration.md)
-* [Debezium Setup](doc/debezium_setup.md)
 
 ### Operations
 
