@@ -79,3 +79,59 @@ Stop all components.
 ```
 docker compose -f docker-compose-mysql.yml down
 ```
+
+### Connecting to External MySQL/ClickHouse
+
+**Step 1:** Update **MySQL** information in config.yaml(https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/config.yml
+):
+```
+   database.hostname: <MySQL Hostname>
+   database.port: <MySQL Port>
+   database.user: <MySQL username>
+   database.password: <MySQL password>
+```
+**Step 2:** Update **ClickHouse** information in config.yaml: 
+```
+    clickhouse.server.url: <ClickHouse hostname>
+    clickhouse.server.user: <ClickHouse username>
+    clickhouse.server.password: <ClickHouse password>
+    clickhouse.server.port. <ClickHouse port>
+```
+**Step 3:** Update **Offset storage/Schema History** to be stored in **ClickHouse**:
+```
+    offset.storage.jdbc.url: "jdbc:clickhouse://<ClickHouse hostname>:<ClickHouse port>/altinity_sink_connector"
+    schema.history.internal.jdbc.url: "jdbc:clickhouse://<ClickHouse hostname>:<ClickHouse port>/altinity_sink_connector"
+    
+    offset.storage.jdbc.user: <ClickHouse username>
+    offset.storage.jdbc.password: <ClickHouse password>
+    
+    schema.history.internal.jdbc.user: <ClickHouse username>
+    schema.history.internal.jdbc.password: <ClickHouse password>
+```
+**Step 4:** Update **MySQL databases** to be replicated:
+```
+    database.include.list: <Database name>
+```
+
+**Step 5:** Add **table filters** to include/exclude tables to be replicated:
+```
+    table.include.list: <Table names>
+    table.exclude.list: <Table names>
+```
+**Step 6:** Configure **Snapshot Mode** to define initial load vs CDC replication:
+```
+    # Initial load(transfer all existing data in MySQL)
+    snapshot.mode: initial
+    
+    or
+    
+    # CDC replication(transfer only new data in MySQL)
+    snapshot.mode: schema_only
+```
+**Note: ClickHouse Secure(Altinity Cloud/ClickHouse Cloud)**:
+Set the sever url to `https` and add `?ssl=true` to the end of the url.
+```
+clickhouse.server.url: "https://cloud_url"
+offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+```

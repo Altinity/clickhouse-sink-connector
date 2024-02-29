@@ -36,7 +36,8 @@ for analysis.
 
 ## Getting Started
 
-See [QuickStart Guide(Lightweight)](doc/quickstart.md).
+[QuickStart Guide(Lightweight)](doc/quickstart.md).\
+[QuickStart Guide(Kafka)](doc/quickstart_kafka.md).
 
 ## Blog Articles
 
