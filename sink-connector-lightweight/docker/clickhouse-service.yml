@@ -20,3 +20,4 @@ services:
     volumes:
       - ../clickhouse/users.xml:/etc/clickhouse-server/users.xml
       - ../clickhouse/config.xml:/etc/clickhouse-server/conf.d/config.xml
+      - ../clickhouse/macros.xml:/etc/clickhouse-server/conf.d/macros.xml
