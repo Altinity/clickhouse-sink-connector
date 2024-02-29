@@ -8,9 +8,8 @@
 ### Latest Releases
 | Component            | Docker Tag                                                                              |
 |----------------------|-----------------------------------------------------------------------------------------|
-| Kafka Sink Connector | altinity/clickhouse-sink-connector:latest                                               |
-| Lightweight          | altinityinfra/clickhouse-sink-connector:408-97b1d3d83ef93c1b76a2b1c4d9c544dc67fbbec3-lt |
-|                      |                                                                                         |
+| Lightweight          |         altinity/clickhouse-sink-connector:2.0.0-lt                                      |
+| Kafka Sink Connector |   altinity/clickhouse-sink-connector:latest                                                                                       |
 
 # Altinity Sink Connector for ClickHouse
 
