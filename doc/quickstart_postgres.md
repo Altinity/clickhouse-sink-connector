@@ -143,5 +143,5 @@ schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sin
 ```
 
 ## References:
-1. [Sink Connector Configuration ](doc/configuration.md)
+1. [Sink Connector Configuration ](configuration.md)
 2. [PostgreSQL Setup](https://debezium.io/documentation/reference/2.5/connectors/postgresql.html#setting-up-postgresql)
