@@ -36,16 +36,16 @@ for analysis.
 
 ## Getting Started
 
-[QuickStart Guide MySQL (Lightweight)](doc/quickstart.md).\
-[QuickStart Guide PostgreSQL (Lightweight)](doc/quickstart_postgres.md).\
-[QuickStart Guide (Kafka)](doc/quickstart_kafka.md).
+[QuickStart Guide: Lightweight (MySQL)](doc/quickstart.md)\
+[QuickStart Guide: Lightweight (PostgreSQL)](doc/quickstart_postgres.md)\
+[QuickStart Guide: Kafka](doc/quickstart_kafka.md)
 
 ## Blog Articles
 
 First two are good tutorials on MySQL and PostgreSQL respectively. 
 
-- [Altinity Sink connector for ClickHouse](https://altinity.com/blog/fast-mysql-to-clickhouse-replication-announcing-the-altinity-sink-connector-for-clickhouse)
-- [Replicating PostgreSQL to ClickHouse](https://altinity.com/blog/replicating-data-from-postgresql-to-clickhouse-with-the-altinity-sink-connector)
+- [Altinity Sink Connector (MySQL)](https://altinity.com/blog/fast-mysql-to-clickhouse-replication-announcing-the-altinity-sink-connector-for-clickhouse)
+- [Altinity Sink Connector (PostgreSQL)](https://altinity.com/blog/replicating-data-from-postgresql-to-clickhouse-with-the-altinity-sink-connector)
 - [ClickHouse as an analytic extension for MySQL](https://altinity.com/blog/using-clickhouse-as-an-analytic-extension-for-mysql?utm_campaign=Brand&utm_content=224583767&utm_medium=social&utm_source=linkedin&hss_channel=lcp-10955938)
 
 ## Reference Documentation
@@ -67,7 +67,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ## Roadmap 
 
-See [2024 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401).
+[2024 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401).
 
 ## Help
 
