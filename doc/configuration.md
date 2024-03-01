@@ -1,37 +1,3 @@
-# Sink Connector Configuration Settings
-
-## LightWeight Sink Connector
-
-### Setting Values for Docker Operation
-
-Update `config.yml` https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/config.yml
-
-1.  Update **MySQL information** in config.yaml: `database.hostname`, `database.port`, `database.user` and `database.password`.
-2.  Update **ClickHouse information** in config.yaml: `clickhouse.server.url`, `clickhouse.server.user`, `clickhouse.server.password`, `clickhouse.server.port`. 
-Also Update **ClickHouse information** for the following fields that are used to store the offset information- `offset.storage.jdbc.url`, `offset.storage.jdbc.user`, `offset.storage.jdbc.password`, `schema.history.internal.jdbc.url`, `schema.history.internal.jdbc.user`, and `schema.history.internal.jdbc.password`.
-3.  Update MySQL databases to be replicated: `database.include.list`.
-4.  Add table filters: `table.include.list`.
-5.  Set `snapshot.mode` to `initial` if you like to replicate existing records, set `snapshot.mode` to `schema_only` to replicate schema and only the records that are modified after the connector is started.
-6.  Start replication by running the JAR file. `java -jar clickhouse-debezium-embedded-1.0-SNAPSHOT.jar <yaml_config_file>` or docker.
-**ClickHouse HTTPS servers**
-For `https` servers, make sure the `clickhouse.server.url` includes `https`
-Also add `?ssl=true` and port `8443` to both the `offset.storage.jdbc.url` and `schema.history.internal.jdbc.url` configuration variables.
-Example: **ClickHouse Cloud**
-```
-clickhouse.server.url: "https://cloud_url"
-offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
-```
-
-### MySQL Configuration 
-[MySQL Configuration](sink-connector-lightweight/docker/config.yml)
-
-### PostgreSQL Configuration
-For AWS RDS users, you might need to add heartbeat interval and query to avoid WAL logs constantly growing in size.
-https://stackoverflow.com/questions/76415644/postgresql-wal-log-limiting-rds
-https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-wal-disk-space
-
-[PostgreSQL Configuration](sink-connector-lightweight/docker/config_postgres.yml)
 
 ### Configuration Reference
  Configuration                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -64,41 +30,3 @@ https://debezium.io/documentation/reference/stable/connectors/postgresql.html#po
 | restart.event.loop                     | If set to true, replication will be re-started based on the restart.event.loop.timeout.period parameter(which is defined in seconds)                                                                                                                                                                                                                                                                                                                                                                                                 |
 | restart.event.loop.timeout.period.secs | If the last change record(CDC) received from source database exceeds this threshold period defined in seconds, then replication is restarted.                                                                                                                                                                                                                                                                                                                                                                                        |
 | batch.max.records                      | Size of the batch that is persisted to ClickHouse.(Default 100000)                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-
-
-
-## Kafka Sink Connector for ClickHouse
-
-### Recommended Memory limits.
-**Production Usage**
-In `docker-compose.yml` file, its recommended to set Xmx to atleast 5G `-Xmx5G` when using in Production and 
-if you encounter a `Out of memory/Heap exception` error. 
-for both **Debezium** and **Sink**
-
-```
-- KAFKA_HEAP_OPTS=-Xms2G -Xmx5G
-```
-
-### Kafka Sink Connector Configuration
-
-|  Property                        |   Default | Description                                                                                                                                                           |
-|----------------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| tasks.max                        | No        | SinkConnector task(essentially threads), ideally this needs to be the same as the Kafka partitions.                                                                   |
-| topics.regex                     | No        | Regex of matching topics.  Example: "SERVER5432.test.(.*)" matches SERVER5432.test.employees and SERVER5432.test.products                                             |
-| topics                           | No        | The list of topics. topics or topics.regex has to be provided.                                                                                                        |
-| clickhouse.server.url            |           | ClickHouse Server URL                                                                                                                                                 |
-| clickhouse.server.user           |           | ClickHouse Server username                                                                                                                                            |
-| clickhouse.server.password           |           | ClickHouse Server password                                                                                                                                            |
-| clickhouse.server.database       |           | ClickHouse Database name                                                                                                                                              |
-| clickhouse.server.port           | 8123      | ClickHouse Server port                                                                                                                                                |
-| clickhouse.topic2table.map       | No        | Map of Kafka topics to table names, <topic_name1>:<table_name1>,<topic_name2>:<table_name2> This variable will override the default mapping of topics to table names. |
-| store.kafka.metadata             | false     | If set to true, kafka metadata columns will be added to Clickhouse                                                                                                    |
-| store.raw.data                   | false     | If set to true, the entire row is converted to JSON and stored in the column defined by the  ` store.raw.data.column ` field                                          |
-| store.raw.data.column            | No        | Clickhouse table column to store the raw data in JSON form(String Clickhouse DataType)                                                                                |
-| metrics.enable                   | true      | Enable Prometheus scraping                                                                                                                                            |
-| metrics.port                     | 8084      | Metrics port                                                                                                                                                          |
-| buffer.flush.time.ms             | 30        | Buffer(Batch of records) flush time in milliseconds                                                                                                                   |
-| thread.pool.size                 | 10        | Number of threads that is used to connect to ClickHouse                                                                                                               |
-| auto.create.tables               | false     | Sink connector will create tables in ClickHouse (If it does not exist)                                                                                                |
-| snowflake.id                     | true      | Uses SnowFlake ID(Timestamp + GTID) as the version column for ReplacingMergeTree                                                                                      |
-| replacingmergetree.delete.column | "sign"    | Column used as the sign column for ReplacingMergeTree.
