@@ -21,7 +21,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication = Requirement(
     ),
     link=None,
     level=2,
-    num="4.1",
+    num="5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Configurations = Requirement(
@@ -37,7 +37,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Configurations = Requirement(
     ),
     link=None,
     level=2,
-    num="5.1",
+    num="6.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication = Requirement(
@@ -53,7 +53,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication = R
     ),
     link=None,
     level=3,
-    num="6.3.1",
+    num="7.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select = Requirement(
@@ -69,7 +69,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select = Requirem
     ),
     link=None,
     level=3,
-    num="6.4.1",
+    num="7.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee = Requirement(
@@ -102,7 +102,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee = Requireme
     ),
     link=None,
     level=3,
-    num="6.5.1",
+    num="7.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Transactions = Requirement(
@@ -118,7 +118,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Transactions = Requirement(
     ),
     link=None,
     level=2,
-    num="7.1",
+    num="8.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions = Requirement(
@@ -138,7 +138,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions = Requirement(
     ),
     link=None,
     level=2,
-    num="8.1",
+    num="9.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree = Requirement(
@@ -155,7 +155,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replacing
     ),
     link=None,
     level=2,
-    num="9.1",
+    num="10.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames = Requirement(
@@ -173,7 +173,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replacing
     ),
     link=None,
     level=3,
-    num="9.1.1",
+    num="10.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree = Requirement(
@@ -190,7 +190,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replicate
     ),
     link=None,
     level=2,
-    num="9.2",
+    num="10.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames = Requirement(
@@ -207,7 +207,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_Replicate
     ),
     link=None,
     level=3,
-    num="9.2.1",
+    num="10.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes = Requirement(
@@ -223,7 +223,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes = Requirement(
     ),
     link=None,
     level=2,
-    num="10.1",
+    num="11.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requirement(
@@ -255,7 +255,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes = Requ
     ),
     link=None,
     level=3,
-    num="10.2.1",
+    num="11.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal = Requirement(
@@ -281,7 +281,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Decimal = Requireme
     ),
     link=None,
     level=3,
-    num="10.3.1",
+    num="11.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double = Requirement(
@@ -304,7 +304,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Double = Requiremen
     ),
     link=None,
     level=3,
-    num="10.4.1",
+    num="11.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime = Requirement(
@@ -332,7 +332,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime = Requirem
     ),
     link=None,
     level=3,
-    num="10.5.1",
+    num="11.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Binary = Requirement(
@@ -356,7 +356,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Binary = Requiremen
     ),
     link=None,
     level=3,
-    num="10.6.1",
+    num="11.6.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_String = Requirement(
@@ -382,7 +382,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_String = Requiremen
     ),
     link=None,
     level=3,
-    num="10.7.1",
+    num="11.7.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes = Requirement(
@@ -411,7 +411,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes = Require
     ),
     link=None,
     level=3,
-    num="10.8.1",
+    num="11.8.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirement(
@@ -431,7 +431,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirem
     ),
     link=None,
     level=3,
-    num="10.9.1",
+    num="11.9.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requirement(
@@ -454,7 +454,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requir
     ),
     link=None,
     level=3,
-    num="10.10.1",
+    num="11.10.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requirement(
@@ -477,7 +477,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requ
     ),
     link=None,
     level=3,
-    num="10.10.2",
+    num="11.10.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
@@ -500,7 +500,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
     ),
     link=None,
     level=3,
-    num="10.11.1",
+    num="11.11.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
@@ -523,7 +523,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
     ),
     link=None,
     level=3,
-    num="10.12.1",
+    num="11.12.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement(
@@ -547,7 +547,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement
     ),
     link=None,
     level=3,
-    num="10.13.1",
+    num="11.13.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement(
@@ -563,7 +563,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement
     ),
     link=None,
     level=3,
-    num="11.1.1",
+    num="12.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimits = Requirement(
@@ -581,7 +581,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts_PartitionLimi
     ),
     link=None,
     level=4,
-    num="11.1.1.1",
+    num="12.1.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates = Requirement(
@@ -597,7 +597,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates = Requirement
     ),
     link=None,
     level=3,
-    num="11.2.1",
+    num="12.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes = Requirement(
@@ -613,7 +613,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes = Requirement
     ),
     link=None,
     level=3,
-    num="11.3.1",
+    num="12.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation = Requirement(
@@ -632,7 +632,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation = Require
     ),
     link=None,
     level=2,
-    num="12.1",
+    num="13.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreate = Requirement(
@@ -648,7 +648,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreat
     ),
     link=None,
     level=3,
-    num="12.2.1",
+    num="13.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleAutoCreate = Requirement(
@@ -664,7 +664,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_MultipleA
     ),
     link=None,
     level=4,
-    num="12.2.1.1",
+    num="13.2.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoDrop = Requirement(
@@ -680,7 +680,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoDrop 
     ),
     link=None,
     level=3,
-    num="12.3.1",
+    num="13.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter = Requirement(
@@ -715,7 +715,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter = Requirement(
     ),
     link=None,
     level=2,
-    num="13.1",
+    num="14.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddIndex = Requirement(
@@ -731,7 +731,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddIndex = Requirement(
     ),
     link=None,
     level=3,
-    num="13.2.1",
+    num="14.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddKey = Requirement(
@@ -747,7 +747,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddKey = Requirement(
     ),
     link=None,
     level=3,
-    num="13.3.1",
+    num="14.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddFullText = Requirement(
@@ -763,7 +763,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddFullText = Requireme
     ),
     link=None,
     level=3,
-    num="13.4.1",
+    num="14.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddSpecial = Requirement(
@@ -779,7 +779,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddSpecial = Requiremen
     ),
     link=None,
     level=3,
-    num="13.5.1",
+    num="14.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropCheck = Requirement(
@@ -795,7 +795,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropCheck = Requirement
     ),
     link=None,
     level=3,
-    num="13.6.1",
+    num="14.6.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropDefault = Requirement(
@@ -811,7 +811,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropDefault = Requireme
     ),
     link=None,
     level=3,
-    num="13.7.1",
+    num="14.7.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Check = Requirement(
@@ -827,7 +827,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Check = Requirement(
     ),
     link=None,
     level=3,
-    num="13.8.1",
+    num="14.8.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Constraint = Requirement(
@@ -843,7 +843,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Constraint = Requiremen
     ),
     link=None,
     level=3,
-    num="13.9.1",
+    num="14.9.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Index = Requirement(
@@ -859,7 +859,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Index = Requirement(
     ),
     link=None,
     level=3,
-    num="13.10.1",
+    num="14.10.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_CharacterSet = Requirement(
@@ -875,7 +875,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_CharacterSet = Requirem
     ),
     link=None,
     level=3,
-    num="13.11.1",
+    num="14.11.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_ConvertToCharacterSet = Requirement(
@@ -891,7 +891,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_ConvertToCharacterSet =
     ),
     link=None,
     level=3,
-    num="13.12.1",
+    num="14.12.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Algorithm = Requirement(
@@ -907,7 +907,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Algorithm = Requirement
     ),
     link=None,
     level=3,
-    num="13.13.1",
+    num="14.13.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Force = Requirement(
@@ -923,7 +923,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Force = Requirement(
     ),
     link=None,
     level=3,
-    num="13.14.1",
+    num="14.14.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Lock = Requirement(
@@ -939,7 +939,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Lock = Requirement(
     ),
     link=None,
     level=3,
-    num="13.15.1",
+    num="14.15.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Unlock = Requirement(
@@ -955,7 +955,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Unlock = Requirement(
     ),
     link=None,
     level=3,
-    num="13.16.1",
+    num="14.16.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Validation = Requirement(
@@ -971,7 +971,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Validation = Requiremen
     ),
     link=None,
     level=3,
-    num="13.17.1",
+    num="14.17.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add = Requirement(
@@ -987,7 +987,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add = Requireme
     ),
     link=None,
     level=4,
-    num="13.18.1.1",
+    num="14.18.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_NullNotNull = Requirement(
@@ -1003,7 +1003,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_NullNotNull
     ),
     link=None,
     level=4,
-    num="13.18.1.2",
+    num="14.18.1.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Default = Requirement(
@@ -1020,7 +1020,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Default = R
     ),
     link=None,
     level=4,
-    num="13.18.1.3",
+    num="14.18.1.3",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_FirstAfter = Requirement(
@@ -1036,7 +1036,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_FirstAfter 
     ),
     link=None,
     level=4,
-    num="13.18.1.4",
+    num="14.18.1.4",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Multiple = Requirement(
@@ -1054,7 +1054,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add_Multiple = 
     ),
     link=None,
     level=4,
-    num="13.18.1.5",
+    num="14.18.1.5",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify = Requirement(
@@ -1071,7 +1071,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify = Requir
     ),
     link=None,
     level=4,
-    num="13.18.2.1",
+    num="14.18.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_NullNotNull = Requirement(
@@ -1087,7 +1087,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_NullNotN
     ),
     link=None,
     level=4,
-    num="13.18.2.2",
+    num="14.18.2.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Default = Requirement(
@@ -1103,7 +1103,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Default 
     ),
     link=None,
     level=4,
-    num="13.18.2.3",
+    num="14.18.2.3",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_FirstAfter = Requirement(
@@ -1119,7 +1119,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_FirstAft
     ),
     link=None,
     level=4,
-    num="13.18.2.4",
+    num="14.18.2.4",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Multiple = Requirement(
@@ -1135,7 +1135,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify_Multiple
     ),
     link=None,
     level=4,
-    num="13.18.2.5",
+    num="14.18.2.5",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_NullNotNullOldNew = Requirement(
@@ -1151,7 +1151,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_NullNotN
     ),
     link=None,
     level=4,
-    num="13.18.3.1",
+    num="14.18.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_FirstAfter = Requirement(
@@ -1167,7 +1167,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_FirstAft
     ),
     link=None,
     level=4,
-    num="13.18.3.2",
+    num="14.18.3.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple = Requirement(
@@ -1183,7 +1183,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple
     ),
     link=None,
     level=4,
-    num="13.18.3.3",
+    num="14.18.3.3",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop = Requirement(
@@ -1199,7 +1199,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop = Requirem
     ),
     link=None,
     level=4,
-    num="13.18.4.1",
+    num="14.18.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop_Multiple = Requirement(
@@ -1215,7 +1215,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop_Multiple =
     ),
     link=None,
     level=4,
-    num="13.18.4.2",
+    num="14.18.4.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename = Requirement(
@@ -1231,7 +1231,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename = Requir
     ),
     link=None,
     level=4,
-    num="13.18.5.1",
+    num="14.18.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename_Multiple = Requirement(
@@ -1247,7 +1247,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename_Multiple
     ),
     link=None,
     level=4,
-    num="13.18.5.2",
+    num="14.18.5.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddConstraint = Requirement(
@@ -1263,7 +1263,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_AddConstraint = Require
     ),
     link=None,
     level=3,
-    num="13.19.1",
+    num="14.19.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropConstraint = Requirement(
@@ -1279,7 +1279,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropConstraint = Requir
     ),
     link=None,
     level=3,
-    num="13.20.1",
+    num="14.20.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No = Requirement(
@@ -1296,7 +1296,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No = Requirement(
     ),
     link=None,
     level=3,
-    num="14.1.1",
+    num="15.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple = Requirement(
@@ -1313,7 +1313,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple = Requireme
     ),
     link=None,
     level=3,
-    num="14.2.1",
+    num="15.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Composite = Requirement(
@@ -1330,7 +1330,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Composite = Requir
     ),
     link=None,
     level=3,
-    num="14.3.1",
+    num="15.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleUpstreamServers = Requirement(
@@ -1346,7 +1346,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleUpstreamServers = Req
     ),
     link=None,
     level=2,
-    num="15.1",
+    num="16.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDownstreamServers = Requirement(
@@ -1362,7 +1362,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDownstreamServers = R
     ),
     link=None,
     level=2,
-    num="16.1",
+    num="17.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ArchivalMode = Requirement(
@@ -1379,7 +1379,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ArchivalMode = Requirement(
     ),
     link=None,
     level=2,
-    num="17.1",
+    num="18.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BootstrappingMode = Requirement(
@@ -1397,7 +1397,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BootstrappingMode = Requireme
     ),
     link=None,
     level=2,
-    num="18.1",
+    num="19.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BinlogPosition = Requirement(
@@ -1414,7 +1414,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_BinlogPosition = Requirement(
     ),
     link=None,
     level=2,
-    num="19.1",
+    num="20.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnMappingAndTransformationRules = Requirement(
@@ -1431,7 +1431,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnMappingAndTransformatio
     ),
     link=None,
     level=2,
-    num="20.1",
+    num="21.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency = Requirement(
@@ -1448,7 +1448,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency = Requir
     ),
     link=None,
     level=2,
-    num="21.1",
+    num="22.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Latency = Requirement(
@@ -1464,7 +1464,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Latency = Requirement(
     ),
     link=None,
     level=2,
-    num="22.1",
+    num="23.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance = Requirement(
@@ -1480,7 +1480,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance = Requirement(
     ),
     link=None,
     level=2,
-    num="23.1",
+    num="24.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance_LargeDailyDataVolumes = Requirement(
@@ -1496,7 +1496,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Performance_LargeDailyDataVol
     ),
     link=None,
     level=3,
-    num="23.2.1",
+    num="24.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Settings_Topic2TableMap = Requirement(
@@ -1513,7 +1513,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Settings_Topic2TableMap = Req
     ),
     link=None,
     level=3,
-    num="24.1.1",
+    num="25.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid = Requirement(
@@ -1537,7 +1537,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid = Requiremen
     ),
     link=None,
     level=3,
-    num="25.1.1",
+    num="26.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid = Requirement(
@@ -1554,7 +1554,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid = Requirem
     ),
     link=None,
     level=3,
-    num="25.2.1",
+    num="26.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special = Requirement(
@@ -1580,7 +1580,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special = Require
     ),
     link=None,
     level=3,
-    num="26.1.1",
+    num="27.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped = Requirement(
@@ -1596,7 +1596,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Insta
     ),
     link=None,
     level=3,
-    num="27.1.1",
+    num="28.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
@@ -1619,7 +1619,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=2,
-    num="28.1",
+    num="29.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -1643,539 +1643,540 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         Heading(name="Terminology", level=1, num="2"),
         Heading(name="SRS", level=2, num="2.1"),
         Heading(name="MySQL", level=2, num="2.2"),
-        Heading(name="Configuration", level=1, num="3"),
-        Heading(name="General", level=1, num="4"),
+        Heading(name="Test Schema", level=1, num="3"),
+        Heading(name="Configuration", level=1, num="4"),
+        Heading(name="General", level=1, num="5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication",
             level=2,
-            num="4.1",
+            num="5.1",
         ),
-        Heading(name="Configurations", level=1, num="5"),
+        Heading(name="Configurations", level=1, num="6"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Configurations",
             level=2,
-            num="5.1",
+            num="6.1",
         ),
-        Heading(name="Consistency", level=1, num="6"),
+        Heading(name="Consistency", level=1, num="7"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency",
             level=2,
-            num="6.1",
+            num="7.1",
         ),
-        Heading(name="Multiple MySQL Masters", level=2, num="6.2"),
+        Heading(name="Multiple MySQL Masters", level=2, num="7.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters",
             level=3,
-            num="6.2.1",
+            num="7.2.1",
         ),
-        Heading(name="Deduplication", level=2, num="6.3"),
+        Heading(name="Deduplication", level=2, num="7.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication",
             level=3,
-            num="6.3.1",
+            num="7.3.1",
         ),
-        Heading(name="Selects", level=2, num="6.4"),
+        Heading(name="Selects", level=2, num="7.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select",
             level=3,
-            num="6.4.1",
+            num="7.4.1",
         ),
-        Heading(name="Only Once Guarantee", level=2, num="6.5"),
+        Heading(name="Only Once Guarantee", level=2, num="7.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee",
             level=3,
-            num="6.5.1",
+            num="7.5.1",
         ),
-        Heading(name="Transactions", level=1, num="7"),
+        Heading(name="Transactions", level=1, num="8"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Transactions",
             level=2,
-            num="7.1",
+            num="8.1",
         ),
-        Heading(name="Supported Versions", level=1, num="8"),
+        Heading(name="Supported Versions", level=1, num="9"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions",
             level=2,
-            num="8.1",
+            num="9.1",
         ),
-        Heading(name="Supported Storage Engines", level=1, num="9"),
+        Heading(name="Supported Storage Engines", level=1, num="10"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree",
             level=2,
-            num="9.1",
+            num="10.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames",
             level=3,
-            num="9.1.1",
+            num="10.1.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree",
             level=2,
-            num="9.2",
+            num="10.2",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames",
             level=3,
-            num="9.2.1",
+            num="10.2.1",
         ),
-        Heading(name="Data Types", level=1, num="10"),
+        Heading(name="Data Types", level=1, num="11"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes",
             level=2,
-            num="10.1",
+            num="11.1",
         ),
-        Heading(name="Integer Types", level=2, num="10.2"),
+        Heading(name="Integer Types", level=2, num="11.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes",
             level=3,
-            num="10.2.1",
+            num="11.2.1",
         ),
-        Heading(name="Decimal", level=2, num="10.3"),
+        Heading(name="Decimal", level=2, num="11.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal",
             level=3,
-            num="10.3.1",
+            num="11.3.1",
         ),
-        Heading(name="Double", level=2, num="10.4"),
+        Heading(name="Double", level=2, num="11.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double",
             level=3,
-            num="10.4.1",
+            num="11.4.1",
         ),
-        Heading(name="DateTime", level=2, num="10.5"),
+        Heading(name="DateTime", level=2, num="11.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime",
             level=3,
-            num="10.5.1",
+            num="11.5.1",
         ),
-        Heading(name="Binary", level=2, num="10.6"),
+        Heading(name="Binary", level=2, num="11.6"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary",
             level=3,
-            num="10.6.1",
+            num="11.6.1",
         ),
-        Heading(name="String", level=2, num="10.7"),
+        Heading(name="String", level=2, num="11.7"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String",
             level=3,
-            num="10.7.1",
+            num="11.7.1",
         ),
-        Heading(name="Blob Types", level=2, num="10.8"),
+        Heading(name="Blob Types", level=2, num="11.8"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes",
             level=3,
-            num="10.8.1",
+            num="11.8.1",
         ),
-        Heading(name="Nullable", level=2, num="10.9"),
+        Heading(name="Nullable", level=2, num="11.9"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable",
             level=3,
-            num="10.9.1",
+            num="11.9.1",
         ),
-        Heading(name="Enum", level=2, num="10.10"),
+        Heading(name="Enum", level=2, num="11.10"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
             level=3,
-            num="10.10.1",
+            num="11.10.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString",
             level=3,
-            num="10.10.2",
+            num="11.10.2",
         ),
-        Heading(name="JSON", level=2, num="10.11"),
+        Heading(name="JSON", level=2, num="11.11"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON",
             level=3,
-            num="10.11.1",
+            num="11.11.1",
         ),
-        Heading(name="Year", level=2, num="10.12"),
+        Heading(name="Year", level=2, num="11.12"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year",
             level=3,
-            num="10.12.1",
+            num="11.12.1",
         ),
-        Heading(name="Bytes", level=2, num="10.13"),
+        Heading(name="Bytes", level=2, num="11.13"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes",
             level=3,
-            num="10.13.1",
+            num="11.13.1",
         ),
-        Heading(name="Queries", level=1, num="11"),
-        Heading(name="Inserts", level=2, num="11.1"),
+        Heading(name="Queries", level=1, num="12"),
+        Heading(name="Inserts", level=2, num="12.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts",
             level=3,
-            num="11.1.1",
+            num="12.1.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits",
             level=4,
-            num="11.1.1.1",
+            num="12.1.1.1",
         ),
-        Heading(name="Updates", level=2, num="11.2"),
+        Heading(name="Updates", level=2, num="12.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates",
             level=3,
-            num="11.2.1",
+            num="12.2.1",
         ),
-        Heading(name="Deletes", level=2, num="11.3"),
+        Heading(name="Deletes", level=2, num="12.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes",
             level=3,
-            num="11.3.1",
+            num="12.3.1",
         ),
-        Heading(name="Table Schema Creation", level=1, num="12"),
+        Heading(name="Table Schema Creation", level=1, num="13"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation",
             level=2,
-            num="12.1",
+            num="13.1",
         ),
-        Heading(name="Auto Create", level=2, num="12.2"),
+        Heading(name="Auto Create", level=2, num="13.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate",
             level=3,
-            num="12.2.1",
+            num="13.2.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate",
             level=4,
-            num="12.2.1.1",
+            num="13.2.1.1",
         ),
-        Heading(name="Auto Drop", level=2, num="12.3"),
+        Heading(name="Auto Drop", level=2, num="13.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop",
             level=3,
-            num="12.3.1",
+            num="13.3.1",
         ),
-        Heading(name="Alter", level=1, num="13"),
+        Heading(name="Alter", level=1, num="14"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter",
             level=2,
-            num="13.1",
+            num="14.1",
         ),
-        Heading(name="Add Index", level=2, num="13.2"),
+        Heading(name="Add Index", level=2, num="14.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex",
             level=3,
-            num="13.2.1",
+            num="14.2.1",
         ),
-        Heading(name="Add Key", level=2, num="13.3"),
+        Heading(name="Add Key", level=2, num="14.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey",
             level=3,
-            num="13.3.1",
+            num="14.3.1",
         ),
-        Heading(name="Add FullText", level=2, num="13.4"),
+        Heading(name="Add FullText", level=2, num="14.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText",
             level=3,
-            num="13.4.1",
+            num="14.4.1",
         ),
-        Heading(name="Add Special", level=2, num="13.5"),
+        Heading(name="Add Special", level=2, num="14.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial",
             level=3,
-            num="13.5.1",
+            num="14.5.1",
         ),
-        Heading(name="Drop Check", level=2, num="13.6"),
+        Heading(name="Drop Check", level=2, num="14.6"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck",
             level=3,
-            num="13.6.1",
+            num="14.6.1",
         ),
-        Heading(name="Drop Default", level=2, num="13.7"),
+        Heading(name="Drop Default", level=2, num="14.7"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault",
             level=3,
-            num="13.7.1",
+            num="14.7.1",
         ),
-        Heading(name="Check", level=2, num="13.8"),
+        Heading(name="Check", level=2, num="14.8"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check",
             level=3,
-            num="13.8.1",
+            num="14.8.1",
         ),
-        Heading(name="Constraint", level=2, num="13.9"),
+        Heading(name="Constraint", level=2, num="14.9"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint",
             level=3,
-            num="13.9.1",
+            num="14.9.1",
         ),
-        Heading(name="Index", level=2, num="13.10"),
+        Heading(name="Index", level=2, num="14.10"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index",
             level=3,
-            num="13.10.1",
+            num="14.10.1",
         ),
-        Heading(name="Character Set", level=2, num="13.11"),
+        Heading(name="Character Set", level=2, num="14.11"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet",
             level=3,
-            num="13.11.1",
+            num="14.11.1",
         ),
-        Heading(name="Convert To Character Set", level=2, num="13.12"),
+        Heading(name="Convert To Character Set", level=2, num="14.12"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet",
             level=3,
-            num="13.12.1",
+            num="14.12.1",
         ),
-        Heading(name="Algorithm", level=2, num="13.13"),
+        Heading(name="Algorithm", level=2, num="14.13"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm",
             level=3,
-            num="13.13.1",
+            num="14.13.1",
         ),
-        Heading(name="Force", level=2, num="13.14"),
+        Heading(name="Force", level=2, num="14.14"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force",
             level=3,
-            num="13.14.1",
+            num="14.14.1",
         ),
-        Heading(name="Lock", level=2, num="13.15"),
+        Heading(name="Lock", level=2, num="14.15"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock",
             level=3,
-            num="13.15.1",
+            num="14.15.1",
         ),
-        Heading(name="Unlock", level=2, num="13.16"),
+        Heading(name="Unlock", level=2, num="14.16"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock",
             level=3,
-            num="13.16.1",
+            num="14.16.1",
         ),
-        Heading(name="Validation", level=2, num="13.17"),
+        Heading(name="Validation", level=2, num="14.17"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation",
             level=3,
-            num="13.17.1",
+            num="14.17.1",
         ),
-        Heading(name="Columns", level=2, num="13.18"),
-        Heading(name="Add", level=3, num="13.18.1"),
+        Heading(name="Columns", level=2, num="14.18"),
+        Heading(name="Add", level=3, num="14.18.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add",
             level=4,
-            num="13.18.1.1",
+            num="14.18.1.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull",
             level=4,
-            num="13.18.1.2",
+            num="14.18.1.2",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default",
             level=4,
-            num="13.18.1.3",
+            num="14.18.1.3",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter",
             level=4,
-            num="13.18.1.4",
+            num="14.18.1.4",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple",
             level=4,
-            num="13.18.1.5",
+            num="14.18.1.5",
         ),
-        Heading(name="Modify", level=3, num="13.18.2"),
+        Heading(name="Modify", level=3, num="14.18.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify",
             level=4,
-            num="13.18.2.1",
+            num="14.18.2.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull",
             level=4,
-            num="13.18.2.2",
+            num="14.18.2.2",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default",
             level=4,
-            num="13.18.2.3",
+            num="14.18.2.3",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter",
             level=4,
-            num="13.18.2.4",
+            num="14.18.2.4",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple",
             level=4,
-            num="13.18.2.5",
+            num="14.18.2.5",
         ),
-        Heading(name="Change", level=3, num="13.18.3"),
+        Heading(name="Change", level=3, num="14.18.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew",
             level=4,
-            num="13.18.3.1",
+            num="14.18.3.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter",
             level=4,
-            num="13.18.3.2",
+            num="14.18.3.2",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple",
             level=4,
-            num="13.18.3.3",
+            num="14.18.3.3",
         ),
-        Heading(name="Drop", level=3, num="13.18.4"),
+        Heading(name="Drop", level=3, num="14.18.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop",
             level=4,
-            num="13.18.4.1",
+            num="14.18.4.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple",
             level=4,
-            num="13.18.4.2",
+            num="14.18.4.2",
         ),
-        Heading(name="Rename", level=3, num="13.18.5"),
+        Heading(name="Rename", level=3, num="14.18.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename",
             level=4,
-            num="13.18.5.1",
+            num="14.18.5.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple",
             level=4,
-            num="13.18.5.2",
+            num="14.18.5.2",
         ),
-        Heading(name="Add Constraint", level=2, num="13.19"),
+        Heading(name="Add Constraint", level=2, num="14.19"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint",
             level=3,
-            num="13.19.1",
+            num="14.19.1",
         ),
-        Heading(name="Drop Constraint", level=2, num="13.20"),
+        Heading(name="Drop Constraint", level=2, num="14.20"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint",
             level=3,
-            num="13.20.1",
+            num="14.20.1",
         ),
-        Heading(name="Primary Key", level=1, num="14"),
-        Heading(name="No Primary Key", level=2, num="14.1"),
+        Heading(name="Primary Key", level=1, num="15"),
+        Heading(name="No Primary Key", level=2, num="15.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No",
             level=3,
-            num="14.1.1",
+            num="15.1.1",
         ),
-        Heading(name="Simple Primary Key", level=2, num="14.2"),
+        Heading(name="Simple Primary Key", level=2, num="15.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple",
             level=3,
-            num="14.2.1",
+            num="15.2.1",
         ),
-        Heading(name="Composite Primary Key", level=2, num="14.3"),
+        Heading(name="Composite Primary Key", level=2, num="15.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Composite",
             level=3,
-            num="14.3.1",
+            num="15.3.1",
         ),
-        Heading(name="Multiple Upstream Servers", level=1, num="15"),
+        Heading(name="Multiple Upstream Servers", level=1, num="16"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleUpstreamServers",
             level=2,
-            num="15.1",
+            num="16.1",
         ),
-        Heading(name="Multiple Downstream Servers", level=1, num="16"),
+        Heading(name="Multiple Downstream Servers", level=1, num="17"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDownstreamServers",
             level=2,
-            num="16.1",
+            num="17.1",
         ),
-        Heading(name="Archival Mode", level=1, num="17"),
+        Heading(name="Archival Mode", level=1, num="18"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ArchivalMode",
             level=2,
-            num="17.1",
+            num="18.1",
         ),
-        Heading(name="Bootstrapping Mode", level=1, num="18"),
+        Heading(name="Bootstrapping Mode", level=1, num="19"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BootstrappingMode",
             level=2,
-            num="18.1",
+            num="19.1",
         ),
-        Heading(name="Binlog Position", level=1, num="19"),
+        Heading(name="Binlog Position", level=1, num="20"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition",
             level=2,
-            num="19.1",
+            num="20.1",
         ),
-        Heading(name="Column Mapping And Transformation Rules", level=1, num="20"),
+        Heading(name="Column Mapping And Transformation Rules", level=1, num="21"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules",
             level=2,
-            num="20.1",
+            num="21.1",
         ),
-        Heading(name="Columns Inconsistency", level=1, num="21"),
+        Heading(name="Columns Inconsistency", level=1, num="22"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency",
             level=2,
-            num="21.1",
+            num="22.1",
         ),
-        Heading(name="Latency", level=1, num="22"),
+        Heading(name="Latency", level=1, num="23"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency",
             level=2,
-            num="22.1",
+            num="23.1",
         ),
-        Heading(name="Performance ", level=1, num="23"),
+        Heading(name="Performance ", level=1, num="24"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance",
             level=2,
-            num="23.1",
+            num="24.1",
         ),
-        Heading(name="Large Daily Data Volumes", level=2, num="23.2"),
+        Heading(name="Large Daily Data Volumes", level=2, num="24.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes",
             level=3,
-            num="23.2.1",
+            num="24.2.1",
         ),
-        Heading(name="Settings", level=1, num="24"),
-        Heading(name="clickhouse.topic2table.map", level=2, num="24.1"),
+        Heading(name="Settings", level=1, num="25"),
+        Heading(name="clickhouse.topic2table.map", level=2, num="25.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap",
             level=3,
-            num="24.1.1",
+            num="25.1.1",
         ),
-        Heading(name="Table Names", level=1, num="25"),
-        Heading(name="Valid", level=2, num="25.1"),
+        Heading(name="Table Names", level=1, num="26"),
+        Heading(name="Valid", level=2, num="26.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Valid",
             level=3,
-            num="25.1.1",
+            num="26.1.1",
         ),
-        Heading(name="Invalid", level=2, num="25.2"),
+        Heading(name="Invalid", level=2, num="26.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Invalid",
             level=3,
-            num="25.2.1",
+            num="26.2.1",
         ),
-        Heading(name="Column Names", level=1, num="26"),
-        Heading(name="Replicate Tables With Special Column Names", level=2, num="26.1"),
+        Heading(name="Column Names", level=1, num="27"),
+        Heading(name="Replicate Tables With Special Column Names", level=2, num="27.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special",
             level=3,
-            num="26.1.1",
+            num="27.1.1",
         ),
-        Heading(name="Replication Interruption", level=1, num="27"),
+        Heading(name="Replication Interruption", level=1, num="28"),
         Heading(
             name="Retry Replication When ClickHouse Instance Is Not Active",
             level=2,
-            num="27.1",
+            num="28.1",
         ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped",
             level=3,
-            num="27.1.1",
+            num="28.1.1",
         ),
-        Heading(name="Prometheus ", level=1, num="28"),
+        Heading(name="Prometheus ", level=1, num="29"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
             level=2,
-            num="28.1",
+            num="29.1",
         ),
     ),
     requirements=(
@@ -2278,176 +2279,177 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
 * 2 [Terminology](#terminology)
     * 2.1 [SRS](#srs)
     * 2.2 [MySQL](#mysql)
-* 3 [Configuration](#configuration)
-* 4 [General](#general)
-    * 4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication](#rqsrs-030clickhousemysqltoclickhousereplication)
-* 5 [Configurations](#configurations)
-    * 5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Configurations](#rqsrs-030clickhousemysqltoclickhousereplicationconfigurations)
-* 6 [Consistency](#consistency)
-    * 6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency](#rqsrs-030clickhousemysqltoclickhousereplicationconsistency)
-    * 6.2 [Multiple MySQL Masters](#multiple-mysql-masters)
-        * 6.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencymultiplemysqlmasters)
-    * 6.3 [Deduplication](#deduplication)
-        * 6.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencydeduplication)
-    * 6.4 [Selects](#selects)
-        * 6.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencyselect)
-    * 6.5 [Only Once Guarantee](#only-once-guarantee)
-        * 6.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee](#rqsrs-030clickhousemysqltoclickhousereplicationonlyonceguarantee)
-* 7 [Transactions](#transactions)
-    * 7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Transactions](#rqsrs-030clickhousemysqltoclickhousereplicationtransactions)
-* 8 [Supported Versions](#supported-versions)
-    * 8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlversions)
-* 9 [Supported Storage Engines](#supported-storage-engines)
-    * 9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetree)
-        * 9.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
-    * 9.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
-        * 9.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
-* 10 [Data Types](#data-types)
-    * 10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypes)
-    * 10.2 [Integer Types](#integer-types)
-        * 10.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
-    * 10.3 [Decimal](#decimal)
-        * 10.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdecimal)
-    * 10.4 [Double](#double)
-        * 10.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdouble)
-    * 10.5 [DateTime](#datetime)
-        * 10.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdatetime)
-    * 10.6 [Binary](#binary)
-        * 10.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbinary)
-    * 10.7 [String](#string)
-        * 10.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
-    * 10.8 [Blob Types](#blob-types)
-        * 10.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
-    * 10.9 [Nullable](#nullable)
-        * 10.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
-    * 10.10 [Enum](#enum)
-        * 10.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
-        * 10.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
-    * 10.11 [JSON](#json)
-        * 10.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
-    * 10.12 [Year](#year)
-        * 10.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
-    * 10.13 [Bytes](#bytes)
-        * 10.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
-* 11 [Queries](#queries)
-    * 11.1 [Inserts](#inserts)
-        * 11.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
-            * 11.1.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
-    * 11.2 [Updates](#updates)
-        * 11.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
-    * 11.3 [Deletes](#deletes)
-        * 11.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesdeletes)
-* 12 [Table Schema Creation](#table-schema-creation)
-    * 12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreation)
-    * 12.2 [Auto Create](#auto-create)
-        * 12.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautocreate)
-            * 12.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationmultipleautocreate)
-    * 12.3 [Auto Drop](#auto-drop)
-        * 12.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautodrop)
-* 13 [Alter](#alter)
-    * 13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter](#rqsrs-030clickhousemysqltoclickhousereplicationalter)
-    * 13.2 [Add Index](#add-index)
-        * 13.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddindex)
-    * 13.3 [Add Key](#add-key)
-        * 13.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddkey)
-    * 13.4 [Add FullText](#add-fulltext)
-        * 13.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddfulltext)
-    * 13.5 [Add Special](#add-special)
-        * 13.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddspecial)
-    * 13.6 [Drop Check](#drop-check)
-        * 13.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropcheck)
-    * 13.7 [Drop Default](#drop-default)
-        * 13.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropdefault)
-    * 13.8 [Check](#check)
-        * 13.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check](#rqsrs-030clickhousemysqltoclickhousereplicationaltercheck)
-    * 13.9 [Constraint](#constraint)
-        * 13.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterconstraint)
-    * 13.10 [Index](#index)
-        * 13.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index](#rqsrs-030clickhousemysqltoclickhousereplicationalterindex)
-    * 13.11 [Character Set](#character-set)
-        * 13.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationaltercharacterset)
-    * 13.12 [Convert To Character Set](#convert-to-character-set)
-        * 13.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationalterconverttocharacterset)
-    * 13.13 [Algorithm](#algorithm)
-        * 13.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm](#rqsrs-030clickhousemysqltoclickhousereplicationalteralgorithm)
-    * 13.14 [Force](#force)
-        * 13.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force](#rqsrs-030clickhousemysqltoclickhousereplicationalterforce)
-    * 13.15 [Lock](#lock)
-        * 13.15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock](#rqsrs-030clickhousemysqltoclickhousereplicationalterlock)
-    * 13.16 [Unlock](#unlock)
-        * 13.16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock](#rqsrs-030clickhousemysqltoclickhousereplicationalterunlock)
-    * 13.17 [Validation](#validation)
-        * 13.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation](#rqsrs-030clickhousemysqltoclickhousereplicationaltervalidation)
-    * 13.18 [Columns](#columns)
-        * 13.18.1 [Add](#add)
-            * 13.18.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadd)
-            * 13.18.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddnullnotnull)
-            * 13.18.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadddefault)
-            * 13.18.1.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddfirstafter)
-            * 13.18.1.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddmultiple)
-        * 13.18.2 [Modify](#modify)
-            * 13.18.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodify)
-            * 13.18.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifynullnotnull)
-            * 13.18.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifydefault)
-            * 13.18.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifyfirstafter)
-            * 13.18.2.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifymultiple)
-        * 13.18.3 [Change](#change)
-            * 13.18.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangenullnotnulloldnew)
-            * 13.18.3.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangefirstafter)
-            * 13.18.3.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangemultiple)
-        * 13.18.4 [Drop](#drop)
-            * 13.18.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdrop)
-            * 13.18.4.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdropmultiple)
-        * 13.18.5 [Rename](#rename)
-            * 13.18.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrename)
-            * 13.18.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrenamemultiple)
-    * 13.19 [Add Constraint](#add-constraint)
-        * 13.19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddconstraint)
-    * 13.20 [Drop Constraint](#drop-constraint)
-        * 13.20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropconstraint)
-* 14 [Primary Key](#primary-key)
-    * 14.1 [No Primary Key](#no-primary-key)
-        * 14.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeyno)
-    * 14.2 [Simple Primary Key](#simple-primary-key)
-        * 14.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeysimple)
-    * 14.3 [Composite Primary Key](#composite-primary-key)
-        * 14.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Composite](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeycomposite)
-* 15 [Multiple Upstream Servers](#multiple-upstream-servers)
-    * 15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleUpstreamServers](#rqsrs-030clickhousemysqltoclickhousereplicationmultipleupstreamservers)
-* 16 [Multiple Downstream Servers](#multiple-downstream-servers)
-    * 16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDownstreamServers](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledownstreamservers)
-* 17 [Archival Mode](#archival-mode)
-    * 17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ArchivalMode](#rqsrs-030clickhousemysqltoclickhousereplicationarchivalmode)
-* 18 [Bootstrapping Mode](#bootstrapping-mode)
-    * 18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BootstrappingMode](#rqsrs-030clickhousemysqltoclickhousereplicationbootstrappingmode)
-* 19 [Binlog Position](#binlog-position)
-    * 19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition](#rqsrs-030clickhousemysqltoclickhousereplicationbinlogposition)
-* 20 [Column Mapping And Transformation Rules](#column-mapping-and-transformation-rules)
-    * 20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnmappingandtransformationrules)
-* 21 [Columns Inconsistency](#columns-inconsistency)
-    * 21.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnsinconsistency)
-* 22 [Latency](#latency)
-    * 22.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
-* 23 [Performance ](#performance-)
-    * 23.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
-    * 23.2 [Large Daily Data Volumes](#large-daily-data-volumes)
-        * 23.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
-* 24 [Settings](#settings)
-    * 24.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
-        * 24.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
-* 25 [Table Names](#table-names)
-    * 25.1 [Valid](#valid)
-        * 25.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Valid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesvalid)
-    * 25.2 [Invalid](#invalid)
-        * 25.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Invalid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesinvalid)
-* 26 [Column Names](#column-names)
-    * 26.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
-        * 26.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
-* 27 [Replication Interruption](#replication-interruption)
-    * 27.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
-        * 27.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
-* 28 [Prometheus ](#prometheus-)
-    * 28.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 3 [Test Schema](#test-schema)
+* 4 [Configuration](#configuration)
+* 5 [General](#general)
+    * 5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication](#rqsrs-030clickhousemysqltoclickhousereplication)
+* 6 [Configurations](#configurations)
+    * 6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Configurations](#rqsrs-030clickhousemysqltoclickhousereplicationconfigurations)
+* 7 [Consistency](#consistency)
+    * 7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency](#rqsrs-030clickhousemysqltoclickhousereplicationconsistency)
+    * 7.2 [Multiple MySQL Masters](#multiple-mysql-masters)
+        * 7.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencymultiplemysqlmasters)
+    * 7.3 [Deduplication](#deduplication)
+        * 7.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Deduplication](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencydeduplication)
+    * 7.4 [Selects](#selects)
+        * 7.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.Select](#rqsrs-030clickhousemysqltoclickhousereplicationconsistencyselect)
+    * 7.5 [Only Once Guarantee](#only-once-guarantee)
+        * 7.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee](#rqsrs-030clickhousemysqltoclickhousereplicationonlyonceguarantee)
+* 8 [Transactions](#transactions)
+    * 8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Transactions](#rqsrs-030clickhousemysqltoclickhousereplicationtransactions)
+* 9 [Supported Versions](#supported-versions)
+    * 9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlversions)
+* 10 [Supported Storage Engines](#supported-storage-engines)
+    * 10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetree)
+        * 10.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
+    * 10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
+        * 10.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree.DifferentVersionColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetreedifferentversioncolumnnames)
+* 11 [Data Types](#data-types)
+    * 11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypes)
+    * 11.2 [Integer Types](#integer-types)
+        * 11.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesintegertypes)
+    * 11.3 [Decimal](#decimal)
+        * 11.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdecimal)
+    * 11.4 [Double](#double)
+        * 11.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdouble)
+    * 11.5 [DateTime](#datetime)
+        * 11.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesdatetime)
+    * 11.6 [Binary](#binary)
+        * 11.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbinary)
+    * 11.7 [String](#string)
+        * 11.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
+    * 11.8 [Blob Types](#blob-types)
+        * 11.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
+    * 11.9 [Nullable](#nullable)
+        * 11.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+    * 11.10 [Enum](#enum)
+        * 11.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
+        * 11.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
+    * 11.11 [JSON](#json)
+        * 11.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
+    * 11.12 [Year](#year)
+        * 11.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 11.13 [Bytes](#bytes)
+        * 11.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
+* 12 [Queries](#queries)
+    * 12.1 [Inserts](#inserts)
+        * 12.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
+            * 12.1.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
+    * 12.2 [Updates](#updates)
+        * 12.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
+    * 12.3 [Deletes](#deletes)
+        * 12.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesdeletes)
+* 13 [Table Schema Creation](#table-schema-creation)
+    * 13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreation)
+    * 13.2 [Auto Create](#auto-create)
+        * 13.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautocreate)
+            * 13.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationmultipleautocreate)
+    * 13.3 [Auto Drop](#auto-drop)
+        * 13.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop](#rqsrs-030clickhousemysqltoclickhousereplicationtableschemacreationautodrop)
+* 14 [Alter](#alter)
+    * 14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter](#rqsrs-030clickhousemysqltoclickhousereplicationalter)
+    * 14.2 [Add Index](#add-index)
+        * 14.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddindex)
+    * 14.3 [Add Key](#add-key)
+        * 14.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddkey)
+    * 14.4 [Add FullText](#add-fulltext)
+        * 14.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddfulltext)
+    * 14.5 [Add Special](#add-special)
+        * 14.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddspecial)
+    * 14.6 [Drop Check](#drop-check)
+        * 14.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropcheck)
+    * 14.7 [Drop Default](#drop-default)
+        * 14.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropdefault)
+    * 14.8 [Check](#check)
+        * 14.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check](#rqsrs-030clickhousemysqltoclickhousereplicationaltercheck)
+    * 14.9 [Constraint](#constraint)
+        * 14.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterconstraint)
+    * 14.10 [Index](#index)
+        * 14.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index](#rqsrs-030clickhousemysqltoclickhousereplicationalterindex)
+    * 14.11 [Character Set](#character-set)
+        * 14.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationaltercharacterset)
+    * 14.12 [Convert To Character Set](#convert-to-character-set)
+        * 14.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet](#rqsrs-030clickhousemysqltoclickhousereplicationalterconverttocharacterset)
+    * 14.13 [Algorithm](#algorithm)
+        * 14.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm](#rqsrs-030clickhousemysqltoclickhousereplicationalteralgorithm)
+    * 14.14 [Force](#force)
+        * 14.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force](#rqsrs-030clickhousemysqltoclickhousereplicationalterforce)
+    * 14.15 [Lock](#lock)
+        * 14.15.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock](#rqsrs-030clickhousemysqltoclickhousereplicationalterlock)
+    * 14.16 [Unlock](#unlock)
+        * 14.16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock](#rqsrs-030clickhousemysqltoclickhousereplicationalterunlock)
+    * 14.17 [Validation](#validation)
+        * 14.17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation](#rqsrs-030clickhousemysqltoclickhousereplicationaltervalidation)
+    * 14.18 [Columns](#columns)
+        * 14.18.1 [Add](#add)
+            * 14.18.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadd)
+            * 14.18.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddnullnotnull)
+            * 14.18.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsadddefault)
+            * 14.18.1.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddfirstafter)
+            * 14.18.1.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsaddmultiple)
+        * 14.18.2 [Modify](#modify)
+            * 14.18.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodify)
+            * 14.18.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifynullnotnull)
+            * 14.18.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifydefault)
+            * 14.18.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifyfirstafter)
+            * 14.18.2.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsmodifymultiple)
+        * 14.18.3 [Change](#change)
+            * 14.18.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangenullnotnulloldnew)
+            * 14.18.3.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangefirstafter)
+            * 14.18.3.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnschangemultiple)
+        * 14.18.4 [Drop](#drop)
+            * 14.18.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdrop)
+            * 14.18.4.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsdropmultiple)
+        * 14.18.5 [Rename](#rename)
+            * 14.18.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrename)
+            * 14.18.5.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple](#rqsrs-030clickhousemysqltoclickhousereplicationaltercolumnsrenamemultiple)
+    * 14.19 [Add Constraint](#add-constraint)
+        * 14.19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalteraddconstraint)
+    * 14.20 [Drop Constraint](#drop-constraint)
+        * 14.20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint](#rqsrs-030clickhousemysqltoclickhousereplicationalterdropconstraint)
+* 15 [Primary Key](#primary-key)
+    * 15.1 [No Primary Key](#no-primary-key)
+        * 15.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeyno)
+    * 15.2 [Simple Primary Key](#simple-primary-key)
+        * 15.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeysimple)
+    * 15.3 [Composite Primary Key](#composite-primary-key)
+        * 15.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Composite](#rqsrs-030clickhousemysqltoclickhousereplicationprimarykeycomposite)
+* 16 [Multiple Upstream Servers](#multiple-upstream-servers)
+    * 16.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleUpstreamServers](#rqsrs-030clickhousemysqltoclickhousereplicationmultipleupstreamservers)
+* 17 [Multiple Downstream Servers](#multiple-downstream-servers)
+    * 17.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDownstreamServers](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledownstreamservers)
+* 18 [Archival Mode](#archival-mode)
+    * 18.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ArchivalMode](#rqsrs-030clickhousemysqltoclickhousereplicationarchivalmode)
+* 19 [Bootstrapping Mode](#bootstrapping-mode)
+    * 19.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BootstrappingMode](#rqsrs-030clickhousemysqltoclickhousereplicationbootstrappingmode)
+* 20 [Binlog Position](#binlog-position)
+    * 20.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition](#rqsrs-030clickhousemysqltoclickhousereplicationbinlogposition)
+* 21 [Column Mapping And Transformation Rules](#column-mapping-and-transformation-rules)
+    * 21.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnmappingandtransformationrules)
+* 22 [Columns Inconsistency](#columns-inconsistency)
+    * 22.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnsinconsistency)
+* 23 [Latency](#latency)
+    * 23.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency](#rqsrs-030clickhousemysqltoclickhousereplicationlatency)
+* 24 [Performance ](#performance-)
+    * 24.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance](#rqsrs-030clickhousemysqltoclickhousereplicationperformance)
+    * 24.2 [Large Daily Data Volumes](#large-daily-data-volumes)
+        * 24.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes](#rqsrs-030clickhousemysqltoclickhousereplicationperformancelargedailydatavolumes)
+* 25 [Settings](#settings)
+    * 25.1 [clickhouse.topic2table.map](#clickhousetopic2tablemap)
+        * 25.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Settings.Topic2TableMap](#rqsrs-030clickhousemysqltoclickhousereplicationsettingstopic2tablemap)
+* 26 [Table Names](#table-names)
+    * 26.1 [Valid](#valid)
+        * 26.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Valid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesvalid)
+    * 26.2 [Invalid](#invalid)
+        * 26.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableNames.Invalid](#rqsrs-030clickhousemysqltoclickhousereplicationtablenamesinvalid)
+* 27 [Column Names](#column-names)
+    * 27.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
+        * 27.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
+* 28 [Replication Interruption](#replication-interruption)
+    * 28.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
+        * 28.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
+* 29 [Prometheus ](#prometheus-)
+    * 29.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -2463,6 +2465,176 @@ Software Requirements Specification
 ### MySQL
 
 [MySQL](https://www.mysql.com/) server.
+
+## Test Schema
+
+```yaml
+Services:
+  - Source Database Cluster
+  - Sink Connector
+  - ClickHouse Database Cluster
+
+SourceTables:
+  DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
+  DatabaseVersions:
+    MySQL: [8.0]
+    PostgreSQL: null
+    MariaDB: null
+    MongoDB: null
+  DatabaseClusterConfiguration:
+    MySQL: null
+    PostgreSQL: null
+    MariaDB: null
+    MongoDB: null
+  EngineType:
+    MySQL: [InnoDB]
+    PostgreSQL: null
+    MariaDB: null
+    MongoDB: null
+  Schema:
+    TableName:
+      length: 
+        MySQL: 64 characters
+        PostgreSQL: null
+        MariaDB: null
+        MongoDB: null
+      encodings:
+          ASCII: null
+          UTF-8: null
+          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+    Partitioning:
+      MySQL: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
+    Columns:
+      DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
+      Type:
+        MySQL: [Calculated columns, Materialized columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
+      Name:
+        length:
+          mysql: null
+          PostgreSQL: null
+          MariaDB: null
+          MongoDB: null
+        ASCII: null
+        UTF-8: null
+        otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+      DataType:
+        - DECIMAL(2,1) NOT NULL
+        - DECIMAL(30, 10) NOT NULL
+        - DOUBLE NOT NULL
+        - DATE NOT NULL
+        - DATETIME(6) NOT NULL
+        - TIME NOT NULL
+        - TIME(6) NOT NULL
+        - INT NOT NULL
+        - INT NOT NULL
+        - INT UNSIGNED NOT NULL
+        - INT UNSIGNED NOT NULL
+        - BIGINT NOT NULL
+        - BIGINT NOT NULL
+        - BIGINT UNSIGNED NOT NULL
+        - BIGINT UNSIGNED NOT NULL
+        - TINYINT NOT NULL
+        - TINYINT NOT NULL
+        - TINYINT UNSIGNED NOT NULL
+        - TINYINT UNSIGNED NOT NULL
+        - SMALLINT NOT NULL
+        - SMALLINT NOT NULL
+        - SMALLINT UNSIGNED NOT NULL
+        - SMALLINT UNSIGNED NOT NULL
+        - MEDIUMINT NOT NULL
+        - MEDIUMINT NOT NULL
+        - MEDIUMINT UNSIGNED NOT NULL
+        - MEDIUMINT UNSIGNED NOT NULL
+        - CHAR NOT NULL
+        - TEXT NOT NULL
+        - VARCHAR(4) NOT NULL
+        - BLOB NOT NULL
+        - MEDIUMBLOB NOT NULL
+        - LONGBLOB NOT NULL
+        - BINARY NOT NULL
+        - VARBINARY(4) NOT NULL
+      DataValue:
+        Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
+        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
+                  -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
+                  A random value within precision and scale]
+        String:
+          bytes: [null bytes, ...]
+          UTF-8: []
+          ASCII: []
+
+TableOperations:
+  MySQL:
+    - INSERT
+    - UPDATE
+    - DELETE
+    - SELECT
+    - ALTERs:
+      - ADD COLUMN                                            
+      - ADD COLUMN NULL/NOT NULL                              
+      - ADD COLUMN DEFAULT                                    
+      - ADD COLUMN FIRST, AFTER                               
+      - DROP COLUMN                                           
+      - MODIFY COLUMN data_type                               
+      - MODIFY COLUMN data_type NULL/NOT NULL                 
+      - MODIFY COLUMN data_type DEFAULT                       
+      - MODIFY COLUMN FIRST, AFTER                            
+      - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+      - RENAME COLUMN col1 to col2                            
+      - CHANGE COLUMN FIRST, AFTER                            
+      - ALTER COLUMN col_name ADD DEFAULT                     
+      - ALTER COLUMN col_name ADD DROP DEFAULT                
+      - ADD PRIMARY KEY                                       
+  MariaDB: null
+  PostgreSQL: null
+  MongoDB: null
+
+SinkConnector:
+  Version: [latest]
+  Configuration: The full list is inside configurations below
+
+DestinationTables:
+  DatabaseType: [ClickHouse]
+  DatabaseClusterConfiguration: null
+  DatabaseVersion: [22.8, 23.3, 23,11]
+  EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
+  Schema: null
+  TableOperations:
+   - INSERT
+   - UPDATE
+   - DELETE
+   - SELECT
+   - ALTER
+
+SystemActions:
+  Network:
+    - Internal network interruptions in source database cluster
+    - Network interruptions from source database to sink connector
+    - Network interruptions from sink connector to clickhouse
+    - Internal network interruptions in clickhouse database cluster
+  Process:
+    Die:
+      - Internal processes die in source database cluster
+      - Sink connector dies
+      - Internal processes die in clickhouse database cluster
+    Restarted:
+      - Restart of some or all nodes in source database cluster
+      - Restart of sink connector
+      - Restart of some or all nodes in clickhouse database cluster
+  Disk:
+    OutOfSpace:
+      - Out of disk space on some node in source database cluster
+      - Out of disk space where sink connector is running
+      - Out of disk space on some node in clickhouse database cluster
+    Corruptions:
+      - Corruption on a disk used by some node in source database cluster
+      - Corruption on a disk where sink connector is running
+      - Corruption on a disk used by some node in clickhouse database cluster
+```
 
 ## Configuration
 
