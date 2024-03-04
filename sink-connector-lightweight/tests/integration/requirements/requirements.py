@@ -2522,41 +2522,35 @@ SourceTables:
                          eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
                          latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
       DataType:
-        - DECIMAL(2,1) NOT NULL
-        - DECIMAL(30, 10) NOT NULL
-        - DOUBLE NOT NULL
-        - DATE NOT NULL
-        - DATETIME(6) NOT NULL
-        - TIME NOT NULL
-        - TIME(6) NOT NULL
-        - INT NOT NULL
-        - INT NOT NULL
-        - INT UNSIGNED NOT NULL
-        - INT UNSIGNED NOT NULL
-        - BIGINT NOT NULL
-        - BIGINT NOT NULL
+        - DECIMAL(2,1)
+        - DECIMAL(30, 10)
+        - DOUBLE
+        - DATE
+        - DATETIME(1-6)
+        - TIME
+        - TIME(1-6)
+        - INT
+        - INT
+        - INT UNSIGNED
+        - INT UNSIGNED
+        - BIGINT
+        - BIGINT
         - BIGINT UNSIGNED NOT NULL
-        - BIGINT UNSIGNED NOT NULL
-        - TINYINT NOT NULL
-        - TINYINT NOT NULL
-        - TINYINT UNSIGNED NOT NULL
-        - TINYINT UNSIGNED NOT NULL
-        - SMALLINT NOT NULL
-        - SMALLINT NOT NULL
-        - SMALLINT UNSIGNED NOT NULL
-        - SMALLINT UNSIGNED NOT NULL
+        - TINYINT
+        - TINYINT UNSIGNED
+        - SMALLINT
+        - SMALLINT UNSIGNED
+        - MEDIUMINT
         - MEDIUMINT NOT NULL
-        - MEDIUMINT NOT NULL
-        - MEDIUMINT UNSIGNED NOT NULL
-        - MEDIUMINT UNSIGNED NOT NULL
-        - CHAR NOT NULL
-        - TEXT NOT NULL
-        - VARCHAR(4) NOT NULL
-        - BLOB NOT NULL
-        - MEDIUMBLOB NOT NULL
-        - LONGBLOB NOT NULL
-        - BINARY NOT NULL
-        - VARBINARY(4) NOT NULL
+        - MEDIUMINT UNSIGNED
+        - CHAR
+        - TEXT
+        - VARCHAR(1-32766)
+        - BLOB
+        - MEDIUMBLOB
+        - LONGBLOB
+        - BINARY
+        - VARBINARY(4)
       DataValue:
         Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
         Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
@@ -2566,32 +2560,36 @@ SourceTables:
           bytes: [null bytes, ...]
           UTF-8: []
           ASCII: []
+          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
+                           utf32, utf8mb3, utf8mb4]
 
-TableOperations:
-  MySQL:
-    - INSERT
-    - UPDATE
-    - DELETE
-    - SELECT
-    - ALTERs:
-      - ADD COLUMN                                            
-      - ADD COLUMN NULL/NOT NULL                              
-      - ADD COLUMN DEFAULT                                    
-      - ADD COLUMN FIRST, AFTER                               
-      - DROP COLUMN                                           
-      - MODIFY COLUMN data_type                               
-      - MODIFY COLUMN data_type NULL/NOT NULL                 
-      - MODIFY COLUMN data_type DEFAULT                       
-      - MODIFY COLUMN FIRST, AFTER                            
-      - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
-      - RENAME COLUMN col1 to col2                            
-      - CHANGE COLUMN FIRST, AFTER                            
-      - ALTER COLUMN col_name ADD DEFAULT                     
-      - ALTER COLUMN col_name ADD DROP DEFAULT                
-      - ADD PRIMARY KEY                                       
-  MariaDB: null
-  PostgreSQL: null
-  MongoDB: null
+    TableOperations:
+      MySQL:
+        - INSERT
+        - UPDATE
+        - DELETE
+        - SELECT
+        - ALTERs:
+          - ADD COLUMN                                            
+          - ADD COLUMN NULL/NOT NULL                              
+          - ADD COLUMN DEFAULT                                    
+          - ADD COLUMN FIRST, AFTER                               
+          - DROP COLUMN                                           
+          - MODIFY COLUMN data_type                               
+          - MODIFY COLUMN data_type NULL/NOT NULL                 
+          - MODIFY COLUMN data_type DEFAULT                       
+          - MODIFY COLUMN FIRST, AFTER                            
+          - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+          - RENAME COLUMN col1 to col2                            
+          - CHANGE COLUMN FIRST, AFTER                            
+          - ALTER COLUMN col_name ADD DEFAULT                     
+          - ALTER COLUMN col_name ADD DROP DEFAULT                
+          - ADD PRIMARY KEY                                       
+      MariaDB: null
+      PostgreSQL: null
+      MongoDB: null
 
 SinkConnector:
   Version: [latest]
@@ -2599,10 +2597,28 @@ SinkConnector:
 
 DestinationTables:
   DatabaseType: [ClickHouse]
-  DatabaseClusterConfiguration: null
-  DatabaseVersion: [22.8, 23.3, 23,11]
+  DatabaseClusterConfiguration: 
+    - One node
+    - Sharded cluster secure
+    - Cluster with Multiple Shards
+    - Cluster with Replication (but a single shard)
+    - Cluster with Multiple Shards and Replicas
+    - Secure Cluster
+  DatabaseVersion: [22.8, 23.3, 23,11, latest]
   EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
-  Schema: null
+  Schema:
+      TableName:
+          length: 
+            MySQL: 64 characters
+            PostgreSQL: null
+            MariaDB: null
+            MongoDB: null
+          encodings:
+              ASCII: null
+              UTF-8: null
+              otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                             eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                             latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
   TableOperations:
    - INSERT
    - UPDATE
