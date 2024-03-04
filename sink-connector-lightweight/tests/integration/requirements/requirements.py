@@ -2559,7 +2559,9 @@ SourceTables:
         - VARBINARY(4) NOT NULL
       DataValue:
         Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
-        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", -Max value based on precision and scale, +Max value based on precision and scale, "NaN", A random value within precision and scale]
+        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
+                  -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
+                  A random value within precision and scale]
         String:
           bytes: [null bytes, ...]
           UTF-8: []
