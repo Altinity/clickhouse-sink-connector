@@ -2477,7 +2477,7 @@ Services:
 SourceTables:
   DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
   DatabaseVersions:
-    MySQL: null
+    MySQL: [8.0]
     PostgreSQL: null
     MariaDB: null
     MongoDB: null
@@ -2493,25 +2493,73 @@ SourceTables:
     MongoDB: null
   Schema:
     TableName:
-      length: null
-      ASCII: null
-      UTF-8: null
-      otherEncodings: null
+      length: 
+        MySQL: 64 characters
+        PostgreSQL: null
+        MariaDB: null
+        MongoDB: null
+      encodings:
+          ASCII: null
+          UTF-8: null
+          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
     Partitioning:
-      MySQL: [partition by range, null]
+      MySQL: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
     Columns:
-      DefaultValues: null
+      DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
       Type:
-        MySQL: [Calculated columns, Materialized columns, null]
+        MySQL: [Calculated columns, Materialized columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
       Name:
-        length: null
+        length:
+          mysql: null
+          PostgreSQL: null
+          MariaDB: null
+          MongoDB: null
         ASCII: null
         UTF-8: null
-        otherEncodings: null
-      DataType: []
+        otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+      DataType:
+        - DECIMAL(2,1) NOT NULL
+        - DECIMAL(30, 10) NOT NULL
+        - DOUBLE NOT NULL
+        - DATE NOT NULL
+        - DATETIME(6) NOT NULL
+        - TIME NOT NULL
+        - TIME(6) NOT NULL
+        - INT NOT NULL
+        - INT NOT NULL
+        - INT UNSIGNED NOT NULL
+        - INT UNSIGNED NOT NULL
+        - BIGINT NOT NULL
+        - BIGINT NOT NULL
+        - BIGINT UNSIGNED NOT NULL
+        - BIGINT UNSIGNED NOT NULL
+        - TINYINT NOT NULL
+        - TINYINT NOT NULL
+        - TINYINT UNSIGNED NOT NULL
+        - TINYINT UNSIGNED NOT NULL
+        - SMALLINT NOT NULL
+        - SMALLINT NOT NULL
+        - SMALLINT UNSIGNED NOT NULL
+        - SMALLINT UNSIGNED NOT NULL
+        - MEDIUMINT NOT NULL
+        - MEDIUMINT NOT NULL
+        - MEDIUMINT UNSIGNED NOT NULL
+        - MEDIUMINT UNSIGNED NOT NULL
+        - CHAR NOT NULL
+        - TEXT NOT NULL
+        - VARCHAR(4) NOT NULL
+        - BLOB NOT NULL
+        - MEDIUMBLOB NOT NULL
+        - LONGBLOB NOT NULL
+        - BINARY NOT NULL
+        - VARBINARY(4) NOT NULL
       DataValue:
         Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
-        Decimal: null
+        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", -Max value based on precision and scale, +Max value based on precision and scale, "NaN", A random value within precision and scale]
         String:
           bytes: [null bytes, ...]
           UTF-8: []
@@ -2523,22 +2571,42 @@ TableOperations:
     - UPDATE
     - DELETE
     - SELECT
-    - ALTERs: []
+    - ALTERs:
+      - ADD COLUMN                                            
+      - ADD COLUMN NULL/NOT NULL                              
+      - ADD COLUMN DEFAULT                                    
+      - ADD COLUMN FIRST, AFTER                               
+      - DROP COLUMN                                           
+      - MODIFY COLUMN data_type                               
+      - MODIFY COLUMN data_type NULL/NOT NULL                 
+      - MODIFY COLUMN data_type DEFAULT                       
+      - MODIFY COLUMN FIRST, AFTER                            
+      - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+      - RENAME COLUMN col1 to col2                            
+      - CHANGE COLUMN FIRST, AFTER                            
+      - ALTER COLUMN col_name ADD DEFAULT                     
+      - ALTER COLUMN col_name ADD DROP DEFAULT                
+      - ADD PRIMARY KEY                                       
   MariaDB: null
   PostgreSQL: null
   MongoDB: null
 
 SinkConnector:
   Version: [latest]
-  Configuration: null
+  Configuration: The full list is inside configurations below
 
 DestinationTables:
   DatabaseType: [ClickHouse]
   DatabaseClusterConfiguration: null
-  DatabaseVersion: null
+  DatabaseVersion: [22.8, 23.3, 23,11]
   EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
   Schema: null
-  TableOperations: null
+  TableOperations:
+   - INSERT
+   - UPDATE
+   - DELETE
+   - SELECT
+   - ALTER
 
 SystemActions:
   Network:
