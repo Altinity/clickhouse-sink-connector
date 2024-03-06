@@ -1,4 +1,4 @@
-FROM debezium/connect-base:1.9.5.Final
+FROM debezium/connect-base:2.6
 
 LABEL maintainer="Altinity"
 
@@ -8,7 +8,7 @@ USER root:root
 COPY target/*.jar  /kafka/connect/clickhouse-kafka-sink-connector/
 
 # Copy libs
-COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
+#COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
 #
 #docker-maven-download confluent kafka-connect-avro-converter "$CONFLUENT_VERSION" 16c38a7378032f850f0293b7654aa6bf && \
 #    docker-maven-download confluent kafka-connect-avro-data "$CONFLUENT_VERSION" 63022db9533689968540f45be705786d && \
@@ -32,6 +32,14 @@ RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-7.2.1.jar' 'https:
 RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
 RUN 'curl' '-L' '--output' '/kafka/libs/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
 RUN 'curl' '-L' '--output' '/kafka/libs/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-serializer-7.6.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-serializer/7.6.0/kafka-schema-serializer-7.6.0.jar'
+
+RUN 'curl' '-L' '--output' '/kafka/libs/guava-33.0.0-jre.jar' 'https://repo1.maven.org/maven2/com/google/guava/guava/33.0.0-jre/guava-33.0.0-jre.jar'
+
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-json-schema-serializer-7.4.0.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-json-schema-serializer/7.4.0/kafka-json-schema-serializer-7.4.0.jar'
+
+RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-client-7.4.0.jar' 'https://maven.repository.redhat.com/ga/io/confluent/kafka-schema-registry-client/7.4.0/kafka-schema-registry-client-7.4.0.jar'
+
 
 RUN chown -R kafka:kafka /kafka/connect/
 
