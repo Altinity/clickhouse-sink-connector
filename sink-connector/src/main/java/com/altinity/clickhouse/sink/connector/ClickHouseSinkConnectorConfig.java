@@ -136,6 +136,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.TASK_ID.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.RECORDS_BATCH_COUNT.toString(),
+                        Type.INT,
+                        200,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.MEDIUM,
+                        "Sink consumes records in batches, which are cached in memory until they are written to the database.",
+                        CONFIG_GROUP_TASK_CONFIG,
+                        2,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.RECORDS_BATCH_COUNT.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.PROVIDER_CONFIG.toString(),
                         Type.STRING,
                         KafkaProvider.UNKNOWN.name(),

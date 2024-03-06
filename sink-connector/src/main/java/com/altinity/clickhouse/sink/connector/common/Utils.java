@@ -92,8 +92,8 @@ public class Utils {
             // topic names is of the following format.
             // hostname.dbName.tableName
             String[] splitName = topicName.split("\\.");
-            if(splitName.length == 3) {
-                tableName = splitName[2];
+            if(splitName.length >= 3) {
+                tableName = splitName[splitName.length - 1];
             }
 
         return tableName;

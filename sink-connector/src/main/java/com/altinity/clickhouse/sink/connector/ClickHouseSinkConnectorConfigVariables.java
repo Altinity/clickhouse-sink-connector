@@ -4,6 +4,8 @@ package com.altinity.clickhouse.sink.connector;
 public enum ClickHouseSinkConnectorConfigVariables {
 
     IGNORE_DELETE("ignore_delete"),
+
+    RECORDS_BATCH_COUNT("records.batch.count"),
     THREAD_POOL_SIZE("thread.pool.size"),
     BUFFER_COUNT("buffer.count"),
     DEDUPLICATION_POLICY("deduplication.policy"),
