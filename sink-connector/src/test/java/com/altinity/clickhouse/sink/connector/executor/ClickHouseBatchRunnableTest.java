@@ -16,11 +16,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class ClickHouseBatchRunnableTest {
 
 
-    ConcurrentLinkedQueue<List<ClickHouseStruct>> records = new ConcurrentLinkedQueue<>();
+    LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
     @Before
