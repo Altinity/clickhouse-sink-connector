@@ -69,7 +69,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
 
-    MAX_QUEUE_SIZE("max.queue.size");
+    MAX_QUEUE_SIZE("sink.connector.max.queue.size");
 
     private String label;
 
