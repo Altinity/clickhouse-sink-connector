@@ -673,6 +673,24 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
+    @Test
+    public void testReplicatedReplacingMergeTreeWithoutIsDeletedColumn() {
+        HashMap configMap = new HashMap();
+        configMap.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config);
+        StringBuffer clickHouseQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean();
+
+        String sql = "CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;";
+        mySQLDDLParserService.parseSql(sql, "temporal_types_DATETIME4", clickHouseQuery, isDropOrTruncate);
+
+        String expectedResult = "CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8)Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/temporal_types_DATETIME4', '{replica}', _version, is_deleted) ORDER BY tuple()";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
+
+
+    }
+
     @ParameterizedTest
     @CsvSource(
             value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",

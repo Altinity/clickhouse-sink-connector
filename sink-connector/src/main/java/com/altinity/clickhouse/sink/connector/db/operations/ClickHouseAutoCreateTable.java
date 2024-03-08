@@ -69,10 +69,6 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             createTableSyntax.append(",");
 
         }
-//        for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
-//            createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
-//        }
-        //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
         // Append sign and version columns
         createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
