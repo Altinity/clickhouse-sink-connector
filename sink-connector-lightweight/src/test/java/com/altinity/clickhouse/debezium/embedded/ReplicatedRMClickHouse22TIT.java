@@ -25,7 +25,6 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -33,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration test that validates auto creation of Replicated RMT when the flag is set in config(auto.create.replicated.tables)")
-public class ReplicatedRMTIT {
+public class ReplicatedRMClickHouse22TIT {
     protected MySQLContainer mySqlContainer;
     static ClickHouseContainer clickHouseContainer;
 
@@ -59,7 +58,7 @@ public class ReplicatedRMTIT {
         // clickHouseContainer.start();
         Thread.sleep(15000);
 
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -72,13 +71,10 @@ public class ReplicatedRMTIT {
         clickHouseContainer.start();
     }
 
-    static {
-
-    }
 
     @ParameterizedTest
     @CsvSource({
-            "clickhouse/clickhouse-server:latest"
+            "clickhouse/clickhouse-server:22.3"
     })
     @DisplayName("Test that validates creation of Replicated Replacing Merge Tree")
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
