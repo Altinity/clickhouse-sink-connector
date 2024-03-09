@@ -229,12 +229,17 @@ public class DBMetadata {
         if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
             result.right = getSignColumnForCollapsingMergeTree(response);
-        } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+        }
+        else if(response.contains(TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.engine)) {
+            result.left = TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE;
+            result.right = getVersionColumnForReplacingMergeTree(response);
+        }
+        else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
             result.right = getVersionColumnForReplacingMergeTree(response);
         } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.MERGE_TREE;
-        } else {
+        }  else {
             result.left = TABLE_ENGINE.DEFAULT;
         }
 
