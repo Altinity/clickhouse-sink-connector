@@ -128,7 +128,9 @@ public class DbWriter extends BaseDbWriter {
                 this.engine = response.getLeft();
             }
 
-            if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())) {
+            if (this.engine != null &&
+                    (this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()) ||
+                            this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()))) {
                 String rmtColumns = response.getRight();
                 if(rmtColumns != null && rmtColumns.contains(",")) {
                     // New RMT, with version and deleted column.

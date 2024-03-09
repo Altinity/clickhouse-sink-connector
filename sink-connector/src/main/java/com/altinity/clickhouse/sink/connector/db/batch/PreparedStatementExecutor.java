@@ -224,7 +224,7 @@ public class PreparedStatementExecutor {
 
             //String colName = entry.getKey();
 
-            //ToDO: Setting null to a non-nullable field
+            //ToDO: Setting null to a non-nullable field)
             // will throw an error.
             // If the Received column is not a clickhouse column
             try {
@@ -301,7 +301,10 @@ public class PreparedStatementExecutor {
 
         // Version column.
         //String versionColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_VERSION_COLUMN);
-        if(engine != null && engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() && versionColumn != null) {
+        if(engine != null &&
+                (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
+                        engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
+                && versionColumn != null) {
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
 
                     if(columnNameToIndexMap.containsKey(versionColumn)) {

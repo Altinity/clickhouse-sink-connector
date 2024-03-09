@@ -130,14 +130,19 @@ public class ReplicatedRMTIT {
 
         while(dateTimeResult.next()) {
             dataValidated = true;
-            System.out.println(dateTimeResult.getTimestamp("Type").toString());
-            System.out.println(dateTimeResult.getTimestamp("Value").toString());
+            System.out.println(dateTimeResult.getString("Type").toString());
+            System.out.println(dateTimeResult.getString("Value").toString());
 
-            junit.framework.Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
-            junit.framework.Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:47:46.0"));
-            junit.framework.Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999"));
+            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
+            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
         }
         Assert.assertTrue(dataValidated);
+
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
     }
 
 }

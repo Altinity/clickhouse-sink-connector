@@ -170,8 +170,10 @@ public class DBMetadata {
             String parameters = StringUtils.substringBetween(createDML, REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
             if(parameters != null) {
                 String[] parameterArray = parameters.split(",");
-                if(parameterArray != null && parameterArray.length >= 3) {
+                if(parameterArray != null && parameterArray.length == 3) {
                     versionColumn = parameterArray[2].trim();
+                } else if(parameterArray != null && parameterArray.length == 4) {
+                    versionColumn = parameterArray[2].trim() + "," + parameterArray[3].trim();
                 }
             }
         }
