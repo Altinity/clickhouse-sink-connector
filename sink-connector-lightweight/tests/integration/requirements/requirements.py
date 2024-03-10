@@ -2480,7 +2480,7 @@ clickhouse-sink-connector:
       MySQL:
           DatabaseVersion: 8.0
           DatabaseClusterConfiguration: null
-          EngineType: [InnoDB, MyISAM, MEMORY, CSV, ARCHIVE, BLACKHOLE, FEDERATED, EXAMPLE,  ]
+          EngineType: [InnoDB, MyISAM, MEMORY, CSV, ARCHIVE, BLACKHOLE, FEDERATED, EXAMPLE]
           Schema:
             TableName:
               Length: 64 characters
@@ -2490,61 +2490,64 @@ clickhouse-sink-connector:
                   - otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
                                  eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
                                  latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-          Partitioning: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
+          Partitioning: 
+            - RANGE 
+            - LIST 
+            - COLUMNS 
+            - HASH 
+            - KEY 
+            - Subpartitioning
           Columns:
               DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
-              Type: [Calculated Columns, Materialized Columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
+              Type: [Calculated Columns, Materialized Columns, Primary Key Columns, Foreign Key Columns, 
+                     Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, 
+                     ENUM and SET Columns, Spatial Columns]
               Name:
-                Length: none
+                Length: 64 characters
                 Encodings:
-                  ASCII: supported
-                  UTF-8: supported
-                  OtherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                  - ASCII
+                  - UTF-8
+                  - OtherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
                                  eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
                                  latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-                  DataType:
-                    - DECIMAL(2,1)
-                    - DECIMAL(30, 10)
-                    - DOUBLE
-                    - DATE
-                    - DATETIME(1-6)
-                    - TIME
-                    - TIME(1-6)
-                    - INT
-                    - INT
-                    - INT UNSIGNED
-                    - INT UNSIGNED
-                    - BIGINT
-                    - BIGINT
-                    - BIGINT UNSIGNED NOT NULL
-                    - TINYINT
-                    - TINYINT UNSIGNED
-                    - SMALLINT
-                    - SMALLINT UNSIGNED
-                    - MEDIUMINT
-                    - MEDIUMINT NOT NULL
-                    - MEDIUMINT UNSIGNED
-                    - CHAR
-                    - TEXT
-                    - VARCHAR(1-32766)
-                    - BLOB
-                    - MEDIUMBLOB
-                    - LONGBLOB
-                    - BINARY
-                    - VARBINARY(4)
-                  DataValue:
-                    Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
-                    Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
-                              -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
-                              A random value within precision and scale]
-                    String:
-                      Bytes: [null bytes, ...]
-                      UTF-8: []
-                      ASCII: []
-                      otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                                     eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                                     latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
-                                       utf32, utf8mb3, utf8mb4]
+              DataType:
+                  - DECIMAL(2,1)
+                  - DECIMAL(30, 10)
+                  - DOUBLE
+                  - DATE
+                  - DATETIME(1-6)
+                  - TIME(1-6)
+                  - INT
+                  - INT UNSIGNED
+                  - BIGINT
+                  - BIGINT UNSIGNED NOT NULL
+                  - TINYINT
+                  - TINYINT UNSIGNED
+                  - SMALLINT
+                  - SMALLINT UNSIGNED
+                  - MEDIUMINT
+                  - MEDIUMINT UNSIGNED
+                  - CHAR
+                  - TEXT
+                  - VARCHAR(1-32766)
+                  - BLOB
+                  - MEDIUMBLOB
+                  - LONGBLOB
+                  - BINARY
+                  - VARBINARY(4)
+              DataValue:
+                Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
+                Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, 
+                          "0.0001", -Max value based on precision and scale, +Max value based on precision and scale, 
+                          "NaN", A random value within precision and scale]
+                String:
+                  Bytes: [null bytes, ...]
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
+                                   utf32, utf8mb3, utf8mb4]
                   TableOperations:
                     - INSERT
                     - UPDATE
