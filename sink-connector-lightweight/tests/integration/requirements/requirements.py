@@ -2469,187 +2469,225 @@ Software Requirements Specification
 ## Test Schema
 
 ```yaml
-Services:
-  - Source Database Cluster
-  - Sink Connector
-  - ClickHouse Database Cluster
+clickhouse-sink-connector:
+    Services:
+      - Source Database Cluster
+      - Sink Connector
+      - ClickHouse Database Cluster
 
-SourceTables:
-  DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
-  DatabaseVersions:
-    MySQL: [8.0]
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  DatabaseClusterConfiguration:
-    MySQL: null
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  EngineType:
-    MySQL: [InnoDB]
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  Schema:
-    TableName:
-      length: 
-        MySQL: 64 characters
-        PostgreSQL: null
-        MariaDB: null
-        MongoDB: null
-      encodings:
-          ASCII: null
-          UTF-8: null
-          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-    Partitioning:
-      MySQL: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
-    Columns:
-      DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
-      Type:
-        MySQL: [Calculated columns, Materialized columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
-      Name:
-        length:
-          mysql: null
-          PostgreSQL: null
-          MariaDB: null
-          MongoDB: null
-        ASCII: null
-        UTF-8: null
-        otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-      DataType:
-        - DECIMAL(2,1)
-        - DECIMAL(30, 10)
-        - DOUBLE
-        - DATE
-        - DATETIME(1-6)
-        - TIME
-        - TIME(1-6)
-        - INT
-        - INT
-        - INT UNSIGNED
-        - INT UNSIGNED
-        - BIGINT
-        - BIGINT
-        - BIGINT UNSIGNED NOT NULL
-        - TINYINT
-        - TINYINT UNSIGNED
-        - SMALLINT
-        - SMALLINT UNSIGNED
-        - MEDIUMINT
-        - MEDIUMINT NOT NULL
-        - MEDIUMINT UNSIGNED
-        - CHAR
-        - TEXT
-        - VARCHAR(1-32766)
-        - BLOB
-        - MEDIUMBLOB
-        - LONGBLOB
-        - BINARY
-        - VARBINARY(4)
-      DataValue:
-        Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
-        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
-                  -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
-                  A random value within precision and scale]
-        String:
-          bytes: [null bytes, ...]
-          UTF-8: []
-          ASCII: []
-          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
-                           utf32, utf8mb3, utf8mb4]
-
-    TableOperations:
+    SourceTables:
+      DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
       MySQL:
-        - INSERT
-        - UPDATE
-        - DELETE
-        - SELECT
-        - ALTERs:
-          - ADD COLUMN                                            
-          - ADD COLUMN NULL/NOT NULL                              
-          - ADD COLUMN DEFAULT                                    
-          - ADD COLUMN FIRST, AFTER                               
-          - DROP COLUMN                                           
-          - MODIFY COLUMN data_type                               
-          - MODIFY COLUMN data_type NULL/NOT NULL                 
-          - MODIFY COLUMN data_type DEFAULT                       
-          - MODIFY COLUMN FIRST, AFTER                            
-          - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
-          - RENAME COLUMN col1 to col2                            
-          - CHANGE COLUMN FIRST, AFTER                            
-          - ALTER COLUMN col_name ADD DEFAULT                     
-          - ALTER COLUMN col_name ADD DROP DEFAULT                
-          - ADD PRIMARY KEY                                       
-      MariaDB: null
-      PostgreSQL: null
-      MongoDB: null
+          DatabaseVersion: 8.0
+          DatabaseClusterConfiguration: null
+          EngineType: [InnoDB, MyISAM, MEMORY, CSV, ARCHIVE, BLACKHOLE, FEDERATED, EXAMPLE,  ]
+          Schema:
+            TableName:
+              Length: 64 characters
+              Encodings:
+                  - ASCII
+                  - UTF-8
+                  - otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+          Partitioning: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
+          Columns:
+              DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
+              Type: [Calculated Columns, Materialized Columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
+              Name:
+                Length: none
+                Encodings:
+                  ASCII: supported
+                  UTF-8: supported
+                  OtherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+                  DataType:
+                    - DECIMAL(2,1)
+                    - DECIMAL(30, 10)
+                    - DOUBLE
+                    - DATE
+                    - DATETIME(1-6)
+                    - TIME
+                    - TIME(1-6)
+                    - INT
+                    - INT
+                    - INT UNSIGNED
+                    - INT UNSIGNED
+                    - BIGINT
+                    - BIGINT
+                    - BIGINT UNSIGNED NOT NULL
+                    - TINYINT
+                    - TINYINT UNSIGNED
+                    - SMALLINT
+                    - SMALLINT UNSIGNED
+                    - MEDIUMINT
+                    - MEDIUMINT NOT NULL
+                    - MEDIUMINT UNSIGNED
+                    - CHAR
+                    - TEXT
+                    - VARCHAR(1-32766)
+                    - BLOB
+                    - MEDIUMBLOB
+                    - LONGBLOB
+                    - BINARY
+                    - VARBINARY(4)
+                  DataValue:
+                    Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
+                    Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
+                              -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
+                              A random value within precision and scale]
+                    String:
+                      Bytes: [null bytes, ...]
+                      UTF-8: []
+                      ASCII: []
+                      otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                     eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                     latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
+                                       utf32, utf8mb3, utf8mb4]
+                  TableOperations:
+                    - INSERT
+                    - UPDATE
+                    - DELETE
+                    - SELECT
+                    - ALTER:
+                      - ADD COLUMN                                            
+                      - ADD COLUMN NULL/NOT NULL                              
+                      - ADD COLUMN DEFAULT                                    
+                      - ADD COLUMN FIRST, AFTER                               
+                      - DROP COLUMN                                           
+                      - MODIFY COLUMN data_type                               
+                      - MODIFY COLUMN data_type NULL/NOT NULL                 
+                      - MODIFY COLUMN data_type DEFAULT                       
+                      - MODIFY COLUMN FIRST, AFTER                            
+                      - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+                      - RENAME COLUMN col1 to col2                            
+                      - CHANGE COLUMN FIRST, AFTER                            
+                      - ALTER COLUMN col_name ADD DEFAULT                     
+                      - ALTER COLUMN col_name ADD DROP DEFAULT                
+                      - ADD PRIMARY KEY                                       
+      PostgreSQL:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      MariaDB:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      MongoDB:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      
+    SinkConnector:
+      Version: [latest]
+      Configuration: The full list is inside configurations below
+    
+    DestinationTables:
+      DatabaseType: [ClickHouse]
+      DatabaseClusterConfiguration: 
+        - One node
+        - Sharded cluster secure
+        - Cluster with Multiple Shards
+        - Cluster with Replication (but a single shard)
+        - Cluster with Multiple Shards and Replicas
+        - Secure Cluster
+      DatabaseVersion: [22.8, 23.3, 23.11, 23.12]
+      EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
+      TableOperations:
+       - INSERT
+       - UPDATE
+       - DELETE
+       - SELECT
+       - ALTER
 
-SinkConnector:
-  Version: [latest]
-  Configuration: The full list is inside configurations below
-
-DestinationTables:
-  DatabaseType: [ClickHouse]
-  DatabaseClusterConfiguration: 
-    - One node
-    - Sharded cluster secure
-    - Cluster with Multiple Shards
-    - Cluster with Replication (but a single shard)
-    - Cluster with Multiple Shards and Replicas
-    - Secure Cluster
-  DatabaseVersion: [22.8, 23.3, 23,11, latest]
-  EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
-  Schema:
-      TableName:
-          length: 
-            MySQL: 64 characters
-            PostgreSQL: null
-            MariaDB: null
-            MongoDB: null
-          encodings:
-              ASCII: null
-              UTF-8: null
-              otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                             eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                             latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-  TableOperations:
-   - INSERT
-   - UPDATE
-   - DELETE
-   - SELECT
-   - ALTER
-
-SystemActions:
-  Network:
-    - Internal network interruptions in source database cluster
-    - Network interruptions from source database to sink connector
-    - Network interruptions from sink connector to clickhouse
-    - Internal network interruptions in clickhouse database cluster
-  Process:
-    Die:
-      - Internal processes die in source database cluster
-      - Sink connector dies
-      - Internal processes die in clickhouse database cluster
-    Restarted:
-      - Restart of some or all nodes in source database cluster
-      - Restart of sink connector
-      - Restart of some or all nodes in clickhouse database cluster
-  Disk:
-    OutOfSpace:
-      - Out of disk space on some node in source database cluster
-      - Out of disk space where sink connector is running
-      - Out of disk space on some node in clickhouse database cluster
-    Corruptions:
-      - Corruption on a disk used by some node in source database cluster
-      - Corruption on a disk where sink connector is running
-      - Corruption on a disk used by some node in clickhouse database cluster
+    SystemActions:
+      Network:
+        - Internal network interruptions in source database cluster
+        - Network interruptions from source database to sink connector
+        - Network interruptions from sink connector to clickhouse
+        - Internal network interruptions in clickhouse database cluster
+      Process:
+        Die:
+          - Internal processes die in source database cluster
+          - Sink connector dies
+          - Internal processes die in clickhouse database cluster
+        Restarted:
+          - Restart of some or all nodes in source database cluster
+          - Restart of sink connector
+          - Restart of some or all nodes in clickhouse database cluster
+      Disk:
+        OutOfSpace:
+          - Out of disk space on some node in source database cluster
+          - Out of disk space where sink connector is running
+          - Out of disk space on some node in clickhouse database cluster
+        Corruptions:
+          - Corruption on a disk used by some node in source database cluster
+          - Corruption on a disk where sink connector is running
+          - Corruption on a disk used by some node in clickhouse database cluster
 ```
 
 ## Configuration
