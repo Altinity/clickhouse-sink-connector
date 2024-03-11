@@ -170,8 +170,10 @@ public class DBMetadata {
             String parameters = StringUtils.substringBetween(createDML, REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
             if(parameters != null) {
                 String[] parameterArray = parameters.split(",");
-                if(parameterArray != null && parameterArray.length >= 3) {
+                if(parameterArray != null && parameterArray.length == 3) {
                     versionColumn = parameterArray[2].trim();
+                } else if(parameterArray != null && parameterArray.length == 4) {
+                    versionColumn = parameterArray[2].trim() + "," + parameterArray[3].trim();
                 }
             }
         }
@@ -229,12 +231,17 @@ public class DBMetadata {
         if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
             result.right = getSignColumnForCollapsingMergeTree(response);
-        } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+        }
+        else if(response.contains(TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.engine)) {
+            result.left = TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE;
+            result.right = getVersionColumnForReplacingMergeTree(response);
+        }
+        else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
             result.right = getVersionColumnForReplacingMergeTree(response);
         } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
             result.left = TABLE_ENGINE.MERGE_TREE;
-        } else {
+        }  else {
             result.left = TABLE_ENGINE.DEFAULT;
         }
 

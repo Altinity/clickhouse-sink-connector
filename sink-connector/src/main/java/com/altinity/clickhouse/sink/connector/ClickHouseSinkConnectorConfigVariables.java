@@ -53,6 +53,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     //Config variable for auto creating tables if they dont exist.
     AUTO_CREATE_TABLES("auto.create.tables"),
 
+    // Config variable for auto creating ReplicatedReplacingMergeTree
+    AUTO_CREATE_TABLES_REPLICATED("auto.create.tables.replicated"),
+
     // Config variable when set to true, columns will be added.
     ENABLE_SCHEMA_EVOLUTION("schema.evolution"),
 

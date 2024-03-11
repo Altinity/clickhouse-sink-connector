@@ -24,9 +24,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
-    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields, ClickHouseConnection connection) throws SQLException {
+    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields,
+                               ClickHouseConnection connection, boolean isNewReplacingMergeTree,
+                               boolean useReplicatedReplacingMergeTree) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
-        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap);
+        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap,
+                isNewReplacingMergeTree, useReplicatedReplacingMergeTree);
         log.info("**** AUTO CREATE TABLE " + createTableQuery);
         // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
@@ -39,7 +42,10 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
      * @param columnToDataTypesMap
      * @return CREATE TABLE query
      */
-    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields, Map<String, String> columnToDataTypesMap) {
+    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields,
+                                              Map<String, String> columnToDataTypesMap,
+                                              boolean isNewReplacingMergeTreeEngine,
+                                              boolean useReplicatedReplacingMergeTree) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
@@ -69,18 +75,31 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
             createTableSyntax.append(",");
 
         }
-//        for(Map.Entry<String, String>  entry: columnToDataTypesMap.entrySet()) {
-//            createTableSyntax.append("`").append(entry.getKey()).append("`").append(" ").append(entry.getValue()).append(",");
-//        }
-        //createTableSyntax.deleteCharAt(createTableSyntax.lastIndexOf(","));
 
-        // Append sign and version columns
-        createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
-        createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
+        String isDeletedColumn = IS_DELETED_COLUMN;
 
+        if(isNewReplacingMergeTreeEngine == true) {
+            createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
+            createTableSyntax.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+        } else {
+            // Append sign and version columns
+            createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
+            createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
+        }
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
-        createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+
+        if(isNewReplacingMergeTreeEngine == true ){
+            if(useReplicatedReplacingMergeTree == true) {
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
+            } else
+                createTableSyntax.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
+        } else {
+            if(useReplicatedReplacingMergeTree == true) {
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+            } else
+                createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+        }
         createTableSyntax.append(" ");
 
         if(primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
