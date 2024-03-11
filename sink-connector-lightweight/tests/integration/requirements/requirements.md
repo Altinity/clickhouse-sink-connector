@@ -63,6 +63,7 @@
     * 12.1 [Inserts](#inserts)
         * 12.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
             * 12.1.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitionlimits)
+            * 12.1.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionTypes](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinsertspartitiontypes)
     * 12.2 [Updates](#updates)
         * 12.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesupdates)
     * 12.3 [Deletes](#deletes)
@@ -176,8 +177,21 @@
 * 28 [Replication Interruption](#replication-interruption)
     * 28.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 28.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
-* 29 [Prometheus ](#prometheus-)
-    * 29.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 29 [System Actions](#system-actions)
+    * 29.1 [Handling Network Interruptions](#handling-network-interruptions)
+        * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
+    * 29.2 [Handling Process Interruptions](#handling-process-interruptions)
+        * 29.2.1 [Behaviour When Different Processes Were Killed](#behaviour-when-different-processes-were-killed)
+            * 29.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessdie)
+        * 29.2.2 [Behaviour When Different Processes Were Restarted](#behaviour-when-different-processes-were-restarted)
+            * 29.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessrestarted)
+    * 29.3 [Behaviour When There Are Issues With Disk](#behaviour-when-there-are-issues-with-disk)
+        * 29.3.1 [Disk Is out of Space](#disk-is-out-of-space)
+            * 29.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskoutofspace)
+        * 29.3.2 [Disk Is Corrupted](#disk-is-corrupted)
+            * 29.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
+* 30 [Prometheus](#prometheus)
+    * 30.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -197,187 +211,232 @@ Software Requirements Specification
 ## Test Schema
 
 ```yaml
-Services:
-  - Source Database Cluster
-  - Sink Connector
-  - ClickHouse Database Cluster
-
-SourceTables:
-  DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
-  DatabaseVersions:
-    MySQL: [8.0]
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  DatabaseClusterConfiguration:
-    MySQL: null
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  EngineType:
-    MySQL: [InnoDB]
-    PostgreSQL: null
-    MariaDB: null
-    MongoDB: null
-  Schema:
-    TableName:
-      length: 
-        MySQL: 64 characters
-        PostgreSQL: null
-        MariaDB: null
-        MongoDB: null
-      encodings:
-          ASCII: null
-          UTF-8: null
-          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-    Partitioning:
-      MySQL: [RANGE, LIST, COLUMNS, HASH, KEY, Subpartitioning]
-    Columns:
-      DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
-      Type:
-        MySQL: [Calculated columns, Materialized columns, Primary Key Columns, Foreign Key Columns, Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, ENUM and SET Columns, Spatial Columns]
-      Name:
-        length:
-          mysql: null
-          PostgreSQL: null
-          MariaDB: null
-          MongoDB: null
-        ASCII: null
-        UTF-8: null
-        otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-      DataType:
-        - DECIMAL(2,1)
-        - DECIMAL(30, 10)
-        - DOUBLE
-        - DATE
-        - DATETIME(1-6)
-        - TIME
-        - TIME(1-6)
-        - INT
-        - INT
-        - INT UNSIGNED
-        - INT UNSIGNED
-        - BIGINT
-        - BIGINT
-        - BIGINT UNSIGNED NOT NULL
-        - TINYINT
-        - TINYINT UNSIGNED
-        - SMALLINT
-        - SMALLINT UNSIGNED
-        - MEDIUMINT
-        - MEDIUMINT NOT NULL
-        - MEDIUMINT UNSIGNED
-        - CHAR
-        - TEXT
-        - VARCHAR(1-32766)
-        - BLOB
-        - MEDIUMBLOB
-        - LONGBLOB
-        - BINARY
-        - VARBINARY(4)
-      DataValue:
-        Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
-        Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, "0.0001", 
-                  -Max value based on precision and scale, +Max value based on precision and scale, "NaN", 
-                  A random value within precision and scale]
-        String:
-          bytes: [null bytes, ...]
-          UTF-8: []
-          ASCII: []
-          otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                         eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                         latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
-                           utf32, utf8mb3, utf8mb4]
-
-    TableOperations:
+clickhouse-sink-connector:
+    Services:
+      - Source Database Cluster
+      - Sink Connector
+      - ClickHouse Database Cluster
+    SourceTables:
+      DatabaseType: [MySQL, PostgreSQL, MariaDB, MongoDB]
       MySQL:
-        - INSERT
-        - UPDATE
-        - DELETE
-        - SELECT
-        - ALTERs:
-          - ADD COLUMN                                            
-          - ADD COLUMN NULL/NOT NULL                              
-          - ADD COLUMN DEFAULT                                    
-          - ADD COLUMN FIRST, AFTER                               
-          - DROP COLUMN                                           
-          - MODIFY COLUMN data_type                               
-          - MODIFY COLUMN data_type NULL/NOT NULL                 
-          - MODIFY COLUMN data_type DEFAULT                       
-          - MODIFY COLUMN FIRST, AFTER                            
-          - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
-          - RENAME COLUMN col1 to col2                            
-          - CHANGE COLUMN FIRST, AFTER                            
-          - ALTER COLUMN col_name ADD DEFAULT                     
-          - ALTER COLUMN col_name ADD DROP DEFAULT                
-          - ADD PRIMARY KEY                                       
-      MariaDB: null
-      PostgreSQL: null
-      MongoDB: null
+          DatabaseVersion: 8.0
+          DatabaseClusterConfiguration:
+            - MySQL Cluster (NDB Cluster)
+            - InnoDB Cluster
+            - Replication Clusters
+            - Galera Cluster
+          EngineType: [InnoDB, MyISAM, MEMORY, CSV, ARCHIVE, BLACKHOLE, FEDERATED, EXAMPLE]
+          Schema:
+            TableName:
+              Length: 64 characters
+              Encodings:
+                  - ASCII
+                  - UTF-8
+                  - otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+          Partitioning: 
+            - RANGE 
+            - LIST 
+            - COLUMNS 
+            - HASH 
+            - KEY 
+            - Subpartitioning
+          Columns:
+              DefaultValues: [Numeric Types, Date and Time Types, String Types, ENUM Types, SET Types, BOOLEAN, Binary Types]
+              Type: [Calculated Columns, Materialized Columns, Primary Key Columns, Foreign Key Columns, 
+                     Index Columns, Unique Columns, Auto-Increment Columns, Timestamp/DateTime Columns, 
+                     ENUM and SET Columns, Spatial Columns]
+              Name:
+                Length: 64 characters
+                Encodings:
+                  - ASCII
+                  - UTF-8
+                  - OtherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
+              DataType:
+                  - DECIMAL(2,1)
+                  - DECIMAL(30, 10)
+                  - DOUBLE
+                  - DATE
+                  - DATETIME(1-6)
+                  - TIME(1-6)
+                  - INT
+                  - INT UNSIGNED
+                  - BIGINT
+                  - BIGINT UNSIGNED NOT NULL
+                  - TINYINT
+                  - TINYINT UNSIGNED
+                  - SMALLINT
+                  - SMALLINT UNSIGNED
+                  - MEDIUMINT
+                  - MEDIUMINT UNSIGNED
+                  - CHAR
+                  - TEXT
+                  - VARCHAR(1-32766)
+                  - BLOB
+                  - MEDIUMBLOB
+                  - LONGBLOB
+                  - BINARY
+                  - VARBINARY(4)
+              DataValue:
+                Numeric: [Min, Max, 0, -infinity, +infinity, nan, random value]
+                Decimal: [Min value based on precision and scale, Max value based on precision and scale, 0, -0.0001, 
+                          "0.0001", -Max value based on precision and scale, +Max value based on precision and scale, 
+                          "NaN", A random value within precision and scale]
+                String:
+                  Bytes: [null bytes]
+                  UTF-8: [C0 Controls and Basic Latin, Latin Extended-A, Spacing Modifiers, Diacritical Marks, 
+                          Greek and Coptic, Cyrillic Basic, Currency Symbols, Mathematical Operators, Miscellaneous Symbols, Dingbats]
+                  ASCII: [All ASCII characters]
+                  otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
+                                 eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
+                                 latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, 
+                                   utf32, utf8mb3, utf8mb4]
+                  TableOperations:
+                    - INSERT
+                    - UPDATE
+                    - DELETE
+                    - SELECT
+                    - ALTER:
+                      - ADD COLUMN                                            
+                      - ADD COLUMN NULL/NOT NULL                              
+                      - ADD COLUMN DEFAULT                                    
+                      - ADD COLUMN FIRST, AFTER                               
+                      - DROP COLUMN                                           
+                      - MODIFY COLUMN data_type                               
+                      - MODIFY COLUMN data_type NULL/NOT NULL                 
+                      - MODIFY COLUMN data_type DEFAULT                       
+                      - MODIFY COLUMN FIRST, AFTER                            
+                      - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+                      - RENAME COLUMN col1 to col2                            
+                      - CHANGE COLUMN FIRST, AFTER                            
+                      - ALTER COLUMN col_name ADD DEFAULT                     
+                      - ALTER COLUMN col_name ADD DROP DEFAULT                
+                      - ADD PRIMARY KEY                                       
+      PostgreSQL:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      MariaDB:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      MongoDB:
+          DatabaseVersion: null
+          DatabaseClusterConfiguration: null
+          EngineType: null
+          Schema:
+            TableName:
+              Length: null
+              Encodings: null
+          Partitioning: null
+          Columns:
+              DefaultValues: null
+              Type: null
+              Name:
+                Length: null
+                Encodings: null
+              DataType: null
+              DataValue:
+                Numeric: []
+                Decimal: []
+                String:
+                  Bytes: []
+                  UTF-8: []
+                  ASCII: []
+                  otherEncodings: null
+                  TableOperations: null
+      
+    SinkConnector:
+      Version: [latest]
+      Configuration: The full list is inside configurations below
+    
+    DestinationTables:
+      DatabaseType: [ClickHouse]
+      DatabaseClusterConfiguration: 
+        - One node
+        - Sharded cluster secure
+        - Cluster with Multiple Shards
+        - Cluster with Replication (but a single shard)
+        - Cluster with Multiple Shards and Replicas
+        - Secure Cluster
+      DatabaseVersion: [22.8, 23.3, 23.11, 23.12]
+      EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
+      TableOperations:
+       - INSERT
+       - UPDATE
+       - DELETE
+       - SELECT
+       - ALTER
 
-SinkConnector:
-  Version: [latest]
-  Configuration: The full list is inside configurations below
-
-DestinationTables:
-  DatabaseType: [ClickHouse]
-  DatabaseClusterConfiguration: 
-    - One node
-    - Sharded cluster secure
-    - Cluster with Multiple Shards
-    - Cluster with Replication (but a single shard)
-    - Cluster with Multiple Shards and Replicas
-    - Secure Cluster
-  DatabaseVersion: [22.8, 23.3, 23,11, latest]
-  EngineType: [ReplacingMergeTree, ReplicatedReplacingMergeTree]
-  Schema:
-      TableName:
-          length: 
-            MySQL: 64 characters
-            PostgreSQL: null
-            MariaDB: null
-            MongoDB: null
-          encodings:
-              ASCII: null
-              UTF-8: null
-              otherEncodings: [armscii8, big5, binary, cp1250, cp1251, cp1256, cp1257, cp850, cp852, cp866, cp932, dec8, 
-                             eucjpms, euckr, gb18030, gb2312, gbk, geostd8, greek, hebrew, hp8, keybcs2, koi8r, koi8u, latin1, 
-                             latin2, latin5, latin7, macce, macroman, sjis, swe7, tis620, ucs2, ujis, utf16, utf16le, utf32, utf8mb3, utf8mb4]
-  TableOperations:
-   - INSERT
-   - UPDATE
-   - DELETE
-   - SELECT
-   - ALTER
-
-SystemActions:
-  Network:
-    - Internal network interruptions in source database cluster
-    - Network interruptions from source database to sink connector
-    - Network interruptions from sink connector to clickhouse
-    - Internal network interruptions in clickhouse database cluster
-  Process:
-    Die:
-      - Internal processes die in source database cluster
-      - Sink connector dies
-      - Internal processes die in clickhouse database cluster
-    Restarted:
-      - Restart of some or all nodes in source database cluster
-      - Restart of sink connector
-      - Restart of some or all nodes in clickhouse database cluster
-  Disk:
-    OutOfSpace:
-      - Out of disk space on some node in source database cluster
-      - Out of disk space where sink connector is running
-      - Out of disk space on some node in clickhouse database cluster
-    Corruptions:
-      - Corruption on a disk used by some node in source database cluster
-      - Corruption on a disk where sink connector is running
-      - Corruption on a disk used by some node in clickhouse database cluster
+    SystemActions:
+      Network:
+        - Internal network interruptions in source database cluster
+        - Network interruptions from source database to sink connector
+        - Network interruptions from sink connector to clickhouse
+        - Internal network interruptions in clickhouse database cluster
+      Process:
+        Die:
+          - Internal processes die in source database cluster
+          - Sink connector dies
+          - Internal processes die in clickhouse database cluster
+        Restarted:
+          - Restart of some or all nodes in source database cluster
+          - Restart of sink connector
+          - Restart of some or all nodes in clickhouse database cluster
+      Disk:
+        OutOfSpace:
+          - Out of disk space on some node in source database cluster
+          - Out of disk space where sink connector is running
+          - Out of disk space on some node in clickhouse database cluster
+        Corruptions:
+          - Corruption on a disk used by some node in source database cluster
+          - Corruption on a disk where sink connector is running
+          - Corruption on a disk used by some node in clickhouse database cluster
 ```
 
 ## Configuration
@@ -449,13 +508,13 @@ version: 1.0
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency
 
-[Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [ClickHouse].
 
 ### Multiple MySQL Masters
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Consistency.MultipleMySQLMasters
 
-[Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [CLickHouse] when one or more MySQL
+[Altinity Sink Connector] SHALL support consistent data replication from [MySQL] to [ClickHouse] when one or more MySQL
 masters are going down.
 
 ### Deduplication
@@ -477,7 +536,7 @@ version: 1.0
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.OnlyOnceGuarantee
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with only-once guarantee.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with only-once guarantee.
 Block level de-duplication SHALL be used if it is going to replicated tables
 but the publisher SHALL publish only once.
 
@@ -487,14 +546,9 @@ The following cases SHALL be supported:
 2. [MySQL] database event stream provider crash
 3. [MySQL] restart
 3. [ClickHouse] server crash
-4. [Clickhouse] server restart
-7. [Debezium] server crash
-8. [Debezium] server restart
-9. [Altinity Sink Connector] server crash
-10. [Altinity Sink Connector] server restart
-11. [Schemaregistry] server crash
-12. [Schemaregistry] server restart
-13. [Zookeeper] read only mode
+4. [ClickHouse] server restart
+5. [Altinity Sink Connector] server crash
+6. [Altinity Sink Connector] server restart
 
 ## Transactions
 
@@ -518,8 +572,18 @@ version: 1.0
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree
 version: 1.0
 
-[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
-"ReplacingMergeTree" [ClickHouse] table engine.
+[Altinity Sink Connector] SHALL support replication of tables that use the following storage engines in MySQL:
+
+| Storage Engines |
+|-----------------|
+| InnoDB          |
+| MyISAM          |
+| MEMORY          |
+| CSV             |
+| ARCHIVE         |
+| BLACKHOLE       |
+| FEDERATED       |
+| EXAMPLE         |
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames
 version: 1.0
@@ -546,6 +610,32 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables with any datatypes that [MySQL] supports.
+
+| MySQL Datatypes    |
+|--------------------|
+| DECIMAL            |
+| DOUBLE             |
+| DATE               |
+| DATETIME(1-6)      |
+| TIME(1-6)          |
+| INT                |
+| INT UNSIGNED       |
+| BIGINT             |
+| BIGINT UNSIGNED    |
+| TINYINT            |
+| TINYINT UNSIGNED   |
+| SMALLINT           |
+| SMALLINT UNSIGNED  |
+| MEDIUMINT          |
+| MEDIUMINT UNSIGNED |
+| CHAR               |
+| TEXT               |
+| VARCHAR(1-32766)   |
+| BLOB               |
+| MEDIUMBLOB         |
+| LONGBLOB           |
+| BINARY             |
+| VARBINARY          |
 
 ### Integer Types
 
@@ -575,7 +665,7 @@ Integer data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Decimal
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with
 'Decimal' data types as they supported by [MySQL].
 
 [ClickHouse]'s 'Decimal32(S)', 'Decimal64(S)', 'Decimal128(S)', 'Decimal256(S)' also can be
@@ -592,7 +682,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Double
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with
 'Double' data types as they supported by [MySQL].
 
 Data types connection table:
@@ -606,7 +696,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.DateTime
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'Data' and 'Time'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'Data' and 'Time'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -625,7 +715,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Binary
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] replication of tables that contain columns with 'Binary'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] replication of tables that contain columns with 'Binary'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -640,7 +730,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'String'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'String'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -657,7 +747,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'Blob' [MySQL]
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'Blob' [MySQL]
 data types and correctly unhex() them.
 
 ```sql
@@ -677,7 +767,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with NULL [MySQL]
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with NULL [MySQL]
 data types if this expected `Nullable(DataType)` construction should be used.
 
 For example, [MySQL] `VARCHAR(*)` maps to [ClickHouse] `Nullable(String)` and MySQL
@@ -688,7 +778,7 @@ For example, [MySQL] `VARCHAR(*)` maps to [ClickHouse] `Nullable(String)` and My
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'ENUM'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'ENUM'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -700,7 +790,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'ENUM'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'ENUM'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -714,7 +804,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'JSON'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'JSON'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -728,7 +818,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'Year'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'Year'
 data types as they supported by [MySQL].
 
 Data types connection table:
@@ -742,7 +832,7 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data replication to [CLickHouse] of tables that contain columns with 'BIT(m)'
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'BIT(m)'
 data types where m: 2 - 64 as they supported by [MySQL].
 
 Data types connection table:
@@ -759,13 +849,27 @@ Data types connection table:
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts
 version: 1.0
 
-[Altinity Sink Connector] SHALL support new data inserts replication from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support new data inserts replication from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionLimits
 version: 1.0
 
-[Altinity Sink Connector] SHALL support correct data inserts replication from [MySQL] to [CLickHouse] when partition 
+[Altinity Sink Connector] SHALL support correct data inserts replication from [MySQL] to [ClickHouse] when partition 
 limits are hitting or avoid such situations.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts.PartitionTypes
+version: 1.0
+
+[Altinity Sink Connector] SHALL support correct data inserts replication from [MySQL] to [ClickHouse] when the table in source table is partitioned with the following logic.
+
+| Partition Type |
+|----------------|
+| RANGE          |
+| LIST           |
+| COLUMNS        |
+| HASH           |
+| KEY            |
+| Subpartition   |
 
 
 ### Updates
@@ -773,21 +877,21 @@ limits are hitting or avoid such situations.
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Updates
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data updates replication from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support data updates replication from [MySQL] to [ClickHouse].
 
 ### Deletes
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Deletes
 version: 1.0
 
-[Altinity Sink Connector] SHALL support data deletes replication from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support data deletes replication from [MySQL] to [ClickHouse].
 
 ## Table Schema Creation
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation
 version: 1.0
 
-[Altinity Sink Connector]SHALL support the following ways to replicate schema from [MySQL] to [CLickHouse]:
+[Altinity Sink Connector]SHALL support the following ways to replicate schema from [MySQL] to [ClickHouse]:
 * auto-create option
 * `clickhouse_loader` script
 * `chump` utility
@@ -797,26 +901,26 @@ version: 1.0
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoCreate
 version: 1.0
 
-[Altinity Sink Connector] SHALL support auto table creation from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support auto table creation from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.MultipleAutoCreate
 version: 1.0
 
-[Altinity Sink Connector] SHALL support auto creation of multiple tables from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support auto creation of multiple tables from [MySQL] to [ClickHouse].
 
 ### Auto Drop
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.TableSchemaCreation.AutoDrop
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `DROP TABLE` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `DROP TABLE` query from [MySQL] to [ClickHouse].
 
 ## Alter
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter
 version: 1.0
 
-[Altinity Sink Connector] SHALL support all `ALTER` queries.
+[Altinity Sink Connector] SHALL support the following `ALTER` queries.
 
 | MySQL                                                  | ClickHouse                                                      |
 |--------------------------------------------------------|-----------------------------------------------------------------|
@@ -842,112 +946,112 @@ version: 1.0
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddIndex
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD INDEX` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD INDEX` query from [MySQL] to [ClickHouse].
 
 ### Add Key
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddKey
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD Key` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD Key` query from [MySQL] to [ClickHouse].
 
 ### Add FullText
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddFullText
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD FULLTEXT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD FULLTEXT` query from [MySQL] to [ClickHouse].
 
 ### Add Special
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddSpecial
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD SPECIAL` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD SPECIAL` query from [MySQL] to [ClickHouse].
 
 ### Drop Check
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropCheck
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `DROP CHECK` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `DROP CHECK` query from [MySQL] to [ClickHouse].
 
 ### Drop Default
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropDefault
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `DROP DEFAULT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `DROP DEFAULT` query from [MySQL] to [ClickHouse].
 
 ### Check
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Check
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER CHECK` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER CHECK` query from [MySQL] to [ClickHouse].
 
 ### Constraint
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Constraint
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER CONSTRAINT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER CONSTRAINT` query from [MySQL] to [ClickHouse].
 
 ### Index
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Index
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER INDEX` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER INDEX` query from [MySQL] to [ClickHouse].
 
 ### Character Set
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.CharacterSet
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER CHARACTER SET` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER CHARACTER SET` query from [MySQL] to [ClickHouse].
 
 ### Convert To Character Set
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.ConvertToCharacterSet
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER CONVERT TO CHARACTER SET` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER CONVERT TO CHARACTER SET` query from [MySQL] to [ClickHouse].
 
 ### Algorithm
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Algorithm
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER ALGORITHM` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER ALGORITHM` query from [MySQL] to [ClickHouse].
 
 ### Force
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Force
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER FORCE` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER FORCE` query from [MySQL] to [ClickHouse].
 
 ### Lock
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Lock
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER LOCK` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER LOCK` query from [MySQL] to [ClickHouse].
 
 ### Unlock
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Unlock
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER UNLOCK` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER UNLOCK` query from [MySQL] to [ClickHouse].
 
 ### Validation
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Validation
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ALTER VALIDATION` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ALTER VALIDATION` query from [MySQL] to [ClickHouse].
 
 ### Columns
 
@@ -956,28 +1060,28 @@ version: 1.0
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD COLUMN` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.NullNotNull
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD COLUMN NULL/NOT NULL` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD COLUMN NULL/NOT NULL` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Default
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD COLUMN DEFAULT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD COLUMN DEFAULT` query from [MySQL] to [ClickHouse].
 
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.FirstAfter
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD COLUMN FIRST, AFTER` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD COLUMN FIRST, AFTER` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Add.Multiple
 version: 1.0
 
-[Altinity Sink Connector] SHALL support multiple `ADD COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support multiple `ADD COLUMN` query from [MySQL] to [ClickHouse].
 
 
 
@@ -986,83 +1090,83 @@ version: 1.0
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type` query from [MySQL] to [ClickHouse].
 
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.NullNotNull
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type NULL/NOT NULL` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type NULL/NOT NULL` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Default
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type DEFAULT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type DEFAULT` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.FirstAfter
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type FIRST, AFTER` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `MODIFY COLUMN data_type FIRST, AFTER` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Modify.Multiple
 version: 1.0
 
-[Altinity Sink Connector] SHALL support multiple `MODIFY COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support multiple `MODIFY COLUMN` query from [MySQL] to [ClickHouse].
 
 #### Change
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.NullNotNullOldNew
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `CHANGE COLUMN old_name new_name datatype NULL/NOT NULL` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `CHANGE COLUMN old_name new_name datatype NULL/NOT NULL` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.FirstAfter
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `CHANGE COLUMN FIRST, AFTER` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `CHANGE COLUMN FIRST, AFTER` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Change.Multiple
 version: 1.0
 
-[Altinity Sink Connector] SHALL support multiple `CHANGE COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support multiple `CHANGE COLUMN` query from [MySQL] to [ClickHouse].
 
 #### Drop
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `DROP COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `DROP COLUMN` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Drop.Multiple
 version: 1.0
 
-[Altinity Sink Connector] SHALL support multiple `DROP COLUMN` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support multiple `DROP COLUMN` query from [MySQL] to [ClickHouse].
 
 #### Rename
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `RENAME COLUMN col1 to col2` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `RENAME COLUMN col1 to col2` query from [MySQL] to [ClickHouse].
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.Columns.Rename.Multiple
 version: 1.0
 
-[Altinity Sink Connector] SHALL support multiple `RENAME COLUMN col1 to col2` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support multiple `RENAME COLUMN col1 to col2` query from [MySQL] to [ClickHouse].
 
 ### Add Constraint
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.AddConstraint
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `ADD CONSTRAINT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `ADD CONSTRAINT` query from [MySQL] to [ClickHouse].
 
 ### Drop Constraint
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Alter.DropConstraint
 version: 1.0
 
-[Altinity Sink Connector] SHALL support `DROP CONSTRAINT` query from [MySQL] to [CLickHouse].
+[Altinity Sink Connector] SHALL support `DROP CONSTRAINT` query from [MySQL] to [ClickHouse].
 
 ## Primary Key
 
@@ -1071,7 +1175,7 @@ version: 1.0
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.No
 version: 1.0
 
-[Altinity Sink Connector] query SHALL support [MySQL] data replication to [CLickHouse] on queries to tables
+[Altinity Sink Connector] query SHALL support [MySQL] data replication to [ClickHouse] on queries to tables
 with no `PRIMARY KEY`.
 
 ### Simple Primary Key
@@ -1079,7 +1183,7 @@ with no `PRIMARY KEY`.
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Simple
 version: 1.0
 
-[Altinity Sink Connector] query SHALL support [MySQL] data replication to [CLickHouse] on queries with the same order
+[Altinity Sink Connector] query SHALL support [MySQL] data replication to [ClickHouse] on queries with the same order
 as simple `PRIMARY KEY` does.
 
 ### Composite Primary Key
@@ -1087,7 +1191,7 @@ as simple `PRIMARY KEY` does.
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.PrimaryKey.Composite
 version: 1.0
 
-[Altinity Sink Connector] query SHALL support [MySQL] data replication to [CLickHouse] on queries with the same order 
+[Altinity Sink Connector] query SHALL support [MySQL] data replication to [ClickHouse] on queries with the same order 
 as composite `PRIMARY KEY` does.
 
 ## Multiple Upstream Servers
@@ -1095,21 +1199,21 @@ as composite `PRIMARY KEY` does.
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleUpstreamServers
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] from multiple [MySQL] upstream servers.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] from multiple [MySQL] upstream servers.
 
 ## Multiple Downstream Servers
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDownstreamServers
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] when using multiple downstream [ClickHouse] servers.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] when using multiple downstream [ClickHouse] servers.
 
 ## Archival Mode
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ArchivalMode
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with archival mode that
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with archival mode that
 SHALL ignore deletes for some or all tables in [ClickHouse].
 
 ## Bootstrapping Mode
@@ -1117,7 +1221,7 @@ SHALL ignore deletes for some or all tables in [ClickHouse].
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BootstrappingMode
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with 
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with 
 bootstrapping mode for the initial replication of very large tables
 that bypasses event stream by using [MySQL] dump files.
 
@@ -1126,7 +1230,7 @@ that bypasses event stream by using [MySQL] dump files.
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.BinlogPosition
 version: 1.0
 
-[Altinity Sink Connector] SHALL support ability to start replication to [CLickHouse] 
+[Altinity Sink Connector] SHALL support ability to start replication to [ClickHouse] 
 from specific [MySQL] binlog position.
 
 ## Column Mapping And Transformation Rules
@@ -1134,7 +1238,7 @@ from specific [MySQL] binlog position.
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnMappingAndTransformationRules
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with support for
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with support for
 defining column mapping and transformations rules.
 
 ## Columns Inconsistency
@@ -1142,29 +1246,29 @@ defining column mapping and transformations rules.
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnsInconsistency
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] replica table when it has fewer columns.
-[MySQL] replication to [CLickHouse] is not available in all other cases of columns inconsistency .
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] replica table when it has fewer columns.
+[MySQL] replication to [ClickHouse] is not available in all other cases of columns inconsistency .
 
 ## Latency
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Latency
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with latency as close as possible to real-time.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with latency as close as possible to real-time.
 
 ## Performance 
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] more than 100,000 rows/sec.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] more than 100,000 rows/sec.
 
 ### Large Daily Data Volumes
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Performance.LargeDailyDataVolumes
 version: 1.0
 
-[Altinity Sink Connector] SHALL support [MySQL] replication to [CLickHouse] with large daily data volumes of at least 20-30TB per day.
+[Altinity Sink Connector] SHALL support [MySQL] replication to [ClickHouse] with large daily data volumes of at least 20-30TB per day.
 
 ## Settings
 
@@ -1229,7 +1333,83 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL retry replication if the ClickHouse instance is stopped/killed during the active replication from source to destination tables. [Altinity Sink Connector] SHALL continue to retry to replicate data into a source table until the ClickHouse instance is not available again.
 
-## Prometheus 
+## System Actions
+
+### Handling Network Interruptions
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network
+version: 1.0
+
+[Altinity Sink Connector] SHALL be able to recover replication after network related interruptions happen, so that the data on the destination table is not lost.
+
+
+| List of possible network related interruptions                |
+|---------------------------------------------------------------|
+| Internal network interruptions in source database cluster     |
+| Network interruptions from source database to sink connector  |
+| Network interruptions from sink connector to clickhouse       |
+| Internal network interruptions in clickhouse database cluster |
+
+
+### Handling Process Interruptions
+
+#### Behaviour When Different Processes Were Killed
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error and keep the existing data when one of the following or all of the 
+scenarios related to processes being killed happen:
+
+| Scenarios Related to Processes Being Killed           |
+|-------------------------------------------------------|
+| Internal processes die in source database cluster     |
+| Sink connector dies                                   |
+| Internal processes die in clickhouse database cluster |
+
+#### Behaviour When Different Processes Were Restarted
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted
+version: 1.0
+
+[Altinity Sink Connector] SHALL continue replication without losing any data after one of the following or 
+all of the scenarios related to processes being restarted happen:
+
+| Scenarios Related to Processes Being Restarted              |
+|-------------------------------------------------------------|
+| Restart of some or all nodes in source database cluster     |
+| Restart of sink connector                                   |
+| Restart of some or all nodes in clickhouse database cluster |
+
+### Behaviour When There Are Issues With Disk
+
+#### Disk Is out of Space
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when:
+
+- Out of disk space on some node in source database cluster
+- Out of disk space where sink connector is running
+- Out of disk space on some node in clickhouse database cluster
+
+The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.
+
+#### Disk Is Corrupted
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when:
+
+- Corruption on a disk used by some node in source database cluster
+- Corruption on a disk where sink connector is running
+- Corruption on a disk used by some node in clickhouse database cluster
+
+The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.
+
+## Prometheus
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus
 version: 1.0
