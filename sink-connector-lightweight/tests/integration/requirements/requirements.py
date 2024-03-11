@@ -225,6 +225,32 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes = Requirement(
     description=(
         "[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables with any datatypes that [MySQL] supports.\n"
         "\n"
+        "| MySQL Datatypes    |\n"
+        "|--------------------|\n"
+        "| DECIMAL            |\n"
+        "| DOUBLE             |\n"
+        "| DATE               |\n"
+        "| DATETIME(1-6)      |\n"
+        "| TIME(1-6)          |\n"
+        "| INT                |\n"
+        "| INT UNSIGNED       |\n"
+        "| BIGINT             |\n"
+        "| BIGINT UNSIGNED    |\n"
+        "| TINYINT            |\n"
+        "| TINYINT UNSIGNED   |\n"
+        "| SMALLINT           |\n"
+        "| SMALLINT UNSIGNED  |\n"
+        "| MEDIUMINT          |\n"
+        "| MEDIUMINT UNSIGNED |\n"
+        "| CHAR               |\n"
+        "| TEXT               |\n"
+        "| VARCHAR(1-32766)   |\n"
+        "| BLOB               |\n"
+        "| MEDIUMBLOB         |\n"
+        "| LONGBLOB           |\n"
+        "| BINARY             |\n"
+        "| VARBINARY          |\n"
+        "\n"
     ),
     link=None,
     level=2,
@@ -2905,6 +2931,32 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables with any datatypes that [MySQL] supports.
+
+| MySQL Datatypes    |
+|--------------------|
+| DECIMAL            |
+| DOUBLE             |
+| DATE               |
+| DATETIME(1-6)      |
+| TIME(1-6)          |
+| INT                |
+| INT UNSIGNED       |
+| BIGINT             |
+| BIGINT UNSIGNED    |
+| TINYINT            |
+| TINYINT UNSIGNED   |
+| SMALLINT           |
+| SMALLINT UNSIGNED  |
+| MEDIUMINT          |
+| MEDIUMINT UNSIGNED |
+| CHAR               |
+| TEXT               |
+| VARCHAR(1-32766)   |
+| BLOB               |
+| MEDIUMBLOB         |
+| LONGBLOB           |
+| BINARY             |
+| VARBINARY          |
 
 ### Integer Types
 

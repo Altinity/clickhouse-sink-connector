@@ -598,6 +598,32 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables with any datatypes that [MySQL] supports.
 
+| MySQL Datatypes    |
+|--------------------|
+| DECIMAL            |
+| DOUBLE             |
+| DATE               |
+| DATETIME(1-6)      |
+| TIME(1-6)          |
+| INT                |
+| INT UNSIGNED       |
+| BIGINT             |
+| BIGINT UNSIGNED    |
+| TINYINT            |
+| TINYINT UNSIGNED   |
+| SMALLINT           |
+| SMALLINT UNSIGNED  |
+| MEDIUMINT          |
+| MEDIUMINT UNSIGNED |
+| CHAR               |
+| TEXT               |
+| VARCHAR(1-32766)   |
+| BLOB               |
+| MEDIUMBLOB         |
+| LONGBLOB           |
+| BINARY             |
+| VARBINARY          |
+
 ### Integer Types
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.IntegerTypes
