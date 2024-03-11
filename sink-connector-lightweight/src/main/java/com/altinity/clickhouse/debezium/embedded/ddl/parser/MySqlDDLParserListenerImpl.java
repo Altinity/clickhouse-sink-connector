@@ -122,13 +122,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
             } else
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
-        } else
-        if(isReplicatedReplacingMergeTree == true) {
-            this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+        } else {
+            if (isReplicatedReplacingMergeTree == true) {
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+            } else
+                this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         }
-        else
-            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
-
         if(partitionByColumn.length() > 0) {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
