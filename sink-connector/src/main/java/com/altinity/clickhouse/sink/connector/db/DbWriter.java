@@ -101,7 +101,14 @@ public class DbWriter extends BaseDbWriter {
             this.engine = response.getLeft();
 
             long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
-
+            boolean isNewReplacingMergeTreeEngine = false;
+            try {
+                String clickHouseVersion = this.getClickHouseVersion();
+                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                        .checkIfNewReplacingMergeTree(clickHouseVersion);
+            } catch (Exception e) {
+                log.error("Error retrieving ClickHouse version");
+            }
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
@@ -114,8 +121,10 @@ public class DbWriter extends BaseDbWriter {
                         } else if(record.getBeforeStruct() != null) {
                             fields = record.getBeforeStruct().schema().fields().toArray(new Field[0]);
                         }
-
-                        act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn);
+                        boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
+                                ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+                        act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn,
+                                isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree);
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
                     }
