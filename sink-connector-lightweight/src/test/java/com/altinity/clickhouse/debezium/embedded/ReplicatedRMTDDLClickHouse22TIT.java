@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration test that validates auto creation of Replicated RMT when the flag is set in config(auto.create.replicated.tables)")
-public class ReplicatedRMClickHouse22TIT {
+public class ReplicatedRMTDDLClickHouse22TIT {
     protected MySQLContainer mySqlContainer;
     static ClickHouseContainer clickHouseContainer;
 
@@ -83,7 +84,8 @@ public class ReplicatedRMClickHouse22TIT {
 
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "false");
+        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
+        props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
