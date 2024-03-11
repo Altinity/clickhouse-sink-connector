@@ -1655,6 +1655,113 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Insta
     num="28.1.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Network = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL be able to recover replication after network related interruptions happen, so that the data on the destination table is not lost.\n"
+        "\n"
+        "List of possible network related interruptions:\n"
+        "\n"
+        "- Internal network interruptions in source database cluster\n"
+        "- Network interruptions from source database to sink connector\n"
+        "- Network interruptions from sink connector to clickhouse\n"
+        "- Internal network interruptions in clickhouse database cluster\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="29.1.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Die = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL output an error and keep the existing data when one of the following or all of the scenarios related to processes being killed happen:\n"
+        "\n"
+        "- Internal processes die in source database cluster\n"
+        "- Sink connector dies\n"
+        "- Internal processes die in clickhouse database cluster\n"
+        "\n"
+    ),
+    link=None,
+    level=4,
+    num="29.2.1.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Restarted = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL continue replication without losing any data after one of the following or all of the scenarios related to processes being restarted happen:\n"
+        "\n"
+        "- Restart of some or all nodes in source database cluster\n"
+        "- Restart of sink connector\n"
+        "- Restart of some or all nodes in clickhouse database cluster\n"
+        "\n"
+    ),
+    link=None,
+    level=4,
+    num="29.2.2.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_OutOfSpace = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL output an error when:\n"
+        "\n"
+        "- Out of disk space on some node in source database cluster\n"
+        "- Out of disk space where sink connector is running\n"
+        "- Out of disk space on some node in clickhouse database cluster\n"
+        "\n"
+        "The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.\n"
+        "\n"
+    ),
+    link=None,
+    level=4,
+    num="29.3.1.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_Corrupted = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL output an error when:\n"
+        "\n"
+        "- Corruption on a disk used by some node in source database cluster\n"
+        "- Corruption on a disk where sink connector is running\n"
+        "- Corruption on a disk used by some node in clickhouse database cluster\n"
+        "\n"
+        "The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.\n"
+        "\n"
+    ),
+    link=None,
+    level=4,
+    num="29.3.2.1",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
     version="1.0",
@@ -1675,7 +1782,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=2,
-    num="29.1",
+    num="30.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -2233,11 +2340,50 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=3,
             num="28.1.1",
         ),
-        Heading(name="Prometheus ", level=1, num="29"),
+        Heading(name="System Actions", level=1, num="29"),
+        Heading(name="Handling Network Interruptions", level=2, num="29.1"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network",
+            level=3,
+            num="29.1.1",
+        ),
+        Heading(name="Handling Process Interruptions", level=2, num="29.2"),
+        Heading(
+            name="Behaviour When Different Processes Were Killed", level=3, num="29.2.1"
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die",
+            level=4,
+            num="29.2.1.1",
+        ),
+        Heading(
+            name="Behaviour When Different Processes Were Restarted",
+            level=3,
+            num="29.2.2",
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted",
+            level=4,
+            num="29.2.2.1",
+        ),
+        Heading(name="Behaviour When There Are Issues With Disk", level=2, num="29.3"),
+        Heading(name="Disk Is out of Space", level=3, num="29.3.1"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace",
+            level=4,
+            num="29.3.1.1",
+        ),
+        Heading(name="Disk Is Corrupted", level=3, num="29.3.2"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted",
+            level=4,
+            num="29.3.2.1",
+        ),
+        Heading(name="Prometheus", level=1, num="30"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus",
             level=2,
-            num="29.1",
+            num="30.1",
         ),
     ),
     requirements=(
@@ -2329,6 +2475,11 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Network,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Die,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Restarted,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_OutOfSpace,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_Corrupted,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
     ),
     content="""
@@ -2511,8 +2662,21 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
 * 28 [Replication Interruption](#replication-interruption)
     * 28.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 28.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
-* 29 [Prometheus ](#prometheus-)
-    * 29.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 29 [System Actions](#system-actions)
+    * 29.1 [Handling Network Interruptions](#handling-network-interruptions)
+        * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
+    * 29.2 [Handling Process Interruptions](#handling-process-interruptions)
+        * 29.2.1 [Behaviour When Different Processes Were Killed](#behaviour-when-different-processes-were-killed)
+            * 29.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessdie)
+        * 29.2.2 [Behaviour When Different Processes Were Restarted](#behaviour-when-different-processes-were-restarted)
+            * 29.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessrestarted)
+    * 29.3 [Behaviour When There Are Issues With Disk](#behaviour-when-there-are-issues-with-disk)
+        * 29.3.1 [Disk Is out of Space](#disk-is-out-of-space)
+            * 29.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskoutofspace)
+        * 29.3.2 [Disk Is Corrupted](#disk-is-corrupted)
+            * 29.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
+* 30 [Prometheus](#prometheus)
+    * 30.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -3654,7 +3818,75 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL retry replication if the ClickHouse instance is stopped/killed during the active replication from source to destination tables. [Altinity Sink Connector] SHALL continue to retry to replicate data into a source table until the ClickHouse instance is not available again.
 
-## Prometheus 
+## System Actions
+
+### Handling Network Interruptions
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network
+version: 1.0
+
+[Altinity Sink Connector] SHALL be able to recover replication after network related interruptions happen, so that the data on the destination table is not lost.
+
+List of possible network related interruptions:
+
+- Internal network interruptions in source database cluster
+- Network interruptions from source database to sink connector
+- Network interruptions from sink connector to clickhouse
+- Internal network interruptions in clickhouse database cluster
+
+### Handling Process Interruptions
+
+#### Behaviour When Different Processes Were Killed
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error and keep the existing data when one of the following or all of the scenarios related to processes being killed happen:
+
+- Internal processes die in source database cluster
+- Sink connector dies
+- Internal processes die in clickhouse database cluster
+
+#### Behaviour When Different Processes Were Restarted
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted
+version: 1.0
+
+[Altinity Sink Connector] SHALL continue replication without losing any data after one of the following or all of the scenarios related to processes being restarted happen:
+
+- Restart of some or all nodes in source database cluster
+- Restart of sink connector
+- Restart of some or all nodes in clickhouse database cluster
+
+### Behaviour When There Are Issues With Disk
+
+#### Disk Is out of Space
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when:
+
+- Out of disk space on some node in source database cluster
+- Out of disk space where sink connector is running
+- Out of disk space on some node in clickhouse database cluster
+
+The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.
+
+#### Disk Is Corrupted
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when:
+
+- Corruption on a disk used by some node in source database cluster
+- Corruption on a disk where sink connector is running
+- Corruption on a disk used by some node in clickhouse database cluster
+
+The error SHALL be shown so that the data on the source and destination tables is not lost due to the disk related issues.
+
+## Prometheus
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus
 version: 1.0
