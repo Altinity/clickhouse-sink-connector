@@ -1342,12 +1342,14 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL be able to recover replication after network related interruptions happen, so that the data on the destination table is not lost.
 
-List of possible network related interruptions:
 
-- Internal network interruptions in source database cluster
-- Network interruptions from source database to sink connector
-- Network interruptions from sink connector to clickhouse
-- Internal network interruptions in clickhouse database cluster
+| List of possible network related interruptions                |
+|---------------------------------------------------------------|
+| Internal network interruptions in source database cluster     |
+| Network interruptions from source database to sink connector  |
+| Network interruptions from sink connector to clickhouse       |
+| Internal network interruptions in clickhouse database cluster |
+
 
 ### Handling Process Interruptions
 
@@ -1356,22 +1358,28 @@ List of possible network related interruptions:
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die
 version: 1.0
 
-[Altinity Sink Connector] SHALL output an error and keep the existing data when one of the following or all of the scenarios related to processes being killed happen:
+[Altinity Sink Connector] SHALL output an error and keep the existing data when one of the following or all of the 
+scenarios related to processes being killed happen:
 
-- Internal processes die in source database cluster
-- Sink connector dies
-- Internal processes die in clickhouse database cluster
+| Scenarios Related to Processes Being Killed           |
+|-------------------------------------------------------|
+| Internal processes die in source database cluster     |
+| Sink connector dies                                   |
+| Internal processes die in clickhouse database cluster |
 
 #### Behaviour When Different Processes Were Restarted
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted
 version: 1.0
 
-[Altinity Sink Connector] SHALL continue replication without losing any data after one of the following or all of the scenarios related to processes being restarted happen:
+[Altinity Sink Connector] SHALL continue replication without losing any data after one of the following or 
+all of the scenarios related to processes being restarted happen:
 
-- Restart of some or all nodes in source database cluster
-- Restart of sink connector
-- Restart of some or all nodes in clickhouse database cluster
+| Scenarios Related to Processes Being Restarted              |
+|-------------------------------------------------------------|
+| Restart of some or all nodes in source database cluster     |
+| Restart of sink connector                                   |
+| Restart of some or all nodes in clickhouse database cluster |
 
 ### Behaviour When There Are Issues With Disk
 
