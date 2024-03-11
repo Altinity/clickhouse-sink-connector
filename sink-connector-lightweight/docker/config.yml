@@ -149,3 +149,6 @@ restart.event.loop.timeout.period.secs: "3000"
 
 # Maximum number of threads in the thread pool for processing CDC records.
 #thread.pool.size: 10
+
+# Sink Connector maximum queue size
+#sink.connector.max.queue.size: "100000"

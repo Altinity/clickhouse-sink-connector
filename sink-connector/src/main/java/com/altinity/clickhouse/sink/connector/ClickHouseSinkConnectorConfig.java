@@ -423,8 +423,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
+                // Define the max queue size.
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
+                        Type.INT,
+                        500000,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.HIGH,
+                        "The maximum size of the queue",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
 
-                // ToDo: Add JVM Proxy
                 ;
     }
 }
