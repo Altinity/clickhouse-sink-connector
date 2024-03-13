@@ -237,10 +237,11 @@ clickhouse-sink-connector:
       MySQL:
           DatabaseVersion: 8.0
           DatabaseClusterConfiguration:
-            - MySQL Cluster (NDB Cluster)
-            - InnoDB Cluster
-            - Replication Clusters
-            - Galera Cluster
+            - Standalone
+            - Primary and replica
+            - High available clusters
+            - Multi-primary
+            - Hosted
           EngineType: [InnoDB, MyISAM, MEMORY, CSV, ARCHIVE, BLACKHOLE, FEDERATED, EXAMPLE]
           Schema:
             TableName:
