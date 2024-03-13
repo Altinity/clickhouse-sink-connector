@@ -147,8 +147,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_InnoDB = 
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.1",
+    level=3,
+    num="10.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_MyISAM = Requirement(
@@ -163,8 +163,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_MyISAM = 
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.2",
+    level=3,
+    num="10.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_MEMORY = Requirement(
@@ -179,8 +179,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_MEMORY = 
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.3",
+    level=3,
+    num="10.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CSV = Requirement(
@@ -195,8 +195,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_CSV = Req
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.4",
+    level=3,
+    num="10.4.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ARCHIVE = Requirement(
@@ -211,8 +211,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ARCHIVE =
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.5",
+    level=3,
+    num="10.5.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_BLACKHOLE = Requirement(
@@ -227,8 +227,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_BLACKHOLE
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.6",
+    level=3,
+    num="10.6.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_FEDERATED = Requirement(
@@ -243,8 +243,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_FEDERATED
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.7",
+    level=3,
+    num="10.7.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_EXAMPLE = Requirement(
@@ -259,8 +259,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_EXAMPLE =
         "\n"
     ),
     link=None,
-    level=2,
-    num="10.8",
+    level=3,
+    num="10.8.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplacingMergeTree_VirtualColumnNames = Requirement(
@@ -1971,45 +1971,53 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             num="9.1",
         ),
         Heading(name="Supported Storage Engines", level=1, num="10"),
+        Heading(name="InnoDB", level=2, num="10.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.InnoDB",
-            level=2,
-            num="10.1",
+            level=3,
+            num="10.1.1",
         ),
+        Heading(name="MyISAM", level=2, num="10.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MyISAM",
-            level=2,
-            num="10.2",
+            level=3,
+            num="10.2.1",
         ),
+        Heading(name="MEMORY", level=2, num="10.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MEMORY",
-            level=2,
-            num="10.3",
+            level=3,
+            num="10.3.1",
         ),
+        Heading(name="CSV", level=2, num="10.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CSV",
-            level=2,
-            num="10.4",
+            level=3,
+            num="10.4.1",
         ),
+        Heading(name="ARCHIVE", level=2, num="10.5"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ARCHIVE",
-            level=2,
-            num="10.5",
+            level=3,
+            num="10.5.1",
         ),
+        Heading(name="BLACKHOLE", level=2, num="10.6"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.BLACKHOLE",
-            level=2,
-            num="10.6",
+            level=3,
+            num="10.6.1",
         ),
+        Heading(name="FEDERATED", level=2, num="10.7"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.FEDERATED",
-            level=2,
-            num="10.7",
+            level=3,
+            num="10.7.1",
         ),
+        Heading(name="EXAMPLE", level=2, num="10.8"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.EXAMPLE",
-            level=2,
-            num="10.8",
+            level=3,
+            num="10.8.1",
         ),
         Heading(name="Replication of InnoDB Storage Engine", level=1, num="11"),
         Heading(
@@ -2664,14 +2672,22 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
 * 9 [Supported Versions](#supported-versions)
     * 9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLVersions](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlversions)
 * 10 [Supported Storage Engines](#supported-storage-engines)
-    * 10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.InnoDB](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesinnodb)
-    * 10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MyISAM](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesmyisam)
-    * 10.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MEMORY](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesmemory)
-    * 10.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CSV](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescsv)
-    * 10.5 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ARCHIVE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesarchive)
-    * 10.6 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.BLACKHOLE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesblackhole)
-    * 10.7 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.FEDERATED](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesfederated)
-    * 10.8 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.EXAMPLE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesexample)
+    * 10.1 [InnoDB](#innodb)
+        * 10.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.InnoDB](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesinnodb)
+    * 10.2 [MyISAM](#myisam)
+        * 10.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MyISAM](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesmyisam)
+    * 10.3 [MEMORY](#memory)
+        * 10.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MEMORY](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesmemory)
+    * 10.4 [CSV](#csv)
+        * 10.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CSV](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginescsv)
+    * 10.5 [ARCHIVE](#archive)
+        * 10.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ARCHIVE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesarchive)
+    * 10.6 [BLACKHOLE](#blackhole)
+        * 10.6.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.BLACKHOLE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesblackhole)
+    * 10.7 [FEDERATED](#federated)
+        * 10.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.FEDERATED](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesfederated)
+    * 10.8 [EXAMPLE](#example)
+        * 10.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.EXAMPLE](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesexample)
 * 11 [Replication of InnoDB Storage Engine](#replication-of-innodb-storage-engine)
     * 11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplacingmergetreevirtualcolumnnames)
     * 11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationmysqlstorageenginesreplicatedreplacingmergetree)
@@ -3212,42 +3228,58 @@ version: 1.0
 
 ## Supported Storage Engines
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.InnoDB
+### InnoDB
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.InnoDB
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'InnoDB' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MyISAM
+### MyISAM
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MyISAM
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'MyISAM' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MEMORY
+### MEMORY
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.MEMORY
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'MEMORY' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CSV
+### CSV
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.CSV
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'CSV' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ARCHIVE
+### ARCHIVE
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ARCHIVE
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'ARCHIVE' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.BLACKHOLE
+### BLACKHOLE
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.BLACKHOLE
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'BLACKHOLE' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.FEDERATED
+### FEDERATED
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.FEDERATED
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'FEDERATED' storage engine in MySQL:
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.EXAMPLE
+### EXAMPLE
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.EXAMPLE
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use the 'EXAMPLE' storage engine in MySQL:
