@@ -103,6 +103,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if(columnNames.contains(isDeletedColumn)) {
             isDeletedColumn = "__" + IS_DELETED_COLUMN;
         }
+
+        // Check if the destination is ReplicatedReplacingMergeTree.
+        boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                .AUTO_CREATE_TABLES_REPLICATED.toString());
+
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -113,10 +118,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         this.query.append(")");
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
-            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
-        } else
-            this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
-
+            if(isReplicatedReplacingMergeTree == true) {
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
+            } else
+                this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
+        } else {
+            if (isReplicatedReplacingMergeTree == true) {
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+            } else
+                this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+        }
         if(partitionByColumn.length() > 0) {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }

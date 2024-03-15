@@ -55,7 +55,7 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchRunnable runnable;
 
     // Records grouped by Topic Name
-    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records = new ConcurrentLinkedQueue<>();
+    private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
 
     private BaseDbWriter writer = null;
@@ -97,13 +97,15 @@ public class DebeziumChangeEventCapture {
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase(), dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config, this.conn);
-            try {
-                String clickHouseVersion = writer.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
-                        .checkIfNewReplacingMergeTree(clickHouseVersion);
-            } catch (Exception e) {
-                log.error("Error retrieving version");
-            }
+
+        }
+
+        try {
+            String clickHouseVersion = writer.getClickHouseVersion();
+            isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                    .checkIfNewReplacingMergeTree(clickHouseVersion);
+        } catch (Exception e) {
+            log.error("Error retrieving version");
         }
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
@@ -586,6 +588,13 @@ public class DebeziumChangeEventCapture {
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
                       DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
 
+        // Check if max queue size was defined by the user.
+        if(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
+            int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
+            this.records = new LinkedBlockingQueue<>(maxQueueSize);
+        } else {
+            this.records = new LinkedBlockingQueue<>();
+        }
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),

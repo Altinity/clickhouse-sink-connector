@@ -53,6 +53,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     //Config variable for auto creating tables if they dont exist.
     AUTO_CREATE_TABLES("auto.create.tables"),
 
+    // Config variable for auto creating ReplicatedReplacingMergeTree
+    AUTO_CREATE_TABLES_REPLICATED("auto.create.tables.replicated"),
+
     // Config variable when set to true, columns will be added.
     ENABLE_SCHEMA_EVOLUTION("schema.evolution"),
 
@@ -67,7 +70,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     RESTART_EVENT_LOOP("restart.event.loop"),
 
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
-    JDBC_PARAMETERS("clickhouse.jdbc.params");
+    JDBC_PARAMETERS("clickhouse.jdbc.params"),
+
+    MAX_QUEUE_SIZE("sink.connector.max.queue.size");
 
     private String label;
 
