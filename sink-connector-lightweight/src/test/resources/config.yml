@@ -31,3 +31,4 @@ schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector
 enable.snapshot.ddl: "true"
 auto.create.tables: "true"
 metrics.enable: "false"
+database.connectionTimeZone: "America/Chicago"
