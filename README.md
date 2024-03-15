@@ -55,6 +55,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Architecture Overview](doc/architecture.md)
 * [Lightweight Sink Connect CLI](doc/sink_connector_cli.md)
 * [Mutable Data Handling](doc/mutable_data.md)
+* [ClickHouse Engine Types](doc/clickhouse_engines.md)
 
 ### Operations
 
