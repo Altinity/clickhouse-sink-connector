@@ -133,7 +133,9 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
 
+        boolean dateTimeResultChecked = false;
         while(dateTimeResult.next()) {
+            dateTimeResultChecked = true;
             System.out.println("DATE TIME");
             System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
@@ -143,6 +145,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:47:46.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
         }
+        Assert.assertTrue(dateTimeResultChecked);
 
         // DATETIME1
         ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");

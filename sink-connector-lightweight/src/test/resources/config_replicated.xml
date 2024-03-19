@@ -1,11 +1,18 @@
 <clickhouse replace="true">
+    <user_directories>
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+        <local_directory>
+            <path>/var/lib/clickhouse/access/</path>
+        </local_directory>
+    </user_directories>
     <timezone>America/Chicago</timezone>
     <zookeeper>
-        <node index="1">
+        <node>
             <host>zookeeper</host>
             <port>2181</port>
         </node>
-        <session_timeout_ms>15000</session_timeout_ms>
     </zookeeper>
     <macros>
         <replica>clickhouse</replica>

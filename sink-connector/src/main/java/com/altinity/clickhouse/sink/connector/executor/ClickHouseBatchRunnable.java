@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 /**
  * Runnable object that will be called on
@@ -35,7 +36,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public class ClickHouseBatchRunnable implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
-    private final ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
+    private final LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
     private final ClickHouseSinkConnectorConfig config;
 
@@ -57,7 +58,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private List<ClickHouseStruct> currentBatch = null;
 
-    public ClickHouseBatchRunnable(ConcurrentLinkedQueue<List<ClickHouseStruct>> records,
+    public ClickHouseBatchRunnable(LinkedBlockingQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
         this.records = records;
