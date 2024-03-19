@@ -147,3 +147,6 @@ restart.event.loop.timeout.period.secs: "30"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
 #clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+
+# The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
+sink.connector.max.queue.size: "100000"

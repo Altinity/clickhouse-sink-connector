@@ -284,6 +284,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, ReplicatedReplacingMergeTree tables are created in ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString())
+
+                .define(
                         ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString(),
                         Type.BOOLEAN,
                         false,
@@ -423,8 +434,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
+                // Define the max queue size.
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
+                        Type.INT,
+                        500000,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.HIGH,
+                        "The maximum size of the queue",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
 
-                // ToDo: Add JVM Proxy
                 ;
     }
 }
