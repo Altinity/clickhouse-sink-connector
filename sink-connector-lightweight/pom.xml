@@ -23,7 +23,8 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
-        <sink-connector-library-version>0.0.7</sink-connector-library-version>
+        <apache.httpclient.version>5.2.1</apache.httpclient.version>
+        <sink-connector-library-version>0.0.8</sink-connector-library-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -330,7 +331,14 @@
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.4.5</version>
+            <classifier>shaded</classifier>
+            <version>0.6.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
