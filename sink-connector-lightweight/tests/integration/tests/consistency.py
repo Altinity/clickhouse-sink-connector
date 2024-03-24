@@ -289,7 +289,7 @@ def combinatoric_kill_start(self):
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_OnlyOnceGuarantee("1.0")
 )
 def module(self):
-    """Сheck data consistency when network or service faults are introduced."""
+    """Check data consistency when network or service faults are introduced."""
     xfail("")
 
     for suite in loads(current_module(), Suite):

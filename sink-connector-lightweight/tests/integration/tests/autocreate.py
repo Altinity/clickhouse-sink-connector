@@ -50,7 +50,7 @@ def create_all_data_types_null_table(
     mysql_columns=all_mysql_datatypes,
     clickhouse_columns=all_ch_datatypes,
 ):
-    """Check all availabe methods and tables creation of replicated MySQL to Ch table that
+    """Check all available methods and tables creation of replicated MySQL to Ch table that
     contains all supported "NULL" data types.
     """
 
@@ -69,7 +69,7 @@ def create_all_data_types_not_null_table_manual(
     mysql_columns=all_nullable_mysql_datatypes,
     clickhouse_columns=all_nullable_ch_datatypes,
 ):
-    """Check all availabe methods and tables creation of replicated MySQL to CH table
+    """Check all available methods and tables creation of replicated MySQL to CH table
     which contains all supported "NOT NULL" data types.
     """
     for clickhouse_table_engine in self.context.clickhouse_table_engines:

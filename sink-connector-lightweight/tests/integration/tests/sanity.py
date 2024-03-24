@@ -52,7 +52,8 @@ def mysql_to_clickhouse(
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with all availabe methods and tables."""
+    """Basic check MySQL to Clickhouse connection by small and simple data insert with all available methods and
+    tables."""
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):

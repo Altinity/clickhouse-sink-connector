@@ -124,7 +124,7 @@ def equal_columns_some_different_names(
 )
 @Name("columns inconsistency")
 def module(self):
-    """Check for different columns inconsistency."""
+    """Check for different columns' inconsistency."""
 
     with Pool(1) as executor:
         try:

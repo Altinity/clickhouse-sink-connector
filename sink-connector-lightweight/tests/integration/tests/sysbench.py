@@ -37,8 +37,6 @@ def sysbench_tests(
                 f"/manual_scripts/sysbench/{script} -t " f"{test_name}",
                 message="Threads started!",
             )
-        #     <test_name>, test_name should be one of the following
-        #               bulk_insert, oltp_insert, oltp_delete, oltp_update_index, oltp_update_non_index"
         else:
             self.context.cluster.node("bash-tools").cmd(
                 "/manual_scripts/sysbench/" f"{script}", message="Threads started!"

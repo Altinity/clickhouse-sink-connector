@@ -109,7 +109,7 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
 
     for i in range(mysql_restarts_number):
         with And(
-            f"I make {mysql_restarts_number} MySQL's node restart and insert data in MySQL table"
+            f"I make {mysql_restarts_number} MySQL node restarts and insert data in MySQL table"
         ):
             self.context.cluster.node("mysql-master").restart()
             retry(

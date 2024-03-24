@@ -22,7 +22,6 @@ def virtual_column_names(
     mysql = self.context.cluster.node("mysql-master")
 
     table_name = f"virtual_columns_{getuid()}"
-    # table_name = "vendeta"
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_to_clickhouse_replicated_table(
