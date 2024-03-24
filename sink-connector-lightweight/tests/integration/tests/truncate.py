@@ -18,7 +18,7 @@ def truncate(
     table_name = f"truncate_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -28,7 +28,7 @@ def truncate(
             engine=engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
     with Then("I check that clickhouse table received data"):

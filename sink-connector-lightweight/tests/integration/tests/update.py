@@ -20,7 +20,7 @@ def simple_update(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
-        f"I create MySql to ClickHouse replicated table", description=table_name
+        f"I create MySQL to ClickHouse replicated table", description=table_name
     ):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
@@ -31,9 +31,9 @@ def simple_update(
             engine=engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
-    with Then(f"I update data in MySql table"):
+    with Then(f"I update data in MySQL table"):
         mysql.query(f"UPDATE {table_name} SET k=k+5 WHERE id=1;")
 
     with And("I check that ClickHouse has updated data as MySQL"):
@@ -571,7 +571,7 @@ def many_partitions_mixed_parts(self):
 @TestFeature
 @Name("one million datapoints")
 def one_million_datapoints(self):
-    """Check `UPDATE` with a table that has one million entries."""
+    """Check `UPDATE` statement with a table that has one million entries."""
 
     for outline in loads(current_module(), Outline):
         if outline.name != "simple update":
@@ -692,7 +692,7 @@ def parallel(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates("1.0"))
 @Name("update")
 def module(self):
-    """MySql to ClickHouse replication update tests to test `UPDATE` queries."""
+    """MySQL to ClickHouse replication update tests to test `UPDATE` queries."""
 
     with Pool(1) as executor:
         try:

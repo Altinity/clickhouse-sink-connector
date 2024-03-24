@@ -69,7 +69,7 @@ def insert_update_delete(self):
 @TestModule
 @Name("parallel")
 def module(self):
-    """Check for MySql to ClickHouse replication of parallel inserts, updates and deletes."""
+    """Check for MySQL to ClickHouse replication of parallel inserts, updates and deletes."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

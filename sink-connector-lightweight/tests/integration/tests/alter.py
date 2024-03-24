@@ -983,7 +983,7 @@ def drop_constraint(self, node=None):
 @TestModule
 @Name("alter")
 def module(self):
-    """Check simple `ALTER` queries for MySql to ClickHouse replication."""
+    """Check simple `ALTER` queries for MySQL to ClickHouse replication."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

@@ -125,7 +125,7 @@ def regression(
     thread_fuzzer=None,
     collect_service_logs=None,
 ):
-    """ClickHouse regression for MySql to ClickHouse replication with manual table creation."""
+    """ClickHouse regression for MySQL to ClickHouse replication with manual table creation."""
     nodes = {
         "debezium": ("debezium",),
         "mysql-master": ("mysql-master",),

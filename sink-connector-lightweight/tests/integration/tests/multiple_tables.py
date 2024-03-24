@@ -28,7 +28,7 @@ def multiple_table_auto_creation(
                 clickhouse_columns=clickhouse_columns,
             )
 
-        with When(f"I insert data in MySql table"):
+        with When(f"I insert data in MySQL table"):
             mysql.query(f"insert into {table_name} values (1,777)")
 
         with Then("I count created tables"):

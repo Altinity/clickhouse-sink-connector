@@ -26,10 +26,10 @@ def stop_start(self, services, loops=10):
         )
 
     with When(
-        "I insert, update, delete  data in MySql table with concurrently unavailable service"
+        "I insert, update, delete  data in MySQL table with concurrently unavailable service"
     ):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(
@@ -93,10 +93,10 @@ def restart(self, services, loops=10):
         )
 
     with When(
-        "I insert, update, delete data in MySql table concurrently with services restart"
+        "I insert, update, delete data in MySQL table concurrently with services restart"
     ):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(
@@ -156,7 +156,7 @@ def unstable_network_connection(self, services, loops=10):
 
     with When("I add network fault"):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(
@@ -228,10 +228,10 @@ def kill_start(self, services, loops=2):
         )
 
     with When(
-        "I insert, update, delete data in MySql table concurrently with services SIGKILL"
+        "I insert, update, delete data in MySQL table concurrently with services SIGKILL"
     ):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(

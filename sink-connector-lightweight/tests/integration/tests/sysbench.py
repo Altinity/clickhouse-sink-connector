@@ -130,7 +130,7 @@ def read_write_load_test(self):
 @TestScenario
 @Repeat(1)
 def update_index(self):
-    """Check MySQl by sysbench "update index" test."""
+    """Check MySQL by sysbench "update index" test."""
     xfail("expected")
     sysbench_tests(script="run_sysbench_update_index.sh")
 

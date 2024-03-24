@@ -12,7 +12,7 @@ def mysql_to_clickhouse_insert(
     table_name = f"columns_inconsistency_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -20,7 +20,7 @@ def mysql_to_clickhouse_insert(
             clickhouse_columns=clickhouse_columns,
         )
 
-    with When("I insert data in MySql table"):
+    with When("I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
         time.sleep(20)
 

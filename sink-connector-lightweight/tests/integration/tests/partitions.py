@@ -31,7 +31,7 @@ def create_table_partitioned_by_range(self):
 @TestModule
 @Name("partitions")
 def module(self, clickhouse_node="clickhouse", mysql_node="mysql-master"):
-    """Check tables with PARTITION BY for MySql to ClickHouse replication."""
+    """Check tables with PARTITION BY for MySQL to ClickHouse replication."""
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 

@@ -31,7 +31,7 @@ def partition_limits(
         )
 
     with When(
-        "I insert data in MySql table wtih more than 100 partitions per insert block"
+        "I insert data in MySQL table wtih more than 100 partitions per insert block"
     ):
         complex_insert(
             node=mysql,

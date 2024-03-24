@@ -526,7 +526,7 @@ def parallel(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts("1.0"))
 @Name("insert")
 def module(self):
-    """MySql to ClickHouse replication insert tests to test `INSERT` queries."""
+    """MySQL to ClickHouse replication insert tests to test `INSERT` queries."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

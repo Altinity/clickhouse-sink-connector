@@ -186,7 +186,7 @@ def regression(
     thread_fuzzer=None,
     collect_service_logs=None,
 ):
-    """ClickHouse regression for MySql to ClickHouse replication with auto table creation."""
+    """ClickHouse regression for MySQL to ClickHouse replication with auto table creation."""
     nodes = {
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),

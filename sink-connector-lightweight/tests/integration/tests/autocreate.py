@@ -15,7 +15,7 @@ def create_all_data_types(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
-        f"I create MySql to CH replicated table with all supported NOT NULL data types",
+        f"I create MySQL to CH replicated table with all supported NOT NULL data types",
         description=table_name,
     ):
         create_mysql_to_clickhouse_replicated_table(
@@ -25,7 +25,7 @@ def create_all_data_types(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with When(f"I check MySql table {table_name} was created"):
+    with When(f"I check MySQL table {table_name} was created"):
         mysql.query(f"SHOW CREATE TABLE {table_name};", message=f"{table_name}")
 
     with Then(f"I make insert to create ClickHouse table"):

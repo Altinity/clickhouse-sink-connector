@@ -25,7 +25,7 @@ def check_datatype_replication(
         f"{f'MyData Nullable({ch_type})' if nullable else f'MyData {ch_type}'}"
     )
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -33,7 +33,7 @@ def check_datatype_replication(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with When(f"I insert data in MySql table {table_name}"):
+    with When(f"I insert data in MySQL table {table_name}"):
         for i, value in enumerate(values, 1):
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
             with Then(f"I make check that ClickHouse table has same dataset"):

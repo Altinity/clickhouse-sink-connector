@@ -26,10 +26,10 @@ def stop_start_parallel(self, services, loops=10):
         )
 
     with When(
-        "I insert, update, delete  data in MySql table with concurrently unavailable service"
+        "I insert, update, delete  data in MySQL table with concurrently unavailable service"
     ):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(

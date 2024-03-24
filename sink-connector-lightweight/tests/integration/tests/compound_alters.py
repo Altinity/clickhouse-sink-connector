@@ -657,7 +657,7 @@ def multiple_drop_column(self, node=None):
 @TestModule
 @Name("compound alters")
 def module(self):
-    """Check serial connection of `ALTER` queries for MySql to ClickHouse replication."""
+    """Check serial connection of `ALTER` queries for MySQL to ClickHouse replication."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

@@ -16,7 +16,7 @@ def mysql_to_clickhouse_connection(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -24,7 +24,7 @@ def mysql_to_clickhouse_connection(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         complex_insert(
             node=mysql,
             table_name=table_name,
@@ -66,7 +66,7 @@ def mysql_to_clickhouse(
 @TestModule
 @Name("sanity")
 def module(self):
-    """MySql to ClickHouse replication sanity test that checks
+    """MySQL to ClickHouse replication sanity test that checks
     basic replication using a simple table."""
 
     with Pool(1) as executor:

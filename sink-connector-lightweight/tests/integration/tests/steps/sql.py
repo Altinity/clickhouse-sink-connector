@@ -94,7 +94,7 @@ def create_mysql_to_clickhouse_replicated_table(
     :param mysql_columns: MySQL table columns
     :param clickhouse_columns: coresponding ClickHouse columns
     :param clickhouse_table_engine: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
-    :param mysql_node: MySql docker compose node
+    :param mysql_node: MySQL docker compose node
     :param clickhouse_node: CH docker compose node
     :return:
     """
@@ -181,7 +181,7 @@ def create_mysql_to_clickhouse_replicated_table(
         yield
     finally:
         with Finally(
-            "I clean up by deleting MySql to CH replicated table", description={name}
+            "I clean up by deleting MySQL to CH replicated table", description={name}
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {name};")
             clickhouse_node.query(
@@ -293,7 +293,7 @@ def insert(
         node = self.context.cluster.node("mysql-master")
 
     with Given(
-        f"I insert {first_insert_id - last_insert_id} rows of data in MySql table"
+        f"I insert {first_insert_id - last_insert_id} rows of data in MySQL table"
     ):
         for i in range(first_insert_id, last_insert_id + 1):
             node.query(f"INSERT INTO `{table_name}` VALUES {insert_values}".format(x=i))
@@ -421,7 +421,7 @@ def complex_check_creation_and_select(
     with_optimize=False,
 ):
     """
-    Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySql
+    Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySQL
     :param self:
     :param table_name:
     :param auto_create_tables:
@@ -526,7 +526,7 @@ def delete(
         return r
     else:
         with Given(
-            f"I delete {last_delete_id - first_delete_id} rows of data in MySql table"
+            f"I delete {last_delete_id - first_delete_id} rows of data in MySQL table"
         ):
             for i in range(first_delete_id, last_delete_id):
                 mysql.query(f"DELETE FROM {table_name} WHERE id={i}")
@@ -576,7 +576,7 @@ def update(
         return r
     else:
         with Given(
-            f"I update {last_update_id - first_update_id} rows of data in MySql table"
+            f"I update {last_update_id - first_update_id} rows of data in MySQL table"
         ):
             for i in range(first_update_id, last_update_id):
                 mysql.query(f"UPDATE {table_name} SET k=k+5 WHERE id={i};")
@@ -617,9 +617,9 @@ def concurrent_queries(
             last_insert_id=last_insert_number,
         )
 
-    with When("I start concurrently insert, update and delete queries in MySql table"):
+    with When("I start concurrently insert, update and delete queries in MySQL table"):
         By(
-            "inserting data in MySql table",
+            "inserting data in MySQL table",
             test=insert,
             parallel=True,
         )(
@@ -628,7 +628,7 @@ def concurrent_queries(
             table_name=table_name,
         )
         By(
-            "deleting data in MySql table",
+            "deleting data in MySQL table",
             test=delete,
             parallel=True,
         )(
@@ -637,7 +637,7 @@ def concurrent_queries(
             table_name=table_name,
         )
         By(
-            "updating data in MySql table",
+            "updating data in MySQL table",
             test=update,
             parallel=True,
         )(

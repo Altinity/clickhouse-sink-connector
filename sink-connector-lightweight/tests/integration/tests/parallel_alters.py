@@ -474,7 +474,7 @@ def multiple_parallel_add_modify_drop_column(self, column_number=5, node=None):
 @TestModule
 @Name("parallel alters")
 def module(self):
-    """Check parallel `ALTER` queries for MySql to ClickHouse replication."""
+    """Check parallel `ALTER` queries for MySQL to ClickHouse replication."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

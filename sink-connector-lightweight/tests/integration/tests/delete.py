@@ -19,7 +19,7 @@ def simple_delete(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -29,9 +29,9 @@ def simple_delete(
             engine=engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
-    with Then(f"I delete data in MySql table"):
+    with Then(f"I delete data in MySQL table"):
         mysql.query(f"DELETE FROM {table_name} WHERE id=1;")
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
@@ -714,7 +714,7 @@ def parallel(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes("1.0"))
 @Name("delete")
 def module(self, node="clickhouse"):
-    """MySql to ClickHouse replication delete tests to test `DELETE` queries."""
+    """MySQL to ClickHouse replication delete tests to test `DELETE` queries."""
     self.context.node = self.context.cluster.node(node)
 
     with Pool(1) as executor:
