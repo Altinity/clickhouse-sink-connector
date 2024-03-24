@@ -17,10 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 /**
  * <p>Creates sink service instance, takes records loaded from those
@@ -39,7 +36,7 @@ public class ClickHouseSinkTask extends SinkTask {
     private ClickHouseBatchExecutor executor;
 
     // Records grouped by Topic Name
-    private ConcurrentLinkedQueue<List<ClickHouseStruct>> records;
+    private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
     private DeDuplicator deduplicator;
 
@@ -66,7 +63,10 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
-        this.records = new ConcurrentLinkedQueue();
+        // check if the config is defined for MAX_QUEUE_SIZE
+        int maxQueueSize = this.config.getInt(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
+
+        this.records = new LinkedBlockingQueue<>(maxQueueSize);
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(this.records, this.config, topic2TableMap);
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
