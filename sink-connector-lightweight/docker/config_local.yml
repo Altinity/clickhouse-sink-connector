@@ -24,7 +24,7 @@ database.server.name: "ER54"
 database.include.list: sbtest
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
-table.include.list: ""
+table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"
 
 # Clickhouse Server URL, Specify only the hostname.
 clickhouse.server.url: "localhost"
@@ -46,7 +46,7 @@ database.allowPublicKeyRetrieval: "true"
 
 # snapshot.mode: Debezium can use different modes when it runs a snapshot. The snapshot mode is determined by the snapshot.mode configuration property.
 # The default value of the property is initial. You can customize the way that the connector creates snapshots by changing the value of the snapshot.mode property
-snapshot.mode: "initial"
+snapshot.mode: "schema_only"
 
 # offset.flush.interval.ms: The number of milliseconds to wait before flushing recent offsets to Kafka. This ensures that offsets are committed within the specified time interval.
 offset.flush.interval.ms: 5000
@@ -150,3 +150,8 @@ restart.event.loop.timeout.period.secs: "30"
 
 # The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
 sink.connector.max.queue.size: "100000"
+
+# Skip schema history capturing
+schema.history.internal.store.only.captured.tables.ddl: "true"
+
+schema.history.internal.store.only.captured.databases.ddl: "true"
