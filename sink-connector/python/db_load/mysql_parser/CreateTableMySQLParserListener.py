@@ -93,7 +93,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
                 if isinstance(child, MySqlParser.GeneratedColumnConstraintContext):
                     expression = child.expression()
                     text = self.extract_original_text(expression)
-                    # aliases are translated to MATERIALIZED see https://github.com/Altinity/clickhouse-sink-connector/pull/443
+                    # generated columns are mapped to MATERIALIZED see https://github.com/Altinity/clickhouse-sink-connector/issues/459 
                     # collations may be present before strings like _latin1 or _utf8mb4 
                     generatedExpression =  " MATERIALIZED " + re.sub(r"\b_.*?'","'", text)
                     generated = True
