@@ -13,6 +13,7 @@ import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -64,7 +65,7 @@ public class Debezium15KTablesLoadIT {
         Injector injector = Guice.createInjector(new AppInjector());
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("table.include.list","employees.table1,employees.table2,employees.table3");
+        props.setProperty("table.include.list","employees.table[1-3]$");
         props.setProperty("snapshot.mode","schema_only");
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
         props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
