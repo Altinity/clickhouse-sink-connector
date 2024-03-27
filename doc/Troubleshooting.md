@@ -1,5 +1,21 @@
 # Troubleshooting.
 
+### Some tables are not being replicated.
+This can be caused by the following:
+1. The table is not being captured by the Debezium connector.
+2. The database is not being captured by the Debezium connector.
+
+Check the following configuration in the yaml file.
+```
+table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"
+database.include.list: "sbtest"
+```
+You will see the list of tables/databases that are being captured by the Debezium connector in the logs.
+```
+[2021-09-29 14:00:00,000] INFO  [io.debezium.connector.mysql.MySqlConnector] (task-0) Snapshot step 1 - Preparing to snapshot the following 3 tables: sbtest.table1, sbtest.table2, sbtest.table3
+
+```
+
 ### Caused by: io.debezium.DebeziumException: java.sql.SQLSyntaxErrorException: Access denied; you need (at least one of) 
 ### the SUPER, REPLICATION CLIENT privilege(s) for this operation
 ```bash
