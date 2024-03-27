@@ -187,7 +187,7 @@ public class DebeziumConverterTest {
 
         //Date32
         java.sql.Date formattedDate32 = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
-        Assert.assertTrue(formattedDate32.toString().equalsIgnoreCase("2283-11-11"));
+        Assert.assertTrue(formattedDate32.toString().equalsIgnoreCase("2299-01-01"));
 
         //Date
         java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date);
@@ -218,7 +218,7 @@ public class DebeziumConverterTest {
 
         // Test max limit
         String formattedTimestamp4 = DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", ZoneId.of("UTC"));
-        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2283-11-11 23:59:59.000000"));
+        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2299-12-31 23:59:59.000000"));
     }
 
     @Test

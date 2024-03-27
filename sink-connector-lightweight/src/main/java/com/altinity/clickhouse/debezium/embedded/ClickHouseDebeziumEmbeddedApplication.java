@@ -11,12 +11,9 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import org.apache.log4j.ConsoleAppender;
-import org.apache.log4j.Level;
-import org.apache.log4j.LogManager;
-import org.apache.log4j.PatternLayout;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.util.Properties;
@@ -27,7 +24,7 @@ import java.util.concurrent.Executors;
 
 public class ClickHouseDebeziumEmbeddedApplication {
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseDebeziumEmbeddedApplication.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseDebeziumEmbeddedApplication.class);
 
     private static ClickHouseDebeziumEmbeddedApplication embeddedApplication;
 
@@ -53,15 +50,15 @@ public class ClickHouseDebeziumEmbeddedApplication {
         //BasicConfigurator.configure();
         System.setProperty("log4j.configurationFile", "resources/log4j2.xml");
 
-        org.apache.log4j.Logger root = org.apache.log4j.Logger.getRootLogger();
-        root.addAppender(new ConsoleAppender(new PatternLayout("%r %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %p %c %x - %m%n")));
+        //org.apache.log4j.Logger root = org.apache.logging.log4j.getRootLogger();
+       // root.addAppender(new ConsoleAppender(new PatternLayout("%r %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %p %c %x - %m%n")));
 
         String loggingLevel = System.getenv("LOGGING_LEVEL");
         if(loggingLevel != null) {
             // If the user passes a wrong level, it defaults to DEBUG
-            LogManager.getRootLogger().setLevel(Level.toLevel(loggingLevel));
+            LogManager.getRootLogger().atLevel(Level.toLevel(loggingLevel));
         } else {
-            LogManager.getRootLogger().setLevel(Level.INFO);
+            LogManager.getRootLogger().atLevel(Level.INFO);
         }
         injector = Guice.createInjector(new AppInjector());
 
