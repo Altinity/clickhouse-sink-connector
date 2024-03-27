@@ -118,7 +118,7 @@ auto.create.tables: "true"
 #"auto.create.tables.replicated: "true"
 
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
-#database.connectionTimeZone: "US/Samoa"
+database.connectionTimeZone: "UTC"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
@@ -155,3 +155,8 @@ restart.event.loop.timeout.period.secs: "3000"
 
 # Sink Connector maximum queue size
 #sink.connector.max.queue.size: "100000"
+
+# Skip schema history capturing, use the following configuration
+# to reduce slow startup when replicating dbs with large number of tables
+#schema.history.internal.store.only.captured.tables.ddl: "true"
+#schema.history.internal.store.only.captured.databases.ddl: "true"
