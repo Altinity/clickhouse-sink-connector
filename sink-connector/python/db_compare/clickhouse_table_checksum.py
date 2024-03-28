@@ -1,5 +1,5 @@
 """
-# -- ============================================================================
+#r/ -- ============================================================================
 # -- FileName     : clickhouse_table_checksum
 # -- Date         : 
 # -- Summary      : calculate a checksum for a clickhouse table 
@@ -144,8 +144,10 @@ def get_table_checksum_query(conn, table):
                 # requires this function : CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))
                 select += "format_decimal("+column_name + \
                     ","+str(numeric_scale)+")"
-            elif "DateTime64(0)" == data_type:
+            elif "DateTime64(0" in data_type:
                 select += f"toString({column_name})"
+            elif "DateTime64(6" in data_type:
+                select += f"if(toString({column_name}) > '{args.max_datetime_value}', '{args.max_datetime_value}', toString({column_name}))"
             elif "DateTime" in data_type:
                 select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
             else:
@@ -336,6 +338,8 @@ def main():
                         nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
+    parser.add_argument(
+            '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
 
     global args
     args = parser.parse_args()
