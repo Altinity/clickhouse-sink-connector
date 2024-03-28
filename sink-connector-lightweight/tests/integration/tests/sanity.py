@@ -10,7 +10,7 @@ def mysql_to_clickhouse_connection(
     clickhouse_table_engine,
     clickhouse_columns=None,
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert."""
+    """Perform a basic check of the MySQL to ClickHouse connection by inserting a small and simple set of data."""
 
     table_name = f"sanity_{getuid()}"
 
@@ -52,8 +52,7 @@ def mysql_to_clickhouse(
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
 ):
-    """Basic check MySQL to Clickhouse connection by small and simple data insert with all available methods and
-    tables."""
+    """Check the MySQL to ClickHouse connection by inserting small and simple data using all available methods and tables."""
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):

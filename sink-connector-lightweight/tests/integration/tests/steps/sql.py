@@ -421,15 +421,7 @@ def complex_check_creation_and_select(
     with_optimize=False,
 ):
     """
-    Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySQL
-    :param self:
-    :param table_name:
-    :param auto_create_tables:
-    :param replicated:
-    :param statement:
-    :param with_final:
-    :param with_optimize:
-    :return:
+    Verify the creation of tables on all ClickHouse nodes where they are expected, and ensure data consistency with MySQL.
     """
     clickhouse = self.context.cluster.node("clickhouse")
     clickhouse1 = self.context.cluster.node("clickhouse1")
@@ -496,12 +488,7 @@ def delete(
     delay=False,
 ):
     """
-    Delete query step
-    :param self:
-    :param first_delete_id:
-    :param last_delete_id:
-    :param table_name:
-    :return:
+    Test step to delete rows from MySQL table.
     """
     mysql = self.context.cluster.node("mysql-master")
 
