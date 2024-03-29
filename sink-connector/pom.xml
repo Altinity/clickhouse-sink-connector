@@ -235,6 +235,11 @@
             <version>1.0.3</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <version>5.3.1</version>
+        </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.kafka/connect-api -->
         <dependency>
