@@ -1,0 +1,13 @@
+{
+  "name": "mysql-csv-importer",
+  "version": "1.0.0",
+  "description": "Node.js application to import data from a CSV file into a MySQL database",
+  "main": "loadCSVData.js",
+  "scripts": {
+    "start": "node loadCSVData.js"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "mysql": "^2.18.1"
+  }
+}
