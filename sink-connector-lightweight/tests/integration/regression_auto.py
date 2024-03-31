@@ -16,143 +16,110 @@ from integration.requirements.requirements import *
 from integration.tests.steps.steps_global import *
 
 
-xfails = {
-    "schema changes/table recreation with different datatypes": [
-        (Fail, "debezium data conflict crash")
-    ],
-    "schema changes/consistency": [(Fail, "doesn't finished")],
-    "primary keys/no primary key": [
-        (Fail, "https://github.com/Altinity/clickhouse-sink-connector/issues/39")
-    ],
-    "delete/no primary key innodb": [(Fail, "doesn't work in raw")],
-    "delete/no primary key": [(Fail, "doesn't work in raw")],
-    "update/no primary key innodb": [(Fail, "makes delete")],
-    "update/no primary key": [(Fail, "makes delete")],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": [
-        (Fail, "doesn't work")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": [
-        (Fail, "doesn't work")
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": [
-        (Fail, "doesn't work")
-    ],
-    "consistency": [(Fail, "doesn't finished")],
-    "partition limits": [(Fail, "doesn't ready")],
-    "delete/many partition many parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/one million datapoints/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/many partition one part/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/one partition one part/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/one partition mixed parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/many partition mixed parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "delete/parallel/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "update/many partition many parts": [
-        (
-            Fail,
-            "doesn't work without primary key and doesn't insert duplicates of primary key",
-        )
-    ],
-    "update/one million datapoints": [
-        (
-            Fail,
-            "doesn't work without primary key and doesn't insert duplicates of primary key",
-        )
-    ],
-    "update/many partition one part": [
-        (
-            Fail,
-            "doesn't work without primary key and doesn't insert duplicates of primary key",
-        )
-    ],
-    "insert/many partition many parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/one million datapoints/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/many partition one part/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/one partition one part/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/one partition mixed parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/many partition mixed parts/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "insert/parallel/*_no_primary_key": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/insert/*": [
-        (
-            Fail,
-            "doesn't work without primary key as only last row of insert is replicated",
-        )
-    ],
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/partitions/*": [
-        (
-            Fail,
-            "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
-        )
-    ],
+ffails = {
+    "schema changes/table recreation with different datatypes": (
+        Skip,
+        "debezium data conflict crash",
+    ),
+    "schema changes/consistency": (Skip, "doesn't finished"),
+    "primary keys/no primary key": (
+        Skip,
+        "https://github.com/Altinity/clickhouse-sink-connector/issues/39",
+    ),
+    "delete/no primary key innodb": (Skip, "doesn't work in raw"),
+    "delete/no primary key": (Skip, "doesn't work in raw"),
+    "update/no primary key innodb": (Skip, "makes delete"),
+    "update/no primary key": (Skip, "makes delete"),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
+        Skip,
+        "doesn't work",
+    ),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": (
+        Skip,
+        "doesn't work",
+    ),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": (
+        Skip,
+        "doesn't work",
+    ),
+    "consistency": (Skip, "doesn't finished"),
+    "partition limits": (Skip, "doesn't ready"),
+    "delete/many partition many parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/one million datapoints/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/many partition one part/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/one partition one part/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/one partition mixed parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/many partition mixed parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "delete/parallel/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "update/many partition many parts": (
+        Skip,
+        "doesn't work without primary key and doesn't insert duplicates of primary key",
+    ),
+    "update/one million datapoints": (
+        Skip,
+        "doesn't work without primary key and doesn't insert duplicates of primary key",
+    ),
+    "update/many partition one part": (
+        Skip,
+        "doesn't work without primary key and doesn't insert duplicates of primary key",
+    ),
+    "insert/many partition many parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/one million datapoints/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/many partition one part/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/one partition one part/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/one partition mixed parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/many partition mixed parts/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "insert/parallel/*_no_primary_key": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/insert/*": (
+        Skip,
+        "doesn't work without primary key as only last row of insert is replicated",
+    ),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/partitions/*": (
+        Skip,
+        "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
+    ),
 }
 
 
@@ -161,7 +128,7 @@ xflags = {}
 
 @TestModule
 @ArgumentParser(argparser)
-@XFails(xfails)
+@FFails(ffails)
 @XFlags(xflags)
 @Name("mysql to clickhouse replication auto")
 @Requirements(
