@@ -527,6 +527,8 @@ class Cluster(object):
             return ClickHouseNode(self, name, data_base_type="clickhouse")
         if name.startswith("mysql"):
             return MySQLNode(self, name, data_base_type="mysql")
+        if name.startswith("clickhouse-sink"):
+            return SinkConnector(self, name)
         return Node(self, name)
 
     def down(self, timeout=300):
@@ -923,6 +925,45 @@ class MySQLNode(DatabaseNode):
             retry_delay=retry_delay,
             max_query_output_in_bytes=max_query_output_in_bytes,
         )
+
+
+class SinkConnector(DatabaseNode):
+    """ClickHouse Sink Connector node."""
+
+    sink_connector_cli = "./sink-connector-client "
+
+    def start_sink_connector(self, timeout=300):
+        with Given("I start ClickHouse Sink Connector"):
+            self.command(
+                node=self.name,
+                command=f"java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar "
+                f"/config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication",
+                timeout=timeout,
+            )
+
+    def stop_replication(self, timeout=300):
+        with Given("I stop ClickHouse Sink Connector replication"):
+            self.command(
+                node=self.name,
+                command=f"{self.sink_connector_cli} stop_replica",
+                timeout=timeout,
+            )
+
+    def start_replication(self):
+        with Given("I start ClickHouse Sink Connector replication"):
+            self.command(
+                node=self.name,
+                command=f"{self.sink_connector_cli} start_replica",
+                timeout=300,
+            )
+
+    def change_replica_source(self):
+        with Given("I change ClickHouse Sink Connector replica source"):
+            self.command(
+                node=self.name,
+                command=f"{self.sink_connector_cli} change_replica_source",
+                timeout=300,
+            )
 
 
 class ClickHouseNode(DatabaseNode):

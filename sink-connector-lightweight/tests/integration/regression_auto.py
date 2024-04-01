@@ -6,7 +6,6 @@ import time
 
 from testflows.core import *
 
-
 append_path(sys.path, "..")
 
 from integration.helpers.argparser import argparser
@@ -14,7 +13,6 @@ from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
 from integration.tests.steps.steps_global import *
-
 
 ffails = {
     "schema changes/table recreation with different datatypes": (
@@ -122,7 +120,6 @@ ffails = {
     ),
 }
 
-
 xflags = {}
 
 
@@ -181,6 +178,11 @@ def regression(
             docker_compose_project_dir=os.path.join(current_dir(), env),
             caller_dir=os.path.join(current_dir()),
         )
+
+    with And("I start ClickHouse sink connector"):
+        sink_node = self.context.cluster.node("clickhouse-sink-connector-lt")
+
+        sink_node.start_sink_connector()
 
     self.context.cluster = cluster
 
