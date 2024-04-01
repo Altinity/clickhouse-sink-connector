@@ -523,12 +523,12 @@ class Cluster(object):
         """Get object with node bound methods.
         :param name: name of service name
         """
+        if name.startswith("clickhouse-sink"):
+            return SinkConnector(self, name)
         if name.startswith("clickhouse"):
             return ClickHouseNode(self, name, data_base_type="clickhouse")
         if name.startswith("mysql"):
             return MySQLNode(self, name, data_base_type="mysql")
-        if name.startswith("clickhouse-sink"):
-            return SinkConnector(self, name)
         return Node(self, name)
 
     def down(self, timeout=300):
