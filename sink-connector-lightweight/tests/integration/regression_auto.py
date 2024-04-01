@@ -180,7 +180,7 @@ def regression(
         )
 
     with And("I start ClickHouse sink connector"):
-        sink_node = self.context.cluster.node("clickhouse-sink-connector-lt")
+        sink_node = cluster.node("clickhouse-sink-connector-lt")
 
         sink_node.start_sink_connector()
 
