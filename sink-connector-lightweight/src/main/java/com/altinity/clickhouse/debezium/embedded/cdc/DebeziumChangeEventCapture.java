@@ -200,10 +200,6 @@ public class DebeziumChangeEventCapture {
 
                     performDDLOperation(DDL, props, sr, config);
                     setupProcessingThread(config, new MySQLDDLParserService(config));
-//                    ThreadFactory namedThreadFactory =
-//                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-//                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-//                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
@@ -331,7 +327,7 @@ public class DebeziumChangeEventCapture {
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
-        if (writer == null) {
+        if (writer == null || writer.getConnection().isClosed() == true) {
             // Json error string
             JSONObject error = new JSONObject();
             error.put("Error", "Connection to ClickHouse is not established");
@@ -610,14 +606,8 @@ public class DebeziumChangeEventCapture {
     }
 
     public void stop() throws IOException {
-        try {
-            if (this.engine != null) {
-                this.engine.close();
-            }
-        } catch(Exception e) {
-            log.error("Error stopping debezium engine", e);
-        }
-
+        // stop the threads first
+        // and then stop debezium connector.
         try {
             if (this.executor != null) {
                 this.executor.shutdown();
@@ -626,6 +616,16 @@ public class DebeziumChangeEventCapture {
         } catch(Exception e) {
             log.error("Error stopping executor", e);
         }
+
+        try {
+            if (this.engine != null) {
+                this.engine.close();
+            }
+        } catch(Exception e) {
+            log.error("Error stopping debezium engine", e);
+        }
+
+
 
         try {
             if (this.singleThreadDebeziumEventExecutor != null) {
@@ -687,6 +687,7 @@ public class DebeziumChangeEventCapture {
         ThreadFactory namedThreadFactory =
                 new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
         this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
+        this.executor.setRemoveOnCancelPolicy(true);
         for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
             this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
         }

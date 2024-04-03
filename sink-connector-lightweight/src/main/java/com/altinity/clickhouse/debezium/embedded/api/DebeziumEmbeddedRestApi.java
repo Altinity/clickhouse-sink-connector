@@ -105,7 +105,7 @@ public class DebeziumEmbeddedRestApi {
         app.get("/start", ctx -> {
             finalProps.putAll(userProperties);
             CompletableFuture<String> cf = ClickHouseDebeziumEmbeddedApplication.startDebeziumEventLoop(injector, finalProps);
-            ctx.result("Started Replication....");
+            ctx.result("Started Replication...., this might take 60 seconds....");
         });
 
     }
