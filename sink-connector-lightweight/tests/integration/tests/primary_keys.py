@@ -96,7 +96,7 @@ def no_primary_key(self):
                 mysql_columns=" Name VARCHAR(14)",
                 clickhouse_columns=" Name String",
                 primary_key="",
-                engine=True
+                engine=True,
                 # ch_primary_key="PRIMARY KEY tuple() ORDER BY tuple() SETTINGS ",
             )
 

@@ -179,11 +179,6 @@ def regression(
             caller_dir=os.path.join(current_dir()),
         )
 
-    with And("I start ClickHouse sink connector"):
-        sink_node = cluster.node("clickhouse-sink-connector-lt")
-
-        sink_node.start_sink_connector()
-
     self.context.cluster = cluster
 
     self.context.env = env
@@ -200,6 +195,11 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
         time.sleep(30)
+
+    with And("I start ClickHouse sink connector"):
+        sink_node = cluster.node("clickhouse-sink-connector-lt")
+
+        sink_node.start_sink_connector()
 
     with Pool(1) as executor:
         Feature(
