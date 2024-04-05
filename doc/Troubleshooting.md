@@ -42,3 +42,11 @@ table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"
 schema.history.internal.store.only.captured.tables.ddl: "true"
 schema.history.internal.store.only.captured.databases.ddl: "true"
 ```
+
+### Error with binlog no longer available on the server: com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture  - Error starting connectorio.debezium.DebeziumException: The connector is trying to read binlog starting at SourceInfo [currentGtid=null, currentBinlogFilename=mysql-bin-changelog, currentBinlogPosition=, currentRowNumber=0, serverId=0, sourceTime=null, threadId=-1, currentQuery=null, tableIds=[], databaseName=null], but this is no longer available on the server
+This happens when the binlog is purged and its no longer available on the server.
+There are two solutions to get past this error.
+1) Change `snapshot.mode` to `schema.recovery`
+2) Delete the contents of the table `offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info`. and restart sink connector.
+
+
