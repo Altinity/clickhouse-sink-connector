@@ -2,9 +2,8 @@ from integration.requirements.requirements import (
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
 )
 from integration.tests.steps.alter import drop_column
-from integration.tests.steps.common import generate_sample_mysql_value
-from integration.tests.steps.service_settings_steps import *
-from integration.tests.steps.sql import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.mysql import *
 from integration.tests.steps.statements import all_mysql_datatypes_dict
 
 

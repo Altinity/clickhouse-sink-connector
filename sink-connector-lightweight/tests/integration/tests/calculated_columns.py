@@ -1,4 +1,4 @@
-from integration.tests.steps.sql import *
+from integration.tests.steps.mysql import *
 
 
 @TestStep(Then)

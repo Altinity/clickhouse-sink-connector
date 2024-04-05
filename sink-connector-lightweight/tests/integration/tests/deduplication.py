@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline

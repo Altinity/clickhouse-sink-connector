@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -138,7 +139,7 @@ def delete_zero_rows(self, table_name, node=None):
     ).output.strip()
 
     with When(f"I delete zero rows from MySQL table {table_name}"):
-        delete(row_delete=True, table_name=table_name, condition="id < -1")
+        delete_rows(row_delete=True, table_name=table_name, condition="id < -1")
 
     with Then(
         "I check that Clickhouse replication table has the same number of rows as before delete"
@@ -169,7 +170,7 @@ def delete_all_rows(self, table_name, node=None):
         node = self.context.node
 
     with When(f"I delete all rows from MySQL table {table_name}"):
-        delete(row_delete=True, table_name=table_name, condition="id > -1")
+        delete_rows(row_delete=True, table_name=table_name, condition="id > -1")
 
     with Then("I check that Clickhouse replication table has zero rows"):
         retry(
@@ -196,7 +197,7 @@ def delete_small_subset(self, table_name):
     """Check that `DELETE` can remove a small subset of rows."""
 
     with When(f"I delete a small subset of rows from MySQL table {table_name}"):
-        delete(row_delete=True, table_name=table_name, condition="x < 10")
+        delete_rows(row_delete=True, table_name=table_name, condition="x < 10")
 
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
@@ -213,7 +214,7 @@ def delete_large_subset(self, table_name):
     """Check that `DELETE` can remove a large subset of rows."""
 
     with When(f"I delete a small subset of rows from MySQL table {table_name}"):
-        delete(row_delete=True, table_name=table_name, condition="x > 10")
+        delete_rows(row_delete=True, table_name=table_name, condition="x > 10")
 
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
@@ -232,7 +233,7 @@ def delete_all_rows_from_half_of_parts(self, table_name, node=None):
     with When(
         f"I delete all rows from half of the parts from MySQL table {table_name}"
     ):
-        delete(row_delete=True, table_name=table_name, condition="id < 5")
+        delete_rows(row_delete=True, table_name=table_name, condition="id < 5")
 
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
