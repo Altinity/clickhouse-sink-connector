@@ -15,11 +15,6 @@ from integration.requirements.requirements import *
 from integration.tests.steps.clickhouse import *
 
 ffails = {
-    "schema changes/table recreation with different datatypes": (
-        Skip,
-        "debezium data conflict crash",
-    ),
-    "schema changes/consistency": (Skip, "doesn't finished"),
     "primary keys/no primary key": (
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/39",
@@ -40,7 +35,6 @@ ffails = {
         Skip,
         "doesn't work",
     ),
-    "consistency": (Skip, "doesn't finished"),
     "partition limits": (Skip, "doesn't ready"),
     "delete/many partition many parts/*_no_primary_key": (
         Skip,
