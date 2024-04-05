@@ -1,0 +1,14 @@
+<clickhouse replace="true">
+    <timezone>America/Chicago</timezone>
+    <zookeeper>
+        <node index="1">
+            <host>zookeeper</host>
+            <port>2181</port>
+        </node>
+        <session_timeout_ms>15000</session_timeout_ms>
+    </zookeeper>
+    <macros>
+        <replica>clickhouse</replica>
+        <shard>02</shard>
+    </macros>
+</clickhouse>
