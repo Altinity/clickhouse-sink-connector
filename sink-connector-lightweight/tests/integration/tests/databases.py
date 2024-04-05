@@ -52,7 +52,7 @@ def databases_tables(
         mysql.query(f"INSERT INTO {table_name} VALUES (3, '2018-09-08 17:51:05.777')")
 
     with Then(f"I check that data is replicated to the correct table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

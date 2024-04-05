@@ -26,7 +26,7 @@ def mysql_to_clickhouse_insert(
         time.sleep(20)
 
     with Then("I check data inserted correct"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             manual_output=output,
             clickhouse_table_engine=clickhouse_table_engine,

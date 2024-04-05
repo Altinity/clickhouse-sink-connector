@@ -2,6 +2,7 @@ import time
 from itertools import combinations
 from testflows.connect import Shell
 from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
 from integration.tests.steps.service_settings import *
 
 

@@ -29,7 +29,7 @@ def simple_insert(
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
 
     with Then("I check data inserted correct"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             manual_output=output,
             clickhouse_table_engine=clickhouse_table_engine,
@@ -171,7 +171,7 @@ def one_partition_one_part(self, node=None):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -212,7 +212,7 @@ def one_partition_many_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -266,7 +266,7 @@ def one_partition_mixed_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -312,7 +312,7 @@ def many_partitions_one_part(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -353,7 +353,7 @@ def many_partitions_many_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -407,7 +407,7 @@ def many_partitions_mixed_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -451,7 +451,7 @@ def one_million_datapoints(self, node=None):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -516,7 +516,7 @@ def parallel(self):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,

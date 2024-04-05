@@ -1,3 +1,6 @@
+from integration.requirements.requirements import (
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
+)
 from integration.tests.steps.mysql import *
 
 

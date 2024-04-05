@@ -46,7 +46,7 @@ def virtual_column_names(
             )
 
     with And(f"I check that data is replicated"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

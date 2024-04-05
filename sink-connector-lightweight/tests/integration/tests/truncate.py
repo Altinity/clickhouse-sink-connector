@@ -33,7 +33,7 @@ def truncate(
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
     with Then("I check that clickhouse table received data"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -44,7 +44,7 @@ def truncate(
         mysql.query(f"TRUNCATE TABLE {table_name}")
 
     with And("I check that clickhouse table empty"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

@@ -37,7 +37,7 @@ def create_all_data_types(
     with Then(
         f"I check that corresponding ClickHouse table was created and data was inserted"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

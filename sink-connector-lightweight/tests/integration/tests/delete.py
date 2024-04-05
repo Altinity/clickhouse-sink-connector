@@ -36,7 +36,7 @@ def simple_delete(
         mysql.query(f"DELETE FROM {table_name} WHERE id=1;")
 
     with And("I check that ClickHouse table has same number of rows as MySQL table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -156,7 +156,7 @@ def delete_zero_rows(self, table_name, node=None):
     with And(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -185,7 +185,7 @@ def delete_all_rows(self, table_name, node=None):
     with And(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -202,7 +202,7 @@ def delete_small_subset(self, table_name):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -219,7 +219,7 @@ def delete_large_subset(self, table_name):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -238,7 +238,7 @@ def delete_all_rows_from_half_of_parts(self, table_name, node=None):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -289,7 +289,7 @@ def one_partition_one_part(self):
                                 with Then(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -343,7 +343,7 @@ def one_partition_many_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -409,7 +409,7 @@ def one_partition_mixed_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -462,7 +462,7 @@ def many_partitions_one_part(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -516,7 +516,7 @@ def many_partitions_many_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -582,7 +582,7 @@ def many_partitions_mixed_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -636,7 +636,7 @@ def one_million_datapoints(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -683,19 +683,19 @@ def parallel(self):
                 with And(
                     "I perform deletes in MySQL to make parallel deletes in replicated ClickHouse table"
                 ):
-                    By(f"delete zero rows", test=delete, parallel=True)(
+                    By(f"delete zero rows", test=delete_rows, parallel=True)(
                         row_delete=True, table_name=table_name, condition="id < -1"
                     )
 
                     By(
                         f"delete rows with `x` column value less then 10",
-                        test=delete,
+                        test=delete_rows,
                         parallel=True,
                     )(row_delete=True, table_name=table_name, condition="x < 10")
 
                     By(
                         f"delete rows with `x` column value more then 20",
-                        test=delete,
+                        test=delete_rows,
                         parallel=True,
                     )(row_delete=True, table_name=table_name, condition="x > 20")
 
@@ -704,7 +704,7 @@ def parallel(self):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,

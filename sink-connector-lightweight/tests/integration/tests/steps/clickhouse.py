@@ -23,33 +23,6 @@ def create_database(self, name="test", node=None):
             )
 
 
-@TestStep(Given)
-def create_clickhouse_table_engine(
-    self, name=None, statement=None, node=None, force_select_final=False
-):
-    """Creation of default ClickHouse table for tests"""
-    if node is None:
-        node = self.context.cluster.node("clickhouse")
-    if name is None:
-        name = "users"
-    if statement is None:
-        statement = f"CREATE TABLE IF NOT EXISTS test.{name} "
-        f"(id Int32, age Int32) "
-        f"ENGINE = MergeTree "
-        f"PRIMARY KEY id ORDER BY id SETTINGS {' ignore_force_select_final=1' if force_select_final else ''}"
-        f"index_granularity = 8192;"
-
-    try:
-        with Given(f"I create ClickHouse table {name}"):
-            node.query(statement)
-        yield
-    finally:
-        with Finally("I clean up by deleting table in ClickHouse"):
-            node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
-            )
-
-
 @TestStep(Then)
 def select(
     self,
@@ -84,9 +57,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            # f"SELECT {statement} FROM test.{table_name}  FINAL WHERE {sign_column} != -1 FORMAT CSV",
             f"SELECT {statement} FROM test.{table_name} FINAL",
-            # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
             message=f"{manual_output}",
         )
     elif with_optimize:
@@ -96,7 +67,6 @@ def select(
 
                 node.query(
                     f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
-                    # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
                     message=f"{manual_output}",
                 )
 
@@ -106,14 +76,13 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            # f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
             f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
             message=f"{manual_output}",
         )
 
 
 @TestStep(Then)
-def complex_check_creation_and_select(
+def verify_table_creation_in_clickhouse(
     self,
     table_name,
     statement,

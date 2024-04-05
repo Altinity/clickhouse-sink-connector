@@ -38,7 +38,7 @@ def mysql_to_clickhouse_snowflake(
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -126,7 +126,7 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
         with Then(
             "I check that MySQL tables and Clickhouse replication tables have the same data"
         ):
-            complex_check_creation_and_select(
+            verify_table_creation_in_clickhouse(
                 table_name=table_name,
                 clickhouse_table_engine=clickhouse_table_engine,
                 statement="count(*)",

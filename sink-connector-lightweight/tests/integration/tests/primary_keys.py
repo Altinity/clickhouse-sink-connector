@@ -37,7 +37,7 @@ def check_different_primary_keys(
         mysql.query(f"INSERT INTO {table_name} VALUES {insert_values}")
 
     with Then(f"I check that ClickHouse table has same data as MySQL table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             manual_output=output_values,
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,

@@ -35,7 +35,7 @@ def deduplication(
             )
 
     with Then(f"I wait unique values from CLickHouse table equal to MySQL table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             manual_output=insert_number,
             table_name=table_name,
             statement="count(*)",

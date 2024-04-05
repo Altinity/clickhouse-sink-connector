@@ -33,7 +33,7 @@ def insert_update_delete(self):
 
         By(
             f"delete rows with `x` column value less then 10",
-            test=delete,
+            test=delete_rows,
             parallel=True,
         )(row_delete=True, table_name=table_name, condition="x < 10")
 
@@ -45,7 +45,7 @@ def insert_update_delete(self):
 
         By(
             f"delete rows with `x` column value less then 100",
-            test=delete,
+            test=delete_rows,
             parallel=True,
         )(row_delete=True, table_name=table_name, condition="x < 100")
 
@@ -60,7 +60,7 @@ def insert_update_delete(self):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
