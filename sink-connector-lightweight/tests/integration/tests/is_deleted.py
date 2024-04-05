@@ -4,7 +4,7 @@ from integration.requirements.requirements import (
 from integration.tests.steps.alter import drop_column
 from integration.tests.steps.service_settings import *
 from integration.tests.steps.mysql import *
-from integration.tests.steps.statements import all_mysql_datatypes_dict
+from integration.tests.steps.datatypes import all_mysql_datatypes_dict
 
 
 @TestStep(Given)
