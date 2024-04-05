@@ -981,6 +981,13 @@ class SinkConnector(DatabaseNode):
                 timeout=300,
             )
 
+    def show_replication_status(self):
+        with Given("I change ClickHouse Sink Connector replica source"):
+            self.command(
+                command=f"{self.sink_connector_cli} show_replica_status",
+                timeout=300,
+            )
+
 
 class ClickHouseNode(DatabaseNode):
     """Node with ClickHouse server."""

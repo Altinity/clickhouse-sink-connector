@@ -191,9 +191,9 @@ def regression(
         time.sleep(30)
 
     with And("I start ClickHouse sink connector"):
-        sink_node = cluster.node("clickhouse-sink-connector-lt")
+        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
 
-        sink_node.start_sink_connector()
+        self.context.sink_node.start_sink_connector()
 
     with Pool(1) as executor:
         Feature(
@@ -284,6 +284,11 @@ def regression(
         Feature(
             run=load("tests.retry_on_fail", "module"),
             parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.sink_cli_commands", "module"),
+            parallel=False,
             executor=executor,
         )
         join()

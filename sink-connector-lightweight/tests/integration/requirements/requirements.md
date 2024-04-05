@@ -194,12 +194,13 @@
     * 29.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
 * 30 [Sink Connector Actions From CLI](#sink-connector-actions-from-cli)
-    * 30.1 [Start Replication](#start-replication)
-        * 30.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistartreplication)
-    * 30.2 [Stop Replication](#stop-replication)
-        * 30.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistopreplication)
-    * 30.3 [Show Replication Status](#show-replication-status)
-        * 30.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus](#rqsrs-030clickhousemysqltoclickhousereplicationclishowreplicationstatus)
+    * 30.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI](#rqsrs-030clickhousemysqltoclickhousereplicationcli)
+    * 30.2 [Start Replication](#start-replication)
+        * 30.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistartreplication)
+    * 30.3 [Stop Replication](#stop-replication)
+        * 30.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistopreplication)
+    * 30.4 [Show Replication Status](#show-replication-status)
+        * 30.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus](#rqsrs-030clickhousemysqltoclickhousereplicationclishowreplicationstatus)
 * 31 [System Actions](#system-actions)
     * 31.1 [Handling Network Interruptions](#handling-network-interruptions)
         * 31.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
@@ -1400,9 +1401,16 @@ version: 1.0
 
 ## Sink Connector Actions From CLI
 
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
+version: 1.0
+
+[Altinity Sink Connector] SHALL support using CLI commands to manipulate replication status in order to manage replication process more easily.
+To start using CLI commands, the user should run the `sink-connector-client` script from the command line.
+
 ### Start Replication
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
+version: 1.0
 
 [Altinity Sink Connector] SHALL start replication process when `stop_replica` command is executed.
 
@@ -1414,6 +1422,7 @@ bash-4.4# ./sink-connector-client start_replica
 ### Stop Replication
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
+version: 1.0
 
 [Altiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
 
@@ -1427,6 +1436,7 @@ bash-4.4# ./sink-connector-client stop_replica
 ### Show Replication Status
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
+version: 1.0
 
 [Altinity Sink Connector] SHALL show replication status when `show_replica_status` command is executed.
 

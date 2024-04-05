@@ -82,6 +82,17 @@ def select(
 
 
 @TestStep(Then)
+def check_if_table_was_created(self, table_name, node=None, timeout=40, message=1):
+    """Check if table was created."""
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    retry(node.query, timeout=timeout, delay=3)(
+        f"EXISTS {self.context.database}.{table_name}", message=f"{message}"
+    )
+
+
+@TestStep(Then)
 def verify_table_creation_in_clickhouse(
     self,
     table_name,
