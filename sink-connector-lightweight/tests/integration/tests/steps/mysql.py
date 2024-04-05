@@ -122,7 +122,7 @@ def create_mysql_to_clickhouse_replicated_table(
     engine=True,
     partition_by_mysql=False,
 ):
-    """Create MySQL-to-ClickHouse replicated table."""
+    """Create MySQL to ClickHouse replicated table."""
     if mysql_node is None:
         mysql_node = self.context.cluster.node("mysql-master")
 
@@ -215,8 +215,66 @@ def create_mysql_to_clickhouse_replicated_table(
             time.sleep(5)
 
 
-@TestStep
-def create_tables(self, table_name, clickhouse_table_engine):
+@TestStep(Given)
+def create_table_with_no_primary_key(self, table_name, clickhouse_table_engine):
+    """Create MySQL table without primary key."""
+
+    with By(f"creating a {table_name} table without primary key"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"{table_name}",
+            mysql_columns="x INT NOT NULL",
+            clickhouse_columns="x Int32",
+            clickhouse_table_engine=clickhouse_table_engine,
+            primary_key=None,
+        )
+
+
+@TestStep(Given)
+def create_table_with_no_engine(self, table_name, clickhouse_table_engine):
+    """Create MySQL table without engine."""
+
+    with By(f"creating a {table_name} table without engine"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"{table_name}",
+            mysql_columns="x INT NOT NULL",
+            clickhouse_columns="x Int32",
+            clickhouse_table_engine=clickhouse_table_engine,
+            engine=False,
+        )
+
+
+@TestStep(Given)
+def create_table_with_primary_key_and_engine(self, table_name, clickhouse_table_engine):
+    """Create MySQL table with primary key and with engine."""
+
+    with By(f"creating a {table_name} table with primary key and with engine"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"{table_name}",
+            mysql_columns="x INT NOT NULL",
+            clickhouse_columns="x Int32",
+            clickhouse_table_engine=clickhouse_table_engine,
+        )
+
+
+@TestStep(Given)
+def create_table_with_no_engine_and_no_primary_key(
+    self, table_name, clickhouse_table_engine
+):
+    """Create MySQL table without engine and without primary key."""
+
+    with By(f"creating a {table_name} table without engine and without primary key"):
+        create_mysql_to_clickhouse_replicated_table(
+            name=f"{table_name}",
+            mysql_columns="x INT NOT NULL",
+            clickhouse_columns="x Int32",
+            clickhouse_table_engine=clickhouse_table_engine,
+            primary_key=None,
+            engine=False,
+        )
+
+
+@TestStep(Given)
+def create_tables(self, table_name, clickhouse_table_engine="ReplacingMergeTree"):
     """Create different types of replicated tables."""
 
     tables_list = [
@@ -229,68 +287,29 @@ def create_tables(self, table_name, clickhouse_table_engine):
     with Given(
         "I create MySQL to ClickHouse replicated table with primary key and with engine"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-        )
-
-    with And(
-        "I create MySQL to ClickHouse replicated table with complex primary key and with engine"
-    ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_primary_key_complex",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-            primary_key="id,x",
-        )
-
-    with And(
-        "I create MySQL to ClickHouse replicated table with complex primary key and without engine"
-    ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_engine_complex",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-            primary_key="id,x",
-            engine=False,
+        create_table_with_primary_key_and_engine(
+            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
         )
 
     with And(
         "I create MySQL to ClickHouse replicated table without primary key and with engine"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_primary_key",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-            primary_key=None,
+        create_table_with_no_primary_key(
+            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
         )
 
     with And(
         "I create MySQL to ClickHouse replicated table with primary key and without engine"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_engine",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-            engine=False,
+        create_table_with_no_engine(
+            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
         )
 
     with And(
         "I create MySQL to ClickHouse replicated table without primary key and without engine"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_engine_no_primary_key",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
-            primary_key=None,
-            engine=False,
+        create_table_with_no_engine_and_no_primary_key(
+            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
         )
 
     return tables_list
