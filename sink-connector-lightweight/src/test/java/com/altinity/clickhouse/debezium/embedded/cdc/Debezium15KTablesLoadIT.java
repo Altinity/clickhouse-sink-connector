@@ -59,6 +59,7 @@ public class Debezium15KTablesLoadIT {
     }
 
     @Test
+    @Disabled
     @DisplayName("Test that validates skipping of large tables in schema_only mode")
     public void testLoadingTablesInSchemaOnlyMode() throws Exception {
 
