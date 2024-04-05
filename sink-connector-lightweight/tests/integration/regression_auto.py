@@ -12,7 +12,7 @@ from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
-from integration.tests.steps.steps_global import *
+from integration.tests.steps.clickhouse import *
 
 ffails = {
     "schema changes/table recreation with different datatypes": (

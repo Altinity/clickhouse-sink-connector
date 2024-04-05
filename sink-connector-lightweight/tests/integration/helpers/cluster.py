@@ -595,15 +595,14 @@ class Cluster(object):
                     "IMAGE_DEPENDENCY_PROXY", ""
                 )
                 self.environ["COMPOSE_HTTP_TIMEOUT"] = "300"
-                self.environ["CLICKHOUSE_TESTS_SERVER_BIN_PATH"] = (
-                    self.clickhouse_binary_path
-                )
-                self.environ["CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH"] = (
-                    self.clickhouse_odbc_bridge_binary_path
-                    or os.path.join(
-                        os.path.dirname(self.clickhouse_binary_path),
-                        "clickhouse-odbc-bridge",
-                    )
+                self.environ[
+                    "CLICKHOUSE_TESTS_SERVER_BIN_PATH"
+                ] = self.clickhouse_binary_path
+                self.environ[
+                    "CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH"
+                ] = self.clickhouse_odbc_bridge_binary_path or os.path.join(
+                    os.path.dirname(self.clickhouse_binary_path),
+                    "clickhouse-odbc-bridge",
                 )
                 self.environ["CLICKHOUSE_TESTS_DIR"] = self.configs_dir
 

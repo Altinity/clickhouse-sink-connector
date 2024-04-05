@@ -1,18 +1,87 @@
-from integration.requirements.requirements import *
+import random
 
 from integration.helpers.common import *
+from datetime import datetime, timedelta
+from testflows.core import *
+
+
+def generate_sample_mysql_value(data_type):
+    """Generate a sample MySQL value for the provided datatype."""
+    if data_type.startswith("DECIMAL"):
+        precision, scale = map(
+            int, data_type[data_type.index("(") + 1 : data_type.index(")")].split(",")
+        )
+        number = round(
+            random.uniform(-(10 ** (precision - scale)), 10 ** (precision - scale)),
+            scale,
+        )
+        return str(number)
+    elif data_type.startswith("DOUBLE"):
+        # Adjusting the range to avoid overflow, staying within a reasonable limit
+        return str(random.uniform(-1.7e308, 1.7e308))
+    elif data_type == "DATE NOT NULL":
+        return (datetime.today() - timedelta(days=random.randint(1, 365))).strftime(
+            "%Y-%m-%d"
+        )
+    elif data_type.startswith("DATETIME"):
+        return (datetime.now() - timedelta(days=random.randint(1, 365))).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:19]
+    elif data_type.startswith("TIME"):
+        if "6" in data_type:
+            return (datetime.now()).strftime("%H:%M:%S.%f")[
+                : 8 + 3
+            ]  # Including microseconds
+        else:
+            return (datetime.now()).strftime("%H:%M:%S")
+    elif "INT" in data_type:
+        if "TINYINT" in data_type:
+            return str(
+                random.randint(0, 255)
+                if "UNSIGNED" in data_type
+                else random.randint(-128, 127)
+            )
+        elif "SMALLINT" in data_type:
+            return str(
+                random.randint(0, 65535)
+                if "UNSIGNED" in data_type
+                else random.randint(-32768, 32767)
+            )
+        elif "MEDIUMINT" in data_type:
+            return str(
+                random.randint(0, 16777215)
+                if "UNSIGNED" in data_type
+                else random.randint(-8388608, 8388607)
+            )
+        elif "BIGINT" in data_type:
+            return str(
+                random.randint(0, 2**63 - 1)
+                if "UNSIGNED" in data_type
+                else random.randint(-(2**63), 2**63 - 1)
+            )
+        else:  # INT
+            return str(
+                random.randint(0, 4294967295)
+                if "UNSIGNED" in data_type
+                else random.randint(-2147483648, 2147483647)
+            )
+    elif (
+        data_type.startswith("CHAR")
+        or data_type.startswith("VARCHAR")
+        or data_type == "TEXT NOT NULL"
+    ):
+        return "SampleText"
+    elif data_type.endswith("BLOB NOT NULL"):
+        return "SampleBinaryData"
+    elif data_type.startswith("BINARY") or data_type.startswith("VARBINARY"):
+        return "BinaryData"
+    else:
+        return "UnknownType"
 
 
 @TestStep(Given)
 def create_mysql_table(self, name=None, statement=None, node=None):
-    """
-    Creation of default MySQL table for tests
-    :param self:
-    :param name:
-    :param statement:
-    :param node:
-    :return:
-    """
+    """Creation of default MySQL table for tests"""
     if node is None:
         node = self.context.cluster.node("mysql-master")
     if name is None:
@@ -37,40 +106,6 @@ def create_mysql_table(self, name=None, statement=None, node=None):
             time.sleep(5)
 
 
-@TestStep(Given)
-def create_clickhouse_table_engine(
-    self, name=None, statement=None, node=None, force_select_final=False
-):
-    """
-    Creation of default ClickHouse table for tests
-    :param self:
-    :param name:
-    :param statement:
-    :param node:
-    :return:
-    """
-    if node is None:
-        node = self.context.cluster.node("clickhouse")
-    if name is None:
-        name = "users"
-    if statement is None:
-        statement = f"CREATE TABLE IF NOT EXISTS test.{name} "
-        f"(id Int32, age Int32) "
-        f"ENGINE = MergeTree "
-        f"PRIMARY KEY id ORDER BY id SETTINGS {' ignore_force_select_final=1' if force_select_final else ''}"
-        f"index_granularity = 8192;"
-
-    try:
-        with Given(f"I create ClickHouse table {name}"):
-            node.query(statement)
-        yield
-    finally:
-        with Finally("I clean up by deleting table in ClickHouse"):
-            node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
-            )
-
-
 @TestStep
 def create_mysql_to_clickhouse_replicated_table(
     self,
@@ -87,17 +122,7 @@ def create_mysql_to_clickhouse_replicated_table(
     engine=True,
     partition_by_mysql=False,
 ):
-    """Create MySQL-to-ClickHouse replicated table.
-
-    :param self:
-    :param table_name: replicated table name
-    :param mysql_columns: MySQL table columns
-    :param clickhouse_columns: coresponding ClickHouse columns
-    :param clickhouse_table_engine: use 'auto' for auto create, 'ReplicatedReplacingMergeTree' or 'ReplacingMergeTree'
-    :param mysql_node: MySQL docker compose node
-    :param clickhouse_node: CH docker compose node
-    :return:
-    """
+    """Create MySQL-to-ClickHouse replicated table."""
     if mysql_node is None:
         mysql_node = self.context.cluster.node("mysql-master")
 
@@ -128,7 +153,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"/{name}',"
                         " '{replica}',"
                         f" {version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})'if primary_key is not None else 'ORDER BY tuple()'}"
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else 'ORDER BY tuple()'}"
                         f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
                         f" SETTINGS "
                         f"index_granularity = 8192;",
@@ -280,15 +305,7 @@ def insert(
     insert_values="({x},2,'a','b')",
     node=None,
 ):
-    """
-    Insert some controlled interval of id's
-    :param self:
-    :param node:
-    :param first_insert_id:
-    :param last_insert_id:
-    :param table_name:
-    :return:
-    """
+    """Insert some controlled interval of ID's in MySQL table."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -339,143 +356,8 @@ def complex_insert(
         )(f"INSERT INTO {table_name} VALUES {insert_values_1}")
 
 
-@TestStep(Then)
-def select(
-    self,
-    manual_output=None,
-    table_name=None,
-    statement=None,
-    node=None,
-    with_final=False,
-    with_optimize=False,
-    sign_column="_sign",
-    timeout=300,
-):
-    """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
-    :param insert: expected insert data if None compare with MySQL table
-    :param table_name: table name for select  default "users"
-    :param statement: statement for select default "*"
-    :param node: node name
-    :param with_final: 'SELECT ... FINAL'
-    :param with_optimize: loop 'OPTIMIZE TABLE' + 'SELECT'
-    :param timeout: retry timeout
-    """
-    if node is None:
-        node = self.context.cluster.node("clickhouse")
-    if table_name is None:
-        table_name = "users"
-    if statement is None:
-        statement = "*"
-
-    mysql = self.context.cluster.node("mysql-master")
-    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[
-        90:
-    ]
-
-    if manual_output is None:
-        manual_output = mysql_output
-
-    if with_final:
-        retry(
-            node.query,
-            timeout=timeout,
-            delay=10,
-        )(
-            # f"SELECT {statement} FROM test.{table_name}  FINAL WHERE {sign_column} != -1 FORMAT CSV",
-            f"SELECT {statement} FROM test.{table_name} FINAL",
-            # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
-            message=f"{manual_output}",
-        )
-    elif with_optimize:
-        for attempt in retries(count=10, timeout=100, delay=5):
-            with attempt:
-                node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
-
-                node.query(
-                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
-                    # f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
-                    message=f"{manual_output}",
-                )
-
-    else:
-        retry(
-            node.query,
-            timeout=timeout,
-            delay=10,
-        )(
-            # f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
-            f"SELECT {statement} FROM test.{table_name} FORMAT CSV",
-            message=f"{manual_output}",
-        )
-
-
-@TestStep(Then)
-def complex_check_creation_and_select(
-    self,
-    table_name,
-    statement,
-    clickhouse_table_engine=(""),
-    timeout=300,
-    manual_output=None,
-    with_final=False,
-    with_optimize=False,
-):
-    """
-    Verify the creation of tables on all ClickHouse nodes where they are expected, and ensure data consistency with MySQL.
-    """
-    clickhouse = self.context.cluster.node("clickhouse")
-    clickhouse1 = self.context.cluster.node("clickhouse1")
-    clickhouse2 = self.context.cluster.node("clickhouse2")
-    clickhouse3 = self.context.cluster.node("clickhouse3")
-    mysql = self.context.cluster.node("mysql-master")
-
-    if clickhouse_table_engine.startswith("Replicated"):
-        with Then("I check table creation on few nodes"):
-            retry(clickhouse.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse1.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse2.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse3.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-    else:
-        with Then("I check table creation"):
-            retry(clickhouse.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-
-    with Then("I check that ClickHouse table has same number of rows as MySQL table"):
-        select(
-            table_name=table_name,
-            manual_output=manual_output,
-            statement=statement,
-            with_final=with_final,
-            with_optimize=with_optimize,
-            timeout=timeout,
-        )
-        if clickhouse_table_engine.startswith("Replicated"):
-            with Then(
-                "I check that ClickHouse table has same number of rows as MySQL table on the replica node if it is "
-                "replicted table"
-            ):
-                select(
-                    table_name=table_name,
-                    manual_output=manual_output,
-                    statement=statement,
-                    node=self.context.cluster.node("clickhouse1"),
-                    with_final=with_final,
-                    with_optimize=with_optimize,
-                    timeout=timeout,
-                )
-
-
 @TestStep(When)
-def delete(
+def delete_rows(
     self,
     table_name,
     first_delete_id=None,
@@ -532,14 +414,7 @@ def update(
     check=False,
     delay=False,
 ):
-    """
-    Update query step
-    :param self:
-    :param first_update_id:
-    :param last_update_id:
-    :param table_name:
-    :return:
-    """
+    """Update query step for MySQL table."""
     mysql = self.context.cluster.node("mysql-master")
 
     if row_update:
@@ -582,20 +457,7 @@ def concurrent_queries(
     first_update_id,
     last_update_id,
 ):
-    """
-    Insert, update, delete for concurrent queries.
-    :param self:
-    :param table_name: table name
-    :param first_insert_number: first id of precondition insert
-    :param last_insert_number:  last id of precondition insert
-    :param first_insert_id: first id of concurrent insert
-    :param last_insert_id: last id of concurrent insert
-    :param first_delete_id: first id of concurrent delete
-    :param last_delete_id: last id of concurrent delete
-    :param first_update_id: first id of concurrent update
-    :param last_update_id: last id of concurrent update
-    :return:
-    """
+    """Insert, update, delete for concurrent queries."""
 
     with Given("I insert block of precondition rows"):
         insert(
@@ -616,7 +478,7 @@ def concurrent_queries(
         )
         By(
             "deleting data in MySQL table",
-            test=delete,
+            test=delete_rows,
             parallel=True,
         )(
             first_delete_id=first_delete_id,
