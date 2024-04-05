@@ -1415,7 +1415,7 @@ bash-4.4# ./sink-connector-client start_replica
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
 
-[ALtiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
+[Altiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
 
 ```bash
 bash-4.4# ./sink-connector-client stop_replica
