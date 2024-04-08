@@ -52,19 +52,6 @@ services:
       zookeeper:
         condition: service_healthy
 
-
-  bash-tools:
-    image: registry.gitlab.com/altinity-public/container-images/test/bash-tools:5.0
-    hostname: bash-tools
-    restart: "no"
-    entrypoint:
-      - /bin/sleep
-    command:
-      - infinity
-    volumes:
-      - ../../tests/manual_scripts:/manual_scripts
-      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
-
   clickhouse1:
     extends:
       file: clickhouse-service.yml

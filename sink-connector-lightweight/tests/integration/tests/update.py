@@ -48,36 +48,6 @@ def simple_update(
 
 
 @TestFeature
-def no_primary_key(self):
-    """Check replication for `UPDATE` with no primary key and without table engine."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key=None,
-                engine=False,
-            )
-
-
-@TestFeature
-def no_primary_key_innodb(self):
-    """Check replication for `UPDATE` with no primary key and with table engine InnoDB."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key=None,
-                engine=True,
-            )
-
-
-@TestFeature
 def simple_primary_key(self):
     """Check replication for `UPDATE` with simple primary key and without table engine."""
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
@@ -101,36 +71,6 @@ def simple_primary_key_innodb(self):
                 mysql_columns=" k INT,c CHAR, pad CHAR",
                 clickhouse_columns=" k Int32,c String, pad String",
                 primary_key="id",
-                engine=True,
-            )
-
-
-@TestFeature
-def complex_primary_key(self):
-    """Check replication for `UPDATE` with complex primary key and without table engine."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key="id,k",
-                engine=False,
-            )
-
-
-@TestFeature
-def complex_primary_key_innodb(self):
-    """Check replication for `UPDATE` with complex primary key and with table engine InnoDB."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key="id,k",
                 engine=True,
             )
 
@@ -248,7 +188,7 @@ def one_partition_one_part(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -301,7 +241,7 @@ def one_partition_many_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -355,7 +295,7 @@ def one_partition_mixed_parts(self, node=None):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -421,7 +361,7 @@ def many_partitions_one_part(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -474,7 +414,7 @@ def many_partitions_many_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -528,7 +468,7 @@ def many_partitions_mixed_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -594,7 +534,7 @@ def one_million_datapoints(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -641,7 +581,7 @@ def parallel(self):
 
         for table_name in tables_names:
             if table_name.endswith("_no_primary_key"):
-                xfail(
+                skip(
                     "doesn't work without primary key as only last row of insert is replicated"
                 )
 

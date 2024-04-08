@@ -190,11 +190,6 @@ def regression(
         create_database(name="test")
         time.sleep(30)
 
-    with And("I start ClickHouse sink connector"):
-        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
-
-        self.context.sink_node.start_sink_connector()
-
     with Pool(1) as executor:
         Feature(
             run=load("tests.sanity", "module"),
