@@ -326,14 +326,23 @@ public class DebeziumChangeEventCapture {
         String response = "";
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        DBCredentials dbCredentials = parseDBConfiguration(config);
 
         if (writer == null || writer.getConnection().isClosed() == true) {
             // Json error string
-            JSONObject error = new JSONObject();
-            error.put("Error", "Connection to ClickHouse is not established");
-            return error.toJSONString();
+            log.error("**** Connection to ClickHouse is not established, re-initiating ****");
+            //JSONObject error = new JSONObject();
+            //error.put("Error", "Connection to ClickHouse is not established");
+            //return error.toJSONString();
+
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    dbCredentials.getDatabase());
+            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                    dbCredentials.getPassword(), config, conn);
         }
-        DBCredentials dbCredentials = parseDBConfiguration(config);
+        //DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format("select * from %s limit 1", tableName);
         ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
 
