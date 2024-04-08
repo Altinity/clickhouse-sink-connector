@@ -112,6 +112,10 @@ ffails = {
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
     ),
+    "/mysql to clickhouse replication/mysql to clickhouse replication auto/cli/": (
+        Skip,
+        "Tests are not ready"
+    ),
 }
 
 xflags = {}
