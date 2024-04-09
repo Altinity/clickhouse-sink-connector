@@ -114,7 +114,7 @@ ffails = {
     ),
     "/mysql to clickhouse replication/mysql to clickhouse replication auto/cli/": (
         Skip,
-        "Tests are not ready"
+        "Tests are not ready",
     ),
 }
 

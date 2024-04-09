@@ -221,7 +221,7 @@ def create_table_with_no_primary_key(self, table_name, clickhouse_table_engine):
 
     with By(f"creating a {table_name} table without primary key"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}",
+            name=f"{table_name}_no_primary_key",
             mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
@@ -235,7 +235,7 @@ def create_table_with_no_engine(self, table_name, clickhouse_table_engine):
 
     with By(f"creating a {table_name} table without engine"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}",
+            name=f"{table_name}_no_engine",
             mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
@@ -264,7 +264,7 @@ def create_table_with_no_engine_and_no_primary_key(
 
     with By(f"creating a {table_name} table without engine and without primary key"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}",
+            name=f"{table_name}_no_engine_no_primary_key",
             mysql_columns="x INT NOT NULL",
             clickhouse_columns="x Int32",
             clickhouse_table_engine=clickhouse_table_engine,
@@ -277,14 +277,15 @@ def create_table_with_no_engine_and_no_primary_key(
 def create_tables(self, table_name, clickhouse_table_engine="ReplacingMergeTree"):
     """Create different types of replicated tables."""
 
-    tables_list = [
-        f"{table_name}",
-        f"{table_name}_no_primary_key",
-        f"{table_name}_no_engine",
-        f"{table_name}_no_engine_no_primary_key",
-    ]
+    with Given("I set the table names"):
+        tables_list = [
+            f"{table_name}",
+            f"{table_name}_no_primary_key",
+            f"{table_name}_no_engine",
+            f"{table_name}_no_engine_no_primary_key",
+        ]
 
-    with Given(
+    with And(
         "I create MySQL to ClickHouse replicated table with primary key and with engine"
     ):
         create_table_with_primary_key_and_engine(
