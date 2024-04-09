@@ -41,7 +41,7 @@ CREATE TABLE altinity_sink_connector.replica_source_info
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
-SETTINGS index_granularity = 8198;
+SETTINGS index_granularity = 8192;
 
 INSERT INTO altinity_sink_connector.replica_source_info (id,offset_key,offset_val,record_insert_ts,record_insert_seq) VALUES
 ('1e34dce5-f61c-4fe7-ba83-0a6805a6ea8e','["altinity_sink_connector",{"server":"embeddedconnector"}]','{"transaction_id":null,"ts_sec":1687277615,"file":"mysql-bin.000003","pos":1144937,"gtids":"4ada0375-0f7e-11ee-afd1-0242c0a85003:1-2418","row":1,"server_id":189,"event":2}','2023-06-20 16:13:35',3);
