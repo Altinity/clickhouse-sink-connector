@@ -1,7 +1,5 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -45,9 +43,9 @@ public class QueryFormatterTest {
         boolean includeRawData = false;
 
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData,
-                null);
+                null, "employees");
 
-        String expectedQuery  = "insert into `products`(`occupation`,`quantity`,`_topic`,`customerName`) select `occupation`,`quantity`,`_topic`,`customerName` from input('`occupation` String,`quantity` UInt32,`_topic` String,`customerName` String')";
+        String expectedQuery  = "insert into `employees.products`(`occupation`,`quantity`,`_topic`,`customerName`) select `occupation`,`quantity`,`_topic`,`customerName` from input('`occupation` String,`quantity` UInt32,`_topic` String,`customerName` String')";
         //System.out.println("Kafka metadata enabled Processed Query:" + expectedQuery);
 
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
@@ -63,9 +61,9 @@ public class QueryFormatterTest {
         boolean includeRawData = false;
 
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
-                includeKafkaMetaData, includeRawData, null);
+                includeKafkaMetaData, includeRawData, null, "employees");
 
-        String expectedQuery = "insert into `products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "insert into `employees.products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
 
         System.out.println("Kafka metadata disabled Processed Query:" + expectedQuery);
         //Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
@@ -80,9 +78,9 @@ public class QueryFormatterTest {
         boolean includeRawData = true;
 
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
-                includeKafkaMetaData, includeRawData, null);
+                includeKafkaMetaData, includeRawData, null, "customer");
 
-        String expectedQuery = "insert into `products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "insert into `customer.products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
 
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
@@ -96,9 +94,9 @@ public class QueryFormatterTest {
 
         columnNameToDataTypesMap.put("raw_column", "String");
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
-                includeKafkaMetaData, includeRawData, "raw_column");
+                includeKafkaMetaData, includeRawData, "raw_column", "customer2");
 
-        String expectedQuery = "insert into `products`(`raw_column`,`occupation`,`quantity`,`customerName`) select `raw_column`,`occupation`,`quantity`,`customerName` from input('`raw_column` String,`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "insert into `customer2.products`(`raw_column`,`occupation`,`quantity`,`customerName`) select `raw_column`,`occupation`,`quantity`,`customerName` from input('`raw_column` String,`occupation` String,`quantity` UInt32,`customerName` String')";
         //String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }

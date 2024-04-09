@@ -83,6 +83,10 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
+    private String database;
+
+    @Getter
+    @Setter
     // The insert position is described by a Log Sequence Number (LSN) that is a byte offset into the logs,
     // increasing monotonically with each new record. LSN values are returned as the datatype pg_lsn.
     // Values can be compared to calculate the volume of WAL data that separates them,
@@ -251,6 +255,9 @@ public class ClickHouseStruct {
             }
             if(fieldNames.contains(LSN) && source.get(LSN) != null && source.get(LSN) instanceof Long) {
                 this.setLsn((Long) source.get(LSN));
+            }
+            if(fieldNames.contains(DATABASE) && source.get(DATABASE) != null && source.get(DATABASE) instanceof String) {
+                this.setDatabase((String) source.get(DATABASE));
             }
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);

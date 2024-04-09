@@ -698,19 +698,6 @@ public class DebeziumChangeEventCapture {
         synchronized (this.records) {
             this.records.add(convertedRecords);
         }
-        //String topicName = convertedRecords.get(0).getTopic();
-     //   synchronized (this.records) {
-            //Iterate through convertedRecords and add to the records map.
 
-//                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
-//                if (this.records.containsKey(ClickHouseStruct.getTopic())) {
-//                    structs = this.records.get(ClickHouseStruct.getTopic());
-//                    structs.add(Arrays.asList(ClickHouseStruct));
-//                } else {
-//                    structs = new ConcurrentLinkedQueue<>();
-//                    structs.add(Arrays.asList(ClickHouseStruct));
-//                }
-//                this.records.put(ClickHouseStruct.getTopic(), structs);
-       // }
     }
 }
