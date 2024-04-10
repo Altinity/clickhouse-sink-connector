@@ -10,6 +10,7 @@ import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -40,7 +41,7 @@ public class MultipleDatabaseIT
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("data_types.sql")
+               // .withInitScript("data_types.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -61,13 +62,16 @@ public class MultipleDatabaseIT
     }
 
     @DisplayName("Integration Test that validates handling of multiple databases")
-    public void testMultipleDatabases(String clickHouseServerVersion) throws Exception {
+    @Test
+    public void testMultipleDatabases() throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         // Set the list of databases captured.
         props.put("database.whitelist", "test_db,test_db2");
+        props.put("database.include.list", "test_db,test_db2");
+
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
@@ -108,7 +112,7 @@ public class MultipleDatabaseIT
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+                "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
         // query clickhouse connection and get data for test_table1 and test_table2
         ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
         // Validate the data
