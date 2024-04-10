@@ -105,6 +105,12 @@ public class MultipleDatabaseIT
 
         Thread.sleep(10000);
 
+        // Run ALTER TABLE to add a new column
+        conn.createStatement().execute("ALTER TABLE test_table ADD COLUMN age INT");
+
+        Thread.sleep(10000);
+        conn.close();
+
         // Create connection to clickhouse and validate if the tables are replicated.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");
