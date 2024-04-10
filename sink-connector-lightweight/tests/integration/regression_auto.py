@@ -179,6 +179,11 @@ def regression(
 
     self.context.cluster = cluster
 
+    with And("I start sink-connector-lightweight"):
+        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
+
+        self.context.sink_node.start_sink_connector()
+
     self.context.env = env
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]

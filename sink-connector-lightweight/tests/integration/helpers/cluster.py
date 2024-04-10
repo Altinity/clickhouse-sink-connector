@@ -4,6 +4,7 @@ import uuid
 import inspect
 import tempfile
 import threading
+import re
 
 import testflows.settings as settings
 
@@ -953,13 +954,37 @@ class SinkConnector(DatabaseNode):
 
     sink_connector_cli = "./sink-connector-client "
 
+    @staticmethod
+    def parse_value(input_string):
+        match = re.search(r"\[\d+\]\s*(\d+)", str(input_string))
+        if match:
+            return int(match.group(1))
+        else:
+            raise ValueError(f"Failed to parse value from string: {input_string}")
+
     def start_sink_connector(self, timeout=300):
         with Given("I start ClickHouse Sink Connector"):
-            self.command(
-                command="nohup java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > app.log 2>&1 &",
+            start_command = self.command(
+                command="java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > sink_logs 2>&1 &",
                 exitcode=0,
                 timeout=timeout,
             )
+            sink_connector_pid = self.parse_value(start_command.output.strip())
+
+        with And("I save the PID of the ClickHouse Sink Connector into a file"):
+            self.command(
+                command=f"echo {sink_connector_pid} > /tmp/sink_connector.pid",
+                exitcode=0,
+                timeout=timeout,
+            )
+
+    def sink_connector_pid(self):
+        """Return ClickHouse Sink Connector pid if present
+        otherwise return None.
+        """
+        if self.command("ls /tmp/sink_connector.pid").exitcode == 0:
+            return self.command("cat /tmp/sink_connector.pid").output.strip()
+        return None
 
     def stop_replication(self, timeout=300):
         with Given("I stop ClickHouse Sink Connector replication"):
