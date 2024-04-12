@@ -87,15 +87,27 @@ public class DebeziumChangeEventCapture {
 
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
+        String databaseName = "system";
+        if(sr != null && sr.key() != null) {
+            if(sr.key() instanceof Struct) {
+                Struct keyStruct = (Struct) sr.key();
+                //System.out.println("Do something");
+                String recordDbName = (String) keyStruct.get("databaseName");
+                if(recordDbName != null && recordDbName.isEmpty() == false) {
+                    databaseName = recordDbName;
+                }
+            }
+        }
+
         DBCredentials dbCredentials = parseDBConfiguration(config);
         if (writer == null) {
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        dbCredentials.getDatabase());
+                        databaseName);
             conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                     dbCredentials.getUserName(), dbCredentials.getPassword(), config);
 
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                    databaseName, dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config, this.conn);
 
         }
@@ -109,7 +121,7 @@ public class DebeziumChangeEventCapture {
         }
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
@@ -199,7 +211,7 @@ public class DebeziumChangeEventCapture {
 
 
                     performDDLOperation(DDL, props, sr, config);
-                    setupProcessingThread(config, new MySQLDDLParserService(config));
+                    setupProcessingThread(config);
 //                    ThreadFactory namedThreadFactory =
 //                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
 //                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
@@ -295,14 +307,14 @@ public class DebeziumChangeEventCapture {
     private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
         try {
             DBCredentials dbCredentials = parseDBConfiguration(config);
-            if (writer == null) {
+            //if (writer == null) {
                 String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase());
-                conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-                writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         dbCredentials.getDatabase(), dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
-            }
+            //}
 
             String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                     JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
@@ -602,7 +614,7 @@ public class DebeziumChangeEventCapture {
 
         // Start debezium event loop if its requested from REST API.
         if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString()) || forceStart) {
-            this.setupProcessingThread(config, ddlParserService);
+            this.setupProcessingThread(config);
             setupDebeziumEventCapture(props, debeziumRecordParserService, config);
         } else {
             log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() + " variable set to true, Replication is skipped, use sink-connector-client to start replication");
@@ -679,7 +691,7 @@ public class DebeziumChangeEventCapture {
      *
      * @param config
      */
-    private void setupProcessingThread(ClickHouseSinkConnectorConfig config, DDLParserService ddlParserService) {
+    private void setupProcessingThread(ClickHouseSinkConnectorConfig config) {
 
         // Setup separate thread to read messages from shared buffer.
         // this.records = new ConcurrentLinkedQueue<>();

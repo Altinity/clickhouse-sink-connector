@@ -119,7 +119,7 @@ public class DbWriter extends BaseDbWriter {
                         }
                         boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
                                 ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-                        act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn,
+                        act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
                                 isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree);
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);

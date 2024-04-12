@@ -34,6 +34,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     ZoneId userProvidedTimeZone;
 
     public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
+                                      String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
         this.query = transformedQuery;
         this.tableName = tableName;

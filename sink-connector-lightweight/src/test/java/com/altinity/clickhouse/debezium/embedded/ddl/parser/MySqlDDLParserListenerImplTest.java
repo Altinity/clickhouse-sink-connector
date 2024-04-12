@@ -22,7 +22,8 @@ public class MySqlDDLParserListenerImplTest {
     private static MySQLDDLParserService mySQLDDLParserService;
     @BeforeAll
     static public void init() {
-        mySQLDDLParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        mySQLDDLParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                "employees");
     }
     @Test
     public void testCreateTableWithEnum() {
@@ -41,7 +42,7 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (emp_no)"));
         log.info("Create table " + clickHouseQuery);
     }
@@ -50,7 +51,7 @@ public class MySqlDDLParserListenerImplTest {
         String createQuery = "CREATE TABLE rcx ( a INT, b INT, c CHAR(3), d INT) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'), PARTITION p1 VALUES LESS THAN (10,20,'mmm'), " +
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
         StringBuffer clickHouseQuery = new StringBuffer();
-        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
@@ -182,7 +183,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "UTC");
 
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props));
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6,'UTC') NOT NULL ,`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`Maximum_Value` DateTime64(6,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(6,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
@@ -203,7 +204,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "UTC");
 
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props));
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(3,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
@@ -678,7 +679,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap configMap = new HashMap();
         configMap.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "datatypes");
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean();
 

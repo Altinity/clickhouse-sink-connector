@@ -111,7 +111,7 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

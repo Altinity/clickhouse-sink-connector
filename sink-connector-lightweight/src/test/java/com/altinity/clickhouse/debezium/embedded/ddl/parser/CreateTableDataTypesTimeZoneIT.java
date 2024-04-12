@@ -71,7 +71,7 @@ public class CreateTableDataTypesTimeZoneIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

@@ -107,13 +107,6 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
-//            int numRecords = records.size();
-//            if (numRecords <= 0) {
-//                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
-//                return;
-//            } else {
-//                log.debug("**** Processing Batch of Records ****" + numRecords);
-//            }
 
             // Poll from Queue until its empty.
             while(records.size() > 0 || currentBatch != null) {
@@ -147,6 +140,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 });
                 boolean result = true;
                 // For each topic, process the records.
+                // topic name syntax is server.database.table
                 for (Map.Entry<String, List<ClickHouseStruct>> entry : topicToRecordsMap.entrySet()) {
                     result = processRecordsByTopic(entry.getKey(), entry.getValue());
                     if(result == false) {
@@ -197,7 +191,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         return tableName;
     }
 
-    public DbWriter getDbWriterForTable(String topicName, String tableName,
+    public DbWriter getDbWriterForTable(String topicName, String tableName, String databaseName,
                                         ClickHouseStruct record, ClickHouseConnection connection) {
         DbWriter writer = null;
 
@@ -207,7 +201,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
 
         writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
-                    this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
+                databaseName, tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record, connection);
         this.topicToDbWriterMap.put(topicName, writer);
         return writer;
@@ -251,7 +245,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(this.conn == null) {
             createConnection();
         }
-        DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
+        // Note: getting records.get(0) is safe as the topic name is same for all records.
+        ClickHouseStruct firstRecord =  records.get(0);
+        DbWriter writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, this.conn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
@@ -261,7 +257,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retrying");
             if(writer == null) {
-                writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
+                writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, this.conn);
             }
             if(writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
