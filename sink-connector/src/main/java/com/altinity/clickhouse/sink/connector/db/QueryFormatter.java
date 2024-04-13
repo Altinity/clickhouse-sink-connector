@@ -106,7 +106,7 @@ public class QueryFormatter {
         if(colNamesToDataTypesIndex != -1)
             colNamesToDataTypes.deleteCharAt(colNamesToDataTypesIndex);
 
-        String tableWithBackTicks = new StringBuffer().append("`").append(dbName).append(".").append(tableName).append(("`")).toString();
+        String tableWithBackTicks = new StringBuffer().append("`").append(tableName).append(("`")).toString();
 
         String insertQuery = String.format("insert into %s(%s) select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
         MutablePair<String, Map<String, Integer>> response = new MutablePair<String, Map<String, Integer>>();

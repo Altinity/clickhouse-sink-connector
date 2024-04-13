@@ -33,9 +33,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     ClickHouseSinkConnectorConfig config;
     ZoneId userProvidedTimeZone;
 
+    String databaseName;
+
     public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
                                       String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
+        this.databaseName = databaseName;
         this.query = transformedQuery;
         this.tableName = tableName;
         this.config = config;
@@ -90,7 +93,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-        this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
+        this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
                 .append(Constants.AS).append(" ").append(newTableName);
     }
 
@@ -149,7 +152,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                this.query.append(tree.getText()).append("(");
+                this.query.append(databaseName).append(".").append(tree.getText()).append("(");
             }else if(tree instanceof MySqlParser.IfNotExistsContext) {
                 this.query.append(Constants.IF_NOT_EXISTS);
             }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
@@ -475,7 +478,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             if (tree instanceof TableNameContext) {
                 this.tableName = tree.getText();
-                this.query.append(String.format(Constants.ALTER_TABLE, tree.getText()));
+                this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
             }
 
             if (tree instanceof AlterByAddColumnContext) {

@@ -100,11 +100,18 @@ public class MultipleDatabaseIT
         conn.createStatement().execute("USE test_db2");
         conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table2 (id INT PRIMARY KEY not null, name VARCHAR(255))");
 
+        // Also add test_table here but with a different schema.
+        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY not null, name2 VARCHAR(255), name3 VARCHAR(255))");
+
         // Insert a new row
-        conn.createStatement().execute("INSERT INTO test_table2 VALUES (1, 'test')");
+        conn.createStatement().execute("INSERT INTO test_table2 VALUES (1, 'test2')");
+
+        // Insert a new row into test_table
+        conn.createStatement().execute("INSERT INTO test_table VALUES (1, 'test33', 'test44')");
 
         Thread.sleep(10000);
 
+        conn.createStatement().execute("use test_db");
         // Run ALTER TABLE to add a new column
         conn.createStatement().execute("ALTER TABLE test_table ADD COLUMN age INT");
 
@@ -121,28 +128,26 @@ public class MultipleDatabaseIT
                 "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
         // query clickhouse connection and get data for test_table1 and test_table2
 
-        while(true) {
-            ;
+
+        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
+        // Validate the data
+        boolean recordFound = false;
+        while(rs.next()) {
+            recordFound = true;
+            assert rs.getInt("id") == 1;
+            assert rs.getString("name").equalsIgnoreCase("test");
         }
-//        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
-//        // Validate the data
-//        boolean recordFound = false;
-//        while(rs.next()) {
-//            recordFound = true;
-//            assert rs.getInt("id") == 1;
-//            assert rs.getString("name").equalsIgnoreCase("test");
-//        }
-//        Assert.assertTrue(recordFound);
-//
-//        rs = writer.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2");
-//        // Validate the data
-//        recordFound = false;
-//        while(rs.next()) {
-//            recordFound = true;
-//            assert rs.getInt("id") == 1;
-//            assert rs.getString("name").equalsIgnoreCase("test");
-//        }
-//
-//        Assert.assertTrue(recordFound);
+        Assert.assertTrue(recordFound);
+
+        rs = writer.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2");
+        // Validate the data
+        recordFound = false;
+        while(rs.next()) {
+            recordFound = true;
+            assert rs.getInt("id") == 1;
+            assert rs.getString("name").equalsIgnoreCase("test2");
+        }
+
+        Assert.assertTrue(recordFound);
     }
 }

@@ -85,6 +85,28 @@ public class DebeziumChangeEventCapture {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
     }
 
+    // Function to store the DBwriter instance for a given database.
+    private Map<String, BaseDbWriter> dbWriterMap = new HashMap<>();
+
+    // Function to retrieve the DBWriter from dbWriterMap for a given database.
+    // if it exists or create a new one.
+    private BaseDbWriter getDbWriter(String databaseName, ClickHouseSinkConnectorConfig config) {
+        if(dbWriterMap.containsKey(databaseName)) {
+            return dbWriterMap.get(databaseName);
+        } else {
+            DBCredentials dbCredentials = parseDBConfiguration(config);
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    databaseName);
+            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    databaseName, dbCredentials.getUserName(),
+                    dbCredentials.getPassword(), config, conn);
+            dbWriterMap.put(databaseName, writer);
+            return writer;
+        }
+    }
+
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
 
         String databaseName = "system";
@@ -99,26 +121,20 @@ public class DebeziumChangeEventCapture {
             }
         }
 
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-        if (writer == null) {
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        databaseName);
-            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        if(writer == null) {
 
+            DBCredentials dbCredentials = parseDBConfiguration(config);
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                    databaseName);
+            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     databaseName, dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config, this.conn);
-
+                    dbCredentials.getPassword(), config, conn);
         }
+        //BaseDbWriter writer = getDbWriter(databaseName, config);
 
-        try {
-            String clickHouseVersion = writer.getClickHouseVersion();
-            isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
-                    .checkIfNewReplacingMergeTree(clickHouseVersion);
-        } catch (Exception e) {
-            log.error("Error retrieving version");
-        }
+
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, databaseName);
@@ -131,6 +147,7 @@ public class DebeziumChangeEventCapture {
         } else {
             log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         }
+
 
         long currentTime = System.currentTimeMillis();
         boolean ddlProcessingResult = true;
@@ -158,6 +175,15 @@ public class DebeziumChangeEventCapture {
             ddlProcessingResult = false;
             //throw new RuntimeException(e);
         }
+
+        try {
+            String clickHouseVersion = writer.getClickHouseVersion();
+            isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                    .checkIfNewReplacingMergeTree(clickHouseVersion);
+        } catch (Exception e) {
+            log.error("Error retrieving version");
+        }
+
         long elapsedTime = System.currentTimeMillis() - currentTime;
         Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
     }
@@ -203,19 +229,13 @@ public class DebeziumChangeEventCapture {
 
 
                 if (DDL != null && DDL.isEmpty() == false)
-                //&& ((DDL.toUpperCase().contains("ALTER TABLE") || DDL.toUpperCase().contains("RENAME TABLE"))))
                 {
                     log.info("***** DDL received, Flush all existing records");
                     this.executor.shutdown();
                     this.executor.awaitTermination(60, TimeUnit.SECONDS);
 
-
                     performDDLOperation(DDL, props, sr, config);
                     setupProcessingThread(config);
-//                    ThreadFactory namedThreadFactory =
-//                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-//                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-//                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
@@ -231,12 +251,6 @@ public class DebeziumChangeEventCapture {
                 } catch(Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-//
-//                synchronized (this.records) {
-//                    if (chStruct != null) {
-//                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
-//                    }
-//                }
             }
 
             String value = String.valueOf(record.value());
