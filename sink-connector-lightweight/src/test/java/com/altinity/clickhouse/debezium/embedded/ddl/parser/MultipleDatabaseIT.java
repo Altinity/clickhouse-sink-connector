@@ -174,7 +174,13 @@ public class MultipleDatabaseIT
         assert columnMap.containsKey("id");
         assert columnMap.containsKey("name2");
 
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
 
+        writer.getConnection().close();
 
 
     }
