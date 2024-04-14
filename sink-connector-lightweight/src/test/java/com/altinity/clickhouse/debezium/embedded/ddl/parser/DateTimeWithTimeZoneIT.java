@@ -86,17 +86,9 @@ public class DateTimeWithTimeZoneIT {
         ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
+
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
-
-        writer.getConnection().close();
-        //Thread.sleep(10000);
-        ClickHouseConnection conn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-
-        writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
 
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
