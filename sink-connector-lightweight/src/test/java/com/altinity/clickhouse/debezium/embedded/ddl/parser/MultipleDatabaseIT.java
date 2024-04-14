@@ -20,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -120,7 +121,7 @@ public class MultipleDatabaseIT
 
         // Create connection to clickhouse and validate if the tables are replicated.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
+                "system");
         ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
@@ -149,5 +150,32 @@ public class MultipleDatabaseIT
         }
 
         Assert.assertTrue(recordFound);
+
+        // validate ALTER TABLE REMOVE COLUMN.
+        // Run ALTER TABLE REMOVE COLUMN in MySQL
+        conn = ITCommon.connectToMySQL(mySqlContainer);
+        conn.createStatement().execute("use test_db2");
+        conn.createStatement().execute("ALTER TABLE test_table DROP COLUMN name3");
+        Thread.sleep(10000);
+
+        // Create a test_db DBWriter instance.
+        // A new ClickHouseConnection with test_db database.
+        // Jdbc url with test_db database.
+        String testDb2JdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "test_db2");
+        ClickHouseConnection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter testDb2Writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "test_db2", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, testDb2Conn);
+
+        // Validate the columns in Clickhouse for test_db.test_table
+        Map<String, String> columnMap = testDb2Writer.getColumnsDataTypesForTable("test_table");
+
+        assert columnMap.containsKey("id");
+        assert columnMap.containsKey("name2");
+
+
+
+
     }
 }
