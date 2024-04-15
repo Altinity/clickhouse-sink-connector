@@ -299,7 +299,7 @@ def regression(
             sink_connector_container_id = self.context.sink_node.get_container_id()
 
             os.system(
-                f"docker cp {sink_connector_container_id}:/sink-connector-lt.log env/logs/sink-connector-lt.log"
+                f"docker cp {sink_connector_container_id}:/sink-connector-lt.log logs/sink-connector-lt.log"
             )
 
 
