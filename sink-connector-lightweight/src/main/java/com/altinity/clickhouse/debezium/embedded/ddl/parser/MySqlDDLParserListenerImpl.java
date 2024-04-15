@@ -152,7 +152,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                this.query.append(databaseName).append(".").append(tree.getText()).append("(");
+                String tableName = tree.getText();
+                // If tableName already includes the database name don't include database name in this.query
+                if(tableName.contains(".")) {
+                    this.query.append(tableName).append("(");
+                } else
+                    this.query.append(databaseName).append(".").append(tree.getText()).append("(");
             }else if(tree instanceof MySqlParser.IfNotExistsContext) {
                 this.query.append(Constants.IF_NOT_EXISTS);
             }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
