@@ -990,6 +990,26 @@ class SinkConnector(DatabaseNode):
             return self.command("cat /tmp/sink_connector.pid").output.strip()
         return None
 
+    def stop_sink_connector(self, timeout=300):
+        """Stop ClickHouse Sink Connector."""
+        with By(f"sending kill -TERM to ClickHouse server process on {self.name}"):
+            pid = self.sink_connector_pid()
+            self.command(f"kill -TERM {pid}", exitcode=0, steps=False)
+
+        with And("checking that pid does not exist"):
+            for i, attempt in enumerate(retries(timeout=100, delay=3)):
+                with attempt:
+                    if i > 0 and i % 20 == 0:
+                        self.command(f"kill -KILL {pid}", steps=False)
+                    if (
+                        self.command(f"ps {pid}", steps=False, no_checks=True).exitcode
+                        != 1
+                    ):
+                        fail(f"pid {pid} still alive")
+
+        with And("deleting ClickHouse server pid file"):
+            self.command("rm -rf /tmp/clickhouse-server.pid", exitcode=0, steps=False)
+
     def stop_replication(self, timeout=300):
         with Given("I stop ClickHouse Sink Connector replication"):
             self.command(
