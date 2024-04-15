@@ -119,7 +119,7 @@ ffails = {
     "/mysql to clickhouse replication/auto table creation/truncate/no primary key/*": (
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
-    )
+    ),
 }
 
 xflags = {}
@@ -294,13 +294,12 @@ def regression(
                 parallel=True,
                 executor=executor,
             )
-            Feature(
-                run=load("tests.sink_cli_commands", "module"),
-                parallel=True,
-                executor=executor,
-            )
+
             join()
 
+        Feature(
+            run=load("tests.sink_cli_commands", "module"),
+        )
     finally:
         with Finally("I collect logs for sink connector"):
 
