@@ -969,7 +969,7 @@ class SinkConnector(DatabaseNode):
     def start_sink_connector(self, timeout=300):
         with Given("I start ClickHouse Sink Connector"):
             start_command = self.command(
-                command="java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > sink_logs 2>&1 &",
+                command="java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > sink-connector-lt.log 2>&1 &",
                 exitcode=0,
                 timeout=timeout,
             )
@@ -1037,6 +1037,11 @@ class SinkConnector(DatabaseNode):
                 command=f"{self.sink_connector_cli} show_replica_status",
                 timeout=300,
             )
+
+    def get_container_id(self):
+        with Given("I get the container ID of the ClickHouse Sink Connector"):
+            container_id = self.cluster.node_container_id(self.name)
+            return container_id
 
 
 class ClickHouseNode(DatabaseNode):
