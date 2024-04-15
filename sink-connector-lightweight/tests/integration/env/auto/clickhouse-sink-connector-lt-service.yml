@@ -15,5 +15,4 @@ services:
         - "host.docker.internal:host-gateway"
       entrypoint: bash -c "tail -f /dev/null"
       volumes:
-        - ./data:/data
         - ./config.yml:/config.yml
