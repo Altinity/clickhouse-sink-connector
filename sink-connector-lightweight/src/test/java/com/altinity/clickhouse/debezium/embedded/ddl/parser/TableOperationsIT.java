@@ -80,7 +80,7 @@ public class TableOperationsIT {
             });
 
 
-            Thread.sleep(20000);
+            Thread.sleep(30000);
 
             Connection conn = ITCommon.connectToMySQL(mySqlContainer);
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();
