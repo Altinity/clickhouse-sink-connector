@@ -3,9 +3,7 @@ version: "2.3"
 services:
     clickhouse-sink-connector-lt:
       hostname: clickhouse-sink-connector-lt
-      build:
-        context: .
-        dockerfile: Dockerfile
+      image: ${SINK_CONNECTOR_IMAGE}
       restart: "no"
       expose:
         - "8083"
