@@ -113,8 +113,11 @@ public class ClickHouseSinkTask extends SinkTask {
                 //Update the hashmap with the topic name and the list of records.
             }
         }
-        synchronized (this.records) {
-            this.records.add(batch);
+
+        try {
+            this.records.put(batch);
+        } catch (InterruptedException e) {
+            throw new RetriableException(e);
         }
     }
 //

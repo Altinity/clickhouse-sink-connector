@@ -824,6 +824,8 @@ class DatabaseNode(Node):
                 ):
                     try:
                         r = self.cluster.bash(None)(command, *args, **kwargs)
+                        time.sleep(1)
+                        note("I waited 1 second after the query execution")
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
                         raise
@@ -845,6 +847,8 @@ class DatabaseNode(Node):
             ):
                 try:
                     r = self.cluster.bash(self.name)(command, *args, **kwargs)
+                    time.sleep(1)
+                    note("I waited 1 second after the query execution")
                 except ExpectTimeoutError:
                     self.cluster.close_bash(self.name)
                     raise

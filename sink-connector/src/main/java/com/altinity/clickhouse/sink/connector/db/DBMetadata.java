@@ -287,7 +287,7 @@ public class DBMetadata {
                 return result;
             }
 
-            ResultSet columns = conn.getMetaData().getColumns(null, database,
+            ResultSet columns = conn.getMetaData().getColumns(database, null,
                     tableName, null);
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");
