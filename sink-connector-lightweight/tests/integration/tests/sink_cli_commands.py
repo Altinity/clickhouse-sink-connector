@@ -41,32 +41,43 @@ def check_replication_status(self):
 )
 def check_that_replication_can_be_stopped(self):
     table_name = f"tb_{getuid()}"
-
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+    test_values = "(1, 'test', 1)"
     try:
-        with Given("I stop the replication"):
-            stop_replication()
+        with Given("I start replication on the sink connector node"):
+            start_replication()
 
-        with And("I create a table in MySQL"):
+        with And(
+            "I create a table in MySQL and check that it was also created in ClickHouse"
+        ):
             create_mysql_to_clickhouse_replicated_table(
                 name=f"\`{table_name}\`",
                 mysql_columns=f"col1 varchar(255), col2 int",
                 clickhouse_table_engine=self.context.clickhouse_table_engines[0],
             )
 
+            check_if_table_was_created(table_name=table_name)
+
+        with When("I stop replication"):
+            stop_replication()
+
+        with And("I insert data into the table"):
+            mysql_node.query(f"INSERT INTO {table_name} VALUES {test_values}")
+
         with Then("I check that the table was not replicated on the ClickHouse side"):
-            with By("waiting for 5 seconds to give the replication time to start"):
+            with By(
+                "waiting for 5 seconds to make sure that the table was not replicated"
+            ):
                 time.sleep(5)
 
             with And("checking that the table was not replicated"):
-                for retry in retries(timeout=40):
-                    with retry:
-                        check_if_table_was_created(table_name=table_name, message=0)
+                clickhouse_node.query(
+                    f"SELECT * FROM test.{table_name} FORMAT TabSeparated"
+                )
     finally:
-        with Finally("I start the replication"):
+        with Finally("I start the replication again"):
             start_replication()
-            for retry in retries(timeout=40):
-                with retry:
-                    check_if_table_was_created(table_name=table_name)
 
 
 @TestModule
@@ -78,7 +89,15 @@ def module(
     mysql_node="mysql-master",
 ):
     """
-    Check that the table is replicated when teh source table has a column named is_deleted.
+    Check that actions provided inside the sink-connector-client script work as intended
+
+    List of available actions:
+       - start_replica              Start the replication
+       - stop_replica               Stop the replication
+       - show_replica_status        Status of replication
+       - change_replication_source  Update binlog file/position and gtids
+       - lsn                        Update lsn (For postgreSQL)
+       - help, h                    Shows a list of commands or help for one command
     """
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
