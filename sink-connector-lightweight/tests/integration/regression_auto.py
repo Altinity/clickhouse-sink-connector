@@ -112,10 +112,6 @@ ffails = {
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
     ),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/cli/": (
-        Skip,
-        "Tests are not ready",
-    ),
 }
 
 xflags = {}
@@ -125,7 +121,7 @@ xflags = {}
 @ArgumentParser(argparser)
 @FFails(ffails)
 @XFlags(xflags)
-@Name("mysql to clickhouse replication auto")
+@Name("auto table creation")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
@@ -291,7 +287,7 @@ def regression(
                 executor=executor,
             )
             Feature(
-                run=load("tests.test_terminal", "module"),
+                run=load("tests.sink_cli_commands", "module"),
                 parallel=True,
                 executor=executor,
             )
