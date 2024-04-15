@@ -203,7 +203,7 @@ def regression(
             create_database(name="test")
             time.sleep(30)
 
-        with Pool(2) as executor:
+        with Pool(4) as executor:
             Feature(
                 run=load("tests.sanity", "module"),
                 parallel=True,
