@@ -1401,27 +1401,29 @@ version: 1.0
 
 ## Sink Connector Actions From CLI
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
+### Commands
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
 version: 1.0
 
 [Altinity Sink Connector] SHALL support using CLI commands to manipulate replication status in order to manage replication process more easily.
 To start using CLI commands, the user should run the `sink-connector-client` script from the command line.
 
-### Start Replication
+#### Start Replication
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
 version: 1.0
 
-[Altinity Sink Connector] SHALL start replication process when `stop_replica` command is executed.
+[Altinity Sink Connector] SHALL start replication process when `start_replica` command is executed.
 
 ```bash
 bash-4.4# ./sink-connector-client start_replica
 2024/04/05 10:57:14 Started Replication....
 ```
 
-### Stop Replication
+#### Stop Replication
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
 version: 1.0
 
 [Altiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
@@ -1433,9 +1435,9 @@ bash-4.4# ./sink-connector-client stop_replica
 2024/04/05 10:57:22 ***** Replication stopped successfully *****
 ```
 
-### Show Replication Status
+#### Show Replication Status
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
 version: 1.0
 
 [Altinity Sink Connector] SHALL show replication status when `show_replica_status` command is executed.
@@ -1460,6 +1462,29 @@ bash-4.4# ./sink-connector-client show_replica_status
     "offset_val": "{\"ts_sec\":1712296812,\"file\":\"mysql-bin.000003\",\"pos\":197,\"gtids\":\"978f1323-f33b-11ee-b609-0242ac120003:1-56\"}"
   }
 ]
+```
+
+#### Change Replication Source
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource
+version: 1.0
+
+[Altinity Sink Connector] SHALL support updating binlog file/position and gtids by using `change_replication_source` command.
+
+### Global Options
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions
+version: 1.0
+
+[Altinity Sink Connector] SHALL support using the following global options  for the `sink-connector-client` script.
+
+```shell
+GLOBAL OPTIONS:
+   --host value   Host server address of sink connector
+   --port value   Port of sink connector
+   --secure       If true, then use https, else http
+   --help, -h     show help
+   --version, -v  print the version
 ```
 
 ## System Actions
