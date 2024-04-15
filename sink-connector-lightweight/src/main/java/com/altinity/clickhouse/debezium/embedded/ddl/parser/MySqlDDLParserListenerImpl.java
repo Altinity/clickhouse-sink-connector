@@ -94,7 +94,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
         this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
-                .append(Constants.AS).append(" ").append(newTableName);
+                .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
     }
 
     @Override
@@ -530,7 +530,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+        this.query.delete(0, this.query.toString().length()).append(String.format
+                (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
 
     }
 
@@ -599,7 +600,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
-                    this.query.append(originalTableName).append(" to ").append(newTableName);
+                    this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
+                            append(databaseName).append(".").append(newTableName);
                 }
             } else if(child instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {
@@ -607,11 +609,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-//
-//        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
-//                newTableName.isEmpty() == false) {
-//            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
-//        }
     }
 
     @Override
