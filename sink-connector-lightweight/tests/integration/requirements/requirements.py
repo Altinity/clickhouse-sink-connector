@@ -1768,8 +1768,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI = Requirement(
         "\n"
     ),
     link=None,
-    level=2,
-    num="30.1",
+    level=3,
+    num="30.1.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StartReplication = Requirement(
@@ -1780,7 +1780,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StartReplication = Requir
     type=None,
     uid=None,
     description=(
-        "[Altinity Sink Connector] SHALL start replication process when `stop_replica` command is executed.\n"
+        "[Altinity Sink Connector] SHALL start replication process when `start_replica` command is executed.\n"
         "\n"
         "```bash\n"
         "bash-4.4# ./sink-connector-client start_replica\n"
@@ -1789,8 +1789,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StartReplication = Requir
         "\n"
     ),
     link=None,
-    level=3,
-    num="30.2.1",
+    level=4,
+    num="30.1.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StopReplication = Requirement(
@@ -1812,8 +1812,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StopReplication = Require
         "\n"
     ),
     link=None,
-    level=3,
-    num="30.3.1",
+    level=4,
+    num="30.1.3.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ShowReplicationStatus = Requirement(
@@ -1850,8 +1850,49 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ShowReplicationStatus = R
         "\n"
     ),
     link=None,
+    level=4,
+    num="30.1.4.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ChangeReplicationSource = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support updating binlog file/position and gtids by using `change_replication_source` command.\n"
+        "\n"
+    ),
+    link=None,
+    level=4,
+    num="30.1.5.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_GlobalOptions = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support using the following global options  for the `sink-connector-client` script.\n"
+        "\n"
+        "```shell\n"
+        "GLOBAL OPTIONS:\n"
+        "   --host value   Host server address of sink connector\n"
+        "   --port value   Port of sink connector\n"
+        "   --secure       If true, then use https, else http\n"
+        "   --help, -h     show help\n"
+        "   --version, -v  print the version\n"
+        "```\n"
+        "\n"
+    ),
+    link=None,
     level=3,
-    num="30.4.1",
+    num="30.2.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Network = Requirement(
@@ -2592,28 +2633,41 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             num="29.1.1",
         ),
         Heading(name="Sink Connector Actions From CLI", level=1, num="30"),
+        Heading(name="Commands", level=2, num="30.1"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI",
-            level=2,
-            num="30.1",
+            level=3,
+            num="30.1.1",
         ),
-        Heading(name="Start Replication", level=2, num="30.2"),
+        Heading(name="Start Replication", level=3, num="30.1.2"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication",
-            level=3,
-            num="30.2.1",
+            level=4,
+            num="30.1.2.1",
         ),
-        Heading(name="Stop Replication", level=2, num="30.3"),
+        Heading(name="Stop Replication", level=3, num="30.1.3"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication",
-            level=3,
-            num="30.3.1",
+            level=4,
+            num="30.1.3.1",
         ),
-        Heading(name="Show Replication Status", level=2, num="30.4"),
+        Heading(name="Show Replication Status", level=3, num="30.1.4"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus",
+            level=4,
+            num="30.1.4.1",
+        ),
+        Heading(name="Change Replication Source", level=3, num="30.1.5"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource",
+            level=4,
+            num="30.1.5.1",
+        ),
+        Heading(name="Global Options", level=2, num="30.2"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions",
             level=3,
-            num="30.4.1",
+            num="30.2.1",
         ),
         Heading(name="System Actions", level=1, num="31"),
         Heading(name="Handling Network Interruptions", level=2, num="31.1"),
@@ -2761,6 +2815,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StartReplication,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StopReplication,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ShowReplicationStatus,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ChangeReplicationSource,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_GlobalOptions,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Network,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Die,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Process_Restarted,
@@ -2965,13 +3021,18 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 29.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
 * 30 [Sink Connector Actions From CLI](#sink-connector-actions-from-cli)
-    * 30.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI](#rqsrs-030clickhousemysqltoclickhousereplicationcli)
-    * 30.2 [Start Replication](#start-replication)
-        * 30.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistartreplication)
-    * 30.3 [Stop Replication](#stop-replication)
-        * 30.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistopreplication)
-    * 30.4 [Show Replication Status](#show-replication-status)
-        * 30.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus](#rqsrs-030clickhousemysqltoclickhousereplicationclishowreplicationstatus)
+    * 30.1 [Commands](#commands)
+        * 30.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI](#rqsrs-030clickhousemysqltoclickhousereplicationcli)
+        * 30.1.2 [Start Replication](#start-replication)
+            * 30.1.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistartreplication)
+        * 30.1.3 [Stop Replication](#stop-replication)
+            * 30.1.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistopreplication)
+        * 30.1.4 [Show Replication Status](#show-replication-status)
+            * 30.1.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus](#rqsrs-030clickhousemysqltoclickhousereplicationclishowreplicationstatus)
+        * 30.1.5 [Change Replication Source](#change-replication-source)
+            * 30.1.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource](#rqsrs-030clickhousemysqltoclickhousereplicationclichangereplicationsource)
+    * 30.2 [Global Options](#global-options)
+        * 30.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions](#rqsrs-030clickhousemysqltoclickhousereplicationcliglobaloptions)
 * 31 [System Actions](#system-actions)
     * 31.1 [Handling Network Interruptions](#handling-network-interruptions)
         * 31.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
@@ -4172,27 +4233,29 @@ version: 1.0
 
 ## Sink Connector Actions From CLI
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
+### Commands
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
 version: 1.0
 
 [Altinity Sink Connector] SHALL support using CLI commands to manipulate replication status in order to manage replication process more easily.
 To start using CLI commands, the user should run the `sink-connector-client` script from the command line.
 
-### Start Replication
+#### Start Replication
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
 version: 1.0
 
-[Altinity Sink Connector] SHALL start replication process when `stop_replica` command is executed.
+[Altinity Sink Connector] SHALL start replication process when `start_replica` command is executed.
 
 ```bash
 bash-4.4# ./sink-connector-client start_replica
 2024/04/05 10:57:14 Started Replication....
 ```
 
-### Stop Replication
+#### Stop Replication
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
 version: 1.0
 
 [Altiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
@@ -4204,9 +4267,9 @@ bash-4.4# ./sink-connector-client stop_replica
 2024/04/05 10:57:22 ***** Replication stopped successfully *****
 ```
 
-### Show Replication Status
+#### Show Replication Status
 
-#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
 version: 1.0
 
 [Altinity Sink Connector] SHALL show replication status when `show_replica_status` command is executed.
@@ -4231,6 +4294,29 @@ bash-4.4# ./sink-connector-client show_replica_status
     "offset_val": "{\"ts_sec\":1712296812,\"file\":\"mysql-bin.000003\",\"pos\":197,\"gtids\":\"978f1323-f33b-11ee-b609-0242ac120003:1-56\"}"
   }
 ]
+```
+
+#### Change Replication Source
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource
+version: 1.0
+
+[Altinity Sink Connector] SHALL support updating binlog file/position and gtids by using `change_replication_source` command.
+
+### Global Options
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions
+version: 1.0
+
+[Altinity Sink Connector] SHALL support using the following global options  for the `sink-connector-client` script.
+
+```shell
+GLOBAL OPTIONS:
+   --host value   Host server address of sink connector
+   --port value   Port of sink connector
+   --secure       If true, then use https, else http
+   --help, -h     show help
+   --version, -v  print the version
 ```
 
 ## System Actions
