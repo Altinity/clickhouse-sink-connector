@@ -956,6 +956,10 @@ class SinkConnector(DatabaseNode):
 
     sink_connector_cli = "./sink-connector-client "
 
+    def __init__(self, cluster, name):
+        super().__init__(cluster, name)
+        self.command(command="microdnf install procps")
+
     @staticmethod
     def parse_value(input_string):
         match = re.search(r"\[\d+\]\s*(\d+)", str(input_string))
