@@ -107,7 +107,7 @@ public class DBMetadata {
                 return new MutablePair<>(null, null);
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s.%s", databaseName, tableName);
+                String showSchemaQuery = String.format("show create table `%s.%s`", databaseName, tableName);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs != null && rs.next()) {
                     String response =  rs.getString(1);
@@ -208,7 +208,7 @@ public class DBMetadata {
             }
             try(Statement stmt = conn.createStatement()) {
                 String showSchemaQuery = String.format("select engine_full from system.tables where name='%s' and database='%s'",
-                        tableName, database);
+                        database + "." + tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.wasNull() == false && rs.next()) {
                     String response =  rs.getString(1);

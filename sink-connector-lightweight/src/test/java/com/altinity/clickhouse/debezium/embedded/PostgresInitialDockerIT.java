@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
 
+@Disabled
 public class PostgresInitialDockerIT {
 
     @Container

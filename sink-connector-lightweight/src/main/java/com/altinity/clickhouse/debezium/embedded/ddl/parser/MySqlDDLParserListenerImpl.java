@@ -470,7 +470,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     public void postProcessModifyColumn(String tableName, String oldCol, String newCol, String dataType) {
         this.query.append("\n");
-        this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
+        this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
 
     }
 

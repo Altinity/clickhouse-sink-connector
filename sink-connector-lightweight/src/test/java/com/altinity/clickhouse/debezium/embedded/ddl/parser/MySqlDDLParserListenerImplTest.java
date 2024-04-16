@@ -72,7 +72,8 @@ public class MySqlDDLParserListenerImplTest {
                 ");";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
         log.info("Create table " + clickHouseQuery);
 
         String createQueryWithoutPrimaryKey =  "create table t(\n" +
@@ -89,7 +90,7 @@ public class MySqlDDLParserListenerImplTest {
                 ");";
         StringBuffer clickHouseQueryWOPrimaryKey = new StringBuffer();
         mySQLDDLParserService.parseSql(createQueryWithoutPrimaryKey, "Persons", clickHouseQueryWOPrimaryKey);
-        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
+        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
     @Test
@@ -122,7 +123,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery6, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6, 0) NOT NULL ,`Mid_Value` DateTime64(6, 0) NOT NULL ,`Maximum_Value` DateTime64(6, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(6, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6, 0) NOT NULL ,`Mid_Value` DateTime64(6, 0) NOT NULL ,`Maximum_Value` DateTime64(6, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(6, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery1 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -134,7 +135,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery1 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery1, "Persons", clickHouseQuery1);
-        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1, 0) NOT NULL ,`Mid_Value` DateTime64(1, 0) NOT NULL ,`Maximum_Value` DateTime64(1, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(1, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1, 0) NOT NULL ,`Mid_Value` DateTime64(1, 0) NOT NULL ,`Maximum_Value` DateTime64(1, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(1, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery2 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -146,7 +147,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery2, "Persons", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE `temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2, 0) NOT NULL ,`Mid_Value` DateTime64(2, 0) NOT NULL ,`Maximum_Value` DateTime64(2, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(2, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2, 0) NOT NULL ,`Mid_Value` DateTime64(2, 0) NOT NULL ,`Maximum_Value` DateTime64(2, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(2, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
 
     }
@@ -252,7 +253,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createDBQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists 730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -270,7 +271,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE `salaries`(`emp_no` Int32 NOT NULL ,`salary` Int32 NOT NULL ,`from_date` Date32 NOT NULL ,`to_date` Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`emp_no`,`from_date`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.salaries`(`emp_no` Int32 NOT NULL ,`salary` Int32 NOT NULL ,`from_date` Date32 NOT NULL ,`to_date` Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`emp_no`,`from_date`)"));
         log.info("Create table query" + clickHouseQuery.toString());
     }
 
@@ -329,7 +330,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAddColumnWithNull() {
-        String expectedClickHouseQuery = "ALTER TABLE add_test ADD COLUMN optional Nullable(Bool)  DEFAULT 0";
+        String expectedClickHouseQuery = "ALTER TABLE employees.add_test ADD COLUMN optional Nullable(Bool)  DEFAULT 0";
         String mysqlQuery = "alter table add_test add column optional bool default 0 null;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "employees", clickHouseQuery);
@@ -345,14 +346,14 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
 
-        String expectedCHQuery = "ALTER TABLE add_test ADD COLUMN customer_address String, ADD COLUMN customer_name Nullable(String)";
+        String expectedCHQuery = "ALTER TABLE employees.add_test ADD COLUMN customer_address String, ADD COLUMN customer_name Nullable(String)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
         log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
     }
 
     @Test
     public void testAddDefault() {
-        String expectedClickHouseQuery = "ALTER TABLE add_test ADD COLUMN foo Nullable(Int32)  DEFAULT 2";
+        String expectedClickHouseQuery = "ALTER TABLE employees.add_test ADD COLUMN foo Nullable(Int32)  DEFAULT 2";
         String mysqlQuery = "ALTER TABLE add_test ADD COLUMN foo INT DEFAULT 2;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
@@ -440,8 +441,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnFirst() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE add_test MODIFY COLUMN stocks Bool first\n" +
-                "ALTER TABLE add_test RENAME COLUMN stocks to options";
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool first\n" +
+                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
         String sql = "alter table add_test change column stocks options bool first";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -452,8 +453,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnAfter() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1\n" +
-                "ALTER TABLE add_test RENAME COLUMN stocks to options";
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool after col1\n" +
+                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
         String sql = "alter table add_test change column stocks options bool after col1";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -466,8 +467,8 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE ship_class MODIFY COLUMN tonange Decimal(10,10)\n" +
-                "ALTER TABLE ship_class RENAME COLUMN tonange to tonange_new";
+        String expectedCHQuery = "ALTER TABLE employees.ship_class MODIFY COLUMN tonange Decimal(10,10)\n" +
+                "ALTER TABLE employees.ship_class RENAME COLUMN tonange to tonange_new";
 
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
