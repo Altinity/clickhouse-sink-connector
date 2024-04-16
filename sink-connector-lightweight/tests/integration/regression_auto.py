@@ -11,7 +11,7 @@ append_path(sys.path, "..")
 from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
-from integration.helpers.create_config import SinkConfig
+from integration.helpers.create_config import *
 from integration.requirements.requirements import *
 from integration.tests.steps.clickhouse import *
 
@@ -164,7 +164,7 @@ def regression(
 
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
-    self.context.config.save("env/auto/configs/config.yml")
+    create_default_sink_config()
 
     if stress is not None:
         self.context.stress = stress

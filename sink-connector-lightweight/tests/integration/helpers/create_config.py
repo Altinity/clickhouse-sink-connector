@@ -1,5 +1,7 @@
 import yaml
+
 from integration.helpers.default_config import default_config
+from testflows.core import *
 
 
 def literal_unicode_representer(dumper, data):
@@ -15,8 +17,9 @@ class SinkConfig:
         self.data = initial_data
         yaml.add_representer(str, literal_unicode_representer)
 
-    def update(self, key, value):
-        self.data[key] = value
+    def update(self, new_data):
+        for key, value in new_data.items():
+            self.data[key] = value
 
     def remove(self, key):
         self.data.pop(key)
@@ -37,3 +40,32 @@ class SinkConfig:
                 allow_unicode=True,
                 sort_keys=False,
             )
+
+
+@TestStep(Given)
+def create_default_sink_config(self, path="env/auto/configs/config.yml"):
+    """Create the default sink connector configuration."""
+    config = self.context.config
+
+    with By(f"creating the default sink connector configuration file"):
+        config.save(path=path)
+
+
+@TestStep(Given)
+def update_sink_config(self, new_data: dict, path="env/auto/configs/config.yml"):
+    """Update the sink connector configuration."""
+    config = self.context.config
+
+    with By(f"updating the sink connector configuration file"):
+        config.update(new_data)
+        config.save(path=path)
+
+
+@TestStep(Given)
+def remove_configuration(self, key):
+    """Remove the sink connector configuration."""
+    config = self.context.config
+
+    with By(f"removing the sink connector configuration key {key}"):
+        config.remove(key)
+        config.save()
