@@ -11,6 +11,7 @@ append_path(sys.path, "..")
 from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
+from integration.helpers.create_config import SinkConfig
 from integration.requirements.requirements import *
 from integration.tests.steps.clickhouse import *
 
@@ -162,6 +163,8 @@ def regression(
     }
 
     self.context.clickhouse_version = clickhouse_version
+    self.context.config = SinkConfig()
+    self.context.config.save("env/auto/configs/config.yml")
 
     if stress is not None:
         self.context.stress = stress
@@ -203,7 +206,7 @@ def regression(
             create_database(name="test")
             time.sleep(30)
 
-        with Pool(4) as executor:
+        with Pool(1) as executor:
             Feature(
                 run=load("tests.sanity", "module"),
                 parallel=True,

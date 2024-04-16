@@ -964,10 +964,13 @@ class SinkConnector(DatabaseNode):
         else:
             raise ValueError(f"Failed to parse value from string: {input_string}")
 
-    def start_sink_connector(self, timeout=300):
+    def start_sink_connector(self, timeout=300, config_file=None):
+        if config_file is None:
+            config_file = "config.yml"
+
         with Given("I start ClickHouse Sink Connector"):
             start_command = self.command(
-                command="java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > sink-connector-lt.log 2>&1 &",
+                command=f"java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /configs/{config_file} com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > sink-connector-lt.log 2>&1 &",
                 exitcode=0,
                 timeout=timeout,
             )
@@ -1007,6 +1010,13 @@ class SinkConnector(DatabaseNode):
 
         with And("deleting ClickHouse server pid file"):
             self.command("rm -rf /tmp/clickhouse-server.pid", exitcode=0, steps=False)
+
+    def restart_sink_connector(self, timeout=300, config_file=None):
+        """Restart ClickHouse Sink Connector."""
+        if self.sink_connector_pid():
+            self.stop_sink_connector(timeout=timeout)
+
+        self.start_sink_connector(timeout=timeout, config_file=config_file)
 
     def stop_replication(self, timeout=300):
         with Given("I stop ClickHouse Sink Connector replication"):
