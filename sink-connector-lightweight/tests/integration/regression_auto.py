@@ -305,7 +305,6 @@ def regression(
         )
     finally:
         with Finally("I collect logs for sink connector"):
-
             sink_connector_container_id = self.context.sink_node.get_container_id()
 
             os.system(

@@ -83,13 +83,29 @@ def select(
 
 @TestStep(Then)
 def check_if_table_was_created(self, table_name, node=None, timeout=40, message=1):
-    """Check if table was created."""
+    """Check if table was created in ClickHouse."""
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
     retry(node.query, timeout=timeout, delay=3)(
         f"EXISTS {self.context.database}.{table_name}", message=f"{message}"
     )
+
+
+@TestStep(Then)
+def validate_data_in_clickhouse_table(
+    self, table_name, expected_output, statement="*", node=None
+):
+    """Validate data in ClickHouse table."""
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    for retry in retries(timeout=40):
+        with retry:
+            data = node.query(
+                f"SELECT {statement} FROM {self.context.database}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+            )
+            assert data.output.strip() == expected_output, error()
 
 
 @TestStep(Then)
