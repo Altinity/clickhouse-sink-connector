@@ -24,15 +24,15 @@ ffails = {
     "delete/no primary key": (Skip, "doesn't work in raw"),
     "update/no primary key innodb": (Skip, "makes delete"),
     "update/no primary key": (Skip, "makes delete"),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto table creation/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto table creation/truncate/no primary key/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/truncate/no primary key": (
+    "/mysql to clickhouse replication/auto table creation/truncate/no primary key": (
         Skip,
         "doesn't work",
     ),
@@ -105,11 +105,11 @@ ffails = {
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/insert/*": (
+    "/mysql to clickhouse replication/auto table creation/insert/*": (
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/mysql to clickhouse replication auto/partitions/*": (
+    "/mysql to clickhouse replication/auto table creation/partitions/*": (
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
     ),
