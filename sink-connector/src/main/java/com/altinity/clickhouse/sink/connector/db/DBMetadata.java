@@ -208,11 +208,13 @@ public class DBMetadata {
             }
             try(Statement stmt = conn.createStatement()) {
                 String showSchemaQuery = String.format("select engine_full from system.tables where name='%s' and database='%s'",
-                        database + "." + tableName, database);
+                        tableName, database);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs.wasNull() == false && rs.next()) {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
+                } else {
+                    log.error("Error: Table not found in system tables:" + tableName + " Database:" + database);
                 }
                 rs.close();
                 stmt.close();

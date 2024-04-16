@@ -83,7 +83,7 @@ public class ReplicatedRMTClickHouse22TIT {
 
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "false");
+        //props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "false");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
@@ -132,6 +132,51 @@ public class ReplicatedRMTClickHouse22TIT {
             Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
         }
         Assert.assertTrue(dataValidated);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         if(engine.get() != null) {
             engine.get().stop();
