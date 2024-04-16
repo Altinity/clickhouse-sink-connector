@@ -10,6 +10,8 @@ from testflows.asserts import error
 from testflows.core import *
 from testflows.core.name import basename, parentname
 
+from integration.helpers.create_config import update_sink_config
+
 
 def current_cpu():
     """Return current cpu architecture."""
@@ -591,16 +593,21 @@ def set_envs_on_node(self, envs, node=None):
 
 
 @TestStep(Given)
-def change_sink_configuration(self, node=None, config_file=None):
+def change_sink_configuration(self, node=None, config_file=None, values=None):
     """Change sink configuration."""
     if node is None:
         node = self.context.sink_node
 
-    with By("restarting the ClickHouse Sink Connector and using the new configuration"):
+    with By("changing the ClickHouse Sink Connector configuration"):
+        update_sink_config(new_data=values, path=config_file)
+
+    with And(
+        "restarting the ClickHouse Sink Connector and using the new configuration"
+    ):
         node.restart_sink_connector(config_file=config_file)
 
 
-from helpers.cluster import Cluster
+from integration.helpers.cluster import Cluster
 
 
 @TestStep(Given)

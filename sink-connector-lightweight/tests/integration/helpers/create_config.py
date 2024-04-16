@@ -48,7 +48,7 @@ def create_default_sink_config(self, path="env/auto/configs/config.yml"):
     config = self.context.config
 
     with By(f"creating the default sink connector configuration file"):
-        config.save(path=path)
+        config.save(filename=path)
 
 
 @TestStep(Given)
@@ -58,14 +58,14 @@ def update_sink_config(self, new_data: dict, path="env/auto/configs/config.yml")
 
     with By(f"updating the sink connector configuration file"):
         config.update(new_data)
-        config.save(path=path)
+        config.save(filename=path)
 
 
 @TestStep(Given)
-def remove_configuration(self, key):
+def remove_configuration(self, key, path):
     """Remove the sink connector configuration."""
     config = self.context.config
 
     with By(f"removing the sink connector configuration key {key}"):
         config.remove(key)
-        config.save()
+        config.save(filename=path)

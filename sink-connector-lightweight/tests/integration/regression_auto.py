@@ -171,146 +171,141 @@ def regression(
 
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
-    try:
-        with Given("docker-compose cluster"):
-            cluster = create_cluster(
-                local=local,
-                clickhouse_binary_path=clickhouse_binary_path,
-                thread_fuzzer=thread_fuzzer,
-                collect_service_logs=collect_service_logs,
-                stress=stress,
-                nodes=nodes,
-                docker_compose_project_dir=os.path.join(current_dir(), env),
-                caller_dir=os.path.join(current_dir()),
-            )
 
-        self.context.cluster = cluster
-
-        with And("I start sink-connector-lightweight"):
-            self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
-
-            self.context.sink_node.start_sink_connector()
-
-        self.context.env = env
-
-        self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
-
-        self.context.database = "test"
-
-        if check_clickhouse_version("<21.4")(self):
-            skip(reason="only supported on ClickHouse version >= 21.4")
-
-        self.context.node = cluster.node("clickhouse")
-
-        with And("I create test database in ClickHouse"):
-            create_database(name="test")
-            time.sleep(30)
-
-        with Pool(1) as executor:
-            Feature(
-                run=load("tests.sanity", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.autocreate", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.insert", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.alter", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.compound_alters", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.parallel_alters", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.truncate", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.deduplication", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.types", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.virtual_columns", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.columns_inconsistency", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.snowflake_id", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.databases", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.table_names", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.is_deleted", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.calculated_columns", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.datatypes", "module"),
-                parallel=True,
-                executor=executor,
-            )
-            Feature(
-                run=load("tests.retry_on_fail", "module"),
-                parallel=True,
-                executor=executor,
-            )
-
-            join()
-
-        Feature(
-            run=load("tests.sink_cli_commands", "module"),
+    with Given("docker-compose cluster"):
+        cluster = create_cluster(
+            local=local,
+            clickhouse_binary_path=clickhouse_binary_path,
+            thread_fuzzer=thread_fuzzer,
+            collect_service_logs=collect_service_logs,
+            stress=stress,
+            nodes=nodes,
+            docker_compose_project_dir=os.path.join(current_dir(), env),
+            caller_dir=os.path.join(current_dir()),
         )
-    finally:
-        with Finally("I collect logs for sink connector"):
-            sink_connector_container_id = self.context.sink_node.get_container_id()
 
-            os.system(
-                f"docker cp {sink_connector_container_id}:/sink-connector-lt.log logs/sink-connector-lt.log"
-            )
+    self.context.cluster = cluster
 
+    with And("I start sink-connector-lightweight"):
+        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
+
+        self.context.sink_node.start_sink_connector()
+
+    self.context.env = env
+
+    self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
+
+    self.context.database = "test"
+
+    if check_clickhouse_version("<21.4")(self):
+        skip(reason="only supported on ClickHouse version >= 21.4")
+
+    self.context.node = cluster.node("clickhouse")
+
+    with And("I create test database in ClickHouse"):
+        create_database(name="test")
+        time.sleep(30)
+
+    with Pool(1) as executor:
+        Feature(
+            run=load("tests.sanity", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.autocreate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.insert", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.alter", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.compound_alters", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.parallel_alters", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.truncate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.deduplication", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.types", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.virtual_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.columns_inconsistency", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.snowflake_id", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.databases", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.table_names", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.is_deleted", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.calculated_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.datatypes", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.retry_on_fail", "module"),
+            parallel=True,
+            executor=executor,
+        )
+
+        join()
+
+    Feature(
+        run=load("tests.schema_only", "module"),
+    )
+    Feature(
+        run=load("tests.sink_cli_commands", "module"),
+    )
 
 if __name__ == "__main__":
     regression()

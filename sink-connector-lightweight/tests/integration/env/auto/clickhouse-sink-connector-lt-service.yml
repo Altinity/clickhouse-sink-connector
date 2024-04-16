@@ -14,3 +14,4 @@ services:
       entrypoint: bash -c "tail -f /dev/null"
       volumes:
         - ./configs:/configs
+        - ../../logs:/logs
