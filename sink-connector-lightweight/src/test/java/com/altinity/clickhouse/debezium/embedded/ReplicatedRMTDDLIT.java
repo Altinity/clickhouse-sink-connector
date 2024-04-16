@@ -88,7 +88,7 @@ public class ReplicatedRMTDDLIT {
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        //props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
+        props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);

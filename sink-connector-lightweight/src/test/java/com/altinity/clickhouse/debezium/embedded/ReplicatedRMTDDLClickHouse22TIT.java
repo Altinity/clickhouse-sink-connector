@@ -85,7 +85,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        //props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
+        props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
@@ -135,11 +135,30 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         }
         Assert.assertTrue(dataValidated);
 
-        if(engine.get() != null) {
-            engine.get().stop();
+        // Create a new table in MySQL
+        conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n" +
+                " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                "  `dt_tz` int DEFAULT NULL,\n" +
+                "  `lat` decimal(9,7) DEFAULT NULL,\n" +
+                "  `long` decimal(10,7) DEFAULT NULL,\n" +
+                "  `did` int unsigned DEFAULT NULL,\n" +
+                "   `lname_id` int unsigned DEFAULT NULL,\n" +
+                " PRIMARY KEY (`uid`,`dt`),\n" +
+                "KEY `stime_utc` (`stime_utc`)\n" +
+                " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
+
+        Thread.sleep(10000);
+
+        while(true) {
+            ;
         }
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
+//        if(engine.get() != null) {
+//            engine.get().stop();
+//        }
+//        conn.close();
+//        // Files.deleteIfExists(tmpFilePath);
+//        executorService.shutdown();
     }
 
 }
