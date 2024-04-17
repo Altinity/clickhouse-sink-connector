@@ -157,12 +157,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                String tableName = tree.getText();
+                this.tableName = tree.getText();
                 // If tableName already includes the database name don't include database name in this.query
                 if(tableName.contains(".")) {
-                    this.query.append(tableName).append("(");
+                    this.query.append(tableName);
                 } else
-                    this.query.append(databaseName).append(".").append(tree.getText()).append("(");
+                    this.query.append(databaseName).append(".").append(tree.getText());
+
+                // If its RRMT add on CLUSTER {cluster} to QUERY.
+                boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                        .AUTO_CREATE_TABLES_REPLICATED.toString());
+                if(isReplicatedReplacingMergeTree) {
+                    this.query.append(" ON CLUSTER `{cluster}`");
+                }
+                this.query.append(" (");
             }else if(tree instanceof MySqlParser.IfNotExistsContext) {
                 this.query.append(Constants.IF_NOT_EXISTS);
             }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
