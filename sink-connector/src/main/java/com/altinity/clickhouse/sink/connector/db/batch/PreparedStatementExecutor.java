@@ -116,11 +116,15 @@ public class PreparedStatementExecutor {
         // Split the records into batches.
         Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
 
+            String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
             try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : batch) {
+                    if(record.getDatabase() != null)
+                        databaseName = record.getDatabase();
+
                     try {
                         bmd.update(record);
                     } catch (Exception e) {
@@ -171,7 +175,7 @@ public class PreparedStatementExecutor {
             if (!truncatedRecords.isEmpty()) {
                 PreparedStatement ps = null;
                 try {
-                    ps = conn.prepareStatement("TRUNCATE TABLE " + tableName);
+                    ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
                 } catch (SQLException e) {
                     throw new RuntimeException(e);
                 }
