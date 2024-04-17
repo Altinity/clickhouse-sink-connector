@@ -170,7 +170,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if(isReplicatedReplacingMergeTree) {
                     this.query.append(" ON CLUSTER `{cluster}`");
                 }
-                this.query.append(" (");
+                this.query.append("(");
             }else if(tree instanceof MySqlParser.IfNotExistsContext) {
                 this.query.append(Constants.IF_NOT_EXISTS);
             }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
