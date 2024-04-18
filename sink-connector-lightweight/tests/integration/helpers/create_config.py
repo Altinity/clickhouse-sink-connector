@@ -5,6 +5,7 @@ from testflows.core import *
 
 
 def literal_unicode_representer(dumper, data):
+    """Remove newline from the string and represent it as a literal block."""
     if "\n" in data:
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
@@ -12,19 +13,23 @@ def literal_unicode_representer(dumper, data):
 
 class SinkConfig:
     def __init__(self, initial_data=None):
+        """Initialize the sink connector configuration with the configuration values."""
         if initial_data is None:
             initial_data = default_config
         self.data = initial_data
         yaml.add_representer(str, literal_unicode_representer)
 
     def update(self, new_data):
+        """Update the ClickHouse Sink Connector configuration."""
         for key, value in new_data.items():
             self.data[key] = value
 
     def remove(self, key):
+        """Remove the ClickHouse Sink Connector configuration key."""
         self.data.pop(key)
 
     def display_config(self):
+        """Print out the ClickHouse Sink Connector configuration."""
         print(
             yaml.dump(
                 self.data, default_flow_style=False, sort_keys=False, allow_unicode=True
@@ -32,6 +37,7 @@ class SinkConfig:
         )
 
     def save(self, filename="config.yaml"):
+        """Save the ClickHouse Sink Connector configuration to the file."""
         with open(filename, "w") as file:
             yaml.dump(
                 self.data,

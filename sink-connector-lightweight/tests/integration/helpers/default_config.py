@@ -1,3 +1,5 @@
+"""Default configuration for the ClickHouse Sink Connector."""
+
 default_config = {
     "name": "my_connector",
     "database.hostname": "mysql-master",
