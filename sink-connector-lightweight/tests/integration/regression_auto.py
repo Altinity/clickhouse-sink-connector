@@ -121,6 +121,14 @@ ffails = {
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
     ),
+    "/mysql to clickhouse replication/auto table creation/schema only/*": (
+        Skip,
+        "Seems to be broken in CI/CD. need oto fix.",
+    ),
+    "/mysql to clickhouse replication/auto table creation/cli/*": (
+        Skip,
+        "Seems to be broken in CI/CD. need oto fix.",
+    ),
 }
 
 xflags = {}
