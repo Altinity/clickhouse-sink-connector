@@ -68,11 +68,13 @@ record_insert_seq:
 6570
 ```
 
+**Query to monitor INSERT duration in ClickHouse**
 
+```select event_time, written_rows from system.query_log where event_time > now () - interval 60 minute and type='QueryFinish' and query like 'insert into table(%'```
 
+**Query to monitor Part log in ClickHouse**
 
-
-
+```select event_time, database, table, rows, duration_ms,size_in_bytes from system.part_log where table='table' and event_type='NewPart' and event_time > now () - interval 30 minute and database='db' ;```
 
 
 ## Sink Connector (Kafka) monitoring
