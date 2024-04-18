@@ -49,4 +49,5 @@ There are two solutions to get past this error.
 1) Change `snapshot.mode` to `schema.recovery`
 2) Delete the contents of the table `offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info`. and restart sink connector.
 
-
+###  A slave with the same server_uuid/server_id as this slave has connected to the master;
+https://stackoverflow.com/questions/63523998/multiple-debezium-connector-for-one-mysql-db , As mentioned here the `database.server.id` configuration variable has to be unique if there are multiple connectors connecting to the same database.
