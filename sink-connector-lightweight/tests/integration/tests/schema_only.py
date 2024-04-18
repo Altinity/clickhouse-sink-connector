@@ -8,16 +8,12 @@ from integration.helpers.common import change_sink_configuration
 
 
 @TestStep(Given)
-def create_table_structure(
-    self, table_name
-):
+def create_table_structure(self, table_name):
     """Create mysql table that is used to only replicate table schema."""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
 
-    with By(
-        f"creating a {table_name} table"
-    ):
+    with By(f"creating a {table_name} table"):
         create_mysql_to_clickhouse_replicated_table(
             name=f"\`{table_name}\`",
             mysql_columns=f"col1 varchar(255), col2 int",
@@ -65,13 +61,17 @@ def module(
     """
     Check that it is possible to only replicate the schema of the table using snapshot mode: schema-only.
     """
-    config_file = "env/auto/configs/schema_only.yml"
+    config_file = os.path.join("env", "auto", "configs", "schema_only.yml")
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 
-    with Given("I create a new ClickHouse Sink Connector configuration with schema-only mode"):
-        change_sink_configuration(values={"snapshot.mode": "schema_only"}, config_file=config_file)
+    with Given(
+        "I create a new ClickHouse Sink Connector configuration with schema-only mode"
+    ):
+        change_sink_configuration(
+            values={"snapshot.mode": "schema_only"}, config_file=config_file
+        )
 
     for scenario in loads(current_module(), Scenario):
         Scenario(run=scenario)

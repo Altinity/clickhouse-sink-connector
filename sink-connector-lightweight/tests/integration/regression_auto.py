@@ -186,11 +186,6 @@ def regression(
 
     self.context.cluster = cluster
 
-    with And("I start sink-connector-lightweight"):
-        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
-
-        self.context.sink_node.start_sink_connector()
-
     self.context.env = env
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
@@ -204,7 +199,11 @@ def regression(
 
     with And("I create test database in ClickHouse"):
         create_database(name="test")
-        time.sleep(30)
+
+    with And("I start sink-connector-lightweight"):
+        self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
+
+        self.context.sink_node.start_sink_connector()
 
     with Pool(1) as executor:
         Feature(
@@ -306,6 +305,7 @@ def regression(
     Feature(
         run=load("tests.sink_cli_commands", "module"),
     )
+
 
 if __name__ == "__main__":
     regression()

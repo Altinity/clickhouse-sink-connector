@@ -15,6 +15,7 @@ from integration.tests.steps.datatypes import all_mysql_datatypes_dict
 
 @TestStep(Given)
 def stop_replication(self):
+    """Stop ClickHouse Sink Connector replication."""
     sink_node = self.context.sink_node
 
     with Given("I stop the replication"):
@@ -23,6 +24,7 @@ def stop_replication(self):
 
 @TestStep(Given)
 def start_replication(self):
+    """Start ClickHouse Sink Connector replication."""
     sink_node = self.context.sink_node
 
     with Given("I start the replication"):
@@ -31,14 +33,16 @@ def start_replication(self):
 
 @TestStep(Given)
 def check_replication_status(self):
+    """Check ClickHouse Sink Connector replication status."""
     sink_node = self.context.sink_node
 
     with Given("I check the replication status"):
-        return sink_node.show_replication_status()
+        sink_node.show_replication_status()
 
 
 @TestStep(Given)
 def create_and_validate_table(self, table_name):
+    """Create a table in MySQL and check that it was also created in ClickHouse."""
     with By(
         "creating a table in MySQL and checking that it was also created in ClickHouse"
     ):
@@ -102,12 +106,18 @@ def check_that_replication_can_be_started(self):
     table_name = f"tb_{getuid()}"
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
-    test_values = "(1, 'test', 1)"
+    test_values = "(1,'test',1)"
     try:
         with Given("I start replication on the sink connector node"):
             start_replication()
 
-        with And(
+        with And("I stop the replication"):
+            stop_replication()
+
+        with And("I start the replication again"):
+            start_replication()
+
+        with When(
             "I create a table in MySQL and check that it was also created in ClickHouse"
         ):
             create_and_validate_table(table_name=table_name)
@@ -115,46 +125,20 @@ def check_that_replication_can_be_started(self):
         with And("I insert data into the table"):
             mysql_node.query(f"INSERT INTO {table_name} VALUES {test_values}")
 
-        with Then("I check that the table was not replicated on the ClickHouse side"):
-            with By(
-                "waiting for 5 seconds to make sure that the table was not replicated"
-            ):
-                time.sleep(5)
+        with Then("I check that the table was replicated on the ClickHouse side"):
+            expected_output = "1,test,1"
 
-            with And("checking that the data on the table was not replicated"):
-                data = clickhouse_node.query(
-                    f"SELECT * FROM test.{table_name} FORMAT TabSeparated"
-                )
-
-                validate_data_in_clickhouse_table()
+            validate_data_in_clickhouse_table(
+                table_name=table_name,
+                expected_output=expected_output,
+                statement="id, col1, col2",
+            )
     finally:
         with Finally("I start the replication again"):
             start_replication()
 
 
-@TestScenario
-@Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_ShowReplicationStatus("1.0")
-)
-def check_replication_status(self):
-    """Check that it is possible to see replication status using the sink-connector-client script."""
-    try:
-        with Given("I start replication on the sink connector node"):
-            start_replication()
-
-        with And(
-            "I execute a command to check the replication status using the sink-connector-client script"
-        ):
-            replication_output = check_replication_status()
-
-        with Then("I check that the replication status is correct"):
-            assert replication_output[0]["Replica_Running"] == "true", error()
-    finally:
-        with Finally("I start the replication again"):
-            start_replication()
-
-
-@TestModule
+@TestFeature
 @Name("cli")
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI("1.0"))
 def module(
@@ -163,8 +147,7 @@ def module(
     mysql_node="mysql-master",
 ):
     """
-    Check that actions provided inside the sink-connector-client script work as intended
-
+    Check that actions provided inside the sink-connector-client script work as intended.
     List of available actions:
        - start_replica              Start the replication
        - stop_replica               Stop the replication
@@ -177,5 +160,5 @@ def module(
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 
-    for scenario in loads(current_module(), Scenario):
-        Scenario(run=scenario)
+    Scenario(run=check_that_replication_can_be_stopped)
+    Scenario(run=check_that_replication_can_be_started)

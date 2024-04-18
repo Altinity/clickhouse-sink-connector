@@ -105,7 +105,7 @@ def validate_data_in_clickhouse_table(
             data = node.query(
                 f"SELECT {statement} FROM {self.context.database}.{table_name} ORDER BY tuple(*) FORMAT CSV"
             )
-            assert data.output.strip() == expected_output, error()
+            assert data.output.strip().replace('"', "") == expected_output, error()
 
 
 @TestStep(Then)
