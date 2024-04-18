@@ -66,9 +66,7 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "replacingmergetree.delete.column": "sign",
 
     "auto.create.tables": true,
-    "schema.evolution": false,
-
-    "deduplication.policy": "off"
+    "schema.evolution": false
 
   }
 }
