@@ -102,5 +102,6 @@ jobs:
           name: testflows-sink-connector-lightweight-artefacts
           path: |
             sink-connector-lightweight/tests/integration/logs/*.log
+            sink-connector-lightweight/tests/integration/env/auto/configs/*.yml
           if-no-files-found: error
           retention-days: 60
