@@ -38,7 +38,7 @@ public class TruncateTableIT {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("data_types.sql")
+                .withInitScript("truncate_table.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -80,6 +80,24 @@ public class TruncateTableIT {
 
 
         Thread.sleep(30000);
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees");
+        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+
+
+        //Validate if ship_class was truncated also in ClickHouse.
+        // Validate that the table is empty in ClickHouse
+        ResultSet rs = writer.executeQueryWithResultSet("select * from ship_class");
+        boolean recordFoundShipClass = false;
+        while(rs.next()) {
+            recordFoundShipClass = true;
+        }
+        Assert.assertFalse(recordFoundShipClass);
+
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int)").execute();
 
@@ -89,14 +107,7 @@ public class TruncateTableIT {
         conn.close();
         Thread.sleep(10000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        ResultSet rs = writer.executeQueryWithResultSet("select * from new_table");
+        rs = writer.executeQueryWithResultSet("select * from new_table");
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
