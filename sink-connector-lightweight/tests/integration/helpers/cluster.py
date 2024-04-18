@@ -954,14 +954,16 @@ class MySQLNode(DatabaseNode):
 class SinkConnector(DatabaseNode):
     """ClickHouse Sink Connector node."""
 
-    sink_connector_cli = "./sink-connector-client "
+    sink_connector_cli = "./sink-connector-client"
 
     def __init__(self, cluster, name):
+        """Install procps package on the node to have all the basic system tools."""
         super().__init__(cluster, name)
         self.command(command="microdnf install procps")
 
     @staticmethod
     def parse_value(input_string):
+        """Parse the output value to get the PID of the ClickHouse Sink Connector."""
         match = re.search(r"\[\d+\]\s*(\d+)", str(input_string))
         if match:
             return int(match.group(1))
@@ -969,10 +971,11 @@ class SinkConnector(DatabaseNode):
             raise ValueError(f"Failed to parse value from string: {input_string}")
 
     def start_sink_connector(self, timeout=300, config_file=None):
+        """Start ClickHouse Sink Connector."""
         if config_file is None:
             config_file = "config.yml"
 
-        config_file = config_file.rsplit('/', 1)[-1]
+        config_file = config_file.rsplit("/", 1)[-1]
 
         with Given("I start ClickHouse Sink Connector"):
             start_command = self.command(
@@ -1025,6 +1028,7 @@ class SinkConnector(DatabaseNode):
         self.start_sink_connector(timeout=timeout, config_file=config_file)
 
     def stop_replication(self, timeout=300):
+        """Stop ClickHouse Sink Connector replication using sink-connector-client script."""
         with Given("I stop ClickHouse Sink Connector replication"):
             self.command(
                 command=f"{self.sink_connector_cli} stop_replica",
@@ -1032,6 +1036,7 @@ class SinkConnector(DatabaseNode):
             )
 
     def start_replication(self):
+        """Start ClickHouse Sink Connector replication using sink-connector-client script."""
         with Given("I start ClickHouse Sink Connector replication"):
             self.command(
                 command=f"{self.sink_connector_cli} start_replica",
@@ -1039,6 +1044,7 @@ class SinkConnector(DatabaseNode):
             )
 
     def change_replica_source(self):
+        """Change ClickHouse Sink Connector replica source using sink-connector-client script."""
         with Given("I change ClickHouse Sink Connector replica source"):
             self.command(
                 command=f"{self.sink_connector_cli} change_replica_source",
@@ -1046,6 +1052,7 @@ class SinkConnector(DatabaseNode):
             )
 
     def show_replication_status(self):
+        """Show ClickHouse Sink Connector replication status using sink-connector-client script."""
         with Given("I change ClickHouse Sink Connector replica source"):
             self.command(
                 command=f"{self.sink_connector_cli} show_replica_status",
@@ -1053,6 +1060,7 @@ class SinkConnector(DatabaseNode):
             )
 
     def get_container_id(self):
+        """Get the container ID of the ClickHouse Sink Connector node."""
         with Given("I get the container ID of the ClickHouse Sink Connector"):
             container_id = self.cluster.node_container_id(self.name)
             return container_id
