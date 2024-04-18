@@ -2,8 +2,8 @@ from integration.requirements.requirements import (
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime,
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes,
 )
-from integration.tests.steps.service_settings_steps import *
-from integration.tests.steps.sql import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.mysql import *
 
 
 def adjust_precision(datetime_str, precision):

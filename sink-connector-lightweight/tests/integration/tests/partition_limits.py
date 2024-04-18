@@ -1,6 +1,6 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -31,7 +31,7 @@ def partition_limits(
         )
 
     with When(
-        "I insert data in MySql table wtih more than 100 partitions per insert block"
+        "I insert data in MySQL table with more than 100 partitions per insert block"
     ):
         complex_insert(
             node=mysql,

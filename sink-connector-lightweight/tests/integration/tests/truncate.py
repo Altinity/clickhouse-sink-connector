@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -18,7 +19,7 @@ def truncate(
     table_name = f"truncate_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -28,11 +29,11 @@ def truncate(
             engine=engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
     with Then("I check that clickhouse table received data"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -43,7 +44,7 @@ def truncate(
         mysql.query(f"TRUNCATE TABLE {table_name}")
 
     with And("I check that clickhouse table empty"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -110,7 +111,7 @@ def simple_primary_key_innodb(self):
 @TestFeature
 def complex_primary_key(self):
     """Check for `DELETE` with complex primary key without engine InnoDB."""
-    xfail("comlex keys need to be fixed")
+    xfail("complex keys need to be fixed")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             truncate(
@@ -125,7 +126,7 @@ def complex_primary_key(self):
 @TestFeature
 def complex_primary_key_innodb(self):
     """Check for `DELETE` with complex primary key with engine InnoDB."""
-    xfail("comlex keys need to be fixed")
+    xfail("complex keys need to be fixed")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             truncate(

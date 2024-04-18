@@ -193,21 +193,34 @@
 * 29 [Replication Interruption](#replication-interruption)
     * 29.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
-* 30 [System Actions](#system-actions)
-    * 30.1 [Handling Network Interruptions](#handling-network-interruptions)
-        * 30.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
-    * 30.2 [Handling Process Interruptions](#handling-process-interruptions)
-        * 30.2.1 [Behaviour When Different Processes Were Killed](#behaviour-when-different-processes-were-killed)
-            * 30.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessdie)
-        * 30.2.2 [Behaviour When Different Processes Were Restarted](#behaviour-when-different-processes-were-restarted)
-            * 30.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessrestarted)
-    * 30.3 [Behaviour When There Are Issues With Disk](#behaviour-when-there-are-issues-with-disk)
-        * 30.3.1 [Disk Is out of Space](#disk-is-out-of-space)
-            * 30.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskoutofspace)
-        * 30.3.2 [Disk Is Corrupted](#disk-is-corrupted)
-            * 30.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
-* 31 [Prometheus](#prometheus)
-    * 31.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 30 [Sink Connector Actions From CLI](#sink-connector-actions-from-cli)
+    * 30.1 [Commands](#commands)
+        * 30.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI](#rqsrs-030clickhousemysqltoclickhousereplicationcli)
+        * 30.1.2 [Start Replication](#start-replication)
+            * 30.1.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistartreplication)
+        * 30.1.3 [Stop Replication](#stop-replication)
+            * 30.1.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication](#rqsrs-030clickhousemysqltoclickhousereplicationclistopreplication)
+        * 30.1.4 [Show Replication Status](#show-replication-status)
+            * 30.1.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus](#rqsrs-030clickhousemysqltoclickhousereplicationclishowreplicationstatus)
+        * 30.1.5 [Change Replication Source](#change-replication-source)
+            * 30.1.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource](#rqsrs-030clickhousemysqltoclickhousereplicationclichangereplicationsource)
+    * 30.2 [Global Options](#global-options)
+        * 30.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions](#rqsrs-030clickhousemysqltoclickhousereplicationcliglobaloptions)
+* 31 [System Actions](#system-actions)
+    * 31.1 [Handling Network Interruptions](#handling-network-interruptions)
+        * 31.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Network](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsnetwork)
+    * 31.2 [Handling Process Interruptions](#handling-process-interruptions)
+        * 31.2.1 [Behaviour When Different Processes Were Killed](#behaviour-when-different-processes-were-killed)
+            * 31.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Die](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessdie)
+        * 31.2.2 [Behaviour When Different Processes Were Restarted](#behaviour-when-different-processes-were-restarted)
+            * 31.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Process.Restarted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsprocessrestarted)
+    * 31.3 [Behaviour When There Are Issues With Disk](#behaviour-when-there-are-issues-with-disk)
+        * 31.3.1 [Disk Is out of Space](#disk-is-out-of-space)
+            * 31.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskoutofspace)
+        * 31.3.2 [Disk Is Corrupted](#disk-is-corrupted)
+            * 31.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
+* 32 [Prometheus](#prometheus)
+    * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 
 ## Introduction
 
@@ -1390,6 +1403,94 @@ The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and t
 version: 1.0
 
 [Altinity Sink Connector] SHALL retry replication if the ClickHouse instance is stopped/killed during the active replication from source to destination tables. [Altinity Sink Connector] SHALL continue to retry to replicate data into a source table until the ClickHouse instance is not available again.
+
+## Sink Connector Actions From CLI
+
+### Commands
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI
+version: 1.0
+
+[Altinity Sink Connector] SHALL support using CLI commands to manipulate replication status in order to manage replication process more easily.
+To start using CLI commands, the user should run the `sink-connector-client` script from the command line.
+
+#### Start Replication
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StartReplication
+version: 1.0
+
+[Altinity Sink Connector] SHALL start replication process when `start_replica` command is executed.
+
+```bash
+bash-4.4# ./sink-connector-client start_replica
+2024/04/05 10:57:14 Started Replication....
+```
+
+#### Stop Replication
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.StopReplication
+version: 1.0
+
+[Altiniry Sink Connector] SHALL stop replication process when `stop_replica` command is executed.
+
+```bash
+bash-4.4# ./sink-connector-client stop_replica
+2024/04/05 10:57:21 ***** Stopping replication..... *****
+2024/04/05 10:57:22 
+2024/04/05 10:57:22 ***** Replication stopped successfully *****
+```
+
+#### Show Replication Status
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ShowReplicationStatus
+version: 1.0
+
+[Altinity Sink Connector] SHALL show replication status when `show_replica_status` command is executed.
+
+```bash
+bash-4.4# ./sink-connector-client show_replica_status
+[
+  {
+    "Seconds_Behind_Source": 18001
+  },
+  {
+    "Replica_Running": true
+  },
+  {
+    "Database": "test"
+  },
+  {
+    "record_insert_ts": 2024-04-05T06,
+    "offset_key": "[\"company-1\",{\"server\":\"embeddedconnector\"}]",
+    "record_insert_seq": 218,
+    "id": "457678de-4759-4bb6-8720-fbdd60627eb5",
+    "offset_val": "{\"ts_sec\":1712296812,\"file\":\"mysql-bin.000003\",\"pos\":197,\"gtids\":\"978f1323-f33b-11ee-b609-0242ac120003:1-56\"}"
+  }
+]
+```
+
+#### Change Replication Source
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.ChangeReplicationSource
+version: 1.0
+
+[Altinity Sink Connector] SHALL support updating binlog file/position and gtids by using `change_replication_source` command.
+
+### Global Options
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.CLI.GlobalOptions
+version: 1.0
+
+[Altinity Sink Connector] SHALL support using the following global options  for the `sink-connector-client` script.
+
+```shell
+GLOBAL OPTIONS:
+   --host value   Host server address of sink connector
+   --port value   Port of sink connector
+   --secure       If true, then use https, else http
+   --help, -h     show help
+   --version, -v  print the version
+```
 
 ## System Actions
 

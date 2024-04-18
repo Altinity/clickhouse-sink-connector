@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 import random
 
 
@@ -17,7 +18,7 @@ def mysql_to_clickhouse_snowflake(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -25,7 +26,7 @@ def mysql_to_clickhouse_snowflake(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         self.context.cluster.node("mysql-master").query(
             f"INSERT INTO {table_name} values (1,1)"
         )
@@ -37,7 +38,7 @@ def mysql_to_clickhouse_snowflake(
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -94,7 +95,7 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name,
             mysql_columns=mysql_columns,
@@ -102,14 +103,14 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
             clickhouse_table_engine=clickhouse_table_engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         self.context.cluster.node("mysql-master").query(
             f"INSERT INTO {table_name} values (1,777)"
         )
 
     for i in range(mysql_restarts_number):
         with And(
-            f"I make {mysql_restarts_number} MySQL's node restart and insert data in MySql table"
+            f"I make {mysql_restarts_number} MySQL node restarts and insert data in MySQL table"
         ):
             self.context.cluster.node("mysql-master").restart()
             retry(
@@ -125,7 +126,7 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
         with Then(
             "I check that MySQL tables and Clickhouse replication tables have the same data"
         ):
-            complex_check_creation_and_select(
+            verify_table_creation_in_clickhouse(
                 table_name=table_name,
                 clickhouse_table_engine=clickhouse_table_engine,
                 statement="count(*)",
@@ -163,7 +164,7 @@ def snowflake_id_simple_restart(
     mysql_columns="MyData INT",
     clickhouse_columns="MyData Int32",
 ):
-    """Check MySQL to Clickhouse version column receives increased snowflake id after MySql restart
+    """Check MySQL to Clickhouse version column receives increased snowflake id after MySQL restart
     for all available methods."""
 
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
@@ -178,7 +179,7 @@ def snowflake_id_simple_restart(
 @TestModule
 @Name("snowflake id")
 def module(self):
-    """Check MySql to ClickHouse replication 64-bit snowflake id for the version column"""
+    """Check MySQL to ClickHouse replication 64-bit snowflake id for the version column"""
 
     with Pool(1) as executor:
         try:

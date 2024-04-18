@@ -13,7 +13,7 @@ from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
-from integration.tests.steps.steps_global import *
+from integration.tests.steps.clickhouse import *
 
 xfails = {
     "schema changes/table recreation with different datatypes": [
@@ -125,7 +125,7 @@ def regression(
     thread_fuzzer=None,
     collect_service_logs=None,
 ):
-    """ClickHouse regression for MySql to ClickHouse replication with manual table creation."""
+    """ClickHouse regression for MySQL to ClickHouse replication with manual table creation."""
     nodes = {
         "debezium": ("debezium",),
         "mysql-master": ("mysql-master",),
@@ -162,7 +162,6 @@ def regression(
 
     self.context.clickhouse_table_engines = [
         "ReplacingMergeTree",
-        # "ReplicatedReplacingMergeTree"
     ]
 
     if check_clickhouse_version("<21.4")(self):
