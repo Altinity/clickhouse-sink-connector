@@ -16,6 +16,9 @@ database.user: "root"
 # Password of the MySQL database user to be used when connecting to the database.
 database.password: "root"
 
+# Unique name for the connector.
+database.server.id: "connector-1"
+
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
 
@@ -155,3 +158,8 @@ restart.event.loop.timeout.period.secs: "3000"
 
 # Sink Connector maximum queue size
 #sink.connector.max.queue.size: "100000"
+
+# Skip schema history capturing, use the following configuration
+# to reduce slow startup when replicating dbs with large number of tables
+#schema.history.internal.store.only.captured.tables.ddl: "true"
+#schema.history.internal.store.only.captured.databases.ddl: "true"

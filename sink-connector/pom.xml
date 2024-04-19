@@ -41,6 +41,7 @@
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
+        <apache.httpclient.version>5.2.1</apache.httpclient.version>
     </properties>
 
 
@@ -150,7 +151,6 @@
                 <configuration>
                     <forkCount>0</forkCount> 
                     <useSystemClassLoader>false</useSystemClassLoader>
-                    <!-- <excludedGroups>IntegrationTest</excludedGroups> -->
                     <excludes>
                         <exclude>**/*IT.java</exclude>
                     </excludes>
@@ -158,23 +158,6 @@
                         <include>**/*Test.java</include>
                     </includes>
                 </configuration>
-                <!-- <executions>
-                    <execution>
-                        <id>integration-test</id>
-                        <goals>
-                            <goal>test</goal>
-                        </goals>
-                        <phase>integration-test</phase>
-                        <configuration>
-                            <excludes>
-                                <exclude>none</exclude>
-                            </excludes>
-                            <includes>
-                                <include>**/*IT.java</include>
-                            </includes>
-                        </configuration>
-                    </execution>
-                </executions> -->
             </plugin>
 
             <plugin>
@@ -213,20 +196,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-gpg-plugin</artifactId>
-                <version>1.6</version>
-                <executions>
-                    <execution>
-                        <id>sign-artifacts</id>
-                        <phase>install</phase>
-                        <goals>
-                            <goal>sign</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
@@ -240,31 +209,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>2.9.1</version>
-                <configuration>
-                    <detectJavaApiLink>false</detectJavaApiLink>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>attach-javadocs</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin> -->
-            <!-- <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.0.0</version>
-                <configuration>
-                    <mainClass></mainClass>
-                    <classpathScope>test</classpathScope>
-                </configuration>
-            </plugin> -->
         </plugins>
 
         <!-- disable default maven deploy plugin since we are using gpg:sign-and-deploy-file -->
@@ -290,6 +234,11 @@
             <artifactId>bcpkix-fips</artifactId>
             <version>1.0.3</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <version>5.3.1</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.kafka/connect-api -->
@@ -355,47 +304,7 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.12.6</version>
         </dependency>
-       <!-- <dependency>
-            <groupId>io.confluent</groupId>
-            <artifactId>kafka-schema-registry-client</artifactId>
-            <version>6.2.0</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>io.confluent</groupId>
-                    <artifactId>common-utils</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>io.confluent</groupId>
-                    <artifactId>common-config</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>io.swagger</groupId>
-                    <artifactId>swagger-annotations</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>io.swagger</groupId>
-                    <artifactId>swagger-core</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>io.confluent</groupId>
-            <artifactId>kafka-avro-serializer</artifactId>
-            <version>5.5.1</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>io.confluent</groupId>
-                    <artifactId>common-utils</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency> -->
-        <!-- https://mvnrepository.com/artifact/io.confluent/kafka-connect-avro-converter -->
-        <!-- <dependency>
-            <groupId>io.confluent</groupId>
-            <artifactId>kafka-connect-avro-converter</artifactId>
-            <version>5.5.1</version>
-            <scope>test</scope>
-        </dependency> -->
+
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
@@ -421,17 +330,11 @@
             <artifactId>maven-artifact</artifactId>
             <version>3.9.1</version>
         </dependency>
-        <!--JDBC driver for building connection with Clickhouse-->
-        <!-- <dependency>
-            <groupId>ru.yandex.clickhouse</groupId>
-            <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.3.2</version>
-        </dependency> -->
         <dependency>
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.4.5</version>
+            <version>0.6.0</version>
             <!-- below is only needed when all you want is a shaded jar -->
             <classifier>http</classifier>
             <exclusions>
@@ -474,7 +377,7 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>31.0.1-jre</version>
+            <version>33.0.0-jre</version>
         </dependency>
 
         <!--junit for unit test-->
@@ -551,7 +454,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.4.5</version>
+            <version>0.6.0</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

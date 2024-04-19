@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -14,13 +15,13 @@ def check_different_primary_keys(
     primary_key,
     engine,
 ):
-    """Check replicating MySQl table with different primary keys."""
+    """Check replicating MySQL table with different primary keys."""
     table_name = f"primary_keys_{getuid()}"
 
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
-        f"I create MySql to CH replicated table with some primary key",
+        f"I create MySQL to CH replicated table with some primary key",
         description=table_name,
     ):
         create_mysql_to_clickhouse_replicated_table(
@@ -32,11 +33,11 @@ def check_different_primary_keys(
             engine=engine,
         )
 
-    with When(f"I insert data in MySql table {table_name}"):
+    with When(f"I insert data in MySQL table {table_name}"):
         mysql.query(f"INSERT INTO {table_name} VALUES {insert_values}")
 
     with Then(f"I check that ClickHouse table has same data as MySQL table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             manual_output=output_values,
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
@@ -50,7 +51,7 @@ def check_different_primary_keys(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple("1.0")
 )
 def simple_primary_key(self):
-    """Check replicating MySQl table with simple primary key."""
+    """Check replicating MySQL table with simple primary key."""
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
@@ -69,7 +70,7 @@ def simple_primary_key(self):
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Composite("1.0")
 )
 def composite_primary_key(self):
-    """Check replicating MySQl table with composite key."""
+    """Check replicating MySQL table with composite key."""
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
@@ -86,7 +87,7 @@ def composite_primary_key(self):
 @TestFeature
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No("1.0"))
 def no_primary_key(self):
-    """Check replicating MySQl table without any primary key."""
+    """Check replicating MySQL table without any primary key."""
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             check_different_primary_keys(
@@ -96,7 +97,7 @@ def no_primary_key(self):
                 mysql_columns=" Name VARCHAR(14)",
                 clickhouse_columns=" Name String",
                 primary_key="",
-                engine=True
+                engine=True,
                 # ch_primary_key="PRIMARY KEY tuple() ORDER BY tuple() SETTINGS ",
             )
 
@@ -104,7 +105,7 @@ def no_primary_key(self):
 @TestModule
 @Name("primary keys")
 def module(self):
-    """MySql to ClickHouse replication simple and composite primary keys tests."""
+    """MySQL to ClickHouse replication simple and composite primary keys tests."""
 
     with Pool(1) as executor:
         try:

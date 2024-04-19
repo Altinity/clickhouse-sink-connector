@@ -96,7 +96,7 @@ services:
 
   sink:
     container_name: sink
-    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
+    image: altinity/clickhouse-kafka-sink-connector-on-debezium-base:2024-03-29
     restart: "no"
     ports:
       - "18083:8083"
@@ -124,6 +124,9 @@ services:
     container_name: clickhouse
     image: clickhouse/clickhouse-server:latest
     restart: "no"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -138,6 +141,12 @@ services:
     volumes:
       - ../sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/init_clickhouse.sql
       -  ./clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - ./clickhouse/config.xml:/etc/clickhouse-server/conf.d/config.xml
+
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
 
   #### MONITORING #####
 #  https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica

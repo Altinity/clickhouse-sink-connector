@@ -1,6 +1,6 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestScenario
@@ -31,7 +31,7 @@ def create_table_partitioned_by_range(self):
 @TestModule
 @Name("partitions")
 def module(self, clickhouse_node="clickhouse", mysql_node="mysql-master"):
-    """Check tables with PARTITION BY for MySql to ClickHouse replication."""
+    """Check tables with PARTITION BY for MySQL to ClickHouse replication."""
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 

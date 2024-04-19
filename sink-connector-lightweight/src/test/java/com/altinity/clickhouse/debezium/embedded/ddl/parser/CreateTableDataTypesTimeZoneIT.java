@@ -133,8 +133,8 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateResult.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateResult.getDate("Mid_Value").toString().contains("2022-09-29"));
-            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().contains("2283-11-11"));
-            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().contains("1925-01-01"));
+            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().contains("2299-12-31"));
+            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().contains("1900-01-01"));
         }
         Assert.assertTrue(dateResultValueChecked);
 
