@@ -52,8 +52,6 @@ public class DebeziumChangeEventCapture {
 
     private ClickHouseBatchExecutor executor;
 
-    private ClickHouseBatchRunnable runnable;
-
     // Records grouped by Topic Name
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
@@ -200,10 +198,6 @@ public class DebeziumChangeEventCapture {
 
                     performDDLOperation(DDL, props, sr, config);
                     setupProcessingThread(config, new MySQLDDLParserService(config));
-//                    ThreadFactory namedThreadFactory =
-//                            new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-//                    this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-//                    this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
                 }
 
             } else {
@@ -219,12 +213,6 @@ public class DebeziumChangeEventCapture {
                 } catch(Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
-//
-//                synchronized (this.records) {
-//                    if (chStruct != null) {
-//                        addRecordsToSharedBuffer(chStruct.getTopic(), chStruct);
-//                    }
-//                }
             }
 
             String value = String.valueOf(record.value());
@@ -698,19 +686,34 @@ public class DebeziumChangeEventCapture {
         synchronized (this.records) {
             this.records.add(convertedRecords);
         }
-        //String topicName = convertedRecords.get(0).getTopic();
-     //   synchronized (this.records) {
-            //Iterate through convertedRecords and add to the records map.
 
-//                ConcurrentLinkedQueue<List<ClickHouseStruct>> structs;
-//                if (this.records.containsKey(ClickHouseStruct.getTopic())) {
-//                    structs = this.records.get(ClickHouseStruct.getTopic());
-//                    structs.add(Arrays.asList(ClickHouseStruct));
-//                } else {
-//                    structs = new ConcurrentLinkedQueue<>();
-//                    structs.add(Arrays.asList(ClickHouseStruct));
-//                }
-//                this.records.put(ClickHouseStruct.getTopic(), structs);
-       // }
+    }
+
+    /**
+     * Function to add version to every record.
+     * @param chStructs
+     */
+    public static void addVersion(List<ClickHouseStruct> chStructs) {
+
+        // Start the sequence from 1 million and increment for every record
+        // and reset the sequence back to 1 million in the next second
+        long sequenceStartTime = System.currentTimeMillis();
+        long sequence = 1000000;
+        for(ClickHouseStruct chStruct: chStructs) {
+
+            // if the current time is greater than the next second, reset the sequence
+            // If current time moved to the next second, reset the sequence.
+            // else increment the sequence.
+            // Get diff in seconds from current time and last time.
+            long currentTime = System.currentTimeMillis();
+            long diff = (currentTime - sequenceStartTime) / 1000;
+            if(diff >= 1) {
+                sequence = 1000000;
+                sequenceStartTime = currentTime;
+            } else {
+                sequence++;
+            }
+            chStruct.setSequenceNumber(sequence);
+        }
     }
 }

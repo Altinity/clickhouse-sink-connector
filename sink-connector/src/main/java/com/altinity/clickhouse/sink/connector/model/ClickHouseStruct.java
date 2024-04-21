@@ -83,6 +83,10 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
+    private long sequenceNumber = -1;
+
+    @Getter
+    @Setter
     // The insert position is described by a Log Sequence Number (LSN) that is a byte offset into the logs,
     // increasing monotonically with each new record. LSN values are returned as the datatype pg_lsn.
     // Values can be compared to calculate the volume of WAL data that separates them,
