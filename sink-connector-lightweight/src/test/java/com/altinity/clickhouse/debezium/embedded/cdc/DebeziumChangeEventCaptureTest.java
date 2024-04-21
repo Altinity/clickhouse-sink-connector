@@ -112,6 +112,6 @@ public class DebeziumChangeEventCaptureTest {
     @Test
     @DisplayName("Should reset sequence number when a second has passed")
     public void shouldResetSequenceNumberWhenSecondHasPassed() {
-|| clickHouseStructs2.get(0).getSequenceNumber() == 10001
+
     }
 }
