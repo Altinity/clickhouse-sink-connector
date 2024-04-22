@@ -499,6 +499,8 @@ public class DebeziumChangeEventCapture {
                             batch.add(chStruct);
                         }
                     }
+                    // Add sequence number.
+                    addVersion(batch);
 
                     if(batch.size() > 0) {
                         appendToRecords(batch);
