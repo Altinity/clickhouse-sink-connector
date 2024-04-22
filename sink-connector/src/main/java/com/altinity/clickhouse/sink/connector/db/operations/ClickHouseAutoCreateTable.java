@@ -24,11 +24,11 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
 
-    public void createNewTable(ArrayList<String> primaryKey, String tableName, Field[] fields,
+    public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                ClickHouseConnection connection, boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
-        String createTableQuery = this.createTableSyntax(primaryKey, tableName, fields, colNameToDataTypeMap,
+        String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree);
         log.info("**** AUTO CREATE TABLE " + createTableQuery);
         // ToDO: need to run it before a session is created.
@@ -42,14 +42,14 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
      * @param columnToDataTypesMap
      * @return CREATE TABLE query
      */
-    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, Field[] fields,
+    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                               Map<String, String> columnToDataTypesMap,
                                               boolean isNewReplacingMergeTreeEngine,
                                               boolean useReplicatedReplacingMergeTree) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append(CREATE_TABLE).append(" ").append("`").append(tableName).append("`").append("(");
+        createTableSyntax.append(CREATE_TABLE).append(" ").append("`").append(databaseName).append(".").append(tableName).append("`").append("(");
 
         for(Field f: fields) {
             String colName = f.name();

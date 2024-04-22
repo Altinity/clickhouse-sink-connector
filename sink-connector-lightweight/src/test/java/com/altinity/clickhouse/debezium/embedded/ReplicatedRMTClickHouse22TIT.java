@@ -67,7 +67,7 @@ public class ReplicatedRMTClickHouse22TIT {
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
                 .withExposedPorts(8123)
                         .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
-        clickHouseContainer.withNetwork(network);
+        clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
 
@@ -92,7 +92,7 @@ public class ReplicatedRMTClickHouse22TIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -132,6 +132,51 @@ public class ReplicatedRMTClickHouse22TIT {
             Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
         }
         Assert.assertTrue(dataValidated);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         if(engine.get() != null) {
             engine.get().stop();

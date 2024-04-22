@@ -33,15 +33,17 @@ public class QueryFormatter {
      * There could be a possibility that the column count will not match
      * between Source and Clickhouse.
      * - We will drop records if the columns are not present in clickhouse.
+     *
      * @param tableName
      * @param fields
+     * @param dbName
      * @return
      */
     public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(String tableName, List<Field> fields,
                                                                                       Map<String, String> columnNameToDataTypeMap,
                                                                                       boolean includeKafkaMetaData,
                                                                                       boolean includeRawData,
-                                                                                      String rawDataColumn) {
+                                                                                      String rawDataColumn, String dbName) {
 
 
         Map<String, Integer> colNameToIndexMap = new HashMap<String, Integer>();

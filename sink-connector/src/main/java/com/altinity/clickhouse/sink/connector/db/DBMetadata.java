@@ -107,7 +107,7 @@ public class DBMetadata {
                 return new MutablePair<>(null, null);
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s.%s", databaseName, tableName);
+                String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs != null && rs.next()) {
                     String response =  rs.getString(1);
@@ -213,6 +213,8 @@ public class DBMetadata {
                 if(rs.wasNull() == false && rs.next()) {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
+                } else {
+                    log.error("Error: Table not found in system tables:" + tableName + " Database:" + database);
                 }
                 rs.close();
                 stmt.close();

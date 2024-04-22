@@ -33,8 +33,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     ClickHouseSinkConnectorConfig config;
     ZoneId userProvidedTimeZone;
 
+    String databaseName;
+
     public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
+                                      String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
+        this.databaseName = databaseName;
         this.query = transformedQuery;
         this.tableName = tableName;
         this.config = config;
@@ -89,8 +93,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-        this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
-                .append(Constants.AS).append(" ").append(newTableName);
+        // if the table name already includes the datbase name dont include it in the query.
+        if(originalTableName.contains(".")) {
+            this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
+                    .append(Constants.AS).append(" ").append(newTableName);
+        } else
+            this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
+                .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
     }
 
     @Override
@@ -148,7 +157,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
-                this.query.append(tree.getText()).append("(");
+                this.tableName = tree.getText();
+                // If tableName already includes the database name don't include database name in this.query
+                if(tableName.contains(".")) {
+                    this.query.append(tableName);
+                } else
+                    this.query.append(databaseName).append(".").append(tree.getText());
+
+                // If its RRMT add on CLUSTER {cluster} to QUERY.
+                boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                        .AUTO_CREATE_TABLES_REPLICATED.toString());
+                if(isReplicatedReplacingMergeTree) {
+                    this.query.append(" ON CLUSTER `{cluster}`");
+                }
+                this.query.append("(");
             }else if(tree instanceof MySqlParser.IfNotExistsContext) {
                 this.query.append(Constants.IF_NOT_EXISTS);
             }else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
@@ -461,7 +483,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     public void postProcessModifyColumn(String tableName, String oldCol, String newCol, String dataType) {
         this.query.append("\n");
-        this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
+        // If the tableName already includes the databaseName dont include databaseName in this.query
+        if(tableName.contains(".")) {
+            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s %s", tableName, oldCol, dataType));
+        } else
+            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
 
     }
 
@@ -474,7 +500,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             if (tree instanceof TableNameContext) {
                 this.tableName = tree.getText();
-                this.query.append(String.format(Constants.ALTER_TABLE, tree.getText()));
+                // If the table name already include the database name dont include it in the query.
+                if(this.tableName.contains(".")) {
+                    this.query.append(String.format(Constants.ALTER_TABLE, this.tableName));
+                } else
+                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
             }
 
             if (tree instanceof AlterByAddColumnContext) {
@@ -521,7 +551,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+        // If the databasename already includes the table name dont include it in the query.
+        if(originalTableName.contains(".")) {
+            this.query.delete(0, this.query.toString().length()).append(String.format
+                    (Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+        } else
+            this.query.delete(0, this.query.toString().length()).append(String.format
+                (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
 
     }
 
@@ -590,7 +626,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
-                    this.query.append(originalTableName).append(" to ").append(newTableName);
+                    // If the table name already includes the database name dont include it in the query.
+                    if(originalTableName.contains(".")) {
+                        this.query.append(originalTableName).append(" to ").append(newTableName);
+                    } else
+                        this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
+                                append(databaseName).append(".").append(newTableName);
                 }
             } else if(child instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {
@@ -598,18 +639,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-//
-//        if (originalTableName != null && originalTableName.isEmpty() == false && newTableName != null &&
-//                newTableName.isEmpty() == false) {
-//            this.query.append(String.format(Constants.RENAME_TABLE, originalTableName, newTableName));
-//        }
     }
 
     @Override
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
-                this.query.append(String.format(Constants.TRUNCATE_TABLE, child.getText()));
+                this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + child.getText()));
             }
         }
     }

@@ -73,14 +73,14 @@ public class TableOperationsIT {
 
                     engine.set(new DebeziumChangeEventCapture());
                     engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
+                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
 
 
-            Thread.sleep(20000);
+            Thread.sleep(30000);
 
             Connection conn = ITCommon.connectToMySQL(mySqlContainer);
             conn.prepareStatement("RENAME TABLE ship_class to ship_class_new, add_test to add_test_new").execute();

@@ -108,7 +108,7 @@ public class GroupInsertQueryWithBatchRecords {
                 (tableName, modifiedFields, columnNameToDataTypeMap,
                         config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString()),
                         config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString()),
-                        config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()));
+                        config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()), record.getDatabase() );
 
         String insertQueryTemplate = response.getKey();
         if(response.getKey() == null || response.getValue() == null) {

@@ -83,6 +83,10 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
+    private String database;
+  
+    @Getter
+    @Setter
     private long sequenceNumber = -1;
 
     @Getter
@@ -255,6 +259,9 @@ public class ClickHouseStruct {
             }
             if(fieldNames.contains(LSN) && source.get(LSN) != null && source.get(LSN) instanceof Long) {
                 this.setLsn((Long) source.get(LSN));
+            }
+            if(fieldNames.contains(DATABASE) && source.get(DATABASE) != null && source.get(DATABASE) instanceof String) {
+                this.setDatabase((String) source.get(DATABASE));
             }
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);
