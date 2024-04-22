@@ -315,7 +315,7 @@ public class PreparedStatementExecutor {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                             }
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getSequenceNumber()));
                         }
                     }
 
