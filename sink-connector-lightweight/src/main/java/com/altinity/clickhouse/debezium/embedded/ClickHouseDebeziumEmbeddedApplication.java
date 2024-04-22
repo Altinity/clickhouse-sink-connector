@@ -46,6 +46,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * @param args arguments
      * @throws Exception Exception
      */
+
     public static void main(String[] args) throws Exception {
         //BasicConfigurator.configure();
         System.setProperty("log4j.configurationFile", "resources/log4j2.xml");

@@ -84,6 +84,10 @@ public class ClickHouseStruct {
     @Getter
     @Setter
     private String database;
+  
+    @Getter
+    @Setter
+    private long sequenceNumber = -1;
 
     @Getter
     @Setter

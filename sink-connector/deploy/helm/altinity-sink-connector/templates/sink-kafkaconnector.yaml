@@ -29,8 +29,6 @@ spec:
     auto.create.tables: "true"
     schema.evolution: "false"
 
-    deduplication.policy: "off"
-
     metrics.enable: "true"
     metrics.port: "8084"
 

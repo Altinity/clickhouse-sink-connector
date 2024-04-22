@@ -52,8 +52,6 @@ public class DebeziumChangeEventCapture {
 
     private ClickHouseBatchExecutor executor;
 
-    private ClickHouseBatchRunnable runnable;
-
     // Records grouped by Topic Name
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
@@ -537,6 +535,8 @@ public class DebeziumChangeEventCapture {
                             batch.add(chStruct);
                         }
                     }
+                    // Add sequence number.
+                    addVersion(batch);
 
                     if(batch.size() > 0) {
                         appendToRecords(batch);
@@ -725,5 +725,34 @@ public class DebeziumChangeEventCapture {
             this.records.add(convertedRecords);
         }
 
+
+    }
+
+    /**
+     * Function to add version to every record.
+     * @param chStructs
+     */
+    public static void addVersion(List<ClickHouseStruct> chStructs) {
+
+        // Start the sequence from 1 million and increment for every record
+        // and reset the sequence back to 1 million in the next second
+        long sequenceStartTime = System.currentTimeMillis();
+        long sequence = 1000000;
+        for(ClickHouseStruct chStruct: chStructs) {
+
+            // if the current time is greater than the next second, reset the sequence
+            // If current time moved to the next second, reset the sequence.
+            // else increment the sequence.
+            // Get diff in seconds from current time and last time.
+            long currentTime = System.currentTimeMillis();
+            long diff = (currentTime - sequenceStartTime) / 1000;
+            if(diff >= 1) {
+                sequence = 1000000;
+                sequenceStartTime = currentTime;
+            } else {
+                sequence++;
+            }
+            chStruct.setSequenceNumber(sequence);
+        }
     }
 }
