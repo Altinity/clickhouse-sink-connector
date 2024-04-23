@@ -13,21 +13,21 @@ import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNodeImpl;
 import org.antlr.v4.runtime.ParserRuleContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
+
 
 /**
  * This class contains the only overridden functions from the generated parser.
  */
 public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
-    private static final Logger log = LoggerFactory.getLogger(MySqlDDLParserListenerImpl.class);
+    private static final Logger log = LogManager.getLogger(MySqlDDLParserListenerImpl.class);
     StringBuffer query;
     String tableName;
     ClickHouseSinkConnectorConfig config;

@@ -4,8 +4,8 @@ import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.data.ClickHouseUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.List;
@@ -17,7 +17,7 @@ import java.util.Map;
  */
 public class QueryFormatter {
 
-    private static final Logger log = LoggerFactory.getLogger(QueryFormatter.class);
+    private static final Logger log = LogManager.getLogger(QueryFormatter.class);
 
     private boolean isKafkaMetaDataColumn(String colName) {
         for (KafkaMetaData metaDataColumn : KafkaMetaData.values()) {

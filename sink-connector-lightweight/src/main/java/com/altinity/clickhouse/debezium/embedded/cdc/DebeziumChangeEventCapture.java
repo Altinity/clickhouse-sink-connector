@@ -25,11 +25,11 @@ import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.ParseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.sql.ResultSet;
@@ -48,7 +48,7 @@ import java.text.SimpleDateFormat;
  */
 public class DebeziumChangeEventCapture {
 
-    private static final Logger log = LoggerFactory.getLogger(DebeziumChangeEventCapture.class);
+    private static final Logger log = LogManager.getLogger(DebeziumChangeEventCapture.class);
 
     private ClickHouseBatchExecutor executor;
 

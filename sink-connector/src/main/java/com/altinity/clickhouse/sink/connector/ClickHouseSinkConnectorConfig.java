@@ -9,8 +9,9 @@ import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 
 import java.util.Map;
 
@@ -23,7 +24,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
 
     public static long BUFFER_COUNT_DEFAULT = 100;
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
+    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
 
     // Configuration groups
 

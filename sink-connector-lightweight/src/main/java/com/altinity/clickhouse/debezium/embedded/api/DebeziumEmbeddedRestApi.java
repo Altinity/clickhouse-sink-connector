@@ -8,10 +8,10 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
@@ -21,7 +21,7 @@ import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorag
 
 public class DebeziumEmbeddedRestApi {
 
-    private static final Logger log = LoggerFactory.getLogger(DebeziumEmbeddedRestApi.class);
+    private static final Logger log = LogManager.getLogger(DebeziumEmbeddedRestApi.class);
 
     public static void startRestApi(Properties props, Injector injector,
                              DebeziumChangeEventCapture debeziumChangeEventCapture,

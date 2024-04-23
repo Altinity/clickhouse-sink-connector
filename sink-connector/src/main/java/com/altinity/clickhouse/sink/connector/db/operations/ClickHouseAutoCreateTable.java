@@ -4,8 +4,8 @@ import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -22,7 +22,7 @@ import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseAutoCreateTable.class.getName());
+    private static final Logger log = LogManager.getLogger(ClickHouseAutoCreateTable.class.getName());
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                ClickHouseConnection connection, boolean isNewReplacingMergeTree,

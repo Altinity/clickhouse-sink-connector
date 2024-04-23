@@ -1,22 +1,15 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
-import com.clickhouse.data.ClickHouseChecker;
 import com.clickhouse.data.ClickHouseDataType;
-import com.clickhouse.data.ClickHouseValues;
 import com.clickhouse.data.format.BinaryStreamUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-import java.sql.Date;
-import java.sql.Timestamp;
-import java.time.*;
+import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Calendar;
-import java.util.TimeZone;
-import java.util.concurrent.TimeUnit;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -25,7 +18,7 @@ public class DebeziumConverter {
     private static final int MICROS_IN_SEC = 1000000;
     private static final int MICROS_IN_MILLI = 1000;
 
-    private static final Logger log = LoggerFactory.getLogger(DebeziumConverter.class);
+    private static final Logger log = LogManager.getLogger(DebeziumConverter.class);
 
 
     public static class MicroTimeConverter {

@@ -29,7 +29,8 @@ import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Gauge;
 import org.apache.commons.lang3.tuple.MutablePair;
-import org.slf4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -43,7 +44,7 @@ import java.util.Map;
  */
 public class Metrics {
 
-    private static final Logger log = org.slf4j.LoggerFactory.getLogger(Metrics.class);
+    private static final Logger log = LogManager.getLogger(Metrics.class);
     private static MetricRegistry registry = null;
     private static CollectorRegistry collectorRegistry;
     private static PrometheusMeterRegistry meterRegistry;
