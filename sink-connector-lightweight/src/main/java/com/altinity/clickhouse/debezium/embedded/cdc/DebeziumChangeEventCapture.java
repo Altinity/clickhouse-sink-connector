@@ -337,9 +337,26 @@ public class DebeziumChangeEventCapture {
                     String createDbQuery = String.format("create database if not exists %s", dbName);
                     log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
                     writer.executeQuery(createDbQuery);
+
+
+                    // Also create view.
+                    String view = " CREATE VIEW %s.show_replica_status\n" +
+                            "                                        AS\n" +
+                            "                                         SELECT\n" +
+                            "                                             now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,\n" +
+                            "                                             toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time,\n" +
+                            "                                             fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time,\n" +
+                            "                                             *\n" +
+                            "                                         FROM %s\n" +
+                            "                                         FINAL";
+                    String formattedView = String.format(view, dbName, tableName);
+                    try {
+                        writer.executeQuery(formattedView);
+                    } catch(Exception e) {
+                        log.error("**** Error creating VIEW **** " + formattedView);
+                    }
                 }
             }
-
         } catch(Exception e) {
             log.error("Error creating Debezium storage database", e);
         }
