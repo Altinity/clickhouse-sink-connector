@@ -518,6 +518,7 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
+            final boolean[] initialBootstrap = {true};
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
@@ -535,8 +536,10 @@ public class DebeziumChangeEventCapture {
                             batch.add(chStruct);
                         }
                     }
-                    // Add sequence number.
-                    addVersion(batch);
+                        // Add sequence number.
+                    addVersion(batch, initialBootstrap[0]);
+                    initialBootstrap[0] = false;
+
 
                     if(batch.size() > 0) {
                         appendToRecords(batch);
@@ -728,16 +731,21 @@ public class DebeziumChangeEventCapture {
 
     }
 
+    public static final long SEQUENCE_START = 1000000000;
     /**
      * Function to add version to every record.
      * @param chStructs
      */
-    public static void addVersion(List<ClickHouseStruct> chStructs) {
+    public static void addVersion(List<ClickHouseStruct> chStructs, boolean initialSeed) {
 
         // Start the sequence from 1 million and increment for every record
         // and reset the sequence back to 1 million in the next second
         long sequenceStartTime = System.currentTimeMillis();
-        long sequence = 1000000;
+        long sequence = SEQUENCE_START;
+        if(initialSeed) {
+            // Add 500 million to the sequence
+            sequence += 500000000;
+        }
         for(ClickHouseStruct chStruct: chStructs) {
 
             // if the current time is greater than the next second, reset the sequence
@@ -747,7 +755,7 @@ public class DebeziumChangeEventCapture {
             long currentTime = System.currentTimeMillis();
             long diff = (currentTime - sequenceStartTime) / 1000;
             if(diff >= 1) {
-                sequence = 1000000;
+                sequence = SEQUENCE_START;
                 sequenceStartTime = currentTime;
             } else {
                 sequence++;
