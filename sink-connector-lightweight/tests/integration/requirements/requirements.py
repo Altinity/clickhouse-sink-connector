@@ -2026,6 +2026,28 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     num="32.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support replication of tables that use `ReplicatedReplacingMergeTree` [ClickHouse] table engine.\n"
+        "\n"
+        "\n"
+        "In order for [ALtinity Sink Connector] to replicate a source table as `ReplicatedReplacingMergeTree` in [ClickHouse] the configuration file should contain the following setting:\n"
+        "\n"
+        "```yaml\n"
+        'auto.create.tables.replicated: "true"\n'
+        "```\n"
+    ),
+    link=None,
+    level=2,
+    num="33.2",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree_ClusterTypes_MultipleShardsAndReplicas = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.MultipleShardsAndReplicas",
     version="1.0",
@@ -3151,6 +3173,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_OutOfSpace,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_Corrupted,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree_ClusterTypes_MultipleShardsAndReplicas,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree_ClusterTypes_OneShardOneReplica,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ReplicatedReplacingMergeTree_ClusterTypes_SecureClusterOneShardOneReplica,
@@ -4809,9 +4832,10 @@ ReplicatedReplacingMergeTree:
 ```
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree
+version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of tables that use `ReplicatedReplacingMergeTree` [ClickHouse] table engine.
-version: 1.0
+
 
 In order for [ALtinity Sink Connector] to replicate a source table as `ReplicatedReplacingMergeTree` in [ClickHouse] the configuration file should contain the following setting:
 
