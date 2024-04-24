@@ -221,6 +221,33 @@
             * 31.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
 * 32 [Prometheus](#prometheus)
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 33 [ReplicatedReplacingMergeTree](#replicatedreplacingmergetree)
+    * 33.1 [Test Schema For ReplicatedReplacingMergeTree](#test-schema-for-replicatedreplacingmergetree)
+    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetree)
+    * 33.3 [Types of Clusters That Can Be Used for ReplicatedReplacingMergeTree](#types-of-clusters-that-can-be-used-for-replicatedreplacingmergetree)
+        * 33.3.1 [Multiple Shards and Replicas](#multiple-shards-and-replicas)
+            * 33.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.MultipleShardsAndReplicas](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypesmultipleshardsandreplicas)
+        * 33.3.2 [One Shard and One Replica](#one-shard-and-one-replica)
+            * 33.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.OneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypesoneshardonereplica)
+        * 33.3.3 [Secure Cluster with One Shard and One Replica](#secure-cluster-with-one-shard-and-one-replica)
+            * 33.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterOneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypessecureclusteroneshardonereplica)
+    * 33.4 [Possible Events](#possible-events)
+        * 33.4.1 [Node Related Events](#node-related-events)
+            * 33.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.Killed](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventskilled)
+            * 33.4.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.AllKilled](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventsallkilled)
+            * 33.4.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.ChangeLeader](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventschangeleader)
+        * 33.4.2 [Replica Related Events](#replica-related-events)
+            * 33.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.BehindLeader](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsbehindleader)
+            * 33.4.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.DataInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsdatainconsistency)
+            * 33.4.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.NewReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsnewreplica)
+            * 33.4.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.RemovedReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsremovedreplica)
+        * 33.4.3 [Connection Related Events](#connection-related-events)
+            * 33.4.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ConnectionRelatedEvents.Interrupted](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsconnectionrelatedeventsinterrupted)
+        * 33.4.4 [Disk Related Events](#disk-related-events)
+            * 33.4.4.1 [Out of Space](#out-of-space)
+                * 33.4.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsdiskoutofspace)
+            * 33.4.4.2 [Corrupted Disk](#corrupted-disk)
+                * 33.4.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsdiskcorrupted)
 
 ## Introduction
 
@@ -467,6 +494,11 @@ clickhouse-sink-connector:
           - Corruption on a disk used by some node in source database cluster
           - Corruption on a disk where sink connector is running
           - Corruption on a disk used by some node in clickhouse database cluster
+    Parallel Actions:
+      - Multiple actions happening at the same time
+      - Multiple actions happening at the same time with different sources
+      - Multiple actions happening at the same time with different destinations
+      - Multiple actions happening at the same time with different sources and destinations
 ```
 
 ## Configuration
@@ -1574,6 +1606,142 @@ The error SHALL be shown so that the data on the source and destination tables i
 version: 1.0
 
 [Altinity Sink Connector] SHALL support expose data transfer representation to [Prometheus] service.
+
+## ReplicatedReplacingMergeTree
+
+### Test Schema For ReplicatedReplacingMergeTree
+
+```yaml
+ReplicatedReplacingMergeTree:
+  Clusters:
+    - Cluster with multiple shards and replicas
+    - Cluster with one shard and one replica
+    - Secure cluster with one shard and one replica
+    - Secure cluster with multiple shards and replicas
+  Possible Events:
+    Node Related Events:  
+      - Some of the nodes where replicas are running are killed
+      - All of the nodes where replicas are running are killed
+      - Change of the leader node during the replication process
+    Replica Related Events:  
+      - One or more replicas are behind the leader replica
+      - Data inconsistency between replicas
+      - New replica added durin replication process
+      - Replica removed during replication process
+    Connection Related Event:
+      - Connection between replicas is interrupted
+  Disk:
+    OutOfSpace:
+      - Out of disk space on the disk used by one of replicas in source database cluster
+    Corruptions:
+      - Corruption on a disk used by one of replicas in source database cluster
+```
+
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree
+
+[Altinity Sink Connector] SHALL support replication of tables that use `ReplicatedReplacingMergeTree` [ClickHouse] table engine.
+version: 1.0
+
+In order for [ALtinity Sink Connector] to replicate a source table as `ReplicatedReplacingMergeTree` in [ClickHouse] the configuration file should contain the following setting:
+
+```yaml
+auto.create.tables.replicated: "true"
+```
+### Types of Clusters That Can Be Used for ReplicatedReplacingMergeTree
+
+#### Multiple Shards and Replicas
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.MultipleShardsAndReplicas
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a cluster with multiple shards and replicas.
+
+#### One Shard and One Replica
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.OneShardOneReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a cluster with one shard and one replica.
+
+#### Secure Cluster with One Shard and One Replica
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterOneShardOneReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a secure cluster with one shard and one replica.
+
+
+### Possible Events
+
+#### Node Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.Killed
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when some of the nodes where replicas are running are killed.
+
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.AllKilled
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when all the nodes where replicas are running are killed.
+
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.ChangeLeader
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when the leader node is changed during the replication process.
+
+
+#### Replica Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.BehindLeader
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one or more replicas are behind the leader replica. 
+Replication process from destination to source database SHALL not be interrupted in this case.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.DataInconsistency
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when there is data inconsistency between replicas.
+
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.NewReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when a new replica is added during the replication process.
+
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.RemovedReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when a replica is removed during the replication process.
+
+
+#### Connection Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ConnectionRelatedEvents.Interrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when the connection between replicas is interrupted.
+
+#### Disk Related Events
+
+##### Out of Space
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.OutOfSpace
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one of the replicas in the source database cluster is out of disk space.
+
+##### Corrupted Disk
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.Corrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one of the replicas in the source database cluster has a corrupted disk.
+
 
 [SRS]: #srs
 [MySQL]: #mysql
