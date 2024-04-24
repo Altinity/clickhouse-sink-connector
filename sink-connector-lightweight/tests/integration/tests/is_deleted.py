@@ -18,10 +18,9 @@ def create_table_with_is_deleted(
     with By(
         f"creating a {table_name} table with is_deleted column and {datatype} datatype"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int, {column} {datatype}",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=f"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int, {column} {datatype}",
         )
 
     with And(f"inserting data into the {table_name} table"):

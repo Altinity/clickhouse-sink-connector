@@ -170,7 +170,7 @@ def regression(
         "zookeeper": ("zookeeper",),
     }
 
-    self.context.clickhouse.nodes = nodes
+    self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
     create_default_sink_config()

@@ -15,10 +15,9 @@ def retry_on_fail(self):
         clickhouse_node.stop_clickhouse(safe=False)
 
     with When("I creat a table in MySQL"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"retry VARCHAR(16)",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=f"\`{table_name}\`",
+            columns=f"retry VARCHAR(16)",
         )
 
     with And("I insert data into the MySQL table"):

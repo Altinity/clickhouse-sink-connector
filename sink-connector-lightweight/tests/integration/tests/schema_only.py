@@ -10,10 +10,9 @@ def create_table_structure(self, table_name):
     clickhouse_node = self.context.clickhouse_node
 
     with By(f"creating a {table_name} table"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=f"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
         )
 
     with And(f"inserting data into the {table_name} table"):

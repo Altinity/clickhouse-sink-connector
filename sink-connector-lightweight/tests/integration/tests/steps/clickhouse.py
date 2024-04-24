@@ -124,25 +124,17 @@ def verify_table_creation_in_clickhouse(
     MySQL.
     """
     clickhouse = self.context.cluster.node("clickhouse")
-    clickhouse1 = self.context.cluster.node("clickhouse1")
-    clickhouse2 = self.context.cluster.node("clickhouse2")
-    clickhouse3 = self.context.cluster.node("clickhouse3")
     mysql = self.context.cluster.node("mysql-master")
 
     if clickhouse_table_engine.startswith("Replicated"):
-        with Then("I check table creation on few nodes"):
-            retry(clickhouse.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse1.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse2.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse3.query, timeout=100, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
+        with Then("I check table creation on all ClickHouse nodes"):
+            for clickhouse_node in self.context.nodes["clickhouse"]:
+                retry(
+                    self.context.cluster.node(clickhouse_node).query,
+                    timeout=100,
+                    delay=3,
+                )("SHOW TABLES FROM test", message=f"{table_name}")
+
     else:
         with Then("I check table creation"):
             retry(clickhouse.query, timeout=100, delay=3)(

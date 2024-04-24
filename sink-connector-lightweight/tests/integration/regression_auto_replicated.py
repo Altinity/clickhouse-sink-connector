@@ -7,7 +7,6 @@ import time
 from testflows.core import *
 
 from integration.tests.steps.sink_configurations import (
-    configuration_with_replicated_replacing_merge_tree_table,
     config_with_replicated_table,
 )
 
@@ -169,6 +168,7 @@ def regression(
         "zookeeper": ("zookeeper",),
     }
 
+    self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
     create_default_sink_config_replicated()
@@ -210,7 +210,7 @@ def regression(
     with And("I start sink-connector-lightweight"):
         self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
 
-        self.context.sink_node.start_sink_connector()
+        self.context.sink_node.start_sink_connector(config_file="env/auto_replicated/configs/replicated_config.yml")
 
     with Pool(1) as executor:
         Feature(

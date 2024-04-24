@@ -80,30 +80,57 @@ def generate_sample_mysql_value(data_type):
 
 
 @TestStep(Given)
-def create_mysql_table(self, name=None, statement=None, node=None):
-    """Creation of default MySQL table for tests"""
-    if node is None:
-        node = self.context.cluster.node("mysql-master")
-    if name is None:
-        name = "users"
-    if statement is None:
-        statement = (
-            f"CREATE TABLE IF NOT EXISTS {name}"
-            f" (id INT AUTO_INCREMENT,"
-            f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
-        )
+def create_mysql_table(
+    self,
+    table_name,
+    columns,
+    mysql_node=None,
+    clickhouse_node=None,
+    primary_key="id",
+    engine=True,
+    partition_by_mysql=False,
+):
+    """Create MySQL table that will be auto created in ClickHouse."""
+
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
+
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
 
     try:
-        with Given(f"I create MySQL table {name}"):
-            node.query(statement)
+        key = ""
+        if primary_key is not None:
+            key = f"{primary_key} INT NOT NULL,"
+
+        with Given(f"I create MySQL table", description=name):
+            query = f"CREATE TABLE IF NOT EXISTS {table_name} ({key}{columns}"
+
+            if primary_key is not None:
+                query += f", PRIMARY KEY ({primary_key}))"
+            else:
+                query += ")"
+
+            if engine:
+                query += f" ENGINE = InnoDB"
+
+            if partition_by_mysql:
+                query += f", PARTITION BY {partition_by_mysql}"
+
+            query += ";"
+
+            mysql_node.query(query)
+
         yield
     finally:
-        with Finally("I clean up by deleting table in MySQL"):
-            node.query(f"DROP TABLE IF EXISTS {name};")
-            self.context.cluster.node("clickhouse").query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+        with Finally(
+            "I clean up by deleting MySQL to ClickHouse replicated table",
+            description={name},
+        ):
+            mysql_node.query(f"DROP TABLE IF EXISTS {table_name};")
+            clickhouse_node.query(
+                f"DROP TABLE IF EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster;"
             )
-            time.sleep(5)
 
 
 @TestStep
@@ -216,58 +243,48 @@ def create_mysql_to_clickhouse_replicated_table(
 
 
 @TestStep(Given)
-def create_table_with_no_primary_key(self, table_name, clickhouse_table_engine):
+def create_table_with_no_primary_key(self, table_name):
     """Create MySQL table without primary key."""
 
     with By(f"creating a {table_name} table without primary key"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_primary_key",
+        create_mysql_table(
+            table_name=f"{table_name}_no_primary_key",
             mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
         )
 
 
 @TestStep(Given)
-def create_table_with_no_engine(self, table_name, clickhouse_table_engine):
+def create_table_with_no_engine(self, table_name):
     """Create MySQL table without engine."""
 
     with By(f"creating a {table_name} table without engine"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}_no_engine",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=f"{table_name}_no_engine",
+            columns="x INT NOT NULL",
             engine=False,
         )
 
 
 @TestStep(Given)
-def create_table_with_primary_key_and_engine(self, table_name, clickhouse_table_engine):
+def create_table_with_primary_key_and_engine(self, table_name):
     """Create MySQL table with primary key and with engine."""
 
     with By(f"creating a {table_name} table with primary key and with engine"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"{table_name}",
-            mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=f"{table_name}",
+            columns="x INT NOT NULL",
         )
 
 
 @TestStep(Given)
-def create_table_with_no_engine_and_no_primary_key(
-    self, table_name, clickhouse_table_engine
-):
+def create_table_with_no_engine_and_no_primary_key(self, table_name):
     """Create MySQL table without engine and without primary key."""
 
     with By(f"creating a {table_name} table without engine and without primary key"):
-        create_mysql_to_clickhouse_replicated_table(
+        create_mysql_table(
             name=f"{table_name}_no_engine_no_primary_key",
             mysql_columns="x INT NOT NULL",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
             primary_key=None,
             engine=False,
         )
@@ -288,30 +305,22 @@ def create_tables(self, table_name, clickhouse_table_engine="ReplacingMergeTree"
     with And(
         "I create MySQL to ClickHouse replicated table with primary key and with engine"
     ):
-        create_table_with_primary_key_and_engine(
-            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
-        )
+        create_table_with_primary_key_and_engine(table_name=table_name)
 
     with And(
         "I create MySQL to ClickHouse replicated table without primary key and with engine"
     ):
-        create_table_with_no_primary_key(
-            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
-        )
+        create_table_with_no_primary_key(table_name=table_name)
 
     with And(
         "I create MySQL to ClickHouse replicated table with primary key and without engine"
     ):
-        create_table_with_no_engine(
-            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
-        )
+        create_table_with_no_engine(table_name=table_name)
 
     with And(
         "I create MySQL to ClickHouse replicated table without primary key and without engine"
     ):
-        create_table_with_no_engine_and_no_primary_key(
-            table_name=table_name, clickhouse_table_engine=clickhouse_table_engine
-        )
+        create_table_with_no_engine_and_no_primary_key(table_name=table_name)
 
     return tables_list
 
