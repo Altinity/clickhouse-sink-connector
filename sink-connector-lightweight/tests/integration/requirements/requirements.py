@@ -3690,9 +3690,7 @@ clickhouse-sink-connector:
           - Corruption on a disk used by some node in clickhouse database cluster
     Parallel Actions:
       - Multiple actions happening at the same time
-      - Multiple actions happening at the same time with different sources
-      - Multiple actions happening at the same time with different destinations
-      - Multiple actions happening at the same time with different sources and destinations
+      - Multiple actions happening at the same time with different source databases
 ```
 
 ## Configuration
