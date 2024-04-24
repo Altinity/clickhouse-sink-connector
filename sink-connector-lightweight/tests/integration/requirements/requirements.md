@@ -231,6 +231,8 @@
             * 33.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.OneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypesoneshardonereplica)
         * 33.3.3 [Secure Cluster with One Shard and One Replica](#secure-cluster-with-one-shard-and-one-replica)
             * 33.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterOneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypessecureclusteroneshardonereplica)
+        * 33.3.4 [Secure Cluster with Multiple Shards and Replicas](#secure-cluster-with-multiple-shards-and-replicas)
+            * 33.3.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterMultipleShardsAndReplicas](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypessecureclustermultipleshardsandreplicas)
     * 33.4 [Possible Events](#possible-events)
         * 33.4.1 [Node Related Events](#node-related-events)
             * 33.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.Killed](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventskilled)
@@ -1670,6 +1672,12 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a secure cluster with one shard and one replica.
 
+#### Secure Cluster with Multiple Shards and Replicas
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterMultipleShardsAndReplicas
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a secure cluster with multiple shards and replicas.
 
 ### Possible Events
 
@@ -1679,7 +1687,6 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database when some of the nodes where replicas are running are killed.
-
 
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.AllKilled
 version: 1.0
@@ -1691,7 +1698,6 @@ version: 1.0
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database when the leader node is changed during the replication process.
-
 
 #### Replica Related Events
 
@@ -1706,18 +1712,15 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database when there is data inconsistency between replicas.
 
-
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.NewReplica
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database when a new replica is added during the replication process.
 
-
 ##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.RemovedReplica
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication from source database to the destination database when a replica is removed during the replication process.
-
 
 #### Connection Related Events
 
