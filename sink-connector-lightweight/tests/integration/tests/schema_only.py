@@ -1,10 +1,6 @@
-from integration.requirements.requirements import (
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation,
-)
-from integration.helpers.create_config import *
-from integration.tests.steps.service_settings import *
 from integration.tests.steps.mysql import *
-from integration.helpers.common import change_sink_configuration
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.sink_configurations import config_with_schema_only
 
 
 @TestStep(Given)
@@ -69,9 +65,7 @@ def module(
     with Given(
         "I create a new ClickHouse Sink Connector configuration with schema-only mode"
     ):
-        change_sink_configuration(
-            values={"snapshot.mode": "schema_only"}, config_file=config_file
-        )
+        config_with_schema_only()
 
     for scenario in loads(current_module(), Scenario):
         Scenario(run=scenario)

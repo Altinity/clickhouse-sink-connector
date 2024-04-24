@@ -659,8 +659,8 @@ version: 1.0
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplacingMergeTree.VirtualColumnNames
 version: 1.0
 
-[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to
-"ReplacingMergeTree" [ClickHouse] table engine and virtual column names by default should be "_version" and "_sign".
+[Altinity Sink Connector] SHALL support replication of tables that use "InnoDB" [MySQL] storage engine to both
+"ReplacingMergeTree" and "ReplicatedReplacingMergeTree" [ClickHouse] table engines.
 
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MySQLStorageEngines.ReplicatedReplacingMergeTree

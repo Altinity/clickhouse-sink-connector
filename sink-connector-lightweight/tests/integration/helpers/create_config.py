@@ -58,6 +58,20 @@ def create_default_sink_config(self, path="env/auto/configs/config.yml"):
 
 
 @TestStep(Given)
+def create_default_sink_config_replicated(
+    self, path="env/auto_replicated/configs/replicated_config.yml"
+):
+    """Create the default sink connector configuration."""
+    config = self.context.config
+
+    with By(f"creating the default sink connector configuration file"):
+        config.update(
+            {"auto.create.tables.replicated": "true", "auto.create.tables": "true"}
+        )
+        config.save(filename=path)
+
+
+@TestStep(Given)
 def update_sink_config(self, new_data: dict, path="env/auto/configs/config.yml"):
     """Update the sink connector configuration."""
     config = self.context.config

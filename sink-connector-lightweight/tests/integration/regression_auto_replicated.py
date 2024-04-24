@@ -6,6 +6,11 @@ import time
 
 from testflows.core import *
 
+from integration.tests.steps.sink_configurations import (
+    configuration_with_replicated_replacing_merge_tree_table,
+    config_with_replicated_table,
+)
+
 append_path(sys.path, "..")
 
 from integration.helpers.argparser import argparser
@@ -138,14 +143,8 @@ xflags = {}
 @ArgumentParser(argparser)
 @FFails(ffails)
 @XFlags(xflags)
-@Name("auto table creation")
+@Name("auto replicated table creation")
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_InnoDB(
-        "1.0"
-    ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
     ),
@@ -156,7 +155,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
-    env="env/auto",
+    env="env/auto_replicated",
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
@@ -170,10 +169,9 @@ def regression(
         "zookeeper": ("zookeeper",),
     }
 
-    self.context.clickhouse.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
-    create_default_sink_config()
+    create_default_sink_config_replicated()
 
     if stress is not None:
         self.context.stress = stress
@@ -197,7 +195,7 @@ def regression(
 
     self.context.env = env
 
-    self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
+    self.context.clickhouse_table_engines = ["ReplicatedReplacingMergeTree"]
 
     self.context.database = "test"
 

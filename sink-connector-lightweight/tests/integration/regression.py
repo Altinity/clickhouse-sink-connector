@@ -49,6 +49,11 @@ def regression(
                 parallel=True,
                 executor=pool,
             )(**args)
+            Feature(
+                test=load("regression_auto_replicated", "regression"),
+                parallel=True,
+                executor=pool,
+            )(**args)
         finally:
             join()
 
