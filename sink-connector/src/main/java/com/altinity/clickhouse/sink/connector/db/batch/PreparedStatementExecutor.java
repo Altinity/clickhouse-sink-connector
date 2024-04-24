@@ -314,12 +314,12 @@ public class PreparedStatementExecutor {
                     if(columnNameToIndexMap.containsKey(versionColumn)) {
                         if (record.getGtid() != -1) {
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
                             } else {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                             }
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getSequenceNumber()));
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getSequenceNumber(), true));
                         }
                     }
 

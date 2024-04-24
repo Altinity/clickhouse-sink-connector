@@ -96,9 +96,9 @@ public class DebeziumChangeEventCaptureTest {
         DebeziumChangeEventCapture.addVersion(clickHouseStructs2, false);
 
         // Check if the sequence numbers are unique
-        assertTrue(clickHouseStructs.get(0).getSequenceNumber() != clickHouseStructs.get(1).getSequenceNumber());
-        assertTrue(clickHouseStructs.get(1).getSequenceNumber() != clickHouseStructs.get(2).getSequenceNumber());
-        assertTrue(clickHouseStructs.get(2).getSequenceNumber() != clickHouseStructs.get(3).getSequenceNumber());
+        assertTrue(clickHouseStructs.get(0).getSequenceNumber() < clickHouseStructs.get(1).getSequenceNumber());
+        assertTrue(clickHouseStructs.get(1).getSequenceNumber() < clickHouseStructs.get(2).getSequenceNumber());
+        assertTrue(clickHouseStructs.get(2).getSequenceNumber() < clickHouseStructs.get(3).getSequenceNumber());
 
 
         // Validate ch5 and ch6

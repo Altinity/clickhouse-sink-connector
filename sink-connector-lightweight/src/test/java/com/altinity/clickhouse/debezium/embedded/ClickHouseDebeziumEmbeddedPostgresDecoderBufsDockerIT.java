@@ -26,7 +26,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
-@Disabled
 public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
 
     @Container
@@ -66,7 +65,6 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
     }
 
     @Test
-    @Disabled
     @DisplayName("Integration Test - Validates PostgreSQL replication when the plugin is set to DecoderBufs")
     public void testDecoderBufsPlugin() throws Exception {
         Network network = Network.newNetwork();
