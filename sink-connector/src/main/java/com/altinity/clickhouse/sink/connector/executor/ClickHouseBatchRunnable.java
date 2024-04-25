@@ -16,8 +16,8 @@ import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.SQLException;
 import java.time.ZoneId;
@@ -34,7 +34,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * records to Clickhouse.
  */
 public class ClickHouseBatchRunnable implements Runnable {
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseBatchRunnable.class);
     private final LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
     private final ClickHouseSinkConnectorConfig config;

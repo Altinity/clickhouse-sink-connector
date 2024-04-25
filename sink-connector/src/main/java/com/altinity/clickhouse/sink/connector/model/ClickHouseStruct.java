@@ -9,8 +9,8 @@ import lombok.Setter;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.*;
 
@@ -132,7 +132,7 @@ public class ClickHouseStruct {
     @Setter
     boolean lastRecordInBatch;
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseStruct.class);
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,
                             Long timestamp, Struct beforeStruct, Struct afterStruct, Map<String, Object> metadata,

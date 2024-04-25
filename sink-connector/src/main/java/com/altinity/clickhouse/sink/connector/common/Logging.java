@@ -15,8 +15,10 @@
 package com.altinity.clickhouse.sink.connector.common;
 
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Objects;
 
@@ -25,7 +27,7 @@ import java.util.Objects;
  */
 public class Logging {
     // todo: change to interface when upgrading to Java 9 or later
-    private final Logger log = LoggerFactory.getLogger(getClass().getName());
+    private final Logger log = LogManager.getLogger(getClass().getName());
 
     // only message
     protected void logInfo(String msg) {
