@@ -241,11 +241,22 @@ public class ClickHouseDataTypeMapper {
             if (value instanceof Struct) {
                 Struct decimalValue = (Struct) value;
                 Object scale = decimalValue.get("scale");
-                Object unscaledValueInBytes =  decimalValue.get("value");
-                BigDecimal bd = new BigDecimal(new BigInteger((byte[]) unscaledValueInBytes), (Integer) scale);
-                ps.setBigDecimal(index, bd);
+                Object unscaledValueObject =  decimalValue.get("value");
 
+                byte[] unscaledValueBytes;
+                if (unscaledValueObject instanceof ByteBuffer) {
+                    ByteBuffer unscaledByteBuffer = (ByteBuffer) unscaledValueObject;
+                    unscaledValueBytes = new byte[unscaledByteBuffer.remaining()];
+                    unscaledByteBuffer.get(unscaledValueBytes);
+                } else if (unscaledValueObject instanceof byte[]) {
+                    unscaledValueBytes = (byte[]) unscaledValueObject;
+                } else {
+                    // Handle unexpected type
+                    throw new IllegalArgumentException("Unexpected type for unscaled value");
+                }
 
+                BigDecimal bigDecimal = new BigDecimal(new BigInteger(unscaledValueBytes), (Integer) scale);
+                ps.setBigDecimal(index, bigDecimal);
             } else {
                 ps.setBigDecimal(index, new BigDecimal(0));
             }
