@@ -49,7 +49,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append(CREATE_TABLE).append(" ").append("`").append(databaseName).append(".").append(tableName).append("`").append("(");
+        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`").append("(");
 
         for(Field f: fields) {
             String colName = f.name();
