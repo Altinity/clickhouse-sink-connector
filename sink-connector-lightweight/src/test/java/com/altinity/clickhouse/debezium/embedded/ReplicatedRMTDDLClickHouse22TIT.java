@@ -149,10 +149,19 @@ public class ReplicatedRMTDDLClickHouse22TIT {
                 " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
 
         Thread.sleep(10000);
-//
-//        while(true) {
-//            ;
-//        }
+
+        // Verify on ClickHouse if the table is created.
+        rs = writer.executeQueryWithResultSet("show create table l1");
+        // Validate that all the tables are created.
+        resultValidated = false;
+        while(rs.next()) {
+            resultValidated = true;
+            String createTableDML = rs.getString(1);
+            System.out.println(createTableDML);
+            assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
+        }
+        Assert.assertTrue(resultValidated);
+
         if(engine.get() != null) {
             engine.get().stop();
         }
