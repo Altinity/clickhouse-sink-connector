@@ -33,8 +33,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-import java.sql.Connection;
-import java.sql.ResultSet;
+import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -46,7 +45,6 @@ public class DebeziumChangeEventCaptureIT{
 
     private static final Logger log = LoggerFactory.getLogger(DebeziumChangeEventCaptureIT.class);
     @Test
-    @Disabled
     public void testDeleteOffsetStorageRow2()  {
         //System.out.println("Delete offset");
         DebeziumChangeEventCapture dec = new DebeziumChangeEventCapture();
@@ -107,7 +105,6 @@ public class DebeziumChangeEventCaptureIT{
     }
 
     @Test
-    @Disabled
     @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly.")
     public void testIncrementingSequenceNumbers() throws Exception {
 
@@ -192,5 +189,89 @@ public class DebeziumChangeEventCaptureIT{
         assertTrue(version3 > version2);
         // Check if version 2 is greater than version 1
         assertTrue(version2 > version1);
+
+//        if(engine.get() != null) {
+//            engine.get().stop();
+//        }
+        conn.close();
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
+    }
+
+    @Test
+    @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
+            + "by performing a lot of updates on the primary key.")
+    public void testIncrementingSequenceNumberWithUpdates() throws Exception {
+
+        Injector injector = Guice.createInjector(new AppInjector());
+
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+        props.setProperty("snapshot.mode", "schema_only");
+        props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
+        props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
+
+        // Override clickhouse server timezone.
+        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+
+
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
+                        injector.getInstance(DDLParserService.class), props, false);
+                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
+                        , new Properties());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+
+        });
+
+        Thread.sleep(25000);
+
+        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+
+        // Insert a new row in the table
+        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+
+        // Generate and execute the update workload
+        String updateStatement = "UPDATE newtable SET col2 = ? WHERE col1 = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(updateStatement)) {
+            conn.setAutoCommit(false);
+            for (int i = 0; i < 20000; i++) {
+                // Set parameters for the update statement
+                pstmt.setInt(1, 10000 + i);
+                pstmt.setString(2, "a");
+
+                // Execute the update statement
+                pstmt.executeUpdate();
+            }
+            conn.commit();
+        }
+
+
+        Thread.sleep(10000);
+
+        // Validate in Clickhouse the last record written is 29999
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees");
+        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+
+        long col2 = 1L;
+        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from newtable final where col1 = 'a'");
+        while(version1Result.next()) {
+            col2 = version1Result.getLong("col2");
+        }
+        Thread.sleep(10000);
+
+
+        assertTrue(col2 == 29999);
+        conn.close();
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
     }
 }
