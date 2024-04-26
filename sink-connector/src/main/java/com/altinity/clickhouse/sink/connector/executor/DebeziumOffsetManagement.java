@@ -137,12 +137,14 @@ public class DebeziumOffsetManagement {
 
                 record.getCommitter().markProcessed(record.getSourceRecord());
                 log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
                     record.getCommitter().markBatchFinished();
                     log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+                            + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
                 }
             }
         }

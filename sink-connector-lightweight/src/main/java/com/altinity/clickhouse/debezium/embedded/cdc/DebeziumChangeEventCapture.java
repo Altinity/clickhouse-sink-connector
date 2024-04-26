@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
@@ -656,6 +657,7 @@ public class DebeziumChangeEventCapture {
     }
 
     public void stop() throws IOException {
+
         try {
             if (this.engine != null) {
                 this.engine.close();
@@ -749,6 +751,7 @@ public class DebeziumChangeEventCapture {
     }
 
     public static final long SEQUENCE_START = 1000000000;
+    public static final long SEQUENCE_START_INITIAL = 500000000;
     /**
      * Function to add version to every record.
      * @param chStructs
@@ -757,27 +760,33 @@ public class DebeziumChangeEventCapture {
 
         // Start the sequence from 1 million and increment for every record
         // and reset the sequence back to 1 million in the next second
-        long sequenceStartTime = System.currentTimeMillis();
+        if(chStructs.isEmpty()) {
+            return;
+        }
+        long sequenceStartTime = chStructs.get(0).getTs_ms();
         long sequence = SEQUENCE_START;
         if(initialSeed) {
             // Add 500 million to the sequence
-            sequence += 500000000;
+            // sequence += 500000000;
+            // Add 000 to the debezium timestamp.
+            sequence = SEQUENCE_START_INITIAL;
         }
         for(ClickHouseStruct chStruct: chStructs) {
-
-            // if the current time is greater than the next second, reset the sequence
-            // If current time moved to the next second, reset the sequence.
-            // else increment the sequence.
-            // Get diff in seconds from current time and last time.
-            long currentTime = System.currentTimeMillis();
-            long diff = (currentTime - sequenceStartTime) / 1000;
-            if(diff >= 1) {
+            // Get the first ts_ms from chStruct
+            // Subsequent records add 1 to sequence.
+            // If its been more than a second from the first
+            // ts_ms then reset the sequence.
+            // Get diff in seconds
+            int diff = (int) (chStruct.getTs_ms() - sequenceStartTime) / 1000;
+            if(diff > 1) {
                 sequence = SEQUENCE_START;
-                sequenceStartTime = currentTime;
-            } else {
+                sequenceStartTime = chStruct.getTs_ms();
+            }   else {
                 sequence++;
             }
-            chStruct.setSequenceNumber(sequence);
+            // Pad the sequence number with 0s
+            chStruct.setSequenceNumber(chStruct.getTs_ms() * 1000 + sequence);
+
         }
     }
 }

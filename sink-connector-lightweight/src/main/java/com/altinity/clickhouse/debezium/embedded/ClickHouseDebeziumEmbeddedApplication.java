@@ -133,6 +133,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void stop() throws IOException {
         debeziumChangeEventCapture.stop();
 
+        //Stop Rest API
+        DebeziumEmbeddedRestApi.stop();
     }
 
     /**
