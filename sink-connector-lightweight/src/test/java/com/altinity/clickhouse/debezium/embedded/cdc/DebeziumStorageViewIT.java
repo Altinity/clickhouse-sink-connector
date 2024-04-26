@@ -34,7 +34,6 @@ import java.util.concurrent.Executors;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumPropertiesForSchemaOnly;
 
 @Testcontainers
-@Disabled
 @DisplayName("Test that validates if the debezium storage view is created successfully")
 public class DebeziumStorageViewIT {
     protected MySQLContainer mySqlContainer;
@@ -105,6 +104,7 @@ public class DebeziumStorageViewIT {
         }
         Assert.assertTrue(viewCheck);
 
+        ClickHouseDebeziumEmbeddedApplication.stop();
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
         executorService.shutdown();
     }

@@ -785,8 +785,7 @@ public class DebeziumChangeEventCapture {
                 sequence++;
             }
             // Pad the sequence number with 0s
-            chStruct.setSequenceNumber(chStruct.getTs_ms() * 1000 + sequence);
-
+            chStruct.setSequenceNumber(chStruct.getTs_ms() * 100000 + sequence);
         }
     }
 }

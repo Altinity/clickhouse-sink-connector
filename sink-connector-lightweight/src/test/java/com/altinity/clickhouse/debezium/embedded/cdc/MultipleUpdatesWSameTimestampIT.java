@@ -75,6 +75,7 @@ public class MultipleUpdatesWSameTimestampIT {
 
     @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
             + "by performing a lot of updates on the primary key.")
+    @Test
     public void testIncrementingSequenceNumberWithUpdates() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
