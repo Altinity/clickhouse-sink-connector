@@ -27,7 +27,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
 
-@Disabled
 public class PostgresInitialDockerIT {
 
     @Container
