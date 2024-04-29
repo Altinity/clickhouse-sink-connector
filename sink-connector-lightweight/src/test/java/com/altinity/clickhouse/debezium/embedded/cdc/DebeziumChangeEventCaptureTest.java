@@ -111,7 +111,10 @@ public class DebeziumChangeEventCaptureTest {
 
 
         // Validate ch5 and ch6
-        assertTrue(clickHouseStructs2.get(0).getSequenceNumber() != clickHouseStructs2.get(1).getSequenceNumber());
+        assertTrue(clickHouseStructs2.get(0).getSequenceNumber() < clickHouseStructs2.get(1).getSequenceNumber());
+
+        assertTrue(clickHouseStructs.get(3).getSequenceNumber() < clickHouseStructs2.get(0).getSequenceNumber());
+
 
     }
 
