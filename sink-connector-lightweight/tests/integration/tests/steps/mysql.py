@@ -80,15 +80,36 @@ def generate_sample_mysql_value(data_type):
 
 
 @TestStep(Given)
-def create_mysql_table(self, name=None, statement=None, node=None):
-    """Creation of default MySQL table for tests"""
+def create_mysql_database(self, node=None, database_name=None):
+    """Creation of MySQL database."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    if database_name is None:
+        database_name = "test"
+
+    try:
+        with Given(f"I create MySQL database {database_name}"):
+            node.query(f"DROP DATABASE IF EXISTS {database_name};")
+            node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+    except:
+        with Finally(f"I delete MySQL database {database_name}"):
+            node.query(f"DROP DATABASE IF EXISTS {database_name};")
+
+
+@TestStep(Given)
+def create_mysql_table(self, name=None, statement=None, node=None, database_name=None):
+    """Creation of default MySQL table for tests."""
+
+    if database_name is None:
+        database_name = "test"
     if node is None:
         node = self.context.cluster.node("mysql-master")
     if name is None:
         name = "users"
     if statement is None:
         statement = (
-            f"CREATE TABLE IF NOT EXISTS {name}"
+            f"CREATE TABLE IF NOT EXISTS {database_name}.{name}"
             f" (id INT AUTO_INCREMENT,"
             f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
         )
