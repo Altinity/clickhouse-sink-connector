@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <clickhouse>
     <macros>
+	    <cluster>sharded_cluster</cluster>
         <replica>clickhouse3</replica>
         <shard>02</shard>
 <!--        <shard2>03</shard2>-->
