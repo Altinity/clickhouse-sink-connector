@@ -129,7 +129,7 @@ def create_mysql_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {table_name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS test.{table_name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP TABLE IF EXISTS test.{table_name} ON CLUSTER sharded_cluster;"
             )
 
 
@@ -172,7 +172,7 @@ def create_mysql_to_clickhouse_replicated_table(
                     description=name,
                 ):
                     clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
+                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_cluster"
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplicatedReplacingMergeTree("
@@ -237,7 +237,7 @@ def create_mysql_to_clickhouse_replicated_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_cluster;"
             )
             time.sleep(5)
 
@@ -249,7 +249,7 @@ def create_table_with_no_primary_key(self, table_name):
     with By(f"creating a {table_name} table without primary key"):
         create_mysql_table(
             table_name=f"{table_name}_no_primary_key",
-            mysql_columns="x INT NOT NULL",
+            columns="x INT NOT NULL",
             primary_key=None,
         )
 
@@ -283,8 +283,8 @@ def create_table_with_no_engine_and_no_primary_key(self, table_name):
 
     with By(f"creating a {table_name} table without engine and without primary key"):
         create_mysql_table(
-            name=f"{table_name}_no_engine_no_primary_key",
-            mysql_columns="x INT NOT NULL",
+            table_name=f"{table_name}_no_engine_no_primary_key",
+            columns="x INT NOT NULL",
             primary_key=None,
             engine=False,
         )
