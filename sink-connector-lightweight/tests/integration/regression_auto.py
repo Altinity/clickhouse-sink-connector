@@ -206,7 +206,7 @@ def regression(
     self.context.node = cluster.node("clickhouse")
 
     with And("I create test database in ClickHouse"):
-        create_database(name="test")
+        create_clickhouse_database(name="test")
 
     with And("I start sink-connector-lightweight"):
         self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
@@ -304,7 +304,6 @@ def regression(
             parallel=True,
             executor=executor,
         )
-
         join()
 
     Feature(
@@ -312,6 +311,10 @@ def regression(
     )
     Feature(
         run=load("tests.sink_cli_commands", "module"),
+    )
+
+    Feature(
+        run=load("tests.multiple_databases", "module"),
     )
 
 

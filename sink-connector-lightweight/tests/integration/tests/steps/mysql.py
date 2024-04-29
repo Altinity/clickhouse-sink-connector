@@ -92,7 +92,8 @@ def create_mysql_database(self, node=None, database_name=None):
         with Given(f"I create MySQL database {database_name}"):
             node.query(f"DROP DATABASE IF EXISTS {database_name};")
             node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
-    except:
+        yield
+    finally:
         with Finally(f"I delete MySQL database {database_name}"):
             node.query(f"DROP DATABASE IF EXISTS {database_name};")
 
@@ -133,6 +134,7 @@ def create_mysql_to_clickhouse_replicated_table(
     name,
     mysql_columns,
     clickhouse_table_engine,
+    database_name=None,
     clickhouse_columns=None,
     mysql_node=None,
     clickhouse_node=None,
@@ -144,6 +146,9 @@ def create_mysql_to_clickhouse_replicated_table(
     partition_by_mysql=False,
 ):
     """Create MySQL to ClickHouse replicated table."""
+    if database_name is None:
+        database_name = "test"
+
     if mysql_node is None:
         mysql_node = self.context.cluster.node("mysql-master")
 
@@ -205,9 +210,7 @@ def create_mysql_to_clickhouse_replicated_table(
             )
 
         with Given(f"I create MySQL table", description=name):
-            query = (
-                f"CREATE TABLE IF NOT EXISTS {name} (id INT NOT NULL,{mysql_columns}"
-            )
+            query = f"CREATE TABLE IF NOT EXISTS {database_name}.{name} (id INT NOT NULL,{mysql_columns}"
 
             if primary_key is not None:
                 query += f", PRIMARY KEY ({primary_key}))"
@@ -231,7 +234,7 @@ def create_mysql_to_clickhouse_replicated_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP TABLE IF EXISTS {database_name}.{name} ON CLUSTER sharded_replicated_cluster;"
             )
             time.sleep(5)
 
@@ -337,16 +340,32 @@ def create_tables(self, table_name, clickhouse_table_engine="ReplacingMergeTree"
     return tables_list
 
 
+@TestStep(When)
+def insert(self, table_name, values, node=None, database_name=None):
+    """Insert data into MySQL table."""
+    if database_name is None:
+        database_name = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    with When("I insert data into MySQL table"):
+        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES {values};")
+
+
 @TestStep(Given)
-def insert(
+def insert_precondition_rows(
     self,
     first_insert_id,
     last_insert_id,
     table_name,
-    insert_values="({x},2,'a','b')",
+    insert_values=None,
     node=None,
 ):
     """Insert some controlled interval of ID's in MySQL table."""
+    if insert_values is None:
+        insert_values = "({x},2,'a','b')"
+
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -501,7 +520,7 @@ def concurrent_queries(
     """Insert, update, delete for concurrent queries."""
 
     with Given("I insert block of precondition rows"):
-        insert(
+        insert_precondition_rows(
             table_name=table_name,
             first_insert_id=first_insert_number,
             last_insert_id=last_insert_number,
@@ -510,7 +529,7 @@ def concurrent_queries(
     with When("I start concurrently insert, update and delete queries in MySQL table"):
         By(
             "inserting data in MySQL table",
-            test=insert,
+            test=insert_precondition_rows,
             parallel=True,
         )(
             first_insert_id=first_insert_id,

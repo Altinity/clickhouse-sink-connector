@@ -34,7 +34,7 @@ def databases_tables(
     ):
         clickhouse_node = self.context.cluster.node("clickhouse")
 
-        create_database(name="test2")
+        create_clickhouse_database(name="test2")
 
         clickhouse_node.query(
             f"CREATE TABLE IF NOT EXISTS test2.{table_name} "
