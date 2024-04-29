@@ -4440,9 +4440,22 @@ version: 1.0
 
 ```yaml
 Multiple Databases:
-  
-
-
+  Source:
+      structure:
+          - One database on source and one database on destination
+          - Multiple databases on source and multiple database on destination
+          - Multiple databases on source and one database on destination
+          - One database on source and multiple databases on destination
+      actions:
+          - Insert data on each database sequentially
+          - Insert data on all databases simultaneously
+          - Remove database 
+  Destination:
+        Engines: [ReplicatedReplacingMergeTree, ReplacingMergeTree]
+        actions:
+          - Remove database
+          - Remove database and create it again
+          - One of the databases is out if sync with source database 
 ```
 
 ### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
