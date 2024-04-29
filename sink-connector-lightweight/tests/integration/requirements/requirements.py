@@ -2020,6 +2020,27 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     description=(
         "[Altinity Sink Connector] SHALL support expose data transfer representation to [Prometheus] service.\n"
         "\n"
+    ),
+    link=None,
+    level=2,
+    num="32.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].\n"
+        "\n"
+        "The implementation works as follows,\n"
+        "```\n"
+        "MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)\n"
+        "```\n"
+        "\n"
         "[SRS]: #srs\n"
         "[MySQL]: #mysql\n"
         "[Prometheus]: https://prometheus.io/\n"
@@ -2030,7 +2051,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus = Requirement(
     ),
     link=None,
     level=2,
-    num="32.1",
+    num="33.2",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -2714,6 +2735,13 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=2,
             num="32.1",
         ),
+        Heading(name="Multiple Databases", level=1, num="33"),
+        Heading(name="Test Schema - Multiple Databases ", level=2, num="33.1"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases",
+            level=2,
+            num="33.2",
+        ),
     ),
     requirements=(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication,
@@ -2823,6 +2851,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_OutOfSpace,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_Corrupted,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases,
     ),
     content="""
 # SRS030 MySQL to ClickHouse Replication
@@ -3048,6 +3077,9 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             * 31.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
 * 32 [Prometheus](#prometheus)
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 33 [Multiple Databases](#multiple-databases)
+    * 33.1 [Test Schema - Multiple Databases ](#test-schema---multiple-databases-)
+    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
 
 ## Introduction
 
@@ -4401,6 +4433,27 @@ The error SHALL be shown so that the data on the source and destination tables i
 version: 1.0
 
 [Altinity Sink Connector] SHALL support expose data transfer representation to [Prometheus] service.
+
+## Multiple Databases
+
+### Test Schema - Multiple Databases 
+
+```yaml
+Multiple Databases:
+  
+
+
+```
+
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
+
+The implementation works as follows,
+```
+MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)
+```
 
 [SRS]: #srs
 [MySQL]: #mysql

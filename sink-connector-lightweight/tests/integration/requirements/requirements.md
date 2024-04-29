@@ -221,6 +221,9 @@
             * 31.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
 * 32 [Prometheus](#prometheus)
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 33 [Multiple Databases](#multiple-databases)
+    * 33.1 [Test Schema - Multiple Databases ](#test-schema---multiple-databases-)
+    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
 
 ## Introduction
 
@@ -1574,6 +1577,27 @@ The error SHALL be shown so that the data on the source and destination tables i
 version: 1.0
 
 [Altinity Sink Connector] SHALL support expose data transfer representation to [Prometheus] service.
+
+## Multiple Databases
+
+### Test Schema - Multiple Databases 
+
+```yaml
+Multiple Databases:
+  
+
+
+```
+
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
+
+The implementation works as follows,
+```
+MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)
+```
 
 [SRS]: #srs
 [MySQL]: #mysql
