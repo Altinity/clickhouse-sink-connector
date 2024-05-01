@@ -5,4 +5,4 @@ scrape_configs:
   - job_name: 'sink'
     static_configs:
       - targets:
-          - debezium-embedded:8083
+          - clickhouse-sink-connector-lt:8083
