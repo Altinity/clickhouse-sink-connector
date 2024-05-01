@@ -42,7 +42,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
-        <debezium.version>2.6.0</debezium.version>
+        <debezium.version>2.6.0.Final</debezium.version>
     </properties>
 
 
