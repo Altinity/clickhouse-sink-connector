@@ -518,7 +518,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 for (ParseTree dropColumnTree : ((MySqlParser.AlterByDropColumnContext) (tree)).children) {
                     if (dropColumnTree instanceof MySqlParser.UidContext) {
                         for(ParseTree dropColumnChild: ((MySqlParser.UidContext) dropColumnTree).children) {
-                            if(dropColumnChild instanceof MySqlParser.SimpleIdContext) {
+                            if(dropColumnChild instanceof MySqlParser.SimpleIdContext || dropColumnChild instanceof TerminalNodeImpl) {
                                 this.query.append(String.format(Constants.DROP_COLUMN, dropColumnChild.getText()));
                             }
                         }
