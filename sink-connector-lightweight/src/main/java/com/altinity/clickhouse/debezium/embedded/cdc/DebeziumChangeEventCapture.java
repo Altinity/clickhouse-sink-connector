@@ -254,7 +254,7 @@ public class DebeziumChangeEventCapture {
             }
 
             String value = String.valueOf(record.value());
-            log.debug(String.format("Record %s", value));
+            //log.debug(String.format("Record %s", value));
         } catch (Exception e) {
             log.error("Exception processing record", e);
         }

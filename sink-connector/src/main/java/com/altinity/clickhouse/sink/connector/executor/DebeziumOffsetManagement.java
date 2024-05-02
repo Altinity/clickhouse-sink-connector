@@ -136,9 +136,9 @@ public class DebeziumOffsetManagement {
             if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
                 record.getCommitter().markProcessed(record.getSourceRecord());
-                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
+//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
+//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
                     record.getCommitter().markBatchFinished();
