@@ -67,24 +67,33 @@ public class DebeziumChangeEventCaptureTest {
         ClickHouseStruct ch1 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch1.setTs_ms(currentTimestamp);
+
         ClickHouseStruct ch2 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp + 100, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch2.setTs_ms(currentTimestamp);
+
         ClickHouseStruct ch3 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp + 200, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch3.setTs_ms(currentTimestamp);
+
         ClickHouseStruct ch4 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp + 300, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch4.setTs_ms(currentTimestamp);
 
         ClickHouseStruct ch5 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp + 500, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch5.setTs_ms(currentTimestamp);
 
         Thread.sleep(1000);
         ClickHouseStruct ch6 = new ClickHouseStruct(10, "topic_1", getKafkaStruct(), 2,
                 currentTimestamp + 1000, null,
                 getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch6.setTs_ms(currentTimestamp);
 
         // Make a list of ch1, ch2, ch3 and ch4
         List<ClickHouseStruct> clickHouseStructs = Arrays.asList(ch1, ch2, ch3, ch4, ch5);
@@ -102,11 +111,11 @@ public class DebeziumChangeEventCaptureTest {
 
 
         // Validate ch5 and ch6
-        assertTrue(clickHouseStructs2.get(0).getSequenceNumber() != clickHouseStructs2.get(1).getSequenceNumber());
+        assertTrue(clickHouseStructs2.get(0).getSequenceNumber() < clickHouseStructs2.get(1).getSequenceNumber());
 
-        // Reset works.
-      //  assertTrue(clickHouseStructs2.get(0).getSequenceNumber() == 1000001);
-        // DebeziumChangeEventCapture.addVersion();
+        assertTrue(clickHouseStructs.get(3).getSequenceNumber() < clickHouseStructs2.get(0).getSequenceNumber());
+
+
     }
 
     @Test

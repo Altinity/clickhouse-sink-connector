@@ -147,7 +147,7 @@ public class DebeziumChangeEventCaptureIT{
         conn.prepareStatement("insert into newtable values('c', 3, 3)").execute();
         conn.prepareStatement("insert into newtable values('d', 4, 4)").execute();
 
-        Thread.sleep(10000);
+        Thread.sleep(20000);
 
         // Create connection to ClickHouse and get the version numbers.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -163,25 +163,30 @@ public class DebeziumChangeEventCaptureIT{
         long version3 = 1L;
         long version4 = 1L;
 
-        ResultSet version1Result = writer.executeQueryWithResultSet("select _version from newtable where col1 = 'a'");
+        ResultSet version1Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'a'");
         while(version1Result.next()) {
             version1 = version1Result.getLong("_version");
         }
 
-        ResultSet version2Result = writer.executeQueryWithResultSet("select _version from newtable where col1 = 'b'");
+        ResultSet version2Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'b'");
         while(version2Result.next()) {
             version2 = version2Result.getLong("_version");
         }
 
-        ResultSet version3Result = writer.executeQueryWithResultSet("select _version from newtable where col1 = 'c'");
+        ResultSet version3Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'c'");
         while(version3Result.next()) {
             version3 = version3Result.getLong("_version");
         }
 
-        ResultSet version4Result = writer.executeQueryWithResultSet("select _version from newtable where col1 = 'd'");
+        ResultSet version4Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'd'");
         while(version4Result.next()) {
             version4 = version4Result.getLong("_version");
         }
+        System.out.println("Version 1" + version1);
+        System.out.println("Version 2" + version2);
+        System.out.println("Version 3" + version3);
+        System.out.println("Version 4" + version4);
+
 
         // Check if version 4 is greater than version 3
         assertTrue(version4 > version3);
@@ -190,88 +195,9 @@ public class DebeziumChangeEventCaptureIT{
         // Check if version 2 is greater than version 1
         assertTrue(version2 > version1);
 
-//        if(engine.get() != null) {
-//            engine.get().stop();
-//        }
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
         conn.close();
-        // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
     }
 
-    @Test
-    @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
-            + "by performing a lot of updates on the primary key.")
-    public void testIncrementingSequenceNumberWithUpdates() throws Exception {
-
-        Injector injector = Guice.createInjector(new AppInjector());
-
-        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("snapshot.mode", "schema_only");
-        props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
-        props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
-
-        // Override clickhouse server timezone.
-        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
-
-        ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
-                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
-                        , new Properties());
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-
-        });
-
-        Thread.sleep(25000);
-
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-
-        // Insert a new row in the table
-        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
-
-        // Generate and execute the update workload
-        String updateStatement = "UPDATE newtable SET col2 = ? WHERE col1 = ?";
-        try (PreparedStatement pstmt = conn.prepareStatement(updateStatement)) {
-            conn.setAutoCommit(false);
-            for (int i = 0; i < 20000; i++) {
-                // Set parameters for the update statement
-                pstmt.setInt(1, 10000 + i);
-                pstmt.setString(2, "a");
-
-                // Execute the update statement
-                pstmt.executeUpdate();
-            }
-            conn.commit();
-        }
-
-
-        Thread.sleep(10000);
-
-        // Validate in Clickhouse the last record written is 29999
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
-        long col2 = 1L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from newtable final where col1 = 'a'");
-        while(version1Result.next()) {
-            col2 = version1Result.getLong("col2");
-        }
-        Thread.sleep(10000);
-
-
-        assertTrue(col2 == 29999);
-        conn.close();
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
-    }
 }

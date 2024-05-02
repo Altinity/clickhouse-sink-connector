@@ -23,6 +23,7 @@ public class DebeziumEmbeddedRestApi {
 
     private static final Logger log = LogManager.getLogger(DebeziumEmbeddedRestApi.class);
 
+    static Javalin app;
     public static void startRestApi(Properties props, Injector injector,
                              DebeziumChangeEventCapture debeziumChangeEventCapture,
                              Properties userProperties) {
@@ -31,7 +32,7 @@ public class DebeziumEmbeddedRestApi {
             cliPort = "7000";
         }
 
-        Javalin app = Javalin.create().start(Integer.parseInt(cliPort));
+        app = Javalin.create().start(Integer.parseInt(cliPort));
         app.get("/", ctx -> {
             ctx.result("Hello World");
         });
@@ -108,5 +109,10 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication....");
         });
 
+    }
+    // Stop the javalin server
+    public static void stop() {
+        if(app != null)
+            app.stop();
     }
 }

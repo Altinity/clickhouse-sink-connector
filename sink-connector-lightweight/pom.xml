@@ -539,6 +539,7 @@
                     <threadCount>10</threadCount> -->
                     <properties>
                         <property>
+                            <surefire.test.runOrder>filesystem</surefire.test.runOrder>
                             <name>listener</name>
                             <value>com.altinity.clickhouse.debezium.embedded.FailFastListener</value>
                         </property>
@@ -546,7 +547,9 @@
                     <useUnlimitedThreads>true</useUnlimitedThreads>
                     <perCoreThreadCount>true</perCoreThreadCount>
                     <useSystemClassLoader>true</useSystemClassLoader>
-                    </configuration>
+                    <runOrder>${surefire.test.runOrder}</runOrder>
+
+                </configuration>
             </plugin>
 
             <plugin>

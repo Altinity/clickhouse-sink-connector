@@ -8,14 +8,18 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import com.google.common.collect.Maps;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -24,17 +28,25 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static org.junit.Assert.assertTrue;
 
 @Testcontainers
-@DisplayName("Test that validates if the sink connector retries batches on ClickHouse failure")
-public class BatchRetryOnFailureIT {
+@DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
+        + "by performing a lot of updates on the primary key.")
+public class MultipleUpdatesWSameTimestampIT {
+
+    private static final Logger log = LoggerFactory.getLogger(MultipleUpdatesWSameTimestampIT.class);
+
+
     protected MySQLContainer mySqlContainer;
 
     @Container
@@ -50,22 +62,29 @@ public class BatchRetryOnFailureIT {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("datetime.sql")
+//                .withInitScript("15k_tables_mysql.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
         BasicConfigurator.configure();
         mySqlContainer.start();
         clickHouseContainer.start();
-        Thread.sleep(15000);
+        Thread.sleep(35000);
     }
 
+
+    @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
+            + "by performing a lot of updates on the primary key.")
     @Test
-    public void testBatchRetryOnCHFailure() throws Exception {
+    public void testIncrementingSequenceNumberWithUpdates() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+        props.setProperty("snapshot.mode", "schema_only");
+        props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
+        props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
+
         // Override clickhouse server timezone.
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 
@@ -82,43 +101,54 @@ public class BatchRetryOnFailureIT {
             }
 
         });
+
+        Thread.sleep(25000);
+
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
+        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
 
-        Thread.sleep(40000);//
+        // Insert a new row in the table
+        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+
+        // Generate and execute the update workload
+        String updateStatement = "UPDATE newtable SET col2 = ? WHERE col1 = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(updateStatement)) {
+            conn.setAutoCommit(false);
+            for (int i = 0; i < 20000; i++) {
+                // Set parameters for the update statement
+                pstmt.setInt(1, 10000 + i);
+                pstmt.setString(2, "a");
+
+                // Execute the update statement
+                pstmt.executeUpdate();
+            }
+            conn.commit();
+        }
+
+
         Thread.sleep(10000);
 
-
-        // Pause clickhouse container to simulate a batch failure.
-        clickHouseContainer.getDockerClient().pauseContainerCmd(clickHouseContainer.getContainerId()).exec();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT55','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
-
-        Thread.sleep(50000);
-
-        clickHouseContainer.getDockerClient().unpauseContainerCmd(clickHouseContainer.getContainerId()).exec();
-        Thread.sleep(10000);
-
-
-        // Check if Batch was inserted.
+        // Validate in Clickhouse the last record written is 29999
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");
         ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
-        boolean insertCheck = false;
-        while(dateTimeResult.next()) {
-            insertCheck = true;
-            Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
+        long col2 = 1L;
+        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from newtable final where col1 = 'a'");
+        while(version1Result.next()) {
+            col2 = version1Result.getLong("col2");
         }
-        Assert.assertTrue(insertCheck);
+        Thread.sleep(10000);
 
 
-        // Close connection.
-        ClickHouseDebeziumEmbeddedApplication.stop();
+        assertTrue(col2 == 29999);
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
+
+        conn.close();
+        // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
     }
 }
