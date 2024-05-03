@@ -340,7 +340,7 @@ public class DebeziumChangeEventCapture {
 
 
                     // Also create view.
-                    String view = " CREATE VIEW %s.show_replica_status\n" +
+                    String view = " CREATE VIEW IF NOT EXISTS %s.show_replica_status\n" +
                             "                                        AS\n" +
                             "                                         SELECT\n" +
                             "                                             now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,\n" +
