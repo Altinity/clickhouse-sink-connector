@@ -70,11 +70,11 @@ def generate_sample_mysql_value(data_type):
         or data_type.startswith("VARCHAR")
         or data_type == "TEXT NOT NULL"
     ):
-        return "SampleText"
+        return "'SampleText'"
     elif data_type.endswith("BLOB NOT NULL"):
-        return "SampleBinaryData"
+        return "'SampleBinaryData'"
     elif data_type.startswith("BINARY") or data_type.startswith("VARBINARY"):
-        return "BinaryData"
+        return "'BinaryData'"
     else:
         return "UnknownType"
 

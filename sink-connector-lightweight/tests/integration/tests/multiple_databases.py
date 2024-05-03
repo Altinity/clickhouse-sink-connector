@@ -42,17 +42,17 @@ def set_list_of_databases_to_replicate(self, databases=None, config_name=None):
 @TestStep(Given)
 def create_sample_values(self):
     """Create sample values to insert into the table."""
-    return f'{generate_sample_mysql_value("INT")} ,{generate_sample_mysql_value("VARCHAR")}, {generate_sample_mysql_value("INT")}'
+    return f'{generate_sample_mysql_value("INT")},{generate_sample_mysql_value("VARCHAR")},{generate_sample_mysql_value("INT")}'
 
 
 @TestOutline
 def create_table_and_insert_values(
-    self, table_name, database_name=None, message=None
+    self, table_name, database_name=None, exists=None, should_replicate=True
 ):
     """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
 
-    if message is None:
-        message = "1"
+    if exists is None:
+        exists = "1"
 
     if database_name is None:
         database_name = "test"
@@ -70,19 +70,24 @@ def create_table_and_insert_values(
     with And("inserting data into the table"):
         insert(table_name=table_name, database_name=database_name, values=table_values)
 
+    if not should_replicate:
+        table_values = ""
+
     with And("validating that the table was replicated in ClickHouse"):
         for retry in retries(timeout=40):
             with retry:
                 check_if_table_was_created(
-                    table_name=table_name, database_name=database_name, message=message
+                    table_name=table_name, database_name=database_name, message=exists
                 )
-        for retry in retries(timeout=10, delay=1):
-            with retry:
-                validate_data_in_clickhouse_table(
-                    table_name=table_name,
-                    expected_output=table_values,
-                    database_name=database_name,
-                )
+        if should_replicate:
+            for retry in retries(timeout=10, delay=1):
+                with retry:
+                    validate_data_in_clickhouse_table(
+                        table_name=table_name,
+                        expected_output=table_values.replace("'", ""),
+                        database_name=database_name,
+                        statement="id, col1, col2",
+                    )
 
 
 @TestStep(Given)
@@ -155,6 +160,7 @@ def insert_on_database4(self, table_name):
         table_name=table_name, database_name=self.context.database_4
     )
 
+
 @TestStep(Given)
 def insert_on_two_databases(self):
     """Check that inserts are replicated when done on two databases."""
@@ -166,32 +172,79 @@ def insert_on_two_databases(self):
 
 
 @TestStep(Given)
-def insert_on_all_databases(self, table1, table2, table3, table4):
-    """Create tables on all databases."""
+def insert_on_all_databases(self):
+    """Create and insert values on all databases."""
+    table_name1 = "db1_" + getuid()
+    table_name2 = "db2_" + getuid()
+    table_name3 = "db3_" + getuid()
+    table_name4 = "db4_" + getuid()
+
     create_table_and_insert_values(
-        table_name=table1, database_name=self.context.database_1
+        table_name=table_name1, database_name=self.context.database_1
     )
     create_table_and_insert_values(
-        table_name=table2, database_name=self.context.database_2
+        table_name=table_name2, database_name=self.context.database_2
     )
     create_table_and_insert_values(
-        table_name=table3, database_name=self.context.database_3
+        table_name=table_name3, database_name=self.context.database_3
     )
     create_table_and_insert_values(
-        table_name=table4, database_name=self.context.database_4
+        table_name=table_name4, database_name=self.context.database_4
     )
+
+
+@TestStep(Given)
+def insert_on_all_databases_except_database_4(self):
+    """Create and insert values on all databases except database_4."""
+    table_name1 = "db1_" + getuid()
+    table_name2 = "db2_" + getuid()
+    table_name3 = "db3_" + getuid()
+    table_name4 = "db4_" + getuid()
+
+    with By(
+        "creating three tables on three different databases and inserting values in them"
+    ):
+        create_table_and_insert_values(
+            table_name=table_name1, database_name=self.context.database_1
+        )
+        create_table_and_insert_values(
+            table_name=table_name2, database_name=self.context.database_2
+        )
+        create_table_and_insert_values(
+            table_name=table_name3, database_name=self.context.database_3
+        )
+    with And(
+        "creating table on database_4 and inserting values into it and checking that the values are not replicated to ClickHouse"
+    ):
+        create_table_and_insert_values(
+            table_name=table_name4,
+            database_name=self.context.database_4,
+            exists=0,
+            should_replicate=False,
+        )
+
+
+@TestStep(Given)
+def insert_with_specific_database_config(self, databases=None):
+    """Check that the data is correctly replicated when inserting with database.include.list parameter specified in
+    ClickHouse Sink Connector configuration."""
+    if databases is None:
+        databases = f"{self.context.database_1},{self.context.database_2},{self.context.database_3}"
+    with By(
+        "setting specifying database.include.list configuration to include specific databases"
+    ):
+        set_list_of_databases_to_replicate(databases=databases)
+
+    with And("creating and inserting to all databases in the list"):
+        insert_on_all_databases_except_database_4()
 
 
 @TestCheck
 def check_replication_on_multiple_databases(self, action):
     """Check that the tables are correctly replicated on different number of databases."""
-    table_name_1 = "tb1_" + getuid()
-    table_name_2 = "tb2_" + getuid()
-    table_name_3 = "tb3_" + getuid()
-    table_name_4 = "tb4_" + getuid()
 
     with Given(f"I perform {action.__name__}"):
-        pass
+        action()
 
 
 @TestSketch
@@ -199,11 +252,9 @@ def inserts(self):
     """Check that the inserts are correctly replicated on different number of databases."""
 
     actions = {
-        insert_on_database1,
-        insert_on_database2,
-        insert_on_database3,
-        insert_on_database4,
-        insert_on_all_databases
+        insert_on_two_databases,
+        insert_on_all_databases,
+        insert_with_specific_database_config,
     }
 
     check_replication_on_multiple_databases(
