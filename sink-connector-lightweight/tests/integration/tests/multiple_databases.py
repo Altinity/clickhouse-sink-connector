@@ -1,41 +1,11 @@
-from faker import Faker
-from random import randint
-
 from integration.helpers.common import change_sink_configuration
 from integration.tests.steps.clickhouse import (
-    check_if_table_was_created, create_clickhouse_database
+    check_if_table_was_created,
+    create_clickhouse_database,
+    validate_data_in_clickhouse_table,
 )
 from integration.tests.steps.mysql import *
 from integration.tests.steps.service_settings import *
-
-
-@TestStep(When)
-def create_table_with_random_data(self, table_name, database=None, node=None):
-    """Create a MySQL table with random data."""
-    if database is None:
-        database = "test"
-
-    if node is None:
-        node = self.context.cluster.node("mysql-master")
-
-    # Create table
-    node.query(
-        f"CREATE TABLE {database}.\`{table_name}\` (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), address VARCHAR(255), age INT);"
-    )
-
-    # Generate random data
-    fake = Faker()
-    for _ in range(10):
-        name = fake.name()
-        address = fake.address().replace("\n", ", ")
-        age = randint(20, 60)
-
-        # Insert data into table
-        node.query(
-            f"INSERT INTO {database}.{table_name} (name, address, age) VALUES ('{name}', '{address}', {age});"
-        )
-
-        return f"{name}, {address}, {age}"
 
 
 @TestStep(Given)
@@ -51,15 +21,8 @@ def create_destination_database(self, database_name):
 
 
 @TestStep(Given)
-def create_source_and_destination(self, database_name):
-    """Create a MySQL and ClickHouse databases."""
-    create_source_database(database_name=database_name)
-    create_destination_database(database_name=database_name)
-
-
-@TestStep(Given)
 def configuration_with_specific_databases(self, databases=None, config_name=None):
-    """Specify the databases to replicate in the ClickHouse Sink Connector configuration."""
+    """Specify the list of databases to replicate in the ClickHouse Sink Connector configuration."""
     if databases is None:
         databases = "test"
 
@@ -76,9 +39,17 @@ def configuration_with_specific_databases(self, databases=None, config_name=None
     )
 
 
-@TestStep(When)
-def create_sample_table(self, table_name, database_name=None, message=None):
-    """Create a sample table in MySQL."""
+@TestStep(Given)
+def create_sample_values(self):
+    """Create sample values to insert into the table."""
+    return f'{generate_sample_mysql_value("INT")} ,{generate_sample_mysql_value("VARCHAR")}, {generate_sample_mysql_value("INT")}'
+
+
+@TestOutline
+def create_and_validate_sample_table(
+    self, table_name, database_name=None, message=None
+):
+    """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
 
     if message is None:
         message = "1"
@@ -86,7 +57,7 @@ def create_sample_table(self, table_name, database_name=None, message=None):
     if database_name is None:
         database_name = "test"
 
-    table_values = "(1, 'test', 1)"
+    table_values = create_sample_values()
 
     with By("creating a sample table in MySQL"):
         create_mysql_to_clickhouse_replicated_table(
@@ -105,16 +76,42 @@ def create_sample_table(self, table_name, database_name=None, message=None):
                 check_if_table_was_created(
                     table_name=table_name, database_name=database_name, message=message
                 )
+        for retry in retries(timeout=10, delay=1):
+            with retry:
+                validate_data_in_clickhouse_table(
+                    table_name=table_name,
+                    expected_output=table_values,
+                    database_name=database_name,
+                )
 
 
 @TestStep(Given)
-def create_source_and_destination_databases(self, database_name):
+def create_source_and_destination_databases(self, databases=None):
     """Create MySQL and ClickHouse databases."""
-    with By(f"creating a ClickHouse database {database_name}"):
-        create_clickhouse_database(name=database_name)
+    if databases is None:
+        databases = ["test"]
 
-    with And(f"creating a a MySQL database {database_name}"):
-        create_mysql_database(database_name=database_name)
+    for database in databases:
+        with By(f"creating a ClickHouse database {database}"):
+            create_clickhouse_database(name=databases)
+
+        with And(f"creating a a MySQL database {database}"):
+            create_mysql_database(database_name=database)
+
+
+@TestStep(Given)
+def create_databases(self, databases=None):
+    """Create MySQL and ClickHouse databases."""
+    if databases is None:
+        databases = []
+
+    with Pool(4) as pool:
+        for database_name in databases:
+            Scenario(
+                test=create_source_and_destination_databases,
+                parallel=True,
+                executor=pool,
+            )(database_name=database_name)
 
 
 @TestCheck
@@ -127,44 +124,130 @@ def check_if_tables_were_replicated(self, table_name, database_name=None):
         table_name=table_name, database_name=database_name, message=1
     )
 
+
+@TestStep(Given)
+def check_replication_database1(self, table_name):
+    """Create a table on the database_1."""
+    create_and_validate_sample_table(
+        table_name=table_name, database_name=self.context.database_1
+    )
+
+
+@TestStep(Given)
+def check_replication_database2(self, table_name):
+    """Create a table on the database_2."""
+    create_and_validate_sample_table(
+        table_name=table_name, database_name=self.context.database_2
+    )
+
+
+@TestStep(Given)
+def check_replication_database3(self, table_name):
+    """Create a table on the database_3."""
+    create_and_validate_sample_table(
+        table_name=table_name, database_name=self.context.database_3
+    )
+
+
+@TestStep(Given)
+def check_replication_database4(self, table_name):
+    """Create a table on the database_4."""
+    create_and_validate_sample_table(
+        table_name=table_name, database_name=self.context.database_4
+    )
+
+
+@TestStep
+def check_replication_all_databases(self, table1, table2, table3, table4):
+    """Create tables on all databases."""
+    create_and_validate_sample_table(
+        table_name=table1, database_name=self.context.database_1
+    )
+    create_and_validate_sample_table(
+        table_name=table2, database_name=self.context.database_2
+    )
+    create_and_validate_sample_table(
+        table_name=table3, database_name=self.context.database_3
+    )
+    create_and_validate_sample_table(
+        table_name=table4, database_name=self.context.database_4
+    )
+
+
+@TestCheck
+def check_replication_on_multiple_databases(self, create_table_1, create_table_2):
+    """Check that the tables are correctly replicated on different number of databases."""
+    table_name_1 = "tb1_" + getuid()
+    table_name_2 = "tb2_" + getuid()
+
+    with Given(
+        f"I create tables to replicate on databases",
+        description=f"{create_table_1.__name__} and {create_table_2.__name__}",
+    ):
+        if create_table_1.__name__ != create_table_2.__name__:
+            create_table_1(table_name=table_name_1)
+            create_table_2(table_name=table_name_2)
+        else:
+            create_table_1(table_name=table_name_1)
+
+
+@TestSketch
+def multiple_databases(self):
+    actions = {
+        check_replication_database1,
+        check_replication_database2,
+        check_replication_database3,
+        check_replication_database4,
+        check_replication_all_databases,
+    }
+
+    check_replication_on_multiple_databases(
+        create_table_1=either(*actions, i="table_1"),
+        create_table_2=either(*actions, i="table_2"),
+    )
+
+
 @TestModule
 @Name("multiple databases")
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDownstreamServers("1.0")
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases("1.0")
 )
 def module(
     self,
     clickhouse_node="clickhouse",
     mysql_node="mysql-master",
+    database_1="database_1",
+    database_2="database_2",
+    database_3="database_3",
+    database_4="database_4",
 ):
     """
     Check that auto table replication works when there are multiple databases in MySQL.
+
+    Combinations:
+        - Create tables on different databases.
+        - Create tables on all databases.
     """
-
-    self.context.database_1 = "database_1"
-    self.context.database_2 = "database_2"
-    self.context.database_3 = "database_3"
-    self.context.database_4 = "database_4"
-
-    with Pool(4) as pool:
-        for database_name in [
-            self.context.database_1,
-            self.context.database_2,
-            self.context.database_3,
-            self.context.database_4,
-        ]:
-            Scenario(
-                test=create_source_and_destination_databases,
-                parallel=True,
-                executor=pool,
-            )(database_name=database_name)
-
-    self.context.config_file = os.path.join("env", "auto", "configs")
 
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 
-    with Given("I create a new ClickHouse Sink Connector configuration with  mode"):
+    self.context.database_1 = database_1
+    self.context.database_2 = database_2
+    self.context.database_3 = database_3
+    self.context.database_4 = database_4
+
+    with Given(
+        "I create the source and destination databases from a list",
+        descriptopm=f"databases: {database_1, database_2, database_3, database_4}",
+    ):
+        create_databases(databases=[database_1, database_2, database_3, database_4])
+
+    self.context.config_file = os.path.join("env", "auto", "configs")
+
+    with And(
+        "I create a new ClickHouse Sink Connector configuration with configuration to monitor all of the databases"
+    ):
         remove_sink_configuration(
             key="database.include.list",
             config_file=os.path.join(

@@ -350,7 +350,7 @@ def insert(self, table_name, values, node=None, database_name=None):
         node = self.context.cluster.node("mysql-master")
 
     with When("I insert data into MySQL table"):
-        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES {values};")
+        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
 
 
 @TestStep(Given)

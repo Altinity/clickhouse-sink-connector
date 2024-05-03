@@ -4446,6 +4446,11 @@ Multiple Databases:
           - Multiple databases on source and multiple database on destination
           - Multiple databases on source and one database on destination
           - One database on source and multiple databases on destination
+      tables:
+        - two tables with the same name and different structure on different databases
+        - two tables with the sam name and the same structure on the different databases
+        - two tables with the different name and the same structure on the different databases
+        - two tables with the different name and the different structure on the different databases
       actions:
           - Insert data on each database sequentially
           - Insert data on all databases simultaneously
