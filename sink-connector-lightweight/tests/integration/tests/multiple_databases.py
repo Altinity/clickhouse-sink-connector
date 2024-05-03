@@ -21,7 +21,7 @@ def create_destination_database(self, database_name):
 
 
 @TestStep(Given)
-def configuration_with_specific_databases(self, databases=None, config_name=None):
+def set_list_of_databases_to_replicate(self, databases=None, config_name=None):
     """Specify the list of databases to replicate in the ClickHouse Sink Connector configuration."""
     if databases is None:
         databases = "test"
@@ -46,7 +46,7 @@ def create_sample_values(self):
 
 
 @TestOutline
-def create_and_validate_sample_table(
+def create_table_and_insert_values(
     self, table_name, database_name=None, message=None
 ):
     """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
@@ -86,17 +86,16 @@ def create_and_validate_sample_table(
 
 
 @TestStep(Given)
-def create_source_and_destination_databases(self, databases=None):
+def create_source_and_destination_databases(self, database_name=None):
     """Create MySQL and ClickHouse databases."""
-    if databases is None:
-        databases = ["test"]
+    if database_name is None:
+        databases = "test"
 
-    for database in databases:
-        with By(f"creating a ClickHouse database {database}"):
-            create_clickhouse_database(name=databases)
+    with By(f"creating a ClickHouse database {database_name}"):
+        create_clickhouse_database(name=database_name)
 
-        with And(f"creating a a MySQL database {database}"):
-            create_mysql_database(database_name=database)
+    with And(f"creating a a MySQL database {database_name}"):
+        create_mysql_database(database_name=database_name)
 
 
 @TestStep(Given)
@@ -126,84 +125,89 @@ def check_if_tables_were_replicated(self, table_name, database_name=None):
 
 
 @TestStep(Given)
-def check_replication_database1(self, table_name):
+def insert_on_database1(self, table_name):
     """Create a table on the database_1."""
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table_name, database_name=self.context.database_1
     )
 
 
 @TestStep(Given)
-def check_replication_database2(self, table_name):
+def insert_on_database2(self, table_name):
     """Create a table on the database_2."""
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table_name, database_name=self.context.database_2
     )
 
 
 @TestStep(Given)
-def check_replication_database3(self, table_name):
+def insert_on_database3(self, table_name):
     """Create a table on the database_3."""
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table_name, database_name=self.context.database_3
     )
 
 
 @TestStep(Given)
-def check_replication_database4(self, table_name):
+def insert_on_database4(self, table_name):
     """Create a table on the database_4."""
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table_name, database_name=self.context.database_4
     )
 
+@TestStep(Given)
+def insert_on_two_databases(self):
+    """Check that inserts are replicated when done on two databases."""
+    table_name1 = "db1_" + getuid()
+    table_name2 = "db2_" + getuid()
+    with By("crating two table on two different databases"):
+        insert_on_database1(table_name=table_name1)
+        insert_on_database2(table_name=table_name2)
 
-@TestStep
-def check_replication_all_databases(self, table1, table2, table3, table4):
+
+@TestStep(Given)
+def insert_on_all_databases(self, table1, table2, table3, table4):
     """Create tables on all databases."""
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table1, database_name=self.context.database_1
     )
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table2, database_name=self.context.database_2
     )
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table3, database_name=self.context.database_3
     )
-    create_and_validate_sample_table(
+    create_table_and_insert_values(
         table_name=table4, database_name=self.context.database_4
     )
 
 
 @TestCheck
-def check_replication_on_multiple_databases(self, create_table_1, create_table_2):
+def check_replication_on_multiple_databases(self, action):
     """Check that the tables are correctly replicated on different number of databases."""
     table_name_1 = "tb1_" + getuid()
     table_name_2 = "tb2_" + getuid()
+    table_name_3 = "tb3_" + getuid()
+    table_name_4 = "tb4_" + getuid()
 
-    with Given(
-        f"I create tables to replicate on databases",
-        description=f"{create_table_1.__name__} and {create_table_2.__name__}",
-    ):
-        if create_table_1.__name__ != create_table_2.__name__:
-            create_table_1(table_name=table_name_1)
-            create_table_2(table_name=table_name_2)
-        else:
-            create_table_1(table_name=table_name_1)
+    with Given(f"I perform {action.__name__}"):
+        pass
 
 
 @TestSketch
-def multiple_databases(self):
+def inserts(self):
+    """Check that the inserts are correctly replicated on different number of databases."""
+
     actions = {
-        check_replication_database1,
-        check_replication_database2,
-        check_replication_database3,
-        check_replication_database4,
-        check_replication_all_databases,
+        insert_on_database1,
+        insert_on_database2,
+        insert_on_database3,
+        insert_on_database4,
+        insert_on_all_databases
     }
 
     check_replication_on_multiple_databases(
-        create_table_1=either(*actions, i="table_1"),
-        create_table_2=either(*actions, i="table_2"),
+        action=either(*actions),
     )
 
 
@@ -237,9 +241,11 @@ def module(
     self.context.database_3 = database_3
     self.context.database_4 = database_4
 
+    self.context.list_of_databases = [database_1, database_2, database_3, database_4]
+
     with Given(
         "I create the source and destination databases from a list",
-        descriptopm=f"databases: {database_1, database_2, database_3, database_4}",
+        description=f"databases: {database_1, database_2, database_3, database_4}",
     ):
         create_databases(databases=[database_1, database_2, database_3, database_4])
 
@@ -255,5 +261,4 @@ def module(
             ),
         )
 
-    for scenario in loads(current_module(), Scenario):
-        Scenario(run=scenario)
+    Scenario(run=inserts)
