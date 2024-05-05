@@ -619,6 +619,16 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testDropColumnWithoutColumnSyntax() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "alter table `leads`  drop `country`";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.`leads` drop column `country`"));
+    }
+
+    @Test
     public void renameMultipleTables() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
