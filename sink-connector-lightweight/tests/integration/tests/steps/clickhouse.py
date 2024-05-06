@@ -15,6 +15,39 @@ def drop_database(self, database_name=None, node=None):
         )
 
 
+@TestStep(Then)
+def check_column(
+    self, table_name, column_name, node=None, column_type=None, database=None
+):
+    """Check if column exists in ClickHouse table."""
+
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    if column_type is None:
+        select = "name"
+    else:
+        select = "name, type"
+
+    with By(f"checking if {column_name} exists in {table_name}"):
+        for retry in retries(timeout=25, delay=1):
+            with retry:
+                column = node.query(
+                    f"SELECT {select} FROM system.columns WHERE table = '{table_name}' AND name = '{column_name}' AND database = '{database}' FORMAT TabSeparated"
+                )
+
+                expected_output = (
+                    column_name
+                    if column_type is None
+                    else f"{column_name} {column_type}"
+                )
+
+                assert column.output.strip() == expected_output, error()
+
+
 @TestStep(Given)
 def create_clickhouse_database(self, name=None, node=None):
     """Create ClickHouse database."""
