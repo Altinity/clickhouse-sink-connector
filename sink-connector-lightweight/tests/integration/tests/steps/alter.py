@@ -89,12 +89,15 @@ def modify_column(
 
 
 @TestStep(When)
-def drop_column(self, table_name, column_name="new_col", node=None):
+def drop_column(self, table_name, column_name="new_col", node=None, database=None):
     """DROP COLUMN"""
+    if database is None:
+        database = "test"
+
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(f"ALTER TABLE {table_name} DROP COLUMN {column_name};")
+    node.query(f"ALTER TABLE {database}.\`{table_name}\` DROP COLUMN {column_name};")
 
 
 @TestStep(When)
