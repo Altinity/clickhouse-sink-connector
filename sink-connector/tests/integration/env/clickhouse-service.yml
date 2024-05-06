@@ -3,7 +3,7 @@ version: '2.3'
 services:
   clickhouse:
 #    image: clickhouse/clickhouse-integration-test:28741
-    image: registry.gitlab.com/altinity-public/container-images/test/clickhouse-integration-test:21.12
+    image: altinityinfra/clickhouse-regression-multiarch:1.0
     init: true
     expose:
       - "9000"
