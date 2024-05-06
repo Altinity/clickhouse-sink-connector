@@ -766,7 +766,7 @@ public class DebeziumChangeEventCapture {
         if(chStructs.isEmpty()) {
             return;
         }
-        long sequenceStartTime = chStructs.get(0).getTs_ms();
+        long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         //long sequence = SEQUENCE_START;
         if(initialSeed) {
             // Add 500 million to the sequence
@@ -780,15 +780,15 @@ public class DebeziumChangeEventCapture {
             // If its been more than a second from the first
             // ts_ms then reset the sequence.
             // Get diff in seconds
-            int diff = (int) (chStruct.getTs_ms() - sequenceStartTime) / 1000;
+            int diff = (int) (chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000;
             if(diff > 1) {
                 sequenceNumber = SEQUENCE_START;
-                sequenceStartTime = chStruct.getTs_ms();
+                sequenceStartTime = chStruct.getDebezium_ts_ms();
             }   else {
                 sequenceNumber++;
             }
             // Pad the sequence number with 0s
-            chStruct.setSequenceNumber(chStruct.getTs_ms() * 1000000 + sequenceNumber);
+            chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
         }
     }
 }
