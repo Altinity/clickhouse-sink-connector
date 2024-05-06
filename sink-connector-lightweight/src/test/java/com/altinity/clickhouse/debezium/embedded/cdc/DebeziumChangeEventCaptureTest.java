@@ -97,12 +97,12 @@ public class DebeziumChangeEventCaptureTest {
 
         // Make a list of ch1, ch2, ch3 and ch4
         List<ClickHouseStruct> clickHouseStructs = Arrays.asList(ch1, ch2, ch3, ch4, ch5);
-        DebeziumChangeEventCapture.addVersion(clickHouseStructs, true);
+        DebeziumChangeEventCapture.addVersion(clickHouseStructs);
 
         Thread.sleep(1000);
         // Add ch5 and ch6
         List<ClickHouseStruct> clickHouseStructs2 = Arrays.asList(ch5, ch6);
-        DebeziumChangeEventCapture.addVersion(clickHouseStructs2, false);
+        DebeziumChangeEventCapture.addVersion(clickHouseStructs2);
 
         // Check if the sequence numbers are unique
         assertTrue(clickHouseStructs.get(0).getSequenceNumber() < clickHouseStructs.get(1).getSequenceNumber());

@@ -537,7 +537,6 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
-            final boolean[] initialBootstrap = {true};
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
@@ -556,8 +555,7 @@ public class DebeziumChangeEventCapture {
                         }
                     }
                         // Add sequence number.
-                    addVersion(batch, initialBootstrap[0]);
-                    initialBootstrap[0] = false;
+                    addVersion(batch);
 
 
                     if(batch.size() > 0) {
@@ -759,36 +757,31 @@ public class DebeziumChangeEventCapture {
      * Function to add version to every record.
      * @param chStructs
      */
-    public static void addVersion(List<ClickHouseStruct> chStructs, boolean initialSeed) {
+    public static void addVersion(List<ClickHouseStruct> chStructs) {
 
         // Start the sequence from 1 million and increment for every record
         // and reset the sequence back to 1 million in the next second
         if(chStructs.isEmpty()) {
             return;
         }
-        long sequenceStartTime = chStructs.get(0).getTs_ms();
+        long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         //long sequence = SEQUENCE_START;
-        if(initialSeed) {
-            // Add 500 million to the sequence
-            // sequence += 500000000;
-            // Add 000 to the debezium timestamp.
-            sequenceNumber = SEQUENCE_START_INITIAL;
-        }
+
         for(ClickHouseStruct chStruct: chStructs) {
             // Get the first ts_ms from chStruct
             // Subsequent records add 1 to sequence.
             // If its been more than a second from the first
             // ts_ms then reset the sequence.
             // Get diff in seconds
-            int diff = (int) (chStruct.getTs_ms() - sequenceStartTime) / 1000;
+            int diff = (int) (chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000;
             if(diff > 1) {
                 sequenceNumber = SEQUENCE_START;
-                sequenceStartTime = chStruct.getTs_ms();
+                sequenceStartTime = chStruct.getDebezium_ts_ms();
             }   else {
                 sequenceNumber++;
             }
             // Pad the sequence number with 0s
-            chStruct.setSequenceNumber(chStruct.getTs_ms() * 1000000 + sequenceNumber);
+            chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
         }
     }
 }
