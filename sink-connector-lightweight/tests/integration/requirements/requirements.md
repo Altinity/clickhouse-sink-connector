@@ -252,6 +252,9 @@
     * 33.6 [Error Handling](#error-handling)
         * 33.6.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
             * 33.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
+    * 33.7 [Concurrent Actions](#concurrent-actions)
+        * 33.7.1 [Perform Table Operations on Each Database Concurrently](#perform-table-operations-on-each-database-concurrently)
+            * 33.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconcurrentactions)
 
 ## Introduction
 
@@ -1803,6 +1806,18 @@ CREATE TABLE {table_name}
 version: 1.0
 
 [Altinity Sink Connector] SHALL output an error when the replicated database does not exist on the destination. The error SHALL be repeated until the database is created on the destination.
+
+### Concurrent Actions
+
+#### Perform Table Operations on Each Database Concurrently
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions
+version: 1.0
+
+[Altinity Sink Connector] SHALL replicate concurrently performed actions on source.
+
+For example,
+if we perform multiple alter actions on multiple databases, the actions SHALL be replicated to the destination without issues.
 
 [SRS]: #srs
 [MySQL]: #mysql

@@ -2258,6 +2258,25 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ErrorHandli
     description=(
         "[Altinity Sink Connector] SHALL output an error when the replicated database does not exist on the destination. The error SHALL be repeated until the database is created on the destination.\n"
         "\n"
+    ),
+    link=None,
+    level=4,
+    num="33.6.1.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConcurrentActions = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL replicate concurrently performed actions on source.\n"
+        "\n"
+        "For example,\n"
+        "if we perform multiple alter actions on multiple databases, the actions SHALL be replicated to the destination without issues.\n"
+        "\n"
         "[SRS]: #srs\n"
         "[MySQL]: #mysql\n"
         "[Prometheus]: https://prometheus.io/\n"
@@ -2268,7 +2287,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ErrorHandli
     ),
     link=None,
     level=4,
-    num="33.6.1.1",
+    num="33.7.1.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -3075,6 +3094,17 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=4,
             num="33.6.1.1",
         ),
+        Heading(name="Concurrent Actions", level=2, num="33.7"),
+        Heading(
+            name="Perform Table Operations on Each Database Concurrently",
+            level=3,
+            num="33.7.1",
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions",
+            level=4,
+            num="33.7.1.1",
+        ),
     ),
     requirements=(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication,
@@ -3196,6 +3226,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_TableOperations_SpecifyDatabaseName,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_TableOperations_NoSpecifyDatabaseName,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ErrorHandling_DatabaseNotExist,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConcurrentActions,
     ),
     content="""
 # SRS030 MySQL to ClickHouse Replication
@@ -3452,6 +3483,9 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 33.6 [Error Handling](#error-handling)
         * 33.6.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
             * 33.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
+    * 33.7 [Concurrent Actions](#concurrent-actions)
+        * 33.7.1 [Perform Table Operations on Each Database Concurrently](#perform-table-operations-on-each-database-concurrently)
+            * 33.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconcurrentactions)
 
 ## Introduction
 
@@ -5003,6 +5037,18 @@ CREATE TABLE {table_name}
 version: 1.0
 
 [Altinity Sink Connector] SHALL output an error when the replicated database does not exist on the destination. The error SHALL be repeated until the database is created on the destination.
+
+### Concurrent Actions
+
+#### Perform Table Operations on Each Database Concurrently
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions
+version: 1.0
+
+[Altinity Sink Connector] SHALL replicate concurrently performed actions on source.
+
+For example,
+if we perform multiple alter actions on multiple databases, the actions SHALL be replicated to the destination without issues.
 
 [SRS]: #srs
 [MySQL]: #mysql
