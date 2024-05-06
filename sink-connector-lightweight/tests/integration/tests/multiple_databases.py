@@ -17,6 +17,14 @@ from integration.tests.steps.alter import (
 )
 
 
+def get_n_random_items(lst, n):
+    """Get n random items from the list of databases."""
+    if n >= len(lst):
+        return lst
+    else:
+        return random.sample(lst, n)
+
+
 @TestStep(Given)
 def replicate_all_databases(self):
     """Set ClickHouse Sink Connector configuration to replicate all databases."""
@@ -427,21 +435,83 @@ def drop_column_on_a_database(self, database):
         check_column(table_name=table_name, database=database, column_name="")
 
 
+@TestScenario
+def add_primary_key_on_a_database(self, database):
+    """Check that the primary key is added to the table when we add a primary key on a database."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+
+    with Given("I create a table on multiple databases"):
+        create_table_and_insert_values(table_name=table_name, database_name=database)
+
+    with When("I add a primary key on the table"):
+        add_primary_key(table_name=table_name, database=database, column_name=column)
+
+    with Then("I check that the primary key was added to the table"):
+        check_column(table_name=table_name, database=database, column_name=column)
+
+
 @TestCheck
 def check_alters(self, alter_1, alter_2, database_1, database_2):
     """Run multiple alter statements on different databases."""
 
     with Given(
         "I run multiple alter statements on different databases",
-        description=f"alter_1: {alter_1.__name__}, alter_2: {alter_2.__name__}, database_1: {database_1}, database_2: {database_2}",
+        description=f"""
+        alter_1: {alter_1.__name__}, 
+        alter_2: {alter_2.__name__}, 
+        databases: {database_1}, {database_2}
+        """,
     ):
         alter_1(database=database_1)
         alter_2(database=database_2)
 
 
+@TestStep(When)
+def check_concurrent_actions(
+    self,
+    actions,
+    number_of_concurrent_actions=None,
+    number_of_iterations=None,
+    databases=None,
+):
+    """Concurrently perform different actions on multiple source databases."""
+
+    if databases is None:
+        databases = self.context.list_of_databases
+
+    if number_of_concurrent_actions is None:
+        number_of_concurrent_actions = self.context.number_of_concurrent_actions
+
+    if number_of_iterations is None:
+        number_of_iterations = self.context.number_of_iterations
+
+    with By("running concurrent actions on multiple databases"):
+        for i in range(number_of_iterations):
+            for action in get_n_random_items(actions, number_of_concurrent_actions):
+                if action.__name__ not in [
+                    "insert_on_all_databases",
+                    "insert_on_two_databases",
+                ]:
+                    Check(name=f"{action} #{i}", test=action, parallel=True)()
+                else:
+                    Check(name=f"{action} #{i}", test=action, parallel=False)(
+                        database=random.choice(databases)
+                    )
+
+
 @TestSketch(Scenario)
 def check_alters_on_different_databases(self):
-    """Check that the tables are replicated when we alter them on different databases."""
+    """Check that the tables are replicated when we alter them on different databases.
+
+    Combinations:
+        - ADD COLUMN
+        - RENAME COLUMN
+        - CHANGE COLUMN
+        - MODIFY COLUMN
+        - DROP COLUMN
+        - ADD PRIMARY KEY
+    """
     databases = self.context.list_of_databases
 
     alter_statements = [
@@ -450,6 +520,7 @@ def check_alters_on_different_databases(self):
         change_column_on_a_database,
         modify_column_on_a_database,
         drop_column_on_a_database,
+        add_primary_key_on_a_database,
     ]
 
     check_alters(
@@ -493,6 +564,28 @@ def alters(self):
     Scenario(run=check_alters_on_different_databases)
 
 
+@TestSuite
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConcurrentActions(
+        "1.0"
+    )
+)
+def concurrent_actions(self, number_of_iterations=None):
+    """Check that the tables are replicated when we have concurrent actions on different databases."""
+
+    actions = [
+        add_column_on_a_database,
+        rename_column_on_a_database,
+        change_column_on_a_database,
+        modify_column_on_a_database,
+        drop_column_on_a_database,
+        insert_on_two_databases,
+        insert_on_all_databases,
+    ]
+
+    check_concurrent_actions(actions=actions)
+
+
 @TestFeature
 @Name("multiple databases")
 @Requirements(
@@ -502,12 +595,14 @@ def module(
     self,
     clickhouse_node="clickhouse",
     mysql_node="mysql-master",
-    number_of_databases=10,
-    parallel_cases=1,
     database_1="database_1",
     database_2="database_2",
     database_3="database_3",
     database_4="database_4",
+    number_of_databases=10,
+    parallel_cases=1,
+    number_of_concurrent_actions=5,
+    number_of_iterations=10,
 ):
     """
     Check that auto table replication works when there are multiple databases in MySQL.
@@ -523,12 +618,14 @@ def module(
 
     self.context.list_of_databases = [database_1, database_2, database_3, database_4]
     self.context.number_of_databases = number_of_databases
+    self.context.number_of_concurrent_actions = number_of_concurrent_actions
+    self.context.number_of_iterations = number_of_iterations
 
     with Given(
         "I create the source and destination databases from a list",
-        description=f"databases: {database_1, database_2, database_3, database_4}",
+        description=f"databases: {self.context.list_of_databases}",
     ):
-        create_databases(databases=[database_1, database_2, database_3, database_4])
+        create_databases(databases=self.context.list_of_databases)
 
     self.context.config_file = os.path.join("env", "auto", "configs")
 
@@ -540,4 +637,5 @@ def module(
     with Pool(parallel_cases) as executor:
         Feature(run=inserts, parallel=True, executor=executor)
         Feature(run=alters, parallel=True, executor=executor)
+        Feature(run=concurrent_actions, parallel=True, executor=executor)
         join()
