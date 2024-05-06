@@ -538,7 +538,8 @@ def inserts(self):
     Combinations:
         - Check replication when there are more than 1 database on source and destination.
         - Check replication when there are 4 databases on source and destination, and we insert values on all databases.
-        - Check replication when we insert values on all databases except database_4, and we have database.include.list parameter specified in ClickHouse Sink Connector configuration.
+        - Check replication when we insert values on all databases except database_4, and we have database.include.list
+          parameter specified in ClickHouse Sink Connector configuration.
         - Check replication when we have a specific number of databases both on source and destination.
     """
     Scenario(run=insert_on_two_databases)
