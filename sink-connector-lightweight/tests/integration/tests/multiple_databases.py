@@ -331,6 +331,9 @@ def check_replication_on_number_of_databases(self):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Add("1.0")
+)
 def add_column_on_a_database(self, database):
     """Check that the column is added on the table when we add a column on a database."""
     table_name = f"table_{getuid()}"
@@ -347,6 +350,9 @@ def add_column_on_a_database(self, database):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Rename("1.0")
+)
 def rename_column_on_a_database(self, database):
     """Check that the column is renamed on the table when we rename a column on a database."""
     table_name = f"table_{getuid()}"
@@ -369,6 +375,11 @@ def rename_column_on_a_database(self, database):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Change_Multiple(
+        "1.0"
+    )
+)
 def change_column_on_a_database(self, database):
     """Check that the column is changed on the table when we change a column on a database."""
     table_name = f"table_{getuid()}"
@@ -393,6 +404,9 @@ def change_column_on_a_database(self, database):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Modify("1.0")
+)
 def modify_column_on_a_database(self, database):
     """Check that the column is modified on the table when we modify a column on a database."""
     table_name = f"table_{getuid()}"
@@ -420,6 +434,9 @@ def modify_column_on_a_database(self, database):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Columns_Drop("1.0")
+)
 def drop_column_on_a_database(self, database):
     """Check that the column is dropped from the table when we drop a column on a database."""
     table_name = f"table_{getuid()}"
@@ -436,6 +453,9 @@ def drop_column_on_a_database(self, database):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple("1.0")
+)
 def add_primary_key_on_a_database(self, database):
     """Check that the primary key is added to the table when we add a primary key on a database."""
     table_name = f"table_{getuid()}"
