@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.apache.logging.log4j.LogManager;
@@ -24,6 +25,7 @@ public class MySqlDDLParserListenerImplTest {
     static public void init() {
         mySQLDDLParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 "employees");
+        DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
     @Test
     public void testCreateTableWithEnum() {
