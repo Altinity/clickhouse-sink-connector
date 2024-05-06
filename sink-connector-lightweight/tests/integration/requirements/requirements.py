@@ -2041,6 +2041,29 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases = Requireme
         "MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)\n"
         "```\n"
         "\n"
+    ),
+    link=None,
+    level=4,
+    num="33.2.1.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_SourceMultipleDestinationOne = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support replication of a database from source to destination when there are multiple databases on the source side and only one database on the destination side.\n"
+        "\n"
+        "```mermaid\n"
+        "graph LR\n"
+        "    A[MySQL: Database 1]\n"
+        "    B[MySQL: Database 2] -->|Replication| D[ClickHouse: Database 2]\n"
+        "    C[MySQL: Database 3]\n"
+        "```\n"
+        "\n"
         "[SRS]: #srs\n"
         "[MySQL]: #mysql\n"
         "[Prometheus]: https://prometheus.io/\n"
@@ -2050,8 +2073,8 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases = Requireme
         "[GitLab]: https://gitlab.com\n"
     ),
     link=None,
-    level=2,
-    num="33.2",
+    level=4,
+    num="33.2.2.1",
 )
 
 SRS030_MySQL_to_ClickHouse_Replication = Specification(
@@ -2737,10 +2760,24 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         ),
         Heading(name="Multiple Databases", level=1, num="33"),
         Heading(name="Test Schema - Multiple Databases ", level=2, num="33.1"),
+        Heading(name="Databases on Source and Destination", level=2, num="33.2"),
+        Heading(
+            name="Multiple Databases on Source and Destination", level=3, num="33.2.1"
+        ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases",
-            level=2,
-            num="33.2",
+            level=4,
+            num="33.2.1.1",
+        ),
+        Heading(
+            name="Multiple Databases on Source and One Database on Destination",
+            level=3,
+            num="33.2.2",
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne",
+            level=4,
+            num="33.2.2.1",
         ),
     ),
     requirements=(
@@ -2852,6 +2889,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_SystemActions_Disk_Corrupted,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Prometheus,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_SourceMultipleDestinationOne,
     ),
     content="""
 # SRS030 MySQL to ClickHouse Replication
@@ -3079,7 +3117,11 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 * 33 [Multiple Databases](#multiple-databases)
     * 33.1 [Test Schema - Multiple Databases ](#test-schema---multiple-databases-)
-    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
+    * 33.2 [Databases on Source and Destination](#databases-on-source-and-destination)
+        * 33.2.1 [Multiple Databases on Source and Destination](#multiple-databases-on-source-and-destination)
+            * 33.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
+        * 33.2.2 [Multiple Databases on Source and One Database on Destination](#multiple-databases-on-source-and-one-database-on-destination)
+            * 33.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourcemultipledestinationone)
 
 ## Introduction
 
@@ -4455,7 +4497,13 @@ Multiple Databases:
           - Insert data on each database sequentially
           - Insert data on all databases simultaneously
           - Remove database 
+      configValues: 
+        - database.include.list: database1, database2, ... , databaseN
+        - don't specify database.include.list
       TableOperations:
+        - CREATE:
+            - CREATE TABLE {database}.{table_name}
+            - CREATE TABLE {table_name}
         - INSERT
         - UPDATE
         - DELETE
@@ -4484,7 +4532,11 @@ Multiple Databases:
           - One of the databases is out if sync with source database 
 ```
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
+### Databases on Source and Destination
+
+#### Multiple Databases on Source and Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
@@ -4492,6 +4544,20 @@ version: 1.0
 The implementation works as follows,
 ```
 MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)
+```
+
+#### Multiple Databases on Source and One Database on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there are multiple databases on the source side and only one database on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 1]
+    B[MySQL: Database 2] -->|Replication| D[ClickHouse: Database 2]
+    C[MySQL: Database 3]
 ```
 
 [SRS]: #srs

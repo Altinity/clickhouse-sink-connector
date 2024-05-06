@@ -223,7 +223,11 @@
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
 * 33 [Multiple Databases](#multiple-databases)
     * 33.1 [Test Schema - Multiple Databases ](#test-schema---multiple-databases-)
-    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
+    * 33.2 [Databases on Source and Destination](#databases-on-source-and-destination)
+        * 33.2.1 [Multiple Databases on Source and Destination](#multiple-databases-on-source-and-destination)
+            * 33.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
+        * 33.2.2 [Multiple Databases on Source and One Database on Destination](#multiple-databases-on-source-and-one-database-on-destination)
+            * 33.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourcemultipledestinationone)
 
 ## Introduction
 
@@ -1599,7 +1603,13 @@ Multiple Databases:
           - Insert data on each database sequentially
           - Insert data on all databases simultaneously
           - Remove database 
+      configValues: 
+        - database.include.list: database1, database2, ... , databaseN
+        - don't specify database.include.list
       TableOperations:
+        - CREATE:
+            - CREATE TABLE {database}.{table_name}
+            - CREATE TABLE {table_name}
         - INSERT
         - UPDATE
         - DELETE
@@ -1628,7 +1638,11 @@ Multiple Databases:
           - One of the databases is out if sync with source database 
 ```
 
-### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
+### Databases on Source and Destination
+
+#### Multiple Databases on Source and Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
 version: 1.0
 
 [Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
@@ -1636,6 +1650,20 @@ version: 1.0
 The implementation works as follows,
 ```
 MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)
+```
+
+#### Multiple Databases on Source and One Database on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there are multiple databases on the source side and only one database on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 1]
+    B[MySQL: Database 2] -->|Replication| D[ClickHouse: Database 2]
+    C[MySQL: Database 3]
 ```
 
 [SRS]: #srs
