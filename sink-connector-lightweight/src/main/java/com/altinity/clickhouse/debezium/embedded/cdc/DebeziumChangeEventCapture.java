@@ -537,7 +537,6 @@ public class DebeziumChangeEventCapture {
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
             changeEventBuilder.using(props);
-            final boolean[] initialBootstrap = {true};
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
@@ -556,8 +555,7 @@ public class DebeziumChangeEventCapture {
                         }
                     }
                         // Add sequence number.
-                    addVersion(batch, initialBootstrap[0]);
-                    initialBootstrap[0] = false;
+                    addVersion(batch);
 
 
                     if(batch.size() > 0) {
@@ -759,7 +757,7 @@ public class DebeziumChangeEventCapture {
      * Function to add version to every record.
      * @param chStructs
      */
-    public static void addVersion(List<ClickHouseStruct> chStructs, boolean initialSeed) {
+    public static void addVersion(List<ClickHouseStruct> chStructs) {
 
         // Start the sequence from 1 million and increment for every record
         // and reset the sequence back to 1 million in the next second
@@ -768,12 +766,7 @@ public class DebeziumChangeEventCapture {
         }
         long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         //long sequence = SEQUENCE_START;
-        if(initialSeed) {
-            // Add 500 million to the sequence
-            // sequence += 500000000;
-            // Add 000 to the debezium timestamp.
-            sequenceNumber = SEQUENCE_START_INITIAL;
-        }
+
         for(ClickHouseStruct chStruct: chStructs) {
             // Get the first ts_ms from chStruct
             // Subsequent records add 1 to sequence.
