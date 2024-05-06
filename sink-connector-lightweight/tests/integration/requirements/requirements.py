@@ -4800,29 +4800,31 @@ Multiple Databases:
         - database.include.list: database1, database2, ... , databaseN
         - Don't specify database.include.list
       TableOperations:
-        - CREATE:
-            - CREATE TABLE {database}.{table_name}
-            - CREATE TABLE {table_name}
-        - INSERT
-        - UPDATE
-        - DELETE
-        - SELECT
-        - ALTER:
-          - ADD COLUMN                                            
-          - ADD COLUMN NULL/NOT NULL                              
-          - ADD COLUMN DEFAULT                                    
-          - ADD COLUMN FIRST, AFTER                               
-          - DROP COLUMN                                           
-          - MODIFY COLUMN data_type                               
-          - MODIFY COLUMN data_type NULL/NOT NULL                 
-          - MODIFY COLUMN data_type DEFAULT                       
-          - MODIFY COLUMN FIRST, AFTER                            
-          - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
-          - RENAME COLUMN col1 to col2                            
-          - CHANGE COLUMN FIRST, AFTER                            
-          - ALTER COLUMN col_name ADD DEFAULT                     
-          - ALTER COLUMN col_name ADD DROP DEFAULT                
-          - ADD PRIMARY KEY    
+        - types:
+            - With database name
+            - Without database name
+        - operations:
+            - CREATE
+            - INSERT
+            - UPDATE
+            - DELETE
+            - SELECT
+            - ALTER:
+              - ADD COLUMN                                            
+              - ADD COLUMN NULL/NOT NULL                              
+              - ADD COLUMN DEFAULT                                    
+              - ADD COLUMN FIRST, AFTER                               
+              - DROP COLUMN                                           
+              - MODIFY COLUMN data_type                               
+              - MODIFY COLUMN data_type NULL/NOT NULL                 
+              - MODIFY COLUMN data_type DEFAULT                       
+              - MODIFY COLUMN FIRST, AFTER                            
+              - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+              - RENAME COLUMN col1 to col2                            
+              - CHANGE COLUMN FIRST, AFTER                            
+              - ALTER COLUMN col_name ADD DEFAULT                     
+              - ALTER COLUMN col_name ADD DROP DEFAULT                
+              - ADD PRIMARY KEY    
   Destination:
         Engines: [ReplicatedReplacingMergeTree, ReplacingMergeTree]
         actions:
