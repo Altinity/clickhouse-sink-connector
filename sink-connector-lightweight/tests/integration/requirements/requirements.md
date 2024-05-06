@@ -249,6 +249,9 @@
             * 33.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
         * 33.5.2 [Table Operations Without Specifying Database Name](#table-operations-without-specifying-database-name)
             * 33.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsnospecifydatabasename)
+    * 33.6 [Error Handling](#error-handling)
+        * 33.6.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
+            * 33.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
 
 ## Introduction
 
@@ -1791,6 +1794,15 @@ For example,
 ```sql
 CREATE TABLE {table_name}
 ```
+
+### Error Handling
+
+#### When Replicated Database Does Not Exist on the Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when the replicated database does not exist on the destination. The error SHALL be repeated until the database is created on the destination.
 
 [SRS]: #srs
 [MySQL]: #mysql
