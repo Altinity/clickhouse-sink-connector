@@ -228,6 +228,27 @@
             * 33.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
         * 33.2.2 [Multiple Databases on Source and One Database on Destination](#multiple-databases-on-source-and-one-database-on-destination)
             * 33.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourcemultipledestinationone)
+        * 33.2.3 [One Database on Source and Multiple Databases on Destination](#one-database-on-source-and-multiple-databases-on-destination)
+            * 33.2.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationMultiple](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourceonedestinationmultiple)
+        * 33.2.4 [One Database on Source and One Database on Destination](#one-database-on-source-and-one-database-on-destination)
+            * 33.2.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourceonedestinationone)
+    * 33.3 [Table Structure on Source and Destination Databases](#table-structure-on-source-and-destination-databases)
+        * 33.3.1 [Two Tables with the Same Name and Different Structure on Different Databases](#two-tables-with-the-same-name-and-different-structure-on-different-databases)
+            * 33.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameDifferentStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablessamenamedifferentstructure)
+        * 33.3.2 [Two Tables with the Same Name and the Same Structure on Different Databases](#two-tables-with-the-same-name-and-the-same-structure-on-different-databases)
+            * 33.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameSameStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablessamenamesamestructure)
+        * 33.3.3 [Two Tables with the Different Name and the Same Structure on Different Databases](#two-tables-with-the-different-name-and-the-same-structure-on-different-databases)
+            * 33.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.DifferentNameSameStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablesdifferentnamesamestructure)
+    * 33.4 [Configuration Values](#configuration-values)
+        * 33.4.1 [Include Specific List of Databases To Replicate](#include-specific-list-of-databases-to-replicate)
+            * 33.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesincludelist)
+        * 33.4.2 [Replicate All Databases](#replicate-all-databases)
+            * 33.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesreplicateall)
+    * 33.5 [Table Operations](#table-operations)
+        * 33.5.1 [Specify Database Name in Table Operations](#specify-database-name-in-table-operations)
+            * 33.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
+        * 33.5.2 [Table Operations Without Specifying Database Name](#table-operations-without-specifying-database-name)
+            * 33.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsnospecifydatabasename)
 
 ## Introduction
 
@@ -1648,8 +1669,11 @@ version: 1.0
 [Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
 
 The implementation works as follows,
-```
-MySQL(customers, products, departments) -> ClickHouse(customers, products, departments)
+```mermaid
+graph LR
+    A[MySQL: customers] -->|Replicated| D[ClickHouse: customers]
+    B[MySQL: products] -->|Replicated| E[ClickHouse: products]
+    C[MySQL: departments] -->|Replicated| F[ClickHouse: departments]
 ```
 
 #### Multiple Databases on Source and One Database on Destination
@@ -1662,8 +1686,108 @@ version: 1.0
 ```mermaid
 graph LR
     A[MySQL: Database 1]
-    B[MySQL: Database 2] -->|Replication| D[ClickHouse: Database 2]
+    B[MySQL: Database 2] -->|Replicated| D[ClickHouse: Database 2]
     C[MySQL: Database 3]
+```
+
+#### One Database on Source and Multiple Databases on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationMultiple
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there is only one database on the source side and multiple databases on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 2] -->|Not Replicated| D[ClickHouse: Database 1]
+    A -->|Replicated| E[ClickHouse: Database 2]
+    A -->|Not Replicated| F[ClickHouse: Database 3]
+```
+
+#### One Database on Source and One Database on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationOne
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there is only one database on the source side and only one database on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 1] -->|Replicated| D[ClickHouse: Database 1]
+```
+
+### Table Structure on Source and Destination Databases
+
+#### Two Tables with the Same Name and Different Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameDifferentStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the same name and different structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+#### Two Tables with the Same Name and the Same Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameSameStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the same name and the same structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+#### Two Tables with the Different Name and the Same Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.DifferentNameSameStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the different name and the same structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+### Configuration Values
+
+#### Include Specific List of Databases To Replicate
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the usage of the `database.include.list` configuration value to specify a list of databases to replicate.
+
+for example,
+```yaml
+database.include.list: database1, database2, ... , databaseN
+```
+
+This configuration value SHALL ensure that only the databases specified in the list are replicated to the destination.
+
+#### Replicate All Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the ability to monitor all databases from the source and replicate them to the destination without specifying the `database.include.list` configuration value.
+
+### Table Operations
+
+#### Specify Database Name in Table Operations
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName
+version: 1.0
+
+[Altinity Sink Connector] SHALL support specifying the database name in the table operations.
+
+For example,
+
+```sql
+CREATE TABLE {database}.{table_name}
+```
+
+#### Table Operations Without Specifying Database Name
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName
+version: 1.0
+
+[Altinity Sink Connector] SHALL support table operations without specifying the database name.
+
+For example,
+
+```sql
+CREATE TABLE {table_name}
 ```
 
 [SRS]: #srs
