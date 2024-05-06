@@ -1616,17 +1616,17 @@ Multiple Databases:
           - Multiple databases on source and one database on destination
           - One database on source and multiple databases on destination
       tables:
-        - two tables with the same name and different structure on different databases
-        - two tables with the sam name and the same structure on the different databases
-        - two tables with the different name and the same structure on the different databases
-        - two tables with the different name and the different structure on the different databases
+        - Two tables with the same name and different structure on different databases
+        - Two tables with the sam name and the same structure on the different databases
+        - Two tables with the different name and the same structure on the different databases
+        - Two tables with the different name and the different structure on the different databases
       actions:
-          - Insert data on each database sequentially
-          - Insert data on all databases simultaneously
-          - Remove database 
+          - Perform table operations on each database sequentially
+          - Perform table operations on all databases simultaneously
+          - Remove database
       configValues: 
         - database.include.list: database1, database2, ... , databaseN
-        - don't specify database.include.list
+        - Don't specify database.include.list
       TableOperations:
         - CREATE:
             - CREATE TABLE {database}.{table_name}
