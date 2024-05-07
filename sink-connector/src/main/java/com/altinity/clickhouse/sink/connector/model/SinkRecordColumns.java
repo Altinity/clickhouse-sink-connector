@@ -25,5 +25,7 @@ public class SinkRecordColumns {
 
     public static final String LSN = "lsn";
 
+    public static final String DATABASE = "db";
+
 }
 

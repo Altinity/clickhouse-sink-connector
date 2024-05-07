@@ -16,6 +16,9 @@ database.user: "root"
 # Password of the MySQL database user to be used when connecting to the database.
 database.password: "root"
 
+# Unique name for the connector.
+database.server.id: "12345"
+
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
 
@@ -79,7 +82,7 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
     `record_insert_seq` UInt64,
     `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
-ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8198"
+ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8192"
 
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.offset.table.delete: "select * from %s"
@@ -155,3 +158,8 @@ restart.event.loop.timeout.period.secs: "3000"
 
 # Sink Connector maximum queue size
 #sink.connector.max.queue.size: "100000"
+
+# Skip schema history capturing, use the following configuration
+# to reduce slow startup when replicating dbs with large number of tables
+#schema.history.internal.store.only.captured.tables.ddl: "true"
+#schema.history.internal.store.only.captured.databases.ddl: "true"

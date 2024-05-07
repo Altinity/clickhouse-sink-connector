@@ -1,4 +1,7 @@
-from integration.tests.steps.sql import *
+from integration.requirements.requirements import (
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped,
+)
+from integration.tests.steps.mysql import *
 
 
 @TestScenario

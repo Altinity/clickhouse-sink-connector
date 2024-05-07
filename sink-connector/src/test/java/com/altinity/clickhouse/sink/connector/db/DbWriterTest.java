@@ -110,7 +110,7 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap.size() == 20);
+        Assert.assertTrue(columnDataTypesMap.size() == 44);
 
         String database2 = "employees2";
         String jdbcUrl2 = BaseDbWriter.getConnectionString(dbHostName, port, database2);
@@ -120,7 +120,7 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap2.size() == 2);
+        Assert.assertTrue(columnDataTypesMap2.size() ==44);
 
     }
 
@@ -129,7 +129,7 @@ public class DbWriterTest {
     public void testGetEngineType() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "system";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";

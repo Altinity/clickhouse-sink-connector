@@ -4,9 +4,9 @@ import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CH
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -18,7 +18,7 @@ import java.util.TimeZone;
 
 public class DBMetadata {
 
-    private static final Logger log = LoggerFactory.getLogger(DBMetadata.class);
+    private static final Logger log = LogManager.getLogger(DBMetadata.class);
 
 
     public enum TABLE_ENGINE {
@@ -107,7 +107,7 @@ public class DBMetadata {
                 return new MutablePair<>(null, null);
             }
             try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s.%s", databaseName, tableName);
+                String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
                 ResultSet rs = stmt.executeQuery(showSchemaQuery);
                 if(rs != null && rs.next()) {
                     String response =  rs.getString(1);
@@ -213,6 +213,8 @@ public class DBMetadata {
                 if(rs.wasNull() == false && rs.next()) {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
+                } else {
+                    log.error("Error: Table not found in system tables:" + tableName + " Database:" + database);
                 }
                 rs.close();
                 stmt.close();
@@ -287,7 +289,7 @@ public class DBMetadata {
                 return result;
             }
 
-            ResultSet columns = conn.getMetaData().getColumns(null, database,
+            ResultSet columns = conn.getMetaData().getColumns(database, null,
                     tableName, null);
             while (columns.next()) {
                 String columnName = columns.getString("COLUMN_NAME");

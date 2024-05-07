@@ -1,0 +1,53 @@
+<mxfile host="app.diagrams.net" modified="2024-03-05T11:52:46.132Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" etag="6-FdwkM_er-bKnZmaXG9" version="23.0.2" type="device">
+  <diagram name="Page-1" id="4kWa008UeLW88EDx8_1b">
+    <mxGraphModel dx="1360" dy="759" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-4" value="" style="whiteSpace=wrap;html=1;aspect=fixed;" vertex="1" parent="1">
+          <mxGeometry x="160" y="40" width="470" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Kt27N8K72PIJ8C6K6JpF-2" target="Kt27N8K72PIJ8C6K6JpF-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-2" value="" style="outlineConnect=0;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.aws3.mysql_db_instance_2;fillColor=#2E73B8;gradientColor=none;" vertex="1" parent="1">
+          <mxGeometry x="30" y="170" width="60" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-5" value="ClickHouse" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="730" y="240" width="60" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="Kt27N8K72PIJ8C6K6JpF-6" target="Kt27N8K72PIJ8C6K6JpF-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-6" value="Main&lt;br&gt;Thread&lt;br&gt;(DDL)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="200" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-10" value="&lt;b&gt;Thread&amp;nbsp;&lt;br&gt;Pool&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="430" y="80" width="180" height="370" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-8" value="Thread-1" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="100" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-11" value="Thread-2" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="180" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-12" value="Thread-3" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="300" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-13" value="Thread-4" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="380" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-15" value="&lt;b&gt;Sink Connector Lighweight&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="330" y="520" width="150" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Kt27N8K72PIJ8C6K6JpF-16" value="" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.996;exitY=0.516;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="Kt27N8K72PIJ8C6K6JpF-4" target="Kt27N8K72PIJ8C6K6JpF-5">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="400" y="420" as="sourcePoint" />
+            <mxPoint x="450" y="370" as="targetPoint" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

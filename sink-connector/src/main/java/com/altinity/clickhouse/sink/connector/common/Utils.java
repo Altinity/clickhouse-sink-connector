@@ -16,14 +16,14 @@
 package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class Utils {
-    private static final Logger LOGGER = LoggerFactory.getLogger(Utils.class);
+    private static final Logger LOGGER = LogManager.getLogger(Utils.class);
 
     public static final String TASK_ID = "task_id";
     // Connector version, change every release
@@ -90,10 +90,10 @@ public class Utils {
 
 
             // topic names is of the following format.
-            // hostname.dbName.tableName
+            // hostname.dbName.tableName or hostname.dbName.schemaName.tableName
             String[] splitName = topicName.split("\\.");
-            if(splitName.length == 3) {
-                tableName = splitName[2];
+            if(splitName.length >= 3) {
+                tableName = splitName[splitName.length - 1];
             }
 
         return tableName;

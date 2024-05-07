@@ -2,10 +2,10 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.commons.lang3.tuple.Pair;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-import java.util.HashMap;
+
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DebeziumOffsetManagement {
 
     // Instantiate logger
-    private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetManagement.class);
+    private static final Logger log = LogManager.getLogger(DebeziumOffsetManagement.class);
 
     // A list of minimum , maximum timestamps of batches in flight
     static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>> inFlightBatches = new ConcurrentHashMap<>();
@@ -136,13 +136,15 @@ public class DebeziumOffsetManagement {
             if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
                 record.getCommitter().markProcessed(record.getSourceRecord());
-                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
+//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
                     record.getCommitter().markBatchFinished();
                     log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid());
+                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+                            + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
                 }
             }
         }

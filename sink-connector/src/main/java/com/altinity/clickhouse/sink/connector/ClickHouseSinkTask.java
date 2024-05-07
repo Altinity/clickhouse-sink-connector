@@ -13,8 +13,8 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -27,7 +27,7 @@ import java.util.concurrent.*;
 public class ClickHouseSinkTask extends SinkTask {
 
     private String id = "-1";
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkTask.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseSinkTask.class);
 
     public ClickHouseSinkTask() {
 
@@ -113,8 +113,11 @@ public class ClickHouseSinkTask extends SinkTask {
                 //Update the hashmap with the topic name and the list of records.
             }
         }
-        synchronized (this.records) {
-            this.records.add(batch);
+
+        try {
+            this.records.put(batch);
+        } catch (InterruptedException e) {
+            throw new RetriableException(e);
         }
     }
 //

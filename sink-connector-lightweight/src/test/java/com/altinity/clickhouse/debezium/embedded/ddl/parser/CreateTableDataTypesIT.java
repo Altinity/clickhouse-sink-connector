@@ -57,7 +57,8 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -119,9 +120,9 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
 
         while(dateResult.next()) {
-            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1925-01-01"));
+            Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1900-01-01"));
             Assert.assertTrue(dateResult.getDate("Mid_Value").toString().equalsIgnoreCase("2022-09-29"));
-            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2283-11-11"));
+            Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2299-12-31"));
         }
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");

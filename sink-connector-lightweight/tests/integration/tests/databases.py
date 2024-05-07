@@ -1,7 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
-from integration.tests.steps.steps_global import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -46,13 +46,13 @@ def databases_tables(
             f"index_granularity = 8192;"
         )
 
-    with When(f"I insert data in MySql table {table_name}"):
+    with When(f"I insert data in MySQL table {table_name}"):
         mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
         mysql.query(f"INSERT INTO {table_name} VALUES (2, '2018-09-08 17:51:05.777')")
         mysql.query(f"INSERT INTO {table_name} VALUES (3, '2018-09-08 17:51:05.777')")
 
     with Then(f"I check that data is replicated to the correct table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

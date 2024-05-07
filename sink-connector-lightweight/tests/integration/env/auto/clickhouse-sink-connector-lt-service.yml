@@ -1,0 +1,17 @@
+version: "2.3"
+
+services:
+    clickhouse-sink-connector-lt:
+      hostname: clickhouse-sink-connector-lt
+      image: ${SINK_CONNECTOR_IMAGE}
+      restart: "no"
+      expose:
+        - "8083"
+        - "1976"
+        - "5005"
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+      entrypoint: bash -c "tail -f /dev/null"
+      volumes:
+        - ./configs:/configs
+        - ../../logs:/logs

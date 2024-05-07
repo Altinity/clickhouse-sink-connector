@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -22,7 +23,6 @@ def virtual_column_names(
     mysql = self.context.cluster.node("mysql-master")
 
     table_name = f"virtual_columns_{getuid()}"
-    # table_name = "vendeta"
 
     with Given(f"I create MySQL table {table_name})"):
         create_mysql_to_clickhouse_replicated_table(
@@ -32,9 +32,6 @@ def virtual_column_names(
             mysql_columns=mysql_columns,
             clickhouse_table_engine=clickhouse_table_engine,
         )
-
-    # with When(f"I insert data in MySql table {table_name}"):
-    #     mysql.query(f"INSERT INTO {table_name} VALUES (1, '2018-09-08 17:51:05.777')")
 
     with Then(f"I make check that ClickHouse table virtual column names are correct"):
         if check_clickhouse_version("<23")(self):
@@ -49,7 +46,7 @@ def virtual_column_names(
             )
 
     with And(f"I check that data is replicated"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",

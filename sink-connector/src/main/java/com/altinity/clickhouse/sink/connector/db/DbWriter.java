@@ -5,20 +5,16 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.clickhouse.data.ClickHouseColumn;
-import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,7 +23,7 @@ import java.util.Map;
  */
 public class DbWriter extends BaseDbWriter {
     //ClickHouseNode server;
-    private static final Logger log = LoggerFactory.getLogger(DbWriter.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
 
     private final String tableName;
 
@@ -123,7 +119,7 @@ public class DbWriter extends BaseDbWriter {
                         }
                         boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
                                 ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-                        act.createNewTable(record.getPrimaryKey(), tableName, fields, this.conn,
+                        act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
                                 isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree);
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
