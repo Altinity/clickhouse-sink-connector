@@ -485,7 +485,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.append("\n");
         // If the tableName already includes the databaseName dont include databaseName in this.query
         if(tableName.contains(".")) {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s %s", tableName, oldCol, dataType));
+            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
         } else
             this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
 
