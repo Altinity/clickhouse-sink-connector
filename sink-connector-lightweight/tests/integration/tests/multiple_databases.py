@@ -483,8 +483,10 @@ def check_alters(self, alter_1, alter_2, database_1, database_2):
         databases: {database_1}, {database_2}
         """,
     ):
-        alter_1(database=database_1)
-        alter_2(database=database_2)
+        with Pool(2) as executor:
+            Check(test=alter_1, parallel=True, executor=executor)(database=database_1)
+            Check(test=alter_2, parallel=True, executor=executor)(database=database_2)
+            join()
 
 
 @TestStep(When)
@@ -546,8 +548,8 @@ def check_alters_on_different_databases(self):
     check_alters(
         alter_1=either(*alter_statements),
         alter_2=either(*alter_statements),
-        database_1=either(*databases),
-        database_2=either(*databases),
+        database_1="database_1",
+        database_2="database_2",
     )
 
 
@@ -621,7 +623,7 @@ def module(
     database_3="database_3",
     database_4="database_4",
     number_of_databases=10,
-    parallel_cases=1,
+    parallel_cases=2,
     number_of_concurrent_actions=5,
     number_of_iterations=10,
 ):
