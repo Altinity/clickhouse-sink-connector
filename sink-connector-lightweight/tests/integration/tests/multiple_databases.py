@@ -593,7 +593,13 @@ def alters(self):
     )
 )
 def concurrent_actions(self, number_of_iterations=None):
-    """Check that the tables are replicated when we have concurrent actions on different databases."""
+    """Check that the tables are replicated when we have concurrent actions on different databases.
+
+    Actions:
+        - ALTERs
+        - INSERTs
+        - SELECTs
+    """
 
     actions = [
         add_column_on_a_database,
