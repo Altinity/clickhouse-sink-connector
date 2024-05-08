@@ -26,7 +26,7 @@ public class DBMetadata {
         REPLACING_MERGE_TREE("ReplacingMergeTree"),
 
         REPLICATED_REPLACING_MERGE_TREE("ReplicatedReplacingMergeTree"),
-
+        SHARED_REPLACING_MERGE_TREE("SharedReplacingMergeTree"),
         MERGE_TREE("MergeTree"),
 
         DEFAULT("default");
@@ -139,6 +139,7 @@ public class DBMetadata {
 
     public static final String REPLACING_MERGE_TREE_VERSION_WITH_IS_DELETED = "23.2";
     public static final String REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX = "ReplicatedReplacingMergeTree(";
+    public static final String SHARED_REPLACING_MERGE_TREE_VER_PREFIX = "SharedReplacingMergeTree(";
     /**
      * Function to extract the sign column for CollapsingMergeTree
      * @param createDML
@@ -168,6 +169,17 @@ public class DBMetadata {
 
         if(createDML.contains(TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())) {
             String parameters = StringUtils.substringBetween(createDML, REPLICATED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
+            if(parameters != null) {
+                String[] parameterArray = parameters.split(",");
+                if(parameterArray != null && parameterArray.length == 3) {
+                    versionColumn = parameterArray[2].trim();
+                } else if(parameterArray != null && parameterArray.length == 4) {
+                    versionColumn = parameterArray[2].trim() + "," + parameterArray[3].trim();
+                }
+            }
+        }
+        else if (createDML.contains(TABLE_ENGINE.SHARED_REPLACING_MERGE_TREE.getEngine())) {
+            String parameters = StringUtils.substringBetween(createDML, SHARED_REPLACING_MERGE_TREE_VER_PREFIX, ")");
             if(parameters != null) {
                 String[] parameterArray = parameters.split(",");
                 if(parameterArray != null && parameterArray.length == 3) {
