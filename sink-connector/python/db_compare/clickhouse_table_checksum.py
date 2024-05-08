@@ -227,7 +227,7 @@ def select_table_statements(table, query, select_query, order_by, external_colum
 	  ) as t""".format(select_query=select_query, schema=args.clickhouse_database, table=table, where=where, order_by=order_by, limit=limit)
 
     if args.debug_output:
-        sql = """select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1, max_memory_usage=100000000000""".format(
+        sql = """select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1""".format(
             select_query=select_query, schema=args.clickhouse_database, table=table, where=where, order_by=order_by, limit=limit)
     statements.append(sql)
     return statements
