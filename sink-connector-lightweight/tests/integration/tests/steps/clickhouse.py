@@ -24,6 +24,10 @@ def check_column(
     if database is None:
         database = "test"
 
+    if column_type is not None:
+        if "varchar" in column_type:
+            column_type = "String"
+
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
@@ -42,7 +46,7 @@ def check_column(
                 expected_output = (
                     column_name
                     if column_type is None
-                    else f"{column_name} {column_type}"
+                    else f"{column_name}	{column_type}"
                 )
 
                 assert column.output.strip() == expected_output, error()

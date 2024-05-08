@@ -232,7 +232,7 @@ def create_mysql_to_clickhouse_replicated_table(
         with Finally(
             "I clean up by deleting MySQL to CH replicated table", description={name}
         ):
-            mysql_node.query(f"DROP TABLE IF EXISTS {name};")
+            mysql_node.query(f"DROP TABLE IF EXISTS {database_name}.{name};")
             clickhouse_node.query(
                 f"DROP TABLE IF EXISTS {database_name}.{name} ON CLUSTER sharded_replicated_cluster;"
             )

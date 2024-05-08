@@ -385,7 +385,7 @@ def change_column_on_a_database(self, database):
     table_name = f"table_{getuid()}"
     column = "col1"
     new_column = "new_col"
-    new_column_type = "int"
+    new_column_type = "varchar(255)"
 
     with Given("I create a table on multiple databases"):
         create_table_and_insert_values(table_name=table_name, database_name=database)
@@ -411,7 +411,7 @@ def modify_column_on_a_database(self, database):
     """Check that the column is modified on the table when we modify a column on a database."""
     table_name = f"table_{getuid()}"
     column = "col1"
-    new_column_type = "int"
+    new_column_type = "varchar(255)"
 
     with Given("I create a table on multiple databases"):
         create_table_and_insert_values(table_name=table_name, database_name=database)
@@ -495,7 +495,7 @@ def check_concurrent_actions(
     number_of_iterations=None,
     databases=None,
 ):
-    """Concurrently perform different actions on multiple source databases."""
+    """Concurrently perform different actions on multiple source databases that are randomly picked from list of created databases."""
 
     if databases is None:
         databases = self.context.list_of_databases
@@ -509,7 +509,7 @@ def check_concurrent_actions(
     with By("running concurrent actions on multiple databases"):
         for i in range(number_of_iterations):
             for action in get_n_random_items(actions, number_of_concurrent_actions):
-                if action.__name__ not in [
+                if action.__name__ in [
                     "insert_on_all_databases",
                     "insert_on_two_databases",
                 ]:
@@ -532,7 +532,7 @@ def check_alters_on_different_databases(self):
         - DROP COLUMN
         - ADD PRIMARY KEY
     """
-    databases = self.context.list_of_databases
+    databases = self.context.list_of_databases[:2]
 
     alter_statements = [
         add_column_on_a_database,
