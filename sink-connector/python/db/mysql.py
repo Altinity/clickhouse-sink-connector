@@ -115,7 +115,7 @@ def resolve_credentials_from_config(config_file):
     return (mysql_user, mysql_password)
 
 
-def estimate_table_count(conn, mysql_table, mysql_rows, where, pk, min_pk, max_pk):
+def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
     sql = f"explain select * from {mysql_table} where {where} and {pk} between {min_pk} and {max_pk}"
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
@@ -123,7 +123,7 @@ def estimate_table_count(conn, mysql_table, mysql_rows, where, pk, min_pk, max_p
     return count
 
 
-def get_min_max_pk_value(conn, mysql_table, mysql_rows, pk, where):
+def get_min_max_pk_value(conn, mysql_table, pk, where):
     sql = f"select min({pk}) as min_pk, max({pk}) as max_pk from {mysql_table} where {where}"
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
@@ -157,18 +157,18 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
     return list
 
 
-def divide_table_into_even_chunks(conn, mysql_table, mysql_rows, pk, where):
+def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
     if not pk:
          yield {}
          return 
-    (min_pk_value, max_pk_value) = get_min_max_pk_value(conn, mysql_table, mysql_rows, pk, where)
+    (min_pk_value, max_pk_value) = get_min_max_pk_value(conn, mysql_table, pk, where)
     if min_pk_value is None:
         logging.debug(f"No data in {mysql_table}")
         return
-    table_rowcount = estimate_table_count(conn, mysql_table, mysql_rows, where, pk, min_pk_value, max_pk_value)
+    table_rowcount = estimate_table_count(conn, mysql_table, where, pk, min_pk_value, max_pk_value)
     lower_bound = int(min_pk_value)
 
-    nb_chunks = int(table_rowcount / mysql_rows)+1
+    nb_chunks = int(table_rowcount / chunk_size)+1
     logging.debug(f"nb_chunks = {nb_chunks}")
     logging.debug(f"lower_bound {lower_bound} max_pk_value {max_pk_value}")
     chunk_step = int((max_pk_value - min_pk_value) / nb_chunks)+1
