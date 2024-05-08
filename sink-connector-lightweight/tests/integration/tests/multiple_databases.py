@@ -534,7 +534,6 @@ def check_alters_on_different_databases(self):
         - DROP COLUMN
         - ADD PRIMARY KEY
     """
-    databases = self.context.list_of_databases[:2]
 
     alter_statements = [
         add_column_on_a_database,
@@ -653,7 +652,7 @@ def module(
     self.context.config_file = os.path.join("env", "auto", "configs")
 
     with And(
-        "I create a new ClickHouse Sink Connector configuration with configuration to monitor all of the databases"
+        "I create a new ClickHouse Sink Connector configuration to monitor all of the databases"
     ):
         replicate_all_databases()
 
