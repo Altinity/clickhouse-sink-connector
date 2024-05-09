@@ -213,7 +213,7 @@ def regression(
 
         self.context.sink_node.start_sink_connector()
 
-    with Pool(2) as executor:
+    with Pool(1) as executor:
         Feature(
             run=load("tests.sanity", "module"),
             parallel=True,
