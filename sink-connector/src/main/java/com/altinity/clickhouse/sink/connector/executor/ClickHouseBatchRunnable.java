@@ -125,16 +125,18 @@ public class ClickHouseBatchRunnable implements Runnable {
     @Override
     public void run() {
 
-        // If the thread is interrupted, the exit.
-        if(Thread.currentThread().isInterrupted()) {
-            log.info("Thread is interrupted, exiting - Thread ID: " + Thread.currentThread().getId());
-            return;
-        }
+
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
 
             // Poll from Queue until its empty.
             while(records.size() > 0 || currentBatch != null) {
+                // If the thread is interrupted, the exit.
+                if(Thread.currentThread().isInterrupted()) {
+                    log.info("Thread is interrupted, exiting - Thread ID: " + Thread.currentThread().getId());
+                    return;
+                }
+
                 if(currentBatch == null) {
                     currentBatch = records.poll();
                 } else {

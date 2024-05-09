@@ -663,13 +663,6 @@ public class DebeziumChangeEventCapture {
 
     public void stop() throws IOException {
 
-        try {
-            if (this.engine != null) {
-                this.engine.close();
-            }
-        } catch(Exception e) {
-            log.error("Error stopping debezium engine", e);
-        }
 
         try {
             if (this.executor != null) {
@@ -688,6 +681,16 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error stopping debezium event executor", e);
         }
+
+        try {
+            if (this.engine != null) {
+                this.engine.close();
+            }
+        } catch(Exception e) {
+            log.error("Error stopping debezium engine", e);
+        }
+
+
         try {
             if (this.conn != null) {
                 this.conn.close();
