@@ -28,15 +28,15 @@ ffails = {
     "delete/no primary key": (Skip, "doesn't work in raw"),
     "update/no primary key innodb": (Skip, "makes delete"),
     "update/no primary key": (Skip, "makes delete"),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key": (
         Skip,
         "doesn't work",
     ),
@@ -109,27 +109,27 @@ ffails = {
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/auto table creation/insert/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/insert/*": (
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/auto table creation/partitions/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/partitions/*": (
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key innodb/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key innodb/*": (
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key/*": (
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
     ),
-    "/mysql to clickhouse replication/auto table creation/schema only/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/schema only/*": (
         Skip,
         "Seems to be broken in CI/CD. need oto fix.",
     ),
-    "/mysql to clickhouse replication/auto table creation/cli/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
         Skip,
         "Seems to be broken in CI/CD. need oto fix.",
     ),
@@ -159,7 +159,7 @@ def regression(
     thread_fuzzer=None,
     collect_service_logs=None,
 ):
-    """ClickHouse regression for MySQL to ClickHouse replication with auto table creation."""
+    """ClickHouse regression for MySQL to ClickHouse replication with auto replicated table creation."""
     nodes = {
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
