@@ -144,7 +144,7 @@ public class DebeziumOffsetManagement {
                     record.getCommitter().markBatchFinished();
                     log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                             record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-                            + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
+                            + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
                 }
             }
         }

@@ -147,7 +147,7 @@ public class BaseDbWriter {
      * @throws SQLException
      */
     public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
-        if(this.conn == null) {
+        if(this.conn == null || this.conn.isClosed()) {
             String connectionUrl = getConnectionString(hostName, port, database);
             //this.createConnection(connectionUrl, "Agent_1", userName, password);
         }

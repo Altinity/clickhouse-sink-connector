@@ -202,7 +202,8 @@ public class Metrics {
 
             new Thread(server::start).start();
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.error("Cannot start HTTP server for Prometheus on /metrics", e);
+            //throw new RuntimeException(e);
         }
     }
 

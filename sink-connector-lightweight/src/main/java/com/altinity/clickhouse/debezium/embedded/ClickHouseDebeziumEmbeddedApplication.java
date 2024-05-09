@@ -134,7 +134,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
         debeziumChangeEventCapture.stop();
 
         //Stop Rest API
-        DebeziumEmbeddedRestApi.stop();
+        //DebeziumEmbeddedRestApi.stop();
     }
 
     /**
