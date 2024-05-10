@@ -301,9 +301,7 @@ def regression(
         )
         join()
 
-    Feature(
-        run=load("tests.databases", "module")
-    )
+    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )
