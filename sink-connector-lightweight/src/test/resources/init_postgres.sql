@@ -136,4 +136,5 @@ INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Pe
 --
 
 create schema public2;
-CREATE TABLE "public2.tm" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);
+set schema 'public2';
+CREATE TABLE "tm2" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);

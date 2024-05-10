@@ -64,7 +64,8 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("slot.max.retries", "6" );
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
-        properties.put("table.include.list", "public.tm,public.tm2" );
+        properties.put("schema.include.list", "public,public2");
+        properties.put("table.include.list", "public.tm,public2.tm2" );
         return properties;
     }
 
@@ -97,8 +98,10 @@ public class PostgresPgoutputMultipleSchemaIT {
         // Create a postgres connection and insert new records
         // to public2.tm CREATE TABLE "public2.tm" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);
         Connection postgresConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
-        postgresConn.createStatement().execute("insert into public2.tm (id, secid, acc_id) values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid())");
+        postgresConn.createStatement().execute("insert into public2.tm2 (id, secid, acc_id) values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid())");
         postgresConn.close();
+
+        Thread.sleep(10000);
 
         // Create connection.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -117,12 +120,20 @@ public class PostgresPgoutputMultipleSchemaIT {
 
 
         int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm final").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
 
         Assert.assertTrue(tmCount == 2);
+
+
+        int tm2Count = 0;
+        ResultSet chRs2 = writer.getConnection().prepareStatement("select count(*) from public.tm2 final").executeQuery();
+        while(chRs2.next()) {
+            tm2Count =  chRs2.getInt(1);
+        }
+        Assert.assertTrue(tm2Count == 1);
 
         if(engine.get() != null) {
             engine.get().stop();
