@@ -181,8 +181,10 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         start(injector.getInstance(DebeziumRecordParserService.class),
                                 injector.getInstance(DDLParserService.class), props, true);
                     } catch (IOException e) {
+                        log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);
                     } catch (Exception e) {
+                        log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);
                     }
 

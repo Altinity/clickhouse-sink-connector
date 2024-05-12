@@ -177,11 +177,13 @@ public class PreparedStatementExecutor {
                 try {
                     ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
                 } catch (SQLException e) {
+                    log.error("*** Error: Truncate table statement error ****", e);
                     throw new RuntimeException(e);
                 }
                 try {
                     ps.execute();
                 } catch (SQLException e) {
+                    log.error("*** Error: Truncate table statement execute error ****", e);
                     throw new RuntimeException(e);
                 }
             }

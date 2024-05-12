@@ -581,11 +581,13 @@ public class DebeziumChangeEventCapture {
                                     try {
                                         Thread.sleep(SLEEP_TIME);
                                     } catch (InterruptedException e) {
+                                        log.error("Error sleeping", e);
                                         throw new RuntimeException(e);
                                     }
                                     try {
                                         setupDebeziumEventCapture(props, debeziumRecordParserService, config);
                                     } catch (IOException | ClassNotFoundException e) {
+                                        log.error("Error setting up debezium event capture", e);
                                         throw new RuntimeException(e);
                                     }
                                 }

@@ -137,6 +137,7 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                             }
                         }
                     } catch (ParseException e) {
+                        log.error("Error parsing JSON", e);
                         throw new RuntimeException(e);
                     }
 

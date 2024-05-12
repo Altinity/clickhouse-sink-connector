@@ -192,6 +192,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             try {
                 Thread.sleep(10000);
             } catch (InterruptedException ex) {
+                log.error("******* ERROR **** Thread interrupted *********", ex);
                 throw new RuntimeException(ex);
             }
         }
