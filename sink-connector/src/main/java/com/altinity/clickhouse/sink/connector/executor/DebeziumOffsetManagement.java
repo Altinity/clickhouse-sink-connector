@@ -116,6 +116,7 @@ public class DebeziumOffsetManagement {
                     try {
                         acknowledgeRecords(v);
                     } catch (InterruptedException e) {
+                        log.error("*** Error acknowlegeRecords ***", e);
                         throw new RuntimeException(e);
                     }
                 completedBatches.remove(k);
