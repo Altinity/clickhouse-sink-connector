@@ -6,6 +6,9 @@
         </Console>
     </Appenders>
     <Loggers>
+        <Logger name="com.clickhouse.jdbc" level="error" additivity="false">
+            <AppenderRef ref="console" />
+        </Logger>
         <Root level="debug" additivity="false">
             <AppenderRef ref="console" />
         </Root>
