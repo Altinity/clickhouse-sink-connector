@@ -6,7 +6,6 @@ from tests.clickhouse_connection import ClickHouseConnection
 from tests.mysql_connection import MySqlConnection
 from fake_data import FakeData
 
-
 class MyTestCase(unittest.TestCase):
 
     conn = None
@@ -15,27 +14,28 @@ class MyTestCase(unittest.TestCase):
     def setUpClass(cls):
         print("Setup class")
 
+
     @classmethod
     def tearDownClass(cls):
         print("Teardown class")
 
+
+
     def generate_employees_fake_records(self):
-        """
+        '''
         Generate fake records for employees table.
         :return:
-        """
+        '''
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "employees_predated"
+        table_name = 'employees_predated'
         # Start with empty table
-        conn.execute_sql(f"truncate table {table_name}")
-        conn.execute_sql(f"select * from {table_name} limit 1")
+        conn.execute_sql(f'truncate table {table_name}')
+        conn.execute_sql(f'select * from {table_name} limit 1')
 
-        col_names = conn.get_column_names(f"select * from {table_name} limit 1")
-        sql_query = conn.get_insert_sql_query(
-            table_name, ",".join(col_names), len(col_names)
-        )
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         x = range(1, 1000000)
         for n in x:
@@ -49,98 +49,80 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "employees_predated"
+        table_name = 'employees_predated'
         # Start with empty table
-        conn.execute_sql(f"truncate table {table_name}")
-        conn.execute_sql(f"select * from {table_name} limit 1")
-        col_names = conn.get_column_names(f"select * from {table_name} limit 1")
-        sql_query = conn.get_insert_sql_query(
-            table_name, ",".join(col_names), len(col_names)
-        )
+        conn.execute_sql(f'truncate table {table_name}')
+        conn.execute_sql(f'select * from {table_name} limit 1')
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
-        # 9999-12-31 or 1900-01-01
-        fake_row_ch_invalid_date_range = (
-            FakeData.get_fake_employees_row_with_out_of_range_datetime(
-                122323, date(1900, 2, 2), date(1910, 1, 1)
-            )
-        )
+        #9999-12-31 or 1900-01-01
+        fake_row_ch_invalid_date_range = FakeData.get_fake_employees_row_with_out_of_range_datetime(122323, date(1900,2,2), date(1910, 1, 1))
         conn.execute_sql(sql_query, fake_row_ch_invalid_date_range)
 
-        fake_row_ch_invalid_date_range = (
-            FakeData.get_fake_employees_row_with_out_of_range_datetime(
-                122324, date(9999, 12, 30), date(9999, 12, 31)
-            )
-        )
+        fake_row_ch_invalid_date_range = FakeData.get_fake_employees_row_with_out_of_range_datetime(122324, date(9999, 12, 30), date(9999, 12, 31))
         conn.execute_sql(sql_query, fake_row_ch_invalid_date_range)
 
-        clickhouse_conn = ClickHouseConnection(
-            host_name="localhost", username="root", password="root", database="test"
-        )
+        clickhouse_conn = ClickHouseConnection(host_name='localhost', username='root', password='root', database='test')
         clickhouse_conn.create_connection()
-        result = clickhouse_conn.execute_sql("select * from products")
+        result = clickhouse_conn.execute_sql('select * from products')
 
         print(result)
         conn.close()
 
+
     def test_duplicate_inserts(self):
-        """
+        '''
         Test case to make sure duplicate records
         are not inserted
         :return:
-        """
+        '''
 
-        clickhouse_conn = ClickHouseConnection(
-            host_name="localhost", username="root", password="root", database="test"
-        )
+        clickhouse_conn = ClickHouseConnection(host_name='localhost', username='root', password='root', database='test')
         clickhouse_conn.create_connection()
-        clickhouse_conn.execute_sql("truncate table products")
+        clickhouse_conn.execute_sql('truncate table products')
 
         time.sleep(20)
 
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "products"
+        table_name = 'products'
         # Start with empty table
         conn.execute_sql(f"truncate table {table_name}")
         conn.execute_sql(f"select * from {table_name} limit 1")
 
-        col_names = conn.get_column_names(f"select * from {table_name} limit 1")
-        sql_query_1 = conn.get_insert_sql_query(
-            table_name, ",".join(col_names), len(col_names)
-        )
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query_1 = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
         fake_row_1 = FakeData.get_fake_products_row()
         conn.execute_sql(sql_query_1, fake_row_1)
 
         conn.execute_sql(f"truncate table {table_name}")
-        col_names = conn.get_column_names(f"select * from {table_name} limit 1")
-        sql_query_2 = conn.get_insert_sql_query(
-            table_name, ",".join(col_names), len(col_names)
-        )
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query_2 = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
         conn.execute_sql(sql_query_2, fake_row_1)
 
-        result = clickhouse_conn.execute_sql("select count(*) from products")
+
+        result = clickhouse_conn.execute_sql('select count(*) from products')
 
         print(result)
         conn.close()
 
     def generate_products_fake_records(self):
-        """
+        '''
         Generate fake records for products table.
         :return:
-        """
+        '''
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "products"
+        table_name = 'products'
         # Start with empty table
         conn.execute_sql(f"truncate table {table_name}")
         conn.execute_sql(f"select * from {table_name} limit 1")
 
-        col_names = conn.get_column_names(f"select * from {table_name} limit 1")
-        sql_query = conn.get_insert_sql_query(
-            table_name, ",".join(col_names), len(col_names)
-        )
+        col_names = conn.get_column_names(f'select * from {table_name} limit 1')
+        sql_query = conn.get_insert_sql_query(table_name,','.join(col_names), len(col_names))
 
         x = range(1, 1000000)
         for n in x:
@@ -155,24 +137,21 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "products"
-        conn.execute_sql(
-            "update products set buyPrice=900 where productCode='S10_1678'"
-        )
-        conn.execute_sql(
-            "update employees_predated set salary=900 where emp_no='10001'"
-        )
+        table_name = 'products'
+        conn.execute_sql("update products set buyPrice=900 where productCode='S10_1678'");
+        conn.execute_sql("update employees_predated set salary=900 where emp_no='10001'");
         conn.close()
+
 
     def generate_delete_records(self):
 
         conn = MySqlConnection()
         conn.create_connection()
 
-        table_name = "products"
+        table_name = 'products'
 
-        conn.execute_sql("delete from products where productCode='S10_1949'")
-        conn.execute_sql("delete from employees_predated where emp_no =9999")
+        conn.execute_sql("delete from products where productCode='S10_1949'");
+        conn.execute_sql("delete from employees_predated where emp_no =9999");
 
         conn.close()
 
@@ -180,13 +159,11 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        conn.execute_sql("alter table products add column source json")
+        conn.execute_sql("alter table products add column source json");
 
-        conn.execute_sql(
-            "insert into products(source, productCode, productName, productLine, productScale,productVendor, "
-            "productDescription, quantityInStock, buyPrice, MSRP) "
-            "values('{\"key1\": \"value1\", \"key2\": \"value2\"}', 'S10_122222', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)"
-        )
+        conn.execute_sql("insert into products(source, productCode, productName, productLine, productScale,productVendor, "
+                         "productDescription, quantityInStock, buyPrice, MSRP) "
+                         "values('{\"key1\": \"value1\", \"key2\": \"value2\"}', 'S10_122222', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
         conn.close()
 
         # clickhouse_conn = ClickHouseConnection(host_name='localhost', username='root', password='root', database='test')
@@ -198,22 +175,20 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        conn.execute_sql("alter table products add column emp_user_id varchar(15)")
+        conn.execute_sql("alter table products add column emp_user_id varchar(15)");
         conn.close()
 
         conn.create_connection()
-        conn.execute_sql(
-            "insert into products(emp_user_id, productCode, productName, productLine, productScale,productVendor, "
-            "productDescription, quantityInStock, buyPrice, MSRP) "
-            "values('11', 'S10_122243', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)"
-        )
+        conn.execute_sql("insert into products(emp_user_id, productCode, productName, productLine, productScale,productVendor, "
+                         "productDescription, quantityInStock, buyPrice, MSRP) "
+                         "values('11', 'S10_122243', 'TEST', 'TEST', '1:10', 'TEST', 'TEST', 100, 1.0, 1.50)")
         conn.close()
 
     def test_update_primary_key(self):
         conn = MySqlConnection()
         conn.create_connection()
 
-        conn.execute_sql("update sbtest.sbtest1 set k=k+1 where id=2317")
+        conn.execute_sql('update sbtest.sbtest1 set k=k+1 where id=2317')
 
         conn.close()
 
@@ -221,19 +196,17 @@ class MyTestCase(unittest.TestCase):
         conn = MySqlConnection()
         conn.create_connection()
 
-        conn.execute_sql(
-            "insert into sbtest.sbtest1 values(12323555, 1), (243434555, 2), (334345553, 3), (434355544, 4), (534555343, 5)"
-        )
+        conn.execute_sql("insert into sbtest.sbtest1 values(12323555, 1), (243434555, 2), (334345553, 3), (434355544, 4), (534555343, 5)")
 
-    """
+    '''
     Test for auto create tables to make sure the decimal precision is mapped
     properly to ClickHouse
-    """
-
+    '''
     def test_create_table_decimal(self):
 
         conn = MySqlConnection()
-        conn.create_connection()
+        conn.create_connection(
+        )
         conn.execute_sql("drop table test.dec_test")
         conn.execute_sql("create table test.dec_test(product_val decimal(30, 10))")
 
@@ -242,18 +215,18 @@ class MyTestCase(unittest.TestCase):
         conn.execute_sql("")
         conn.close()
 
-
 def test_multiple_tables(self):
-    # self.generate_employees_records_with_datetime()
-    # self.generate_employees_fake_records()
-    # self.generate_products_fake_records()
-    # self.generate_products_fake_records()
-    # self.generate_update_records()
-    # self.test_json_data_type()
-    self.test_alter_table()
-    # self.generate_delete_records()
-    # self.test_duplicate_inserts()
+        #self.generate_employees_records_with_datetime()
+        #self.generate_employees_fake_records()
+        #self.generate_products_fake_records()
+        #self.generate_products_fake_records()
+        #self.generate_update_records()
+        #self.test_json_data_type()
+        self.test_alter_table()
+        #self.generate_delete_records()
+        #self.test_duplicate_inserts()
 
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     unittest.main()

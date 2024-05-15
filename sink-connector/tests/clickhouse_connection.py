@@ -1,5 +1,5 @@
-from clickhouse_driver import Client
 
+from clickhouse_driver import Client
 
 class ClickHouseConnection:
 
@@ -10,12 +10,10 @@ class ClickHouseConnection:
         self.database = database
 
     def create_connection(self):
-        self.client = Client(
-            self.host_name,
-            user=self.username,
-            password=self.password,
-            database=self.database,
-        )
+        self.client = Client(self.host_name,
+                        user=self.username,
+                        password=self.password,
+                        database=self.database)
 
     def execute_sql(self, query):
         result = self.client.execute(query)
