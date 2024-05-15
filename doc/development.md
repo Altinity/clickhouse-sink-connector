@@ -2,7 +2,7 @@
 
 
 Requirements
-- Java JDK 11 (https://openjdk.java.net/projects/jdk/11/)
+- Java JDK 17 (https://openjdk.java.net/projects/jdk/11/)
 - Maven (mvn) (https://maven.apache.org/download.cgi)
 - Docker and Docker-compose
 
@@ -13,6 +13,8 @@ git clone git@github.com:Altinity/clickhouse-sink-connector.git
 ```
 
 2. Build the ClickHouse Sink connector Library:
+This builds the requirement for sink connector lightweight`<sink-connector-library-version>0.0.8</sink-connector-library-version>`
+
 ```bash
 cd sink-connector
 mvn install -DskipTests=true
@@ -23,3 +25,5 @@ mvn install -DskipTests=true
 cd ../sink-connector-lightweight
 mvn install -DskipTests=true
 ```
+
+The JAR file will be created in the  `target` directory.
