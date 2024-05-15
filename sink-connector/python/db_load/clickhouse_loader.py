@@ -497,7 +497,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                         if column['nullable'] == True:
                             structure += f" Nullable({datatype})"
                         else:
-                            structure += f" {datatype}"
+                            structure += f" {datatype}".replace("'","\\'")
                     else:
                         if column['nullable'] == True:
                             structure += " Nullable(String)"
