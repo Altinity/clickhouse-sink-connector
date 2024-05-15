@@ -19,11 +19,13 @@ from db.mysql import *
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
-def compute_count(table, statements, conn):
+def compute_count(table, statements, mysql_user, mysql_password):
     sql = ""
     count = 0
+    conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
     try:
-        for statement in statements:
+        logging.debug(str(statements))
+        for statement in list(statements):
             sql = statement
 
             (result, rowcount) = execute_mysql(conn, sql)
@@ -32,9 +34,9 @@ def compute_count(table, statements, conn):
             if result != None and result.returns_rows == True:
                 x = [element for tupl in result for element in tupl]
                 count += x[0]
-        logging.info("Count for table "+args.mysql_database + "."+table+" = "+str(count))
     finally:
         conn.close()
+    return count
 
 @staticmethod
 def fstr(template, partition_expression):
@@ -42,7 +44,7 @@ def fstr(template, partition_expression):
 
 def select_table_statements(conn, table):
     # TODO adjust the number as a parameter
-    statements = ['set local innodb_parallel_read_threads=32']
+    statements = []
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
     where = ""
@@ -69,7 +71,7 @@ def select_table_statements(conn, table):
                 partition_clause = f" partition({partition_name})"
                 where = fstr(where, partition_expression) 
             sql = f"select count(*) from {schema}.{table} {partition_clause} {where}"
-            statements.append(sql)
+            statements.append(('set local innodb_parallel_read_threads=32', sql))
     return statements
 
 
@@ -77,7 +79,7 @@ def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp, exclude_tables_regex=args.exclude_tables_regex, non_partitioned_tables_only=args.non_partitioned_tables_only, include_partitions_regex=args.include_partitions_regex)
 
 
-def calculate_sql_count(conn, table):
+def calculate_sql_count(conn, table, mysql_user, mysql_password):
 
     try:
         if args.exclude_tables_regex:
@@ -90,7 +92,18 @@ def calculate_sql_count(conn, table):
         statements = []
 
         statements = select_table_statements(conn, table)
-        compute_count(table, statements, conn)
+        row_count = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads_per_table) as executor:
+            futures = []
+            for queries in statements:
+                futures.append(executor.submit(
+                    compute_count, table, queries, mysql_user, mysql_password))
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                row_count += result
+                if future.exception() is not None:
+                    raise future.exception()
+            logging.info("Count for table "+args.mysql_database + "."+table+" = "+str(row_count))
     finally:
         conn.close()
 
@@ -105,7 +118,7 @@ def calculate_table_count(mysql_table, mysql_user, mysql_password):
     statements = []
 
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
-    calculate_sql_count(conn, mysql_table)
+    calculate_sql_count(conn, mysql_table, mysql_user, mysql_password)
 
 
 # hack to add the user to the logger, which needs it apparently
@@ -157,7 +170,8 @@ def main():
                         nargs='+', default=['_sign', '_version'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
-
+    parser.add_argument('--threads_per_table', type=int,
+                        help='number of parallel threads per table', default=1)
     global args
     args = parser.parse_args()
 
