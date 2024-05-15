@@ -110,18 +110,49 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-    modules = [
-        "autocreate",
-        "insert",
-        "delete",
-        "truncate",
-        "deduplication",
-        "primary_keys",
-        "virtual_columns",
-        "columns_inconsistency"
-    ]
-    for module in modules:
-        Feature(run=load(f"tests.{module}", "module"))
+
+    with Pool(1) as executor:
+        Feature(
+            run=load("tests.autocreate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.insert", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.delete", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.deduplication", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.primary_keys", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.virtual_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.columns_inconsistency", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.multiple_databases", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        join()
 
     Feature(run=load("tests.consistency", "module"))
 

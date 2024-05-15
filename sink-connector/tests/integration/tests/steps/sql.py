@@ -74,7 +74,7 @@ def create_mysql_to_clickhouse_replicated_table(
     self,
     name,
     mysql_columns,
-    clickhouse_table,
+    clickhouse_table=None,
     clickhouse_columns=None,
     mysql_node=None,
     clickhouse_node=None,
@@ -83,6 +83,7 @@ def create_mysql_to_clickhouse_replicated_table(
     primary_key="id",
     partition_by=None,
     engine=True,
+    database="test",
 ):
     """Create MySQL-to-ClickHouse replicated table.
 
@@ -95,6 +96,10 @@ def create_mysql_to_clickhouse_replicated_table(
     :param clickhouse_node: CH docker compose node
     :return:
     """
+
+    if clickhouse_table is None:
+        clickhouse_table = ("auto", "ReplacingMergeTree")
+
     if mysql_node is None:
         mysql_node = self.context.cluster.node("mysql-master")
 
@@ -104,10 +109,10 @@ def create_mysql_to_clickhouse_replicated_table(
     try:
         with Given(f"I create MySQL table", description=name):
             mysql_node.query(
-                f"CREATE TABLE IF NOT EXISTS {name} "
+                f"CREATE TABLE IF NOT EXISTS {database}.{name} "
                 f"(id INT AUTO_INCREMENT,"
                 f"{mysql_columns}"
-                f"{f', PRIMARY KEY ({primary_key})'if primary_key is not None else ''})"
+                f"{f', PRIMARY KEY ({primary_key})' if primary_key is not None else ''})"
                 f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
@@ -134,7 +139,7 @@ def create_mysql_to_clickhouse_replicated_table(
                         f"/{name}',"
                         " '{replica}',"
                         f" {version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})'if primary_key is not None else ''}"
+                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else ''}"
                         f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
                         f" SETTINGS "
                         f"index_granularity = 8192;",
@@ -144,7 +149,7 @@ def create_mysql_to_clickhouse_replicated_table(
                     f"I create ClickHouse table as replication table to MySQL test.{name}"
                 ):
                     clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} "
+                        f"CREATE TABLE IF NOT EXISTS {database}.{name} "
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplacingMergeTree({version_column}) "
@@ -171,9 +176,22 @@ def create_mysql_to_clickhouse_replicated_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;;"
+                f"DROP TABLE IF EXISTS {database}.{name} ON CLUSTER sharded_replicated_cluster;;"
             )
             time.sleep(5)
+
+
+@TestStep(When)
+def insert_values(self, table_name, values, database=None, node=None):
+    """Insert values into MySQL table"""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    with By(f"inserting values into {table_name}"):
+        node.query(f"INSERT INTO {database}.{table_name} VALUES {values}")
 
 
 @TestStep(Given)
@@ -182,18 +200,15 @@ def insert(
     first_insert_id,
     last_insert_id,
     table_name,
-    insert_values="({x},2,'a','b')",
+    insert_values=None,
     node=None,
 ):
     """
-    Insert some controlled interval of id's
-    :param self:
-    :param node:
-    :param first_insert_id:
-    :param last_insert_id:
-    :param table_name:
-    :return:
+    Insert some controlled interval of id's in MySql table.
     """
+    if insert_values is None:
+        insert_values = "({x},2,'a','b')"
+
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
