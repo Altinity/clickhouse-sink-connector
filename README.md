@@ -65,6 +65,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ### Development
 
+* [Development](doc/development.md)
 * [Testing](doc/TESTING.md)
 
 ## Roadmap 
