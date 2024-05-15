@@ -4,6 +4,7 @@ import os
 import mysql.connector
 from mysql.connector import Error
 from faker import Faker
+
 Faker.seed(33422)
 
 fake = Faker()
@@ -24,14 +25,15 @@ CREATE TABLE `people` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 """
 
-db_host = os.environ.get('DB_HOST', 'localhost')
-db_name = os.environ.get('DB_NAME')
-db_user = os.environ.get('DB_USER_NAME')
-db_pass = os.environ.get('DB_USER_PASSWORD')
+db_host = os.environ.get("DB_HOST", "localhost")
+db_name = os.environ.get("DB_NAME")
+db_user = os.environ.get("DB_USER_NAME")
+db_pass = os.environ.get("DB_USER_PASSWORD")
 
 try:
-    conn = mysql.connector.connect(host=db_host, database = db_name,
-                                   user=db_user, password=db_pass)
+    conn = mysql.connector.connect(
+        host=db_host, database=db_name, user=db_user, password=db_pass
+    )
 
     if conn.is_connected():
         cursor = conn.cursor()
@@ -46,26 +48,36 @@ try:
 
         while True:
             n += 1
-            row = [fake.first_name(), fake.last_name(), fake.email(), \
-               fake.postcode(), fake.city(), fake.country(), fake.date_of_birth()]
+            row = [
+                fake.first_name(),
+                fake.last_name(),
+                fake.email(),
+                fake.postcode(),
+                fake.city(),
+                fake.country(),
+                fake.date_of_birth(),
+            ]
 
-            cursor.execute(' \
+            cursor.execute(
+                ' \
                 INSERT INTO `people` (first_name, last_name, email, zipcode, city, country, birthdate) \
                 VALUES ("%s", "%s", "%s", %s, "%s", "%s", "%s"); \
-                ' % (row[0], row[1], row[2], row[3], row[4], row[5], row[6]))
+                '
+                % (row[0], row[1], row[2], row[3], row[4], row[5], row[6])
+            )
 
             if n % 100 == 0:
                 print("iteration %s" % n)
                 time.sleep(0.5)
                 conn.commit()
-except Error as e :
-    print ("error", e)
+except Error as e:
+    print("error", e)
     pass
 except Exception as e:
-    print ("Unknown error %s", e)
+    print("Unknown error %s", e)
 finally:
-    #closing database connection.
-    if(conn and conn.is_connected()):
+    # closing database connection.
+    if conn and conn.is_connected():
         conn.commit()
         cursor.close()
         conn.close()

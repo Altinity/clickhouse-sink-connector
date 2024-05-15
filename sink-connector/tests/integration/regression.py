@@ -3,9 +3,7 @@
 import os
 import sys
 
-
 from testflows.core import *
-
 
 append_path(sys.path, "..")
 
@@ -110,18 +108,47 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-    modules = [
-        "autocreate",
-        "insert",
-        "delete",
-        "truncate",
-        "deduplication",
-        "primary_keys",
-        "virtual_columns",
-        "columns_inconsistency"
-    ]
-    for module in modules:
-        Feature(run=load(f"tests.{module}", "module"))
+    with Pool(1) as executor:
+        Feature(
+            run=load(f"tests.autocreate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.insert", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.delete", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.truncate", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.deduplication", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.primary_keys", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.virtual_columns", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load(f"tests.columns_inconsistency", "module"),
+            parallel=True,
+            executor=executor,
+        )
 
     Feature(run=load("tests.consistency", "module"))
     Feature(run=load("tests.manual_section", "module"))
