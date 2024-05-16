@@ -24,6 +24,17 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     private static final Logger log = LogManager.getLogger(ClickHouseAutoCreateTable.class.getName());
 
+    /**
+     * Function to create a new table in ClickHouse.
+     * @param primaryKey
+     * @param tableName
+     * @param databaseName
+     * @param fields
+     * @param connection
+     * @param isNewReplacingMergeTree
+     * @param useReplicatedReplacingMergeTree
+     * @throws SQLException
+     */
     public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                ClickHouseConnection connection, boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree) throws SQLException {
@@ -35,6 +46,54 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         this.runQuery(createTableQuery, connection);
     }
 
+    /**
+     * Function to create history table, table suffixed with _history.
+     * @param primaryKey
+     * @param tableName
+     * @param databaseName
+     * @param fields
+     * @param columnToDataTypesMap
+     * @param useReplicatedReplacingMergeTree
+     * @return
+     */
+    public String createHistoryTableSyntax(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
+                                           Map<String, String> columnToDataTypesMap,
+                                           boolean useReplicatedReplacingMergeTree) {
+
+        StringBuilder createTableSyntax = new StringBuilder();
+
+        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName)
+        .append("_history").append("`").append("(");
+
+        for(Field f: fields) {
+            appendFieldToCreateTableSyntax(createTableSyntax, f, columnToDataTypesMap);
+        }
+
+        createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
+        createTableSyntax.append(")");
+        createTableSyntax.append(" ");
+
+        if(useReplicatedReplacingMergeTree == true)
+            createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+        else
+            createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+
+        createTableSyntax.append(" ");
+
+        if(primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+            createTableSyntax.append(PRIMARY_KEY).append("(");
+            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(") ");
+
+            createTableSyntax.append(ORDER_BY).append("(");
+            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(")");
+        } else {
+            // ToDO:
+            createTableSyntax.append(ORDER_BY_TUPLE);
+        }
+        return createTableSyntax.toString();
+    }
     /**
      * Function to generate CREATE TABLE for ClickHouse.
      *
@@ -52,28 +111,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`").append("(");
 
         for(Field f: fields) {
-            String colName = f.name();
-            String dataType = columnToDataTypesMap.get(colName);
-            boolean isNull = false;
-            if(f.schema().isOptional() == true) {
-                isNull = true;
-            }
-            createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
-
-            // Ignore setting NULL OR not NULL for JSON and Array
-            if(dataType != null &&
-                    (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name()) ||
-                            dataType.contains(ClickHouseDataType.Array.name()))) {
-                // ignore adding nulls;
-            } else {
-                if (isNull) {
-                    createTableSyntax.append(" ").append(NULL);
-                } else {
-                    createTableSyntax.append(" ").append(NOT_NULL);
-                }
-            }
-            createTableSyntax.append(",");
-
+            appendFieldToCreateTableSyntax(createTableSyntax, f, columnToDataTypesMap);
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -116,6 +154,24 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         }
        return createTableSyntax.toString();
     }
+
+    private void appendFieldToCreateTableSyntax(StringBuilder createTableSyntax, Field f, Map<String, String> columnToDataTypesMap) {
+        String colName = f.name();
+        String dataType = columnToDataTypesMap.get(colName);
+        boolean isNull = f.schema().isOptional();
+
+        createTableSyntax.append("`").append(colName).append("` ").append(dataType);
+
+        // Ignore setting NULL OR not NULL for JSON and Array
+        if(dataType != null &&
+                !(dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name()) ||
+                        dataType.contains(ClickHouseDataType.Array.name()))) {
+            createTableSyntax.append(isNull ? " NULL" : " NOT NULL");
+        }
+
+        createTableSyntax.append(",");
+    }
+
 
     @VisibleForTesting
     boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys, Map<String, String> columnToDataTypesMap) {

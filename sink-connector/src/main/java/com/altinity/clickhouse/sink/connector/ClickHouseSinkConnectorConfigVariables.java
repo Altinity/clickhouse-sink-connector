@@ -53,6 +53,8 @@ public enum ClickHouseSinkConnectorConfigVariables {
     //Config variable for auto creating tables if they dont exist.
     AUTO_CREATE_TABLES("auto.create.tables"),
 
+    AUTO_CREATE_HISTORY_TABLES("auto.create.history.tables"),
+
     // Config variable for auto creating ReplicatedReplacingMergeTree
     AUTO_CREATE_TABLES_REPLICATED("auto.create.tables.replicated"),
 
