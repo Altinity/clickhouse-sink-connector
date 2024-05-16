@@ -201,8 +201,12 @@ def create_mysql_to_clickhouse_replicated_table(
 
 
 @TestStep(When)
-def insert_values(self, table_name, values, database=None, node=None):
+def insert_values(self, table_name, values, database=None, node=None, columns=None):
     """Insert values into MySQL table"""
+
+    if columns is None:
+        columns = ""
+
     if database is None:
         database = "test"
 
@@ -210,7 +214,7 @@ def insert_values(self, table_name, values, database=None, node=None):
         node = self.context.cluster.node("mysql-master")
 
     with By(f"inserting values into {table_name}"):
-        node.query(f"INSERT INTO {database}.{table_name} VALUES ({values})")
+        node.query(f"INSERT INTO {database}.{table_name} {columns} VALUES ({values})")
 
 
 @TestStep(Given)

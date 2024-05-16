@@ -76,6 +76,7 @@ def regression(
         "schemaregistry": ("schemaregistry",),
         "sink": ("sink",),
         "zookeeper": ("zookeeper",),
+        "kafka": ("kafka",),
     }
 
     self.context.clickhouse_version = clickhouse_version
