@@ -16,10 +16,8 @@ def init_sink_connector(
     Initialize sink connector.
     """
 
-    if topics is None and database is None and table is None:
+    if topics is None:
         topics = "SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users"
-    elif database is not None and table is not None:
-        topics = "SERVER5432." + database + "." + table
 
     if node is None:
         node = self.context.cluster.node("bash-tools")

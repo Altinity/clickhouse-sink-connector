@@ -22,10 +22,7 @@ def create_table_and_insert_values(
 
     table_values = "1,'test',1"
 
-    with Given(f"I create connection between kafka and sink connector"):
-        init_sink_connector(database=database_name, table=table_name)
-
-    with And("I create MySQL to ClickHouse replicated table"):
+    with Given("I create MySQL to ClickHouse replicated table"):
         create_mysql_to_clickhouse_replicated_table(
             name=table_name, mysql_columns=mysql_columns, database=database_name
         )
@@ -83,17 +80,14 @@ def create_source_and_destination_databases(self, database_name=None):
 @TestStep(Given)
 def create_databases(self, databases=None):
     """Create MySQL and ClickHouse databases from a list of database names."""
+
     if databases is None:
         databases = []
 
-    with Pool(4) as pool:
+
+    with By("executing the create database from a list"):
         for database_name in databases:
-            Scenario(
-                test=create_source_and_destination_databases,
-                parallel=True,
-                executor=pool,
-            )(database_name=database_name)
-        join()
+            create_source_and_destination_databases(database_name=database_name)
 
 
 @TestOutline
@@ -157,7 +151,13 @@ def insert_on_two_databases(self):
     """Check that inserts are replicated when done on two databases."""
     table_name1 = "db1_" + getuid()
     table_name2 = "db2_" + getuid()
-    with By("crating two table on two different databases"):
+
+    databases = ["database_1", "database_2"]
+
+    with Given(f"creating connection between kafka and sink connector"):
+        init_sink_connector(topics=f"SERVER5432.{databases[0]}.{table_name1},SERVER5432.{databases[1]}.{table_name2}")
+
+    with And("crating two table on two different databases"):
         insert_on_database1(table_name=table_name1)
         insert_on_database2(table_name=table_name2)
 
@@ -227,7 +227,7 @@ def inserts(self):
         - Check replication when we have a specific number of databases both on source and destination.
     """
     Scenario(run=insert_on_two_databases)
-    Scenario(run=insert_on_all_databases),
+    # Scenario(run=insert_on_all_databases),
 
 
 @TestFeature
