@@ -36,6 +36,9 @@ def compute_count(table, statements, conn):
     finally:
         conn.close()
 
+@staticmethod
+def fstr(template, partition_expression):
+        return eval(f"f'{template}'")
 
 def select_table_statements(conn, table):
     # TODO adjust the number as a parameter
@@ -60,10 +63,11 @@ def select_table_statements(conn, table):
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
+            partition_expression = partition['partition_expression']
             partition_clause = ""
             if partition_name is not None:
                 partition_clause = f" partition({partition_name})"
-        
+                where = fstr(where, partition_expression) 
             sql = f"select count(*) from {schema}.{table} {partition_clause} {where}"
             statements.append(sql)
     return statements
@@ -132,7 +136,7 @@ def main():
                         help='MySQL database', required=True)
     parser.add_argument('--mysql_port', help='MySQL port',
                         default=3306, required=False)
-    parser.add_argument('--include_tables_regex', help='table regexp', required=False, default=None)
+    parser.add_argument('--include_tables_regex', help='table regexp', required=False, default='.')
     parser.add_argument('--exclude_tables_regex',
                         help='exclude table regexp', required=False)
     parser.add_argument('--include_partitions_regex', help='partitions regex', required=False, default=None)
