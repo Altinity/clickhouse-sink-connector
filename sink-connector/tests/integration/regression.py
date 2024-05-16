@@ -110,7 +110,6 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_database(name="test")
 
-
     with Pool(1) as executor:
         Feature(
             run=load("tests.autocreate", "module"),

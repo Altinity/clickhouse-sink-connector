@@ -4,6 +4,26 @@ from integration.helpers.common import *
 
 
 @TestStep(Given)
+def create_mysql_database(self, node=None, database_name=None):
+    """
+    Create a MySQL database.
+    """
+    if database_name is None:
+        database_name = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    with Given(f"I create MySQL database {database_name}"):
+        node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+
+    yield
+
+    with Finally(f"I drop MySQL database {database_name}"):
+        node.query(f"DROP DATABASE IF EXISTS {database_name};")
+
+
+@TestStep(Given)
 def create_mysql_table(self, name=None, statement=None, node=None):
     """
     Creation of default MySQL table for tests
@@ -191,7 +211,7 @@ def insert_values(self, table_name, values, database=None, node=None):
         node = self.context.cluster.node("mysql-master")
 
     with By(f"inserting values into {table_name}"):
-        node.query(f"INSERT INTO {database}.{table_name} VALUES {values}")
+        node.query(f"INSERT INTO {database}.{table_name} VALUES ({values})")
 
 
 @TestStep(Given)

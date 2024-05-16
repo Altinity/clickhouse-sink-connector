@@ -106,50 +106,6 @@ def init_debezium_connector(self, node=None):
     if node is None:
         node = self.context.cluster.node("bash-tools")
 
-    debezium_settings_transfer_command_apicurio = """cat <<EOF | curl --request POST --url "http://debezium:8083/connectors" --header 'Content-Type: application/json' --data @-
-{
-  "name": "test-connector",
-  "config": {
-    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
-    "tasks.max": "1",
-    "snapshot.mode": "initial",
-    "snapshot.locking.mode": "minimal",
-    "snapshot.delay.ms": 10000,
-    "include.schema.changes":"true",
-    "include.schema.comments": "true",
-    "database.hostname": "mysql-master",
-    "database.port": "3306",
-    "database.user": "root",
-    "database.password": "root",
-    "database.server.id": "5432",
-    "database.server.name": "SERVER5432",
-    "database.whitelist": "test",
-    "database.allowPublicKeyRetrieval":"true",
-    "database.history.kafka.bootstrap.servers": "kafka:9092",
-    "database.history.kafka.topic": "schema-changes.test_db",
-
-
-
-    "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-
-    "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "key.converter.apicurio.registry.auto-register": "true",
-    "key.converter.apicurio.registry.find-latest": "true",
-
-    "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "value.converter.apicurio.registry.auto-register": "true",
-    "value.converter.apicurio.registry.find-latest": "true",
-
-    "topic.creation.$alias.partitions": 3,
-    "topic.creation.default.replication.factor": 1,
-    "topic.creation.default.partitions": 6,
-
-    "provide.transaction.metadata": "true",
-  }
-}
-EOF"""
-
     debezium_settings_transfer_command_confluent = """cat <<EOF | curl --request POST --url "http://debezium:8083/connectors" --header 'Content-Type: application/json' --data @-
       {
         "name": "test-connector",
