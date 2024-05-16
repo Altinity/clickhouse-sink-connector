@@ -5,22 +5,21 @@ from integration.helpers.common import *
 
 @TestStep(Given)
 def create_mysql_database(self, node=None, database_name=None):
-    """
-    Create a MySQL database.
-    """
-    if database_name is None:
-        database_name = "test"
-
+    """Creation of MySQL database."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySQL database {database_name}"):
-        node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+    if database_name is None:
+        database_name = "test"
 
-    yield
-
-    with Finally(f"I drop MySQL database {database_name}"):
-        node.query(f"DROP DATABASE IF EXISTS {database_name};")
+    try:
+        with Given(f"I create MySQL database {database_name}"):
+            node.query(f"DROP DATABASE IF EXISTS {database_name};")
+            node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+        yield
+    finally:
+        with Finally(f"I delete MySQL database {database_name}"):
+            node.query(f"DROP DATABASE IF EXISTS {database_name};")
 
 
 @TestStep(Given)

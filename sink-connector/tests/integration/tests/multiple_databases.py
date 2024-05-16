@@ -1,5 +1,5 @@
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
+from integration.tests.steps.alter import *
 from integration.tests.steps.service_settings_steps import *
 from integration.tests.steps.steps_global import create_database
 from integration.tests.steps.clickhouse import (
@@ -70,11 +70,11 @@ def create_source_and_destination_databases(self, database_name=None):
     if database_name is None:
         database_name = "test"
 
-    with By(f"creating a ClickHouse database {database_name}"):
-        create_database(name=database_name)
-
-    with And(f"creating a a MySQL database {database_name}"):
+    with By(f"creating a a MySQL database {database_name}"):
         create_mysql_database(database_name=database_name)
+
+    with And(f"creating a ClickHouse database {database_name}"):
+        create_database(name=database_name)
 
 
 @TestStep(Given)
@@ -83,7 +83,6 @@ def create_databases(self, databases=None):
 
     if databases is None:
         databases = []
-
 
     with By("executing the create database from a list"):
         for database_name in databases:
@@ -155,7 +154,9 @@ def insert_on_two_databases(self):
     databases = ["database_1", "database_2"]
 
     with Given(f"creating connection between kafka and sink connector"):
-        init_sink_connector(topics=f"SERVER5432.{databases[0]}.{table_name1},SERVER5432.{databases[1]}.{table_name2}")
+        init_sink_connector(
+            topics=f"SERVER5432.{databases[0]}.{table_name1},SERVER5432.{databases[1]}.{table_name2}"
+        )
 
     with And("crating two table on two different databases"):
         insert_on_database1(table_name=table_name1)
@@ -169,6 +170,13 @@ def insert_on_all_databases(self):
     table_name2 = "db2_" + getuid()
     table_name3 = "db3_" + getuid()
     table_name4 = "db4_" + getuid()
+
+    databases = ["database_1", "database_2", "database_3", "database_4"]
+
+    with Given(f"creating connection between kafka and sink connector"):
+        init_sink_connector(
+            topics=f"SERVER5432.{databases[0]}.{table_name1},SERVER5432.{databases[1]}.{table_name2}, SERVER5432.{databases[2]}.{table_name3}, SERVER5432.{databases[3]}.{table_name4}"
+        )
 
     create_table_and_insert_values(
         table_name=table_name1, database_name=self.context.database_1
@@ -227,7 +235,7 @@ def inserts(self):
         - Check replication when we have a specific number of databases both on source and destination.
     """
     Scenario(run=insert_on_two_databases)
-    # Scenario(run=insert_on_all_databases),
+    Scenario(run=insert_on_all_databases)
 
 
 @TestFeature
@@ -262,14 +270,14 @@ def module(
     self.context.number_of_concurrent_actions = number_of_concurrent_actions
     self.context.number_of_iterations = number_of_iterations
 
-    with Given(
+    with Given("I enable debezium and sink connectors after kafka starts up"):
+        init_debezium_connector()
+
+    with And(
         "I create the source and destination databases from a list",
         description=f"databases: {self.context.list_of_databases}",
     ):
         create_databases(databases=self.context.list_of_databases)
-
-    with And("I enable debezium and sink connectors after kafka starts up"):
-        init_debezium_connector()
 
     Feature(run=inserts)
 
