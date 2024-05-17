@@ -20,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,7 +42,7 @@ public class MultipleDatabaseIT
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-               // .withInitScript("data_types.sql")
+                // .withInitScript("data_types.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -78,7 +79,7 @@ public class MultipleDatabaseIT
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "test_db"),false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -90,7 +91,7 @@ public class MultipleDatabaseIT
         // Create a new database
         conn.createStatement().execute("CREATE DATABASE IF NOT EXISTS test_db");
         conn.createStatement().execute("USE test_db");
-        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY, name VARCHAR(255))");
+        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY not null, name VARCHAR(255))");
 
         // Insert a new row
         conn.createStatement().execute("INSERT INTO test_table VALUES (1, 'test')");
@@ -98,22 +99,37 @@ public class MultipleDatabaseIT
         // Create a new database test_db2
         conn.createStatement().execute("CREATE DATABASE IF NOT EXISTS test_db2");
         conn.createStatement().execute("USE test_db2");
-        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table2 (id INT PRIMARY KEY, name VARCHAR(255))");
+        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table2 (id INT PRIMARY KEY not null, name VARCHAR(255))");
+
+        // Also add test_table here but with a different schema.
+        conn.createStatement().execute("CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY not null, name2 VARCHAR(255), name3 VARCHAR(255))");
 
         // Insert a new row
-        conn.createStatement().execute("INSERT INTO test_table2 VALUES (1, 'test')");
+        conn.createStatement().execute("INSERT INTO test_table2 VALUES (1, 'test2')");
+
+        // Insert a new row into test_table
+        conn.createStatement().execute("INSERT INTO test_table VALUES (1, 'test33', 'test44')");
 
         Thread.sleep(10000);
 
+        conn.createStatement().execute("use test_db");
+        // Run ALTER TABLE to add a new column
+        conn.createStatement().execute("ALTER TABLE test_table ADD COLUMN age INT");
+
+        Thread.sleep(10000);
+        conn.close();
+
         // Create connection to clickhouse and validate if the tables are replicated.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
+                "system");
         ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
         // query clickhouse connection and get data for test_table1 and test_table2
+
+
         ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
         // Validate the data
         boolean recordFound = false;
@@ -130,9 +146,42 @@ public class MultipleDatabaseIT
         while(rs.next()) {
             recordFound = true;
             assert rs.getInt("id") == 1;
-            assert rs.getString("name").equalsIgnoreCase("test");
+            assert rs.getString("name").equalsIgnoreCase("test2");
         }
 
         Assert.assertTrue(recordFound);
+
+        // validate ALTER TABLE REMOVE COLUMN.
+        // Run ALTER TABLE REMOVE COLUMN in MySQL
+        conn = ITCommon.connectToMySQL(mySqlContainer);
+        conn.createStatement().execute("use test_db2");
+        conn.createStatement().execute("ALTER TABLE test_table DROP COLUMN name3");
+        Thread.sleep(10000);
+
+        // Create a test_db DBWriter instance.
+        // A new ClickHouseConnection with test_db database.
+        // Jdbc url with test_db database.
+        String testDb2JdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "test_db2");
+        ClickHouseConnection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter testDb2Writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "test_db2", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, testDb2Conn);
+
+        // Validate the columns in Clickhouse for test_db.test_table
+        Map<String, String> columnMap = testDb2Writer.getColumnsDataTypesForTable("test_table");
+
+        assert columnMap.containsKey("id");
+        assert columnMap.containsKey("name2");
+
+        if(engine.get() != null) {
+            engine.get().stop();
+        }
+        // Files.deleteIfExists(tmpFilePath);
+        executorService.shutdown();
+
+        writer.getConnection().close();
+
+
     }
 }

@@ -7,8 +7,8 @@ import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.sink.SinkConnector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,7 +20,7 @@ public class ClickHouseSinkConnector extends SinkConnector {
 
     // String configuration as properties
     private Map<String, String> config;
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnector.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnector.class);
     private boolean ready;
 
     /**

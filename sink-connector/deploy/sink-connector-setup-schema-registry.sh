@@ -73,9 +73,7 @@ if [[ $2 == "apicurio" ]]; then
         "replacingmergetree.delete.column": "_sign",
 
         "auto.create.tables": false,
-        "schema.evolution": false,
-
-        "deduplication.policy": "off"
+        "schema.evolution": false
         }
     }
 EOF
@@ -117,9 +115,7 @@ else
       "replacingmergetree.delete.column": "_sign",
 
       "auto.create.tables": true,
-      "schema.evolution": false,
-
-      "deduplication.policy": "off"
+      "schema.evolution": false
       }
   }
 EOF

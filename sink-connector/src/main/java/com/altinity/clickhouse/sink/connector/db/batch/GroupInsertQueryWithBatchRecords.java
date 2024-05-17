@@ -12,8 +12,8 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Field;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.*;
 
@@ -21,7 +21,7 @@ import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCd
 
 public class GroupInsertQueryWithBatchRecords {
 
-    private static final Logger log = LoggerFactory.getLogger(GroupInsertQueryWithBatchRecords.class);
+    private static final Logger log = LogManager.getLogger(GroupInsertQueryWithBatchRecords.class);
 
 
 
@@ -108,7 +108,7 @@ public class GroupInsertQueryWithBatchRecords {
                 (tableName, modifiedFields, columnNameToDataTypeMap,
                         config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString()),
                         config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString()),
-                        config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()));
+                        config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString()), record.getDatabase() );
 
         String insertQueryTemplate = response.getKey();
         if(response.getKey() == null || response.getValue() == null) {

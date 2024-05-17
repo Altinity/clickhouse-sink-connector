@@ -4,8 +4,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -14,6 +12,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class BaseDbWriter {
 
@@ -29,7 +29,7 @@ public class BaseDbWriter {
 
     private ClickHouseSinkConnectorConfig config;
 
-    private static final Logger log = LoggerFactory.getLogger(BaseDbWriter.class);
+    private static final Logger log = LogManager.getLogger(BaseDbWriter.class);
 
     public BaseDbWriter(
             String hostName,
@@ -147,7 +147,7 @@ public class BaseDbWriter {
      * @throws SQLException
      */
     public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
-        if(this.conn == null) {
+        if(this.conn == null || this.conn.isClosed()) {
             String connectionUrl = getConnectionString(hostName, port, database);
             //this.createConnection(connectionUrl, "Agent_1", userName, password);
         }

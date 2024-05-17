@@ -17,7 +17,7 @@ database.user: "root"
 database.password: "root"
 
 # Unique name for the connector.
-database.server.id: "connector-1"
+database.server.id: "12345"
 
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
@@ -82,7 +82,7 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
     `record_insert_seq` UInt64,
     `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
-ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8198"
+ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8192"
 
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.offset.table.delete: "select * from %s"

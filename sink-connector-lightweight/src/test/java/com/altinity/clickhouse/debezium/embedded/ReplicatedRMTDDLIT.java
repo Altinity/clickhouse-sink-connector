@@ -68,7 +68,7 @@ public class ReplicatedRMTDDLIT {
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
                 .withExposedPorts(8123)
                         .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
-        clickHouseContainer.withNetwork(network);
+        clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
 
@@ -88,7 +88,7 @@ public class ReplicatedRMTDDLIT {
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
+        //props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
@@ -97,7 +97,7 @@ public class ReplicatedRMTDDLIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
