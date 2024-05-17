@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * This is a test for  "plugin.name", "pgoutput"
  */
+
 public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
     @Container
@@ -83,13 +85,14 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "system"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         });
 
         Thread.sleep(50000);
+
 
         // Create connection.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),

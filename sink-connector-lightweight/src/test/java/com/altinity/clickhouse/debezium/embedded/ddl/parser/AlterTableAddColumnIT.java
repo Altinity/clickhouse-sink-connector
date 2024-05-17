@@ -52,7 +52,8 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -77,6 +78,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         conn.prepareStatement(" alter table add_test drop column col101;").execute();
         conn.prepareStatement(" alter table add_test add column col5 ENUM ('M','F');").execute();
         conn.prepareStatement(" alter table add_test add column col6 JSON;").execute();
+        conn.prepareStatement(" alter table add_test drop col4").execute();
 
         Thread.sleep(25000);
 

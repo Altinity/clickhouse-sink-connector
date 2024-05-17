@@ -16,8 +16,8 @@ import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.SQLException;
 import java.time.ZoneId;
@@ -26,7 +26,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
@@ -35,14 +34,18 @@ import java.util.concurrent.LinkedBlockingQueue;
  * records to Clickhouse.
  */
 public class ClickHouseBatchRunnable implements Runnable {
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseBatchRunnable.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseBatchRunnable.class);
     private final LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
     private final ClickHouseSinkConnectorConfig config;
 
-    //ToDo: Later this can be moved to one connection per application.
-    private ClickHouseConnection conn;
+    // Connection that will be used to create
+    // the debezium storage database.
+    private ClickHouseConnection systemConnection;
 
+    // For insert batch the database connection has to be the same.
+    // Create a map of database name to ClickHouseConnection.
+    private Map<String, ClickHouseConnection> databaseToConnectionMap = new HashMap<>();
     /**
      * Data structures with state
      */
@@ -74,15 +77,32 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
-        createConnection();
+        this.systemConnection = createConnection();
     }
 
-    private void createConnection() {
+    private ClickHouseConnection createConnection() {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), this.dbCredentials.getDatabase());
+                this.dbCredentials.getPort(), "system");
 
-        this.conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
+        return BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), config);
+    }
+
+    // Function to check if we have already stored a ClickHouseConnection
+    // in the databaseToConnectionMap.
+    private ClickHouseConnection getClickHouseConnection(String databaseName) {
+        if (this.databaseToConnectionMap.containsKey(databaseName)) {
+            return this.databaseToConnectionMap.get(databaseName);
+        }
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
+                this.dbCredentials.getPort(), databaseName);
+
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight",
+                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), config);
+
+        this.databaseToConnectionMap.put(databaseName, conn);
+        return conn;
     }
 
     private DBCredentials parseDBConfiguration() {
@@ -105,18 +125,18 @@ public class ClickHouseBatchRunnable implements Runnable {
     @Override
     public void run() {
 
+
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
-//            int numRecords = records.size();
-//            if (numRecords <= 0) {
-//                //log.debug(String.format("No records to process ThreadId(%s), TaskId(%s)", Thread.currentThread().getId(), taskId));
-//                return;
-//            } else {
-//                log.debug("**** Processing Batch of Records ****" + numRecords);
-//            }
 
             // Poll from Queue until its empty.
             while(records.size() > 0 || currentBatch != null) {
+                // If the thread is interrupted, the exit.
+                if(Thread.currentThread().isInterrupted()) {
+                    log.info("Thread is interrupted, exiting - Thread ID: " + Thread.currentThread().getId());
+                    return;
+                }
+
                 if(currentBatch == null) {
                     currentBatch = records.poll();
                 } else {
@@ -147,6 +167,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 });
                 boolean result = true;
                 // For each topic, process the records.
+                // topic name syntax is server.database.table
                 for (Map.Entry<String, List<ClickHouseStruct>> entry : topicToRecordsMap.entrySet()) {
                     result = processRecordsByTopic(entry.getKey(), entry.getValue());
                     if(result == false) {
@@ -197,7 +218,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         return tableName;
     }
 
-    public DbWriter getDbWriterForTable(String topicName, String tableName,
+    public DbWriter getDbWriterForTable(String topicName, String tableName, String databaseName,
                                         ClickHouseStruct record, ClickHouseConnection connection) {
         DbWriter writer = null;
 
@@ -207,7 +228,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
 
         writer = new DbWriter(this.dbCredentials.getHostName(), this.dbCredentials.getPort(),
-                    this.dbCredentials.getDatabase(), tableName, this.dbCredentials.getUserName(),
+                databaseName, tableName, this.dbCredentials.getUserName(),
                     this.dbCredentials.getPassword(), this.config, record, connection);
         this.topicToDbWriterMap.put(topicName, writer);
         return writer;
@@ -235,7 +256,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata().getServerTimeZone(this.conn);
+        return new DBMetadata().getServerTimeZone(this.systemConnection);
     }
     /**
      * Function to process records
@@ -248,10 +269,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = false;
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
-        if(this.conn == null) {
-            createConnection();
-        }
-        DbWriter writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
+        // Note: getting records.get(0) is safe as the topic name is same for all records.
+        ClickHouseStruct firstRecord =  records.get(0);
+        ClickHouseConnection databaseConn = getClickHouseConnection(firstRecord.getDatabase());
+
+        DbWriter writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
@@ -261,7 +283,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retrying");
             if(writer == null) {
-                writer = getDbWriterForTable(topicName, tableName, records.get(0), this.conn);
+                writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
             }
             if(writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
@@ -296,7 +318,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
             DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(), dbCredentials.getPort(), dbCredentials.getDatabase(),
-                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config, this.conn);
+                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config, databaseConn);
             try {
                 dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
             } catch (SQLException e) {

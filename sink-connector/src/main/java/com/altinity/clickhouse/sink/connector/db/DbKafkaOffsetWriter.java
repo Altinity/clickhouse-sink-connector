@@ -4,8 +4,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.common.TopicPartition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -20,7 +20,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
 
     Map<String, String> columnNamesToDataTypesMap;
 
-    private static final Logger log = LoggerFactory.getLogger(DbKafkaOffsetWriter.class);
+    private static final Logger log = LogManager.getLogger(DbKafkaOffsetWriter.class);
 
     public DbKafkaOffsetWriter(
             String hostName,

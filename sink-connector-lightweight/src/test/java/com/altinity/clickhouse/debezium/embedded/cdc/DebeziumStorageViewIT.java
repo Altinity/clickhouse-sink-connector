@@ -14,6 +14,7 @@ import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -30,11 +31,11 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumPropertiesForSchemaOnly;
 
 @Testcontainers
-@DisplayName("Test that validates if the sink connector retries batches on ClickHouse failure")
-public class BatchRetryOnFailureIT {
+@DisplayName("Test that validates if the debezium storage view is created successfully")
+public class DebeziumStorageViewIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
@@ -61,14 +62,13 @@ public class BatchRetryOnFailureIT {
     }
 
     @Test
-    public void testBatchRetryOnCHFailure() throws Exception {
+    @DisplayName("Validates that the debezium storage view is created successfully")
+    public void debeziumStorageView() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
 
-        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        // Override clickhouse server timezone.
+        Properties props = getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer);
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
@@ -80,45 +80,32 @@ public class BatchRetryOnFailureIT {
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-
         });
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
 
-        Thread.sleep(40000);//
         Thread.sleep(10000);
 
-
-        // Pause clickhouse container to simulate a batch failure.
-        clickHouseContainer.getDockerClient().pauseContainerCmd(clickHouseContainer.getContainerId()).exec();
-        conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT55','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59','9999-12-31 23:59:59');\n").execute();
-
-        Thread.sleep(50000);
-
-        clickHouseContainer.getDockerClient().unpauseContainerCmd(clickHouseContainer.getContainerId()).exec();
-        Thread.sleep(10000);
-
-
-        // Check if Batch was inserted.
+        // Connect to clickhouse and validate that the view was created successfully.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
+                "altinity_sink_connector");
         ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+                "altinity_sink_connector", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
-        boolean insertCheck = false;
-        while(dateTimeResult.next()) {
-            insertCheck = true;
-            Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
+
+        // Check if the view altinity_sink_connector.show_replica_status was created successfully.
+        ResultSet resultSet = writer.executeQueryWithResultSet("show create view altinity_sink_connector.show_replica_status");
+
+        boolean viewCheck = false;
+        while (resultSet.next()) {
+            viewCheck = true;
+            Assert.assertTrue(resultSet.getString("statement").contains("CREATE VIEW altinity_sink_connector.show_replica_status"));
+            break;
         }
-        Assert.assertTrue(insertCheck);
+        Assert.assertTrue(viewCheck);
 
-
-        // Close connection.
         ClickHouseDebeziumEmbeddedApplication.stop();
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
         executorService.shutdown();
     }
 }

@@ -76,7 +76,8 @@ public class MySQLGenerateColumnsTest {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

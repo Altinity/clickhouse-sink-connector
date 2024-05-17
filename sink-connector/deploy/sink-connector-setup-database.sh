@@ -63,8 +63,6 @@ if [[ $1 == "apicurio" ]]; then
 
         "auto.create.tables": true,
         "schema.evolution": false,
-
-        "deduplication.policy": "off",
         "auto.create.tables.replicated": "true"
         }
     }

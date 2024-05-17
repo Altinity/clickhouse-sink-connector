@@ -8,11 +8,11 @@ import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +24,7 @@ import java.util.Map;
 @Singleton
 public class SourceRecordParserService implements DebeziumRecordParserService {
 
-    private static final Logger log = LoggerFactory.getLogger(SourceRecordParserService.class);
+    private static final Logger log = LogManager.getLogger(SourceRecordParserService.class);
 
     @Override
     public ClickHouseStruct parse(ChangeEvent<SourceRecord, SourceRecord> record, DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer,

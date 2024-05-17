@@ -78,7 +78,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -258,7 +258,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         defaultProps.setProperty("snapshot.mode", "schema_only");
         defaultProps.setProperty("disable.drop.truncate", "true");
         defaultProps.setProperty("auto.create.tables", "false");
-        defaultProps.setProperty("enable.snapshot.ddl", "false");
+        defaultProps.setProperty("enable.snapshot.ddl", "true");
 
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));

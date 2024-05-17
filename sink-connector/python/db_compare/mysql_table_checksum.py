@@ -23,10 +23,11 @@ runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 def compute_checksum(table, statements, conn):
     sql = ""
     debug_out = None
+    result = None
     if args.debug_output:
         out_file = f"out.{table}.mysql.txt"
         # logging.info(f"Debug output to {out_file}")
-        debug_out = open(out_file, 'w')
+        debug_out = open(out_file, 'a')
     try:
         for statement in statements:
             sql = statement
@@ -36,27 +37,17 @@ def compute_checksum(table, statements, conn):
                 logging.debug("Rows affected "+str(rowcount))
             if result != None and result.returns_rows == True:
                 x = [element for tupl in result for element in tupl]
-                md5_sum = ""
-                cnt = -1
+                if not args.debug_output:
+                    result = x 
                 if args.debug_output:
                     for line in x:
                         debug_out.write(str(line)+'\n')
-                else:
-                    for line in x:
-                        logging.debug(str(line))
-                        md5_sum += str(line) + '#'
-                        if cnt == - 1:
-                            cnt = str(line)
-
-                    logging.debug(md5_sum)
-                    m = hashlib.md5()
-                    m.update(md5_sum.encode('utf-8'))
-                    logging.info("Checksum for table "+args.mysql_database +
-                                 "."+table+" = "+m.hexdigest() + " count "+str(cnt))
-                    if args.debug_output:
+                if args.debug_output:
                         debug_out.close()
     finally:
         conn.close()
+
+    return result
 
 
 def get_table_checksum_query(table, conn, binary_encoding):
@@ -86,7 +77,7 @@ def get_table_checksum_query(table, conn, binary_encoding):
             select += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
         elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
-            select += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000000' AS datetime(6)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
+            select += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000000' AS datetime(6)))) else  {column_name} end end"
         elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
             select += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
         elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
@@ -141,7 +132,7 @@ def get_table_checksum_query(table, conn, binary_encoding):
     return (query, select, order_by_columns, external_column_types)
 
 
-def select_table_statements(table, query, select_query, order_by, external_column_types):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = ['set names utf8mb4']
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
@@ -149,8 +140,8 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     if args.debug_limit:
         limit = " limit "+args.debug_limit
     where = "1=1"
-    if args.where:
-        where = args.where
+    if _where:
+        where = _where
 
     statements.append(
         """set @md5sum := "", @a := cast(0 as signed), @b:= cast(0 as signed), @c:= cast(0 as signed), @d:=cast(0 as signed)""")
@@ -183,25 +174,41 @@ def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
 
-def calculate_sql_checksum(conn, table):
-
+def calculate_sql_checksum(conn, table, where):
+    result = None
     try:
         if args.ignore_tables_regex:
             rex_ignore_tables = re.compile(
                 args.ignore_tables_regex, re.IGNORECASE)
             if rex_ignore_tables.match(table):
                 logging.info("Ignoring "+table + " due to ignore_regex_tables")
-                return
+                return None
 
         statements = []
 
         (query, select_query, distributed_by,
          external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
         statements = select_table_statements(
-            table, query, select_query, distributed_by, external_table_types)
-        compute_checksum(table, statements, conn)
+            table, query, select_query, distributed_by, external_table_types, where)
+        result = compute_checksum(table, statements, conn)
     finally:
         conn.close()
+
+    return result
+
+
+def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, chunk, pk, where):
+    conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
+    _where = "1=1"
+    if where:
+        _where += " and "+ where
+    if pk:    
+        min_pk = int(chunk['min_pk'])
+        max_pk = int(chunk['max_pk'])
+        _where = f" {_where} and {pk} between {min_pk} and {max_pk}" 
+
+    result = calculate_sql_checksum(conn, mysql_table, _where)
+    return result
 
 
 def calculate_checksum(mysql_table, mysql_user, mysql_password):
@@ -214,8 +221,55 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password):
     statements = []
 
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
-    calculate_sql_checksum(conn, mysql_table)
+    pk = mysql_pk_columns(conn, args.mysql_database, mysql_table, is_integer=True)
+    threads_per_table = 1
+    if len(pk) > 0 and args.threads_per_table > 1 :
+        pk = pk[0]
+        threads_per_table = args.threads_per_table
+    else:
+        pk = None
+        threads_per_table = 1
+    where = "1=1"
+    if args.where:
+       where = args.where
+    md5_sum = ""
+    cnt = -1
+    result = []
 
+    # initialize debug output
+    if args.debug_output:
+       out_file = f"out.{mysql_table}.mysql.txt"
+       debug_out = open(out_file, 'w')
+       debug_out.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=threads_per_table) as executor:
+            futures = []
+            for chunk in divide_table_into_even_chunks(conn, mysql_table, args.chunk_size, pk, where): 
+                futures.append(executor.submit(
+                    calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where))
+            for future in concurrent.futures.as_completed(futures):
+                result.append(future.result())
+                if future.exception() is not None:
+                    logging.info(f"{mysql_table}")
+                    raise future.exception()
+    if args.debug_output:
+        # checksum is not output in debug_output mode
+        return
+    logging.debug(str(result))
+    to_add = (0,0,0,0,0)
+    for r in result:
+       to_add  = (to_add[0]+r[0], to_add[1]+r[1], to_add[2]+r[2], to_add[3]+r[3], to_add[4]+r[4])
+    x = list(to_add)
+    # print the checksum
+    for line in x:
+            logging.debug(str(line))
+            md5_sum += str(line) + '#'
+            if cnt == - 1:
+                  cnt = str(line)
+    logging.debug(md5_sum)
+    m = hashlib.md5()
+    m.update(md5_sum.encode('utf-8'))
+    logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+m.hexdigest() + " count "+str(cnt))
 
 # hack to add the user to the logger, which needs it apparently
 old_factory = logging.getLogRecordFactory()
@@ -268,9 +322,11 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
                         nargs='+', default=['_sign', '_version'])
+    parser.add_argument('--threads_per_table', type=int,
+                        help='number of parallel threads per table', default=1)
+    parser.add_argument('--chunk_size', type=int, help='Chunk size', default=10000)
     parser.add_argument('--threads', type=int,
-                        help='number of parallel threads', default=1)
-
+                        help='number of tables in parallel to compute', default=1)
     global args
     args = parser.parse_args()
 
@@ -306,11 +362,15 @@ def main():
         tables = get_tables_from_regexp(conn, args.tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
+            future_to_table = {}
             for table in tables.fetchall():
-                futures.append(executor.submit(
-                    calculate_checksum, table['table_name'], mysql_user, mysql_password))
+                future = executor.submit(
+                    calculate_checksum, table['table_name'], mysql_user, mysql_password)
+                futures.append(future)
+                future_to_table[future] = table['table_name']
             for future in concurrent.futures.as_completed(futures):
                 if future.exception() is not None:
+                    logging.error("Exception in table " + future_to_table[future])
                     raise future.exception()
 
     except (KeyboardInterrupt, SystemExit):
