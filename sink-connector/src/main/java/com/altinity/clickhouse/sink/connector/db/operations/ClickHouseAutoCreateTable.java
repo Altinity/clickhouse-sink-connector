@@ -46,6 +46,14 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         this.runQuery(createTableQuery, connection);
     }
 
+    // Create matereialized view
+    // CREATE MATERIALIZED VIEW user_mv to user as select * from user_history;
+    public void createMaterializedView(String tableName, String databaseName, ClickHouseConnection connection) throws SQLException {
+        String createMaterializedViewQuery = "CREATE MATERIALIZED VIEW " + databaseName + "." + tableName + "_mv TO " + databaseName + "." + tableName + " AS SELECT * FROM " + databaseName + "." + tableName + "_history";
+        log.info("**** AUTO CREATE MATERIALIZED VIEW " + createMaterializedViewQuery);
+        this.runQuery(createMaterializedViewQuery, connection);
+    }
+
     /**
      * Function to create history table, table suffixed with _history.
      * @param primaryKey

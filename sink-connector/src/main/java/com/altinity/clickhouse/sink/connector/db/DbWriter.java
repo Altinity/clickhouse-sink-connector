@@ -108,6 +108,7 @@ public class DbWriter extends BaseDbWriter {
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
+
                     log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
@@ -119,7 +120,12 @@ public class DbWriter extends BaseDbWriter {
                         }
                         boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
                                 ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-                        act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
+
+                        if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_HISTORY_TABLES.toString())) {
+                            act.createHistoryTableSyntax(record.getPrimaryKey(), tableName, database, fields, this.conn,
+                                    useReplicatedReplacingMergeTree);
+                        } else
+                            act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
                                 isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree);
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
