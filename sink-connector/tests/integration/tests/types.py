@@ -82,7 +82,6 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-
 @TestOutline(Feature)
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
@@ -295,6 +294,7 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
                 nullable=nullable,
                 clickhouse_table=clickhouse_table,
             )
+
 
 @TestModule
 @Requirements(

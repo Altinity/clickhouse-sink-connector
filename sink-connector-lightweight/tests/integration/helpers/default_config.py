@@ -16,6 +16,7 @@ default_config = {
     "database.allowPublicKeyRetrieval": "true",
     "snapshot.mode": "initial",
     "offset.flush.interval.ms": "5000",
+    "snapshot.locking.mode": "none",
     "connector.class": "io.debezium.connector.mysql.MySqlConnector",
     "offset.storage": "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore",
     "offset.storage.jdbc.offset.table.name": "altinity_sink_connector.replica_source_info",
