@@ -3,7 +3,7 @@ import os
 from integration.helpers.create_config import *
 from integration.helpers.common import change_sink_configuration
 
-default_config_path = os.path.join("env", "auto", "configs", "schema_only.yml")
+default_config_path = os.path.join("env", "auto", "configs")
 
 
 @TestStep(Given)
