@@ -42,7 +42,7 @@ def regression(
 
     self.context.stress = stress
 
-    with Pool(2) as pool:
+    with Pool(1) as pool:
         try:
             Feature(
                 test=load("regression_auto", "regression"),
