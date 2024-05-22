@@ -198,6 +198,7 @@ def regression(
     self.context.env = env
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
+    self.context.clickhouse_table_engine = "ReplacingMergeTree"
 
     self.context.database = "test"
 
