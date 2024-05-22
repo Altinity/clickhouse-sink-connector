@@ -9,8 +9,8 @@ import lombok.Setter;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.*;
 
@@ -83,6 +83,14 @@ public class ClickHouseStruct {
 
     @Getter
     @Setter
+    private String database;
+  
+    @Getter
+    @Setter
+    private long sequenceNumber = -1;
+
+    @Getter
+    @Setter
     // The insert position is described by a Log Sequence Number (LSN) that is a byte offset into the logs,
     // increasing monotonically with each new record. LSN values are returned as the datatype pg_lsn.
     // Values can be compared to calculate the volume of WAL data that separates them,
@@ -124,7 +132,7 @@ public class ClickHouseStruct {
     @Setter
     boolean lastRecordInBatch;
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseStruct.class);
+    private static final Logger log = LogManager.getLogger(ClickHouseStruct.class);
 
     public ClickHouseStruct(long kafkaOffset, String topic, Struct key, Integer kafkaPartition,
                             Long timestamp, Struct beforeStruct, Struct afterStruct, Map<String, Object> metadata,
@@ -251,6 +259,9 @@ public class ClickHouseStruct {
             }
             if(fieldNames.contains(LSN) && source.get(LSN) != null && source.get(LSN) instanceof Long) {
                 this.setLsn((Long) source.get(LSN));
+            }
+            if(fieldNames.contains(DATABASE) && source.get(DATABASE) != null && source.get(DATABASE) instanceof String) {
+                this.setDatabase((String) source.get(DATABASE));
             }
         } catch (Exception e) {
             log.error("setAdditionalMetadata exception", e);

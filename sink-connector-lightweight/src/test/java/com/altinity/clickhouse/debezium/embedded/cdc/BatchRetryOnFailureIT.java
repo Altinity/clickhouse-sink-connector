@@ -118,6 +118,7 @@ public class BatchRetryOnFailureIT {
 
 
         // Close connection.
-        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+        ClickHouseDebeziumEmbeddedApplication.stop();
+        executorService.shutdown();
     }
 }

@@ -33,8 +33,6 @@ spec:
     auto.create.tables: "true"
     schema.evolution: "false"
 
-    deduplication.policy: "off"
-
     metrics.enable: "false"
 
     key.converter: "io.confluent.connect.avro.AvroConverter"

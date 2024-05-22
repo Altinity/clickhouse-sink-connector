@@ -3,8 +3,8 @@ package com.altinity.clickhouse.sink.connector.deduplicator;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.apache.kafka.connect.sink.SinkRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -17,7 +17,7 @@ public class DeDuplicator {
     /**
      * Local instance of a logger
      */
-    private static final Logger log = LoggerFactory.getLogger(DeDuplicator.class);
+    private static final Logger log = LogManager.getLogger(DeDuplicator.class);
 
     /**
      * Prepared, ready-to-use configuration. De-duplication needs some configuration parameters to fetch.

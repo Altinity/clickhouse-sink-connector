@@ -6,14 +6,14 @@ import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.atn.ATNConfigSet;
 import org.antlr.v4.runtime.dfa.DFA;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.BitSet;
 
 public class ErrorListenerImpl implements ANTLRErrorListener {
 
-    private static final Logger log = LoggerFactory.getLogger(ErrorListenerImpl.class);
+    private static final Logger log = LogManager.getLogger(ErrorListenerImpl.class);
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object o, int i, int i1, String s, RecognitionException e) {

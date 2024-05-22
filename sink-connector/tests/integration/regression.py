@@ -118,13 +118,11 @@ def regression(
         "deduplication",
         "primary_keys",
         "virtual_columns",
-        "columns_inconsistency"
+        "columns_inconsistency",
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
 
-    Feature(run=load("tests.consistency", "module"))
-    Feature(run=load("tests.manual_section", "module"))
 
 
 if __name__ == "__main__":

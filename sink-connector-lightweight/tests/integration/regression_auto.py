@@ -214,7 +214,7 @@ def regression(
 
         self.context.sink_node.start_sink_connector()
 
-    with Pool(2) as executor:
+    with Pool(1) as executor:
         Feature(
             run=load("tests.sanity", "module"),
             parallel=True,
@@ -276,11 +276,6 @@ def regression(
             executor=executor,
         )
         Feature(
-            run=load("tests.databases", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
             run=load("tests.table_names", "module"),
             parallel=True,
             executor=executor,
@@ -307,13 +302,13 @@ def regression(
         )
         join()
 
+    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )
     Feature(
         run=load("tests.sink_cli_commands", "module"),
     )
-
     Feature(
         run=load("tests.multiple_databases", "module"),
     )

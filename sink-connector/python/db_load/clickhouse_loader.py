@@ -437,6 +437,9 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
 
 def execute_load(cmd):
     logging.info(cmd)
+    if args.dry_run:
+        logging.info("dry-run not executing")
+        return 
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
     if rc != '0':
@@ -456,7 +459,6 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
     config_file_option = ""
     if args.clickhouse_config_file is not None:
        config_file_option= f"--config-file '{args.clickhouse_config_file}'"
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = []
         for file in glob.glob(schema_files):
@@ -472,6 +474,11 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
             transformed_columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=True, mysqlshell=args.mysqlshell)
+            
+            if args.truncate_tables:
+                if not args.dry_run:
+                    with get_connection(args, clickhouse_user, clickhouse_password) as conn:
+                       clickhouse_execute_conn(conn, f"truncate table {schema}.{table_name}") 
             for data_file in data_files:
                 # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
                 column_metadata_list = schema_map[schema+"."+table_name]
@@ -490,14 +497,14 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                         if column['nullable'] == True:
                             structure += f" Nullable({datatype})"
                         else:
-                            structure += f" {datatype}"
+                            structure += f" {datatype}".replace("'","\\'")
                     else:
                         if column['nullable'] == True:
                             structure += " Nullable(String)"
                         else:
                             structure += " String"
 
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  --max_partitions_per_insert_block=1000 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
@@ -553,7 +560,8 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--use_regexp_parser',
                         action='store_true', default=False)
-
+    parser.add_argument('--truncate_tables', dest='truncate_tables',
+                        action='store_true', default=False)
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
     parser.add_argument('--virtual_columns', help='virtual_columns',
@@ -564,6 +572,7 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--clickhouse_datetime_timezone',
                         help='Timezone for CH date times', required=False, default=None)
+    global args
     args = parser.parse_args()
     schema = not args.data_only
     data = not args.schema_only

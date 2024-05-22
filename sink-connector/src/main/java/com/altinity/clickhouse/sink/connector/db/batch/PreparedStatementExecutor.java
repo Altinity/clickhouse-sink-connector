@@ -22,8 +22,8 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -60,7 +60,7 @@ public class PreparedStatementExecutor {
         //serverTimeZone = new DBMetadata().getServerTimeZone(conn);
     }
 
-    private static final Logger log = LoggerFactory.getLogger(PreparedStatementExecutor.class);
+    private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
 
     /**
      * Function to iterate through records and add it to JDBC prepared statement
@@ -116,11 +116,15 @@ public class PreparedStatementExecutor {
         // Split the records into batches.
         Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
 
+            String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
             try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : batch) {
+                    if(record.getDatabase() != null)
+                        databaseName = record.getDatabase();
+
                     try {
                         bmd.update(record);
                     } catch (Exception e) {
@@ -171,7 +175,7 @@ public class PreparedStatementExecutor {
             if (!truncatedRecords.isEmpty()) {
                 PreparedStatement ps = null;
                 try {
-                    ps = conn.prepareStatement("TRUNCATE TABLE " + tableName);
+                    ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
                 } catch (SQLException e) {
                     throw new RuntimeException(e);
                 }
@@ -310,12 +314,12 @@ public class PreparedStatementExecutor {
                     if(columnNameToIndexMap.containsKey(versionColumn)) {
                         if (record.getGtid() != -1) {
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
                             } else {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                             }
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
                         }
                     }
 

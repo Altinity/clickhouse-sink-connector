@@ -11,11 +11,11 @@ public class SnowFlakeIdTest {
        // 1666300948617
         long currentTimestamp = 1666717042727L;
         long gtId = 1666735042727620291L;
-        long snowFlakeId = SnowFlakeId.generate(currentTimestamp, gtId);
+        long snowFlakeId = SnowFlakeId.generate(currentTimestamp, gtId, false);
         Assert.assertTrue(snowFlakeId == 1584952269638053571L);
 
         long ts1= 1666735042727L;
-        long snowFlakeId1 = SnowFlakeId.generate(ts1, gtId);
+        long snowFlakeId1 = SnowFlakeId.generate(ts1, gtId, false);
         Assert.assertTrue(snowFlakeId1 == 1585027767110053571L);
 
     }
