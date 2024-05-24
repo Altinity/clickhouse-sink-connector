@@ -23,13 +23,10 @@ def simple_update(
     with Given(
         f"I create MySQL to ClickHouse replicated table", description=table_name
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
             primary_key=primary_key,
-            engine=engine,
         )
 
     with When(f"I insert data in MySQL table"):
