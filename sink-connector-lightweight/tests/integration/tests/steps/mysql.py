@@ -97,38 +97,6 @@ def create_mysql_database(self, node=None, database_name=None):
         with Finally(f"I delete MySQL database {database_name}"):
             node.query(f"DROP DATABASE IF EXISTS {database_name};")
 
-
-#
-# @TestStep(Given)
-# def create_mysql_table(self, table_name=None, statement=None, node=None, database_name=None):
-#     """Creation of default MySQL table for tests."""
-#
-#     if database_name is None:
-#         database_name = "test"
-#     if node is None:
-#         node = self.context.cluster.node("mysql-master")
-#     if table_name is None:
-#         table_name = "users"
-#     if statement is None:
-#         statement = (
-#             f"CREATE TABLE IF NOT EXISTS {database_name}.{table_name}"
-#             f" (id INT AUTO_INCREMENT,"
-#             f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
-#         )
-#
-#     try:
-#         with Given(f"I create MySQL table {table_name}"):
-#             node.query(statement)
-#         yield
-#     finally:
-#         with Finally("I clean up by deleting table in MySQL"):
-#             node.query(f"DROP TABLE IF EXISTS {database_name}.{table_name};")
-#             self.context.cluster.node("clickhouse").query(
-#                 f"DROP TABLE IF EXISTS {database_name}.{table_name} ON CLUSTER sharded_replicated_cluster;"
-#             )
-#             time.sleep(5)
-
-
 @TestStep(Given)
 def create_mysql_table(
     self,
@@ -185,7 +153,6 @@ def create_mysql_table(
             clickhouse_node.query(
                 f"DROP TABLE IF EXISTS {database_name}.{table_name} ON CLUSTER replicated_cluster;"
             )
-            time.sleep(5)
 
 
 @TestStep
