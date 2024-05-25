@@ -13,7 +13,6 @@ public enum ClickHouseSinkConnectorConfigVariables {
     CLICKHOUSE_URL("clickhouse.server.url"),
     CLICKHOUSE_USER("clickhouse.server.user"),
     CLICKHOUSE_PASS("clickhouse.server.password"),
-    CLICKHOUSE_DATABASE("clickhouse.server.database"),
     CLICKHOUSE_PORT("clickhouse.server.port"),
 
     PROVIDER_CONFIG( "provider"),
