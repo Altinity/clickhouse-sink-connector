@@ -6,6 +6,10 @@ import time
 
 from testflows.core import *
 
+from integration.tests.steps.sink_configurations import (
+    config_with_replicated_table,
+)
+
 append_path(sys.path, "..")
 
 from integration.helpers.argparser import argparser
@@ -24,15 +28,15 @@ ffails = {
     "delete/no primary key": (Skip, "doesn't work in raw"),
     "update/no primary key innodb": (Skip, "makes delete"),
     "update/no primary key": (Skip, "makes delete"),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key innodb/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key/{'ReplacingMergeTree'}/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key/{'ReplacingMergeTree'}/*": (
         Skip,
         "doesn't work",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key": (
         Skip,
         "doesn't work",
     ),
@@ -105,27 +109,27 @@ ffails = {
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/auto table creation/insert/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/insert/*": (
         Skip,
         "doesn't work without primary key as only last row of insert is replicated",
     ),
-    "/mysql to clickhouse replication/auto table creation/partitions/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/partitions/*": (
         Skip,
         "https://github.com/Altinity/clickhouse-sink-connector/issues/461",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key innodb/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key innodb/*": (
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
     ),
-    "/mysql to clickhouse replication/auto table creation/truncate/no primary key/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/truncate/no primary key/*": (
         Skip,
         "Sometimes when inserting two values, only one values is replicated. Seems to be a config issue.",
     ),
-    "/mysql to clickhouse replication/auto table creation/schema only/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/schema only/*": (
         Skip,
         "Seems to be broken in CI/CD. need oto fix.",
     ),
-    "/mysql to clickhouse replication/auto table creation/cli/*": (
+    "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
         Skip,
         "Seems to be broken in CI/CD. need oto fix.",
     ),
@@ -138,14 +142,8 @@ xflags = {}
 @ArgumentParser(argparser)
 @FFails(ffails)
 @XFlags(xflags)
-@Name("auto table creation")
+@Name("auto replicated table creation")
 @Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLVersions("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_InnoDB(
-        "1.0"
-    ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree(
         "1.0"
     ),
@@ -156,12 +154,12 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
-    env="env/auto",
+    env="env/auto_replicated",
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
 ):
-    """ClickHouse regression for MySQL to ClickHouse replication with auto table creation."""
+    """ClickHouse regression for MySQL to ClickHouse replication with auto replicated table creation."""
     nodes = {
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
@@ -173,7 +171,7 @@ def regression(
     self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
-    create_default_sink_config()
+    create_default_sink_config_replicated()
 
     if stress is not None:
         self.context.stress = stress
@@ -197,8 +195,8 @@ def regression(
 
     self.context.env = env
 
-    self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
-    self.context.clickhouse_table_engine = "ReplacingMergeTree"
+    self.context.clickhouse_table_engine = "ReplicatedReplacingMergeTree"
+    self.context.clickhouse_table_engines = ["ReplicatedReplacingMergeTree"]
 
     self.context.database = "test"
 
@@ -213,7 +211,9 @@ def regression(
     with And("I start sink-connector-lightweight"):
         self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
 
-        self.context.sink_node.start_sink_connector()
+        self.context.sink_node.start_sink_connector(
+            config_file="env/auto_replicated/configs/replicated_config.yml"
+        )
 
     with Pool(1) as executor:
         Feature(
@@ -262,17 +262,17 @@ def regression(
             executor=executor,
         )
         Feature(
-            run=load("tests.virtual_columns", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
             run=load("tests.columns_inconsistency", "module"),
             parallel=True,
             executor=executor,
         )
         Feature(
             run=load("tests.snowflake_id", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.databases", "module"),
             parallel=True,
             executor=executor,
         )
@@ -301,9 +301,9 @@ def regression(
             parallel=True,
             executor=executor,
         )
+
         join()
 
-    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )

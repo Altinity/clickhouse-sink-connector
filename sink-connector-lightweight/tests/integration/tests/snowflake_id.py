@@ -19,11 +19,9 @@ def mysql_to_clickhouse_snowflake(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(f"I create MySQL to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
     with When(f"I insert data in MySQL table"):
@@ -96,11 +94,9 @@ def mysql_to_clickhouse_snowflake_with_mysql_restart(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(f"I create MySQL to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
     with When(f"I insert data in MySQL table"):
