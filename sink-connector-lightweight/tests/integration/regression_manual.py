@@ -170,7 +170,7 @@ def regression(
     self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
-        create_database(name="test")
+        create_clickhouse_database(name="test")
 
     modules = [
         "sanity",

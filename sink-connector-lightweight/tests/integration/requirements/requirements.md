@@ -221,6 +221,69 @@
             * 31.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.SystemActions.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationsystemactionsdiskcorrupted)
 * 32 [Prometheus](#prometheus)
     * 32.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Prometheus](#rqsrs-030clickhousemysqltoclickhousereplicationprometheus)
+* 33 [ReplicatedReplacingMergeTree](#replicatedreplacingmergetree)
+    * 33.1 [Test Schema For ReplicatedReplacingMergeTree](#test-schema-for-replicatedreplacingmergetree)
+    * 33.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetree)
+    * 33.3 [Types of Clusters That Can Be Used for ReplicatedReplacingMergeTree](#types-of-clusters-that-can-be-used-for-replicatedreplacingmergetree)
+        * 33.3.1 [Multiple Shards and Replicas](#multiple-shards-and-replicas)
+            * 33.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.MultipleShardsAndReplicas](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypesmultipleshardsandreplicas)
+        * 33.3.2 [One Shard and One Replica](#one-shard-and-one-replica)
+            * 33.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.OneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypesoneshardonereplica)
+        * 33.3.3 [Secure Cluster with One Shard and One Replica](#secure-cluster-with-one-shard-and-one-replica)
+            * 33.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterOneShardOneReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypessecureclusteroneshardonereplica)
+        * 33.3.4 [Secure Cluster with Multiple Shards and Replicas](#secure-cluster-with-multiple-shards-and-replicas)
+            * 33.3.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterMultipleShardsAndReplicas](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreeclustertypessecureclustermultipleshardsandreplicas)
+    * 33.4 [Possible Events](#possible-events)
+        * 33.4.1 [Node Related Events](#node-related-events)
+            * 33.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.Killed](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventskilled)
+            * 33.4.1.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.AllKilled](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventsallkilled)
+            * 33.4.1.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.ChangeLeader](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsnoderelatedeventschangeleader)
+        * 33.4.2 [Replica Related Events](#replica-related-events)
+            * 33.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.BehindLeader](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsbehindleader)
+            * 33.4.2.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.DataInconsistency](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsdatainconsistency)
+            * 33.4.2.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.NewReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsnewreplica)
+            * 33.4.2.4 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.RemovedReplica](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsreplicarelatedeventsremovedreplica)
+        * 33.4.3 [Connection Related Events](#connection-related-events)
+            * 33.4.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ConnectionRelatedEvents.Interrupted](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsconnectionrelatedeventsinterrupted)
+        * 33.4.4 [Disk Related Events](#disk-related-events)
+            * 33.4.4.1 [Out of Space](#out-of-space)
+                * 33.4.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.OutOfSpace](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsdiskoutofspace)
+            * 33.4.4.2 [Corrupted Disk](#corrupted-disk)
+                * 33.4.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.Corrupted](#rqsrs-030clickhousemysqltoclickhousereplicationreplicatedreplacingmergetreepossibleeventsdiskcorrupted)
+* 34 [Multiple Databases](#multiple-databases)
+    * 34.1 [Test Schema - Multiple Databases ](#test-schema---multiple-databases-)
+    * 34.2 [Databases on Source and Destination](#databases-on-source-and-destination)
+        * 34.2.1 [Multiple Databases on Source and Destination](#multiple-databases-on-source-and-destination)
+            * 34.2.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabases)
+        * 34.2.2 [Multiple Databases on Source and One Database on Destination](#multiple-databases-on-source-and-one-database-on-destination)
+            * 34.2.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourcemultipledestinationone)
+        * 34.2.3 [One Database on Source and Multiple Databases on Destination](#one-database-on-source-and-multiple-databases-on-destination)
+            * 34.2.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationMultiple](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourceonedestinationmultiple)
+        * 34.2.4 [One Database on Source and One Database on Destination](#one-database-on-source-and-one-database-on-destination)
+            * 34.2.4.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationOne](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasessourceonedestinationone)
+    * 34.3 [Table Structure on Source and Destination Databases](#table-structure-on-source-and-destination-databases)
+        * 34.3.1 [Two Tables with the Same Name and Different Structure on Different Databases](#two-tables-with-the-same-name-and-different-structure-on-different-databases)
+            * 34.3.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameDifferentStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablessamenamedifferentstructure)
+        * 34.3.2 [Two Tables with the Same Name and the Same Structure on Different Databases](#two-tables-with-the-same-name-and-the-same-structure-on-different-databases)
+            * 34.3.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameSameStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablessamenamesamestructure)
+        * 34.3.3 [Two Tables with the Different Name and the Same Structure on Different Databases](#two-tables-with-the-different-name-and-the-same-structure-on-different-databases)
+            * 34.3.3.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.DifferentNameSameStructure](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestablesdifferentnamesamestructure)
+    * 34.4 [Configuration Values](#configuration-values)
+        * 34.4.1 [Include Specific List of Databases To Replicate](#include-specific-list-of-databases-to-replicate)
+            * 34.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesincludelist)
+        * 34.4.2 [Replicate All Databases](#replicate-all-databases)
+            * 34.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesreplicateall)
+    * 34.5 [Table Operations](#table-operations)
+        * 34.5.1 [Specify Database Name in Table Operations](#specify-database-name-in-table-operations)
+            * 34.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
+        * 34.5.2 [Table Operations Without Specifying Database Name](#table-operations-without-specifying-database-name)
+            * 34.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsnospecifydatabasename)
+    * 34.6 [Error Handling](#error-handling)
+        * 34.6.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
+            * 34.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
+    * 34.7 [Concurrent Actions](#concurrent-actions)
+        * 34.7.1 [Perform Table Operations on Each Database Concurrently](#perform-table-operations-on-each-database-concurrently)
+            * 34.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconcurrentactions)
 
 ## Introduction
 
@@ -1574,6 +1637,354 @@ The error SHALL be shown so that the data on the source and destination tables i
 version: 1.0
 
 [Altinity Sink Connector] SHALL support expose data transfer representation to [Prometheus] service.
+
+## ReplicatedReplacingMergeTree
+
+### Test Schema For ReplicatedReplacingMergeTree
+
+```yaml
+ReplicatedReplacingMergeTree:
+  Clusters:
+    - Cluster with multiple shards and replicas
+    - Cluster with one shard and one replica
+    - Secure cluster with one shard and one replica
+    - Secure cluster with multiple shards and replicas
+  Possible Events:
+    Node Related Events:  
+      - Some of the nodes where replicas are running are killed
+      - All of the nodes where replicas are running are killed
+      - Change of the leader node during the replication process
+    Replica Related Events:  
+      - One or more replicas are behind the leader replica
+      - Data inconsistency between replicas
+      - New replica added durin replication process
+      - Replica removed during replication process
+    Connection Related Event:
+      - Connection between replicas is interrupted
+  Disk:
+    OutOfSpace:
+      - Out of disk space on the disk used by one of replicas in source database cluster
+    Corruptions:
+      - Corruption on a disk used by one of replicas in source database cluster
+```
+
+### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree
+version: 1.0
+
+[Altinity Sink Connector] SHALL support table replication from source database to the destination database and store the table as  `ReplicatedReplacingMergeTree` [ClickHouse] table engine.
+
+
+In order for [ALtinity Sink Connector] to replicate a source table as `ReplicatedReplacingMergeTree` in [ClickHouse] the configuration file should contain the following setting:
+
+```yaml
+auto.create.tables.replicated: "true"
+```
+### Types of Clusters That Can Be Used for ReplicatedReplacingMergeTree
+
+#### Multiple Shards and Replicas
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.MultipleShardsAndReplicas
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a cluster with multiple shards and replicas.
+
+#### One Shard and One Replica
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.OneShardOneReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a cluster with one shard and one replica.
+
+#### Secure Cluster with One Shard and One Replica
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterOneShardOneReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a secure cluster with one shard and one replica.
+
+#### Secure Cluster with Multiple Shards and Replicas
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.ClusterTypes.SecureClusterMultipleShardsAndReplicas
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database that is stored on a secure cluster with multiple shards and replicas.
+
+### Possible Events
+
+#### Node Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.Killed
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when some of the nodes where replicas are running are killed.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.AllKilled
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when all the nodes where replicas are running are killed.
+
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.NodeRelatedEvents.ChangeLeader
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when the leader node is changed during the replication process.
+
+#### Replica Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.BehindLeader
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one or more replicas are behind the leader replica. 
+Replication process from destination to source database SHALL not be interrupted in this case.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.DataInconsistency
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when there is data inconsistency between replicas.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.NewReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when a new replica is added during the replication process.
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ReplicaRelatedEvents.RemovedReplica
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when a replica is removed during the replication process.
+
+#### Connection Related Events
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.ConnectionRelatedEvents.Interrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when the connection between replicas is interrupted.
+
+#### Disk Related Events
+
+##### Out of Space
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.OutOfSpace
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one of the replicas in the source database cluster is out of disk space.
+
+##### Corrupted Disk
+
+###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ReplicatedReplacingMergeTree.PossibleEvents.Disk.Corrupted
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from source database to the destination database when one of the replicas in the source database cluster has a corrupted disk.
+
+
+## Multiple Databases
+
+### Test Schema - Multiple Databases 
+
+```yaml
+Multiple Databases:
+  Source:
+      structure:
+          - One database on source and one database on destination
+          - Multiple databases on source and multiple database on destination
+          - Multiple databases on source and one database on destination
+          - One database on source and multiple databases on destination
+      tables:
+        - Two tables with the same name and different structure on different databases
+        - Two tables with the sam name and the same structure on the different databases
+        - Two tables with the different name and the same structure on the different databases
+        - Two tables with the different name and the different structure on the different databases
+      actions:
+          - Perform table operations on each database sequentially
+          - Perform table operations on all databases simultaneously
+          - Remove database
+      configValues: 
+        - database.include.list: database1, database2, ... , databaseN
+        - Don't specify database.include.list
+      TableOperations:
+        - types:
+            - With database name
+            - Without database name
+        - operations:
+            - CREATE
+            - INSERT
+            - UPDATE
+            - DELETE
+            - SELECT
+            - ALTER:
+              - ADD COLUMN                                            
+              - ADD COLUMN NULL/NOT NULL                              
+              - ADD COLUMN DEFAULT                                    
+              - ADD COLUMN FIRST, AFTER                               
+              - DROP COLUMN                                           
+              - MODIFY COLUMN data_type                               
+              - MODIFY COLUMN data_type NULL/NOT NULL                 
+              - MODIFY COLUMN data_type DEFAULT                       
+              - MODIFY COLUMN FIRST, AFTER                            
+              - MODIFY COLUMN old_name new_name datatype NULL/NOT NULL
+              - RENAME COLUMN col1 to col2                            
+              - CHANGE COLUMN FIRST, AFTER                            
+              - ALTER COLUMN col_name ADD DEFAULT                     
+              - ALTER COLUMN col_name ADD DROP DEFAULT                
+              - ADD PRIMARY KEY    
+  Destination:
+        Engines: [ReplicatedReplacingMergeTree, ReplacingMergeTree]
+        actions:
+          - Remove database
+          - Remove database and create it again
+          - One of the databases is out if sync with source database 
+```
+
+### Databases on Source and Destination
+
+#### Multiple Databases on Source and Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of multiple databases from [MySQL] to [ClickHouse].
+
+The implementation works as follows,
+```mermaid
+graph LR
+    A[MySQL: customers] -->|Replicated| D[ClickHouse: customers]
+    B[MySQL: products] -->|Replicated| E[ClickHouse: products]
+    C[MySQL: departments] -->|Replicated| F[ClickHouse: departments]
+```
+
+#### Multiple Databases on Source and One Database on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceMultipleDestinationOne
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there are multiple databases on the source side and only one database on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 1]
+    B[MySQL: Database 2] -->|Replicated| D[ClickHouse: Database 2]
+    C[MySQL: Database 3]
+```
+
+#### One Database on Source and Multiple Databases on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationMultiple
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there is only one database on the source side and multiple databases on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 2] -->|Not Replicated| D[ClickHouse: Database 1]
+    A -->|Replicated| E[ClickHouse: Database 2]
+    A -->|Not Replicated| F[ClickHouse: Database 3]
+```
+
+#### One Database on Source and One Database on Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.SourceOneDestinationOne
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of a database from source to destination when there is only one database on the source side and only one database on the destination side.
+
+```mermaid
+graph LR
+    A[MySQL: Database 1] -->|Replicated| D[ClickHouse: Database 1]
+```
+
+### Table Structure on Source and Destination Databases
+
+#### Two Tables with the Same Name and Different Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameDifferentStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the same name and different structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+#### Two Tables with the Same Name and the Same Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.SameNameSameStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the same name and the same structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+#### Two Tables with the Different Name and the Same Structure on Different Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.Tables.DifferentNameSameStructure
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication of two tables with the different name and the same structure on different databases on the source. The tables SHALL be replicated to the correct corresponding databases on the destination.
+
+### Configuration Values
+
+#### Include Specific List of Databases To Replicate
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the usage of the `database.include.list` configuration value to specify a list of databases to replicate.
+
+for example,
+```yaml
+database.include.list: database1, database2, ... , databaseN
+```
+
+This configuration value SHALL ensure that only the databases specified in the list are replicated to the destination.
+
+#### Replicate All Databases
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the ability to monitor all databases from the source and replicate them to the destination without specifying the `database.include.list` configuration value.
+
+### Table Operations
+
+#### Specify Database Name in Table Operations
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName
+version: 1.0
+
+[Altinity Sink Connector] SHALL support specifying the database name in the table operations.
+
+For example,
+
+```sql
+CREATE TABLE {database}.{table_name}
+```
+
+#### Table Operations Without Specifying Database Name
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName
+version: 1.0
+
+[Altinity Sink Connector] SHALL support table operations without specifying the database name.
+
+For example,
+
+```sql
+CREATE TABLE {table_name}
+```
+
+### Error Handling
+
+#### When Replicated Database Does Not Exist on the Destination
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist
+version: 1.0
+
+[Altinity Sink Connector] SHALL output an error when the replicated database does not exist on the destination. The error SHALL be repeated until the database is created on the destination.
+
+### Concurrent Actions
+
+#### Perform Table Operations on Each Database Concurrently
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions
+version: 1.0
+
+[Altinity Sink Connector] SHALL replicate concurrently performed actions on source.
+
+For example,
+if we perform multiple alter actions on multiple databases, the actions SHALL be replicated to the destination without issues.
 
 [SRS]: #srs
 [MySQL]: #mysql
