@@ -37,12 +37,8 @@ public class ClickHouseAutoCreateTableTest {
     @BeforeAll
     static void initialize() {
 
-        columnToDataTypesMap =  getExpectedColumnToDataTypesMap();
+        columnToDataTypesMap = getExpectedColumnToDataTypesMap();
 
-//        this.columnToDataTypesMap.put("customer_id", "Int32");
-//        this.columnToDataTypesMap.put("address", "String");
-//        this.columnToDataTypesMap.put("first_name", "String");
-//        this.columnToDataTypesMap.put("amount", "Int32");
 
         String hostName = "localhost";
         Integer port = 8123;
@@ -208,6 +204,53 @@ public class ClickHouseAutoCreateTableTest {
 
         Assert.assertTrue(act.isPrimaryKeyColumnPresent(primaryKeys, columnToDataTypesMap));
         Assert.assertFalse(act.isPrimaryKeyColumnPresent(primaryKeys2, columnToDataTypesMap));
+    }
+
+
+    @Test
+    public void createHistoryTableSyntax_withReplicatedReplacingMergeTreeEngine() {
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+        Field[] fields = new Field[1];
+        fields[0] = new Field("customerName", 0, Schema.STRING_SCHEMA);
+        Map<String, String> columnToDataTypesMap = new HashMap<>();
+        columnToDataTypesMap.put("customerName", "String");
+
+        String result = act.createHistoryTableSyntax(primaryKeys, "testTable", "testDB", fields, columnToDataTypesMap, true);
+
+        String expected = "CREATE TABLE testDB.`testTable_history`(`customerName` String NOT NULL,`_version` UInt64) Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/testTable', '{replica}', _version) PRIMARY KEY(customerName) ORDER BY(customerName)";
+        Assert.assertTrue(expected.equalsIgnoreCase(result));
+    }
+
+    @Test
+    public void createHistoryTableSyntax_withReplacingMergeTreeEngine() {
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+        Field[] fields = new Field[1];
+        fields[0] = new Field("customerName", 0, Schema.STRING_SCHEMA);
+        Map<String, String> columnToDataTypesMap = new HashMap<>();
+        columnToDataTypesMap.put("customerName", "String");
+
+        String result = act.createHistoryTableSyntax(primaryKeys, "testTable", "testDB", fields, columnToDataTypesMap, false);
+
+        String expected = "CREATE TABLE testDB.`testTable_history`(`customerName` String NOT NULL,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)";
+        Assert.assertTrue(expected.equalsIgnoreCase(result));
+    }
+
+    @Test
+    public void createHistoryTableSyntax_withoutPrimaryKey() {
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        Field[] fields = new Field[1];
+        fields[0] = new Field("customerName", 0, Schema.STRING_SCHEMA);
+        Map<String, String> columnToDataTypesMap = new HashMap<>();
+        columnToDataTypesMap.put("customerName", "String");
+
+        String result = act.createHistoryTableSyntax(null, "testTable", "testDB", fields, columnToDataTypesMap, false);
+
+        String expected = "CREATE TABLE testDB.`testTable_history`(`customerName` String NOT NULL,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        Assert.assertTrue(expected.equalsIgnoreCase(result));
     }
 
 }

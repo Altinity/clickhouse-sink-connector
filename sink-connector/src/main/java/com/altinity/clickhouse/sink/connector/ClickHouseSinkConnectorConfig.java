@@ -285,6 +285,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_HISTORY_TABLES.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, history tables, table names suffixed with _history are created in ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_HISTORY_TABLES.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(),
                         Type.BOOLEAN,
                         false,

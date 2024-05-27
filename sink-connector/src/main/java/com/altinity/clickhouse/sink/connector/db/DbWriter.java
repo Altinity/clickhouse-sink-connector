@@ -119,9 +119,15 @@ public class DbWriter extends BaseDbWriter {
                         }
                         boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
                                 ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-                        String rmtDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
-                        act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
+
+                        if(this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_HISTORY_TABLES.toString())) {
+                            act.createHistoryTableSyntax(record.getPrimaryKey(), tableName, database, fields, columnNameToDataTypeMap,
+                                    useReplicatedReplacingMergeTree);
+                        } else {
+                            String rmtDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
+                            act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
                                 isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree, rmtDeleteColumn);
+                        }
                     } catch (Exception e) {
                         log.error("**** Error creating table ***" + tableName, e);
                     }
