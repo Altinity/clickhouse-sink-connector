@@ -11,11 +11,9 @@ def insert_update_delete(self):
 
     with Given("I create MySQL to ClickHouse replicated table"):
         for clickhouse_table_engine in self.context.clickhouse_table_engines:
-            create_mysql_to_clickhouse_replicated_table(
-                name=table_name,
-                mysql_columns="x INT",
-                clickhouse_columns="x Int32",
-                clickhouse_table_engine=clickhouse_table_engine,
+            create_mysql_table(
+                table_name=table_name,
+                columns="x INT",
             )
 
     with When(

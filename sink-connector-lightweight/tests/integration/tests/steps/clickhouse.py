@@ -1,26 +1,77 @@
 from integration.helpers.common import *
 
 
+@TestStep(Then)
+def drop_database(self, database_name=None, node=None):
+    """Drop ClickHouse database."""
+    if database_name is None:
+        database_name = "test"
+
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+    with By("executing drop database query"):
+        node.query(
+            f"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
+        )
+
+
+@TestStep(Then)
+def check_column(
+    self, table_name, column_name, node=None, column_type=None, database=None
+):
+    """Check if column exists in ClickHouse table."""
+
+    if database is None:
+        database = "test"
+
+    if column_type is not None:
+        if "varchar" in column_type:
+            column_type = "String"
+
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    if column_type is None:
+        select = "name"
+    else:
+        select = "name, type"
+
+    with By(f"checking if {column_name} exists in {table_name}"):
+        for retry in retries(timeout=25, delay=1):
+            with retry:
+                column = node.query(
+                    f"SELECT {select} FROM system.columns WHERE table = '{table_name}' AND name = '{column_name}' AND database = '{database}' FORMAT TabSeparated"
+                )
+
+                expected_output = (
+                    column_name
+                    if column_type is None
+                    else f"{column_name}	{column_type}"
+                )
+
+                assert column.output.strip() == expected_output, error()
+
+
 @TestStep(Given)
-def create_database(self, name="test", node=None):
+def create_clickhouse_database(self, name=None, node=None):
     """Create ClickHouse database."""
+    if name is None:
+        name = "test"
+
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
     try:
         with By(f"adding {name} database if not exists"):
+            drop_database(database_name=name)
+
             node.query(
-                f"DROP DATABASE IF EXISTS {name} ON CLUSTER sharded_replicated_cluster;"
-            )
-            node.query(
-                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER sharded_replicated_cluster"
+                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
             )
         yield
     finally:
         with Finally(f"I delete {name} database if exists"):
-            node.query(
-                f"DROP DATABASE IF EXISTS {name} ON CLUSTER sharded_replicated_cluster;"
-            )
+            drop_database(database_name=name)
 
 
 @TestStep(Then)
@@ -82,30 +133,82 @@ def select(
 
 
 @TestStep(Then)
-def check_if_table_was_created(self, table_name, node=None, timeout=40, message=1):
+def check_if_table_was_created(
+    self, table_name, database_name=None, node=None, timeout=40, message=1
+):
     """Check if table was created in ClickHouse."""
+    if database_name is None:
+        database_name = "test"
+
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
-    retry(node.query, timeout=timeout, delay=3)(
-        f"EXISTS {self.context.database}.{table_name}", message=f"{message}"
-    )
+    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+        for node in self.context.cluster.nodes["clickhouse"]:
+            retry(self.context.cluster.node(node).query, timeout=timeout, delay=3)(
+                f"EXISTS {database_name}.{table_name}", message=f"{message}"
+            )
+    elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
+        retry(node.query, timeout=timeout, delay=3)(
+            f"EXISTS {database_name}.{table_name}", message=f"{message}"
+        )
+    else:
+        raise Exception("Unknown ClickHouse table engine")
 
 
 @TestStep(Then)
 def validate_data_in_clickhouse_table(
-    self, table_name, expected_output, statement="*", node=None
+    self, table_name, expected_output, statement="*", node=None, database_name=None
 ):
     """Validate data in ClickHouse table."""
+
+    if database_name is None:
+        database_name = "test"
+
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+        for node in self.context.cluster.nodes["clickhouse"]:
+            for retry in retries(timeout=40):
+                with retry:
+                    data = self.context.cluster.node(node).query(
+                        f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                    )
+
+                    assert (
+                        data.output.strip().replace('"', "") == expected_output
+                    ), error()
+    elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
+        for retry in retries(timeout=40):
+            with retry:
+                data = node.query(
+                    f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                )
+                assert data.output.strip().replace('"', "") == expected_output, error()
+
+    else:
+        raise Exception("Unknown ClickHouse table engine")
+
+
+@TestStep(Then)
+def validate_rows_number(
+    self, table_name, expected_rows, node=None, database_name=None
+):
+    """Validate number of rows in ClickHouse table."""
+
+    if database_name is None:
+        database_name = "test"
+
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
     for retry in retries(timeout=40):
         with retry:
             data = node.query(
-                f"SELECT {statement} FROM {self.context.database}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                f"SELECT count(*) FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
             )
-            assert data.output.strip().replace('"', "") == expected_output, error()
+            assert data.output.strip().replace('"', "") == expected_rows, error()
 
 
 @TestStep(Then)

@@ -58,6 +58,20 @@ def create_default_sink_config(self, path="env/auto/configs/config.yml"):
 
 
 @TestStep(Given)
+def create_default_sink_config_replicated(
+    self, path="env/auto_replicated/configs/replicated_config.yml"
+):
+    """Create the default sink connector configuration."""
+    config = self.context.config
+
+    with By(f"creating the default sink connector configuration file"):
+        config.update(
+            {"auto.create.tables.replicated": "true", "auto.create.tables": "true"}
+        )
+        config.save(filename=path)
+
+
+@TestStep(Given)
 def update_sink_config(self, new_data: dict, path="env/auto/configs/config.yml"):
     """Update the sink connector configuration."""
     config = self.context.config
@@ -75,3 +89,27 @@ def remove_configuration(self, key, path):
     with By(f"removing the sink connector configuration key {key}"):
         config.remove(key)
         config.save(filename=path)
+
+
+@TestStep(Given)
+def include_all_databases_with_rrmt(self, node=None, config_file=None):
+    """Create and use ClickHouse Sink Connector configuration which allows the following:
+    - Monitors all databases in source and replicates them in destination.
+    - Tables created automatically are with ReplicatedReplacingMergeTree engine.
+    """
+    config = self.context.config
+
+    if node is None:
+        node = self.context.sink_node
+
+    with By("removing the ClickHouse Sink Connector configuration"):
+        config.remove("database.include.list")
+        config.update(
+            {"auto.create.tables.replicated": "true", "auto.create.tables": "true"}
+        )
+        config.save(filename=config_file)
+
+    with And(
+        "restarting the ClickHouse Sink Connector and using the new configuration file"
+    ):
+        node.restart_sink_connector(config_file=config_file)

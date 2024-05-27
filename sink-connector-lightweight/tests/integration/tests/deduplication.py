@@ -15,11 +15,9 @@ def deduplication(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(f"I create MySQL to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns="age INT",
-            clickhouse_columns="age Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns="age INT",
         )
 
     if inserts:
