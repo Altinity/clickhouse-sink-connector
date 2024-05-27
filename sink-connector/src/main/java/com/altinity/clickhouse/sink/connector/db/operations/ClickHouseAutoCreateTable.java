@@ -26,10 +26,10 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                ClickHouseConnection connection, boolean isNewReplacingMergeTree,
-                               boolean useReplicatedReplacingMergeTree) throws SQLException {
+                               boolean useReplicatedReplacingMergeTree, String rmtDeleteColumn) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,
-                isNewReplacingMergeTree, useReplicatedReplacingMergeTree);
+                isNewReplacingMergeTree, useReplicatedReplacingMergeTree, rmtDeleteColumn);
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), Query :%s)", databaseName, createTableQuery));
         // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
@@ -45,7 +45,8 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
     public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                               Map<String, String> columnToDataTypesMap,
                                               boolean isNewReplacingMergeTreeEngine,
-                                              boolean useReplicatedReplacingMergeTree) {
+                                              boolean useReplicatedReplacingMergeTree,
+                                              String rmtDeleteColumn) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
@@ -77,6 +78,10 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
+
+        if(rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
+            isDeletedColumn = rmtDeleteColumn;
+        }
 
         if(isNewReplacingMergeTreeEngine == true) {
             createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
