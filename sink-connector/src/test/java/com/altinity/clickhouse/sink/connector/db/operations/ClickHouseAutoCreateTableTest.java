@@ -125,7 +125,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "employees",
-                createFields(), this.columnToDataTypesMap, false, false);
+                createFields(), this.columnToDataTypesMap, false, false, null);
         System.out.println("QUERY" + query);
         Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
         //Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY (customerName)"));
@@ -137,7 +137,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(null, "auto_create_table", "employees", createFields(),
-                this.columnToDataTypesMap, false, false);
+                this.columnToDataTypesMap, false, false, null);
 
         String expectedQuery = "CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
@@ -151,7 +151,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "customers", createFields(),
-                this.columnToDataTypesMap, false, false);
+                this.columnToDataTypesMap, false, false, null);
 
         String expectedQuery = "CREATE TABLE customers.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
@@ -181,7 +181,7 @@ public class ClickHouseAutoCreateTableTest {
 
         try {
             act.createNewTable(primaryKeys, "auto_create_table", "default", this.createFields(), writer.getConnection(),
-                    false, false);
+                    false, false, null);
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }
