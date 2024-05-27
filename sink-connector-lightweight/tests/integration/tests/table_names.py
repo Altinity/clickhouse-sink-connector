@@ -51,11 +51,9 @@ def check_table_names(self, table_name):
     clickhouse_node = self.context.clickhouse_node
 
     with Given(f"I create the {table_name} table"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns="x INT",
-            clickhouse_columns="x Int32",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=f"\`{table_name}\`",
+            columns="x INT",
         )
 
     with And("I insert data into the table"):

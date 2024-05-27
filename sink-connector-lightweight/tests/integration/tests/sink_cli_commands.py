@@ -46,10 +46,9 @@ def create_and_validate_table(self, table_name):
     with By(
         "creating a table in MySQL and checking that it was also created in ClickHouse"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=f"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
         )
 
         check_if_table_was_created(table_name=table_name)
