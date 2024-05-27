@@ -72,6 +72,7 @@
           </includes>
           <properties>
             <property>
+              <surefire.test.runOrder>filesystem</surefire.test.runOrder>
               <name>listener</name>
               <value>com.altinity.clickhouse.debezium.embedded.FailFastListener</value>
             </property>
@@ -79,6 +80,7 @@
           <useUnlimitedThreads>true</useUnlimitedThreads>
           <perCoreThreadCount>true</perCoreThreadCount>
           <useSystemClassLoader>true</useSystemClassLoader>
+          <runOrder>${surefire.test.runOrder}</runOrder>
         </configuration>
       </plugin>
       <plugin>
@@ -297,7 +299,6 @@
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
     <version.testcontainers>1.19.1</version.testcontainers>
     <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
-    <apache.httpclient.version>5.2.1</apache.httpclient.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <sink-connector-library-version>0.0.8</sink-connector-library-version>
     <version.junit>5.9.1</version.junit>
