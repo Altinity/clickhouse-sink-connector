@@ -52,7 +52,7 @@ database.allowPublicKeyRetrieval: "true"
 snapshot.mode: "initial"
 
 # Snapshot.locking.mode Required for Debezium 2.7.0 and later. The snapshot.locking.mode configuration property specifies the mode that the connector uses to lock tables during snapshotting.
-snapshot.locking.mode: "minimal"
+#snapshot.locking.mode: "minimal"
 
 # offset.flush.interval.ms: The number of milliseconds to wait before flushing recent offsets to Kafka. This ensures that offsets are committed within the specified time interval.
 offset.flush.interval.ms: 5000
