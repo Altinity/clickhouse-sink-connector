@@ -52,23 +52,23 @@ def check_table_names(self, table_name):
 
     with Given(f"I create the {table_name} table"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns="x INT",
         )
 
     with And("I insert data into the table"):
-        mysql_node.query(f"INSERT INTO \`{table_name}\` VALUES (1, 1);")
+        mysql_node.query(rf"INSERT INTO \`{table_name}\` VALUES (1, 1);")
 
     with Then(f"I check that the {table_name} was created in the ClickHouse side"):
         for retry in retries(timeout=40, delay=1):
             with retry:
-                clickhouse_node.query(f"EXISTS test.\`{table_name}\`", message="1")
+                clickhouse_node.query(rf"EXISTS test.\`{table_name}\`", message="1")
 
     with And("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
             with retry:
                 clickhouse_data = clickhouse_node.query(
-                    f"SELECT id,x FROM test.\`{table_name}\` FORMAT CSV"
+                    rf"SELECT id,x FROM test.\`{table_name}\` FORMAT CSV"
                 )
                 assert clickhouse_data.output.strip() == "1,1", error()
 

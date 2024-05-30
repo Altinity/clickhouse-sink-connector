@@ -11,7 +11,7 @@ def create_table_structure(self, table_name):
 
     with By(f"creating a {table_name} table"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"col1 varchar(255), col2 int",
         )
 
