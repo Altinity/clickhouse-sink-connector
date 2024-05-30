@@ -3,6 +3,7 @@ python-dateutil==2.9.0
 numpy==1.26.4
 pyarrow==16.1.0
 pandas==2.2.0
+PyYAML==5.3.1
 docker-compose==1.29.2
 awscli==1.27.36
 docker==6.1.3
