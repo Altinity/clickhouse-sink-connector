@@ -6,6 +6,10 @@
         </Console>
     </Appenders>
     <Loggers>
+        <Logger name="com.clickhouse" level="ERROR"
+                additivity="false">
+            <AppenderRef ref="console"/>
+        </Logger>
         <Root level="debug" additivity="false">
             <AppenderRef ref="console" />
         </Root>
