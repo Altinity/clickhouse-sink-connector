@@ -244,6 +244,7 @@ def select(
     with_optimize=False,
     sign_column="_sign",
     timeout=100,
+    order_by=None
 ):
     """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
     :param insert: expected insert data if None compare with MySQL table
@@ -254,6 +255,11 @@ def select(
     :param with_optimize: loop 'OPTIMIZE TABLE' + 'SELECT'
     :param timeout: retry timeout
     """
+    if order_by is None:
+        order_by = ""
+    else:
+        order_by = f" ORDER BY {order_by}"
+
     if node is None:
         node = self.context.cluster.node("clickhouse")
     if table_name is None:
@@ -262,7 +268,7 @@ def select(
         statement = "*"
 
     mysql = self.context.cluster.node("mysql-master")
-    mysql_output = mysql.query(f"select {statement} from {table_name} ORDER BY tuple(*)").output.strip()[
+    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[
         90:
     ]
 
@@ -275,7 +281,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM test.{table_name} FINAL where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} FINAL where {sign_column} !=-1{order_by} FORMAT CSV",
             message=f"{manual_output}",
         )
     elif with_optimize:
@@ -284,7 +290,7 @@ def select(
                 node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 node.query(
-                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
+                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1{order_by} FORMAT CSV",
                     message=f"{manual_output}",
                 )
 
@@ -294,7 +300,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1{order_by} FORMAT CSV",
             message=f"{manual_output}",
         )
 
@@ -309,6 +315,7 @@ def complex_check_creation_and_select(
     manual_output=None,
     with_final=False,
     with_optimize=False,
+    order_by=None,
 ):
     """
     Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySql
@@ -355,6 +362,7 @@ def complex_check_creation_and_select(
             with_final=with_final,
             with_optimize=with_optimize,
             timeout=timeout,
+            order_by=order_by,
         )
         if clickhouse_table[1].startswith("Replicated"):
             with Then(
@@ -369,6 +377,7 @@ def complex_check_creation_and_select(
                     with_final=with_final,
                     with_optimize=with_optimize,
                     timeout=timeout,
+                    order_by=order_by,
                 )
 
 
