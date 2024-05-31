@@ -262,7 +262,7 @@ def select(
         statement = "*"
 
     mysql = self.context.cluster.node("mysql-master")
-    mysql_output = mysql.query(f"select {statement} from {table_name}").output.strip()[
+    mysql_output = mysql.query(f"select {statement} from {table_name} ORDER BY tuple(*)").output.strip()[
         90:
     ]
 
@@ -275,7 +275,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM test.{table_name} FINAL  where {sign_column} !=-1 FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} FINAL where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
             message=f"{manual_output}",
         )
     elif with_optimize:
@@ -284,7 +284,7 @@ def select(
                 node.query(f"OPTIMIZE TABLE test.{table_name} FINAL DEDUPLICATE")
 
                 node.query(
-                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
+                    f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
                     message=f"{manual_output}",
                 )
 
@@ -294,7 +294,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 FORMAT CSV",
+            f"SELECT {statement} FROM test.{table_name} where {sign_column} !=-1 ORDER BY tuple(*) FORMAT CSV",
             message=f"{manual_output}",
         )
 
