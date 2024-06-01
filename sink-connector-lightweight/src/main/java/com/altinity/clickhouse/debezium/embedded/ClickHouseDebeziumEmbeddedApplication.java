@@ -9,11 +9,17 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.clickhouse.jdbc.internal.ClickHouseConnectionImpl;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.config.AppenderRef;
+import org.apache.logging.log4j.core.config.Configuration;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.LoggerConfig;
 
 import java.io.IOException;
 import java.util.Properties;
@@ -54,6 +60,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
         //org.apache.log4j.Logger root = org.apache.logging.log4j.getRootLogger();
        // root.addAppender(new ConsoleAppender(new PatternLayout("%r %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %p %c %x - %m%n")));
 
+
         String loggingLevel = System.getenv("LOGGING_LEVEL");
         if(loggingLevel != null) {
             // If the user passes a wrong level, it defaults to DEBUG
@@ -61,6 +68,15 @@ public class ClickHouseDebeziumEmbeddedApplication {
         } else {
             LogManager.getRootLogger().atLevel(Level.INFO);
         }
+
+
+        // Hide the Transaction is not supported errors in clickhouse-jdbc
+        final LoggerContext ctx = (LoggerContext) LogManager.getContext(false);
+        final Configuration config = ctx.getConfiguration();
+        final LoggerConfig loggerConfig = config.getLoggerConfig(ClickHouseConnectionImpl.class.getName());
+        loggerConfig.setLevel(Level.ERROR);
+
+        ctx.updateLoggers();
         injector = Guice.createInjector(new AppInjector());
 
         props = new Properties();

@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="INFO">
+<Configuration status="WARN">
     <Appenders>
         <Console name="console" target="SYSTEM_OUT">
             <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n"/>
         </Console>
     </Appenders>
     <Loggers>
-        <Logger name="com.clickhouse" level="ERROR"
-                additivity="false">
-            <AppenderRef ref="console"/>
+        <Logger name="com.clickhouse" level="error">
+            <AppenderRef level="error" ref="console"/>
         </Logger>
-        <Root level="debug" additivity="false">
-            <AppenderRef ref="console" />
+        <Root level="trace" additivity="false">
+            <AppenderRef level="trace" ref="console" />
         </Root>
     </Loggers>
 </Configuration>
