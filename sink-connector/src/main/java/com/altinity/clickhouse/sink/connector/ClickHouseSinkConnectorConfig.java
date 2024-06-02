@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
+import com.altinity.clickhouse.sink.connector.validators.DatabaseOverrideValidator;
 import com.altinity.clickhouse.sink.connector.validators.KafkaProviderValidator;
 import com.altinity.clickhouse.sink.connector.validators.TopicToTableValidator;
 import org.apache.kafka.common.config.AbstractConfig;
@@ -103,6 +104,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         0,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString())
+                // Define overrides map for ClickHouse Database
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
+                        Type.STRING,
+                        "",
+                        new DatabaseOverrideValidator(),
+                        Importance.LOW,
+                        "Map of source to destination database(override) (optional). Format : comma-separated tuples, e.g."
+                                + " <src_database-1>:<destination_database-1>,<src_database-2>:<destination_database-2>,... ",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
                         Type.LONG,
