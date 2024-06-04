@@ -47,7 +47,7 @@ def create_and_validate_table(self, table_name):
         "creating a table in MySQL and checking that it was also created in ClickHouse"
     ):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"col1 varchar(255), col2 int",
         )
 

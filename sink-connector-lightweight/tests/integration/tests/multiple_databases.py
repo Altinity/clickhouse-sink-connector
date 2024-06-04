@@ -113,7 +113,7 @@ def create_table_and_insert_values(
 
     with By("creating a sample table in MySQL"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"col1 varchar(255), col2 int",
             database_name=database_name,
         )

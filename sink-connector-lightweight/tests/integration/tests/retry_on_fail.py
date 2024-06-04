@@ -16,7 +16,7 @@ def retry_on_fail(self):
 
     with When("I creat a table in MySQL"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"retry VARCHAR(16)",
         )
 
