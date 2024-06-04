@@ -125,7 +125,7 @@ public class DBMetadata {
                 }
                 rs.close();
                 stmt.close();
-                log.info("ResultSet" + rs);
+                log.info("getTableEngineUsingShowTable ResultSet" + rs);
             }
         } catch(Exception e) {
             log.error("getTableEngineUsingShowTable exception", e);
@@ -218,7 +218,7 @@ public class DBMetadata {
                 }
                 rs.close();
                 stmt.close();
-                log.info("ResultSet" + rs);
+                log.info("getTableEngineUsingSystemTables ResultSet" + rs);
             }
         } catch(Exception e) {
             log.error("getTableEngineUsingSystemTables exception", e);
