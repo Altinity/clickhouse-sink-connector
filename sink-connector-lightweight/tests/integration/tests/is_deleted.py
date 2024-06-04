@@ -9,18 +9,23 @@ from integration.tests.steps.datatypes import all_mysql_datatypes_dict
 
 @TestStep(Given)
 def create_table_with_is_deleted(
-    self, table_name, datatype="int", data="5", column="is_deleted"
+    self, table_name, datatype="int", data="5", column="is_deleted", backticks=False
 ):
     """Create mysql table that contains the column with the name 'is_deleted'"""
     mysql_node = self.context.mysql_node
     clickhouse_node = self.context.clickhouse_node
+
+    if not backticks:
+        columns = "col1 varchar(255), col2 int, "
+    else:
+        columns = "\`col1\` varchar(255), \`col2\` int, "
 
     with By(
         f"creating a {table_name} table with is_deleted column and {datatype} datatype"
     ):
         create_mysql_table(
             table_name=rf"\`{table_name}\`",
-            columns=f"col1 varchar(255), col2 int, {column} {datatype}",
+            columns=f"{columns}{column} {datatype}",
         )
 
     with And(f"inserting data into the {table_name} table"):
@@ -156,6 +161,46 @@ def is_deleted_different_datatypes(self):
         Check(
             name=f"check is_deleted with {datatype}", test=check_is_deleted_datatypes
         )(datatype=datatype)
+
+
+@TestScenario
+def column_with_backticks(self):
+    """Check that the table is replicated when the source table has columns created with backticks."""
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    with Given(f"I create the {table_name} table and populate it with data"):
+        create_table_with_is_deleted(table_name=table_name, backticks=True)
+
+    with Then("I check that the data was inserted correctly into the ClickHouse table"):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
+                )
+                assert (
+                    "__is_deleted" and "is_deleted" in clickhouse_data.output.strip()
+                ), error()
+
+
+@TestScenario
+def column_with_is_deleted_backticks(self):
+    """Check that the table is replicated when the source table has columns created with is_deleted column having backticks."""
+    clickhouse_node = self.context.clickhouse_node
+    table_name = "tb_" + getuid()
+
+    with Given(f"I create the {table_name} table and populate it with data"):
+        create_table_with_is_deleted(table_name=table_name, column="\`is_deleted\`")
+
+    with Then("I check that the data was inserted correctly into the ClickHouse table"):
+        for retry in retries(timeout=40, delay=1):
+            with retry:
+                clickhouse_data = clickhouse_node.query(
+                    f"DESCRIBE TABLE test.{table_name} FORMAT CSV"
+                )
+                assert (
+                    "__is_deleted" and "is_deleted" in clickhouse_data.output.strip()
+                ), error()
 
 
 @TestModule

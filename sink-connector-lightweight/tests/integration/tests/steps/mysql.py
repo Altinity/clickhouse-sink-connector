@@ -97,6 +97,7 @@ def create_mysql_database(self, node=None, database_name=None):
         with Finally(f"I delete MySQL database {database_name}"):
             node.query(f"DROP DATABASE IF EXISTS {database_name};")
 
+
 @TestStep(Given)
 def create_mysql_table(
     self,
@@ -126,7 +127,7 @@ def create_mysql_table(
             key = f"{primary_key} INT NOT NULL,"
 
         with Given(f"I create MySQL table", description=name):
-            query = f"CREATE TABLE IF NOT EXISTS {database_name}.{table_name} ({key}{columns}"
+            query = rf"CREATE TABLE IF NOT EXISTS {database_name}.{table_name} ({key}{columns}"
 
             if primary_key is not None:
                 query += f", PRIMARY KEY ({primary_key}))"
