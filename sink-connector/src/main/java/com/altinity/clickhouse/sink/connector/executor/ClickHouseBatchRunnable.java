@@ -61,6 +61,9 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private List<ClickHouseStruct> currentBatch = null;
 
+
+    private Map<String, String> databaseOverrideMap = new HashMap<>();
+
     public ClickHouseBatchRunnable(LinkedBlockingQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
@@ -78,6 +81,14 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection();
+
+
+        try {
+            this.databaseOverrideMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+        } catch (Exception e) {
+            log.error("Error parsing database override map" + e);
+        }
     }
 
     private ClickHouseConnection createConnection() {
