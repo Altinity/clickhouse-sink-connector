@@ -1739,6 +1739,30 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special = Require
     num="28.1.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Backticks = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support replication from the source tables that have backticks in column names.\n"
+        "\n"
+        "For example,\n"
+        "\n"
+        "If we create a source table that contains the column with the `is_deleted` name,\n"
+        "\n"
+        "```sql\n"
+        "CREATE TABLE new_table(col1 VARCHAR(255), `col2` INT, `is_deleted` INT)\n"
+        "```\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="28.2.1",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped",
     version="1.0",
@@ -3127,6 +3151,14 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=3,
             num="28.1.1",
         ),
+        Heading(
+            name="Replicate Tables With Backticks in Column Names", level=2, num="28.2"
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks",
+            level=3,
+            num="28.2.1",
+        ),
         Heading(name="Replication Interruption", level=1, num="29"),
         Heading(
             name="Retry Replication When ClickHouse Instance Is Not Active",
@@ -3551,6 +3583,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Valid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableNames_Invalid,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Backticks,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Interruption_ClickHouse_Instance_Stopped,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_CLI_StartReplication,
@@ -3786,6 +3819,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
 * 28 [Column Names](#column-names)
     * 28.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
         * 28.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
+    * 28.2 [Replicate Tables With Backticks in Column Names](#replicate-tables-with-backticks-in-column-names)
+        * 28.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesbackticks)
 * 29 [Replication Interruption](#replication-interruption)
     * 29.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
@@ -5053,6 +5088,21 @@ CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)
 ```
 
 The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.
+
+### Replicate Tables With Backticks in Column Names
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from the source tables that have backticks in column names.
+
+For example,
+
+If we create a source table that contains the column with the `is_deleted` name,
+
+```sql
+CREATE TABLE new_table(col1 VARCHAR(255), `col2` INT, `is_deleted` INT)
+```
 
 ## Replication Interruption
 
