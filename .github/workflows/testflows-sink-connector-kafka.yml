@@ -48,6 +48,18 @@ jobs:
         working-directory: sink-connector/tests/integration
         run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
 
+      - name: Create a virtual environment
+        run: |
+          echo "Install Python modules..."
+          sudo apt-get clean
+          sudo apt-get update
+          sudo apt-get install -y python3.12-venv
+
+          echo "Create and activate Python virtual environment..."
+          python3 -m venv venv
+          source venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+
       - name: Install all dependencies
         working-directory: sink-connector/tests/integration
         run: pip3 install -r requirements.txt
