@@ -248,7 +248,6 @@ public class ClickHouseBatchRunnable implements Runnable {
         try {
             if(!userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
             }
         } catch (Exception e){
             log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
@@ -278,11 +277,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
-                writer.getConnection(), getServerTimeZone(this.config));
+                writer.getDatabaseName(), getServerTimeZone(this.config));
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error("*** TABLE METADATA not retrieved, retrying");
+            log.error(String.format("*** TABLE METADATA not retrieved for Database(%), table(%s) retrying",
+                    writer.getDatabaseName(), writer.getTableName()));
             if(writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
             }
@@ -290,7 +290,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                 writer.updateColumnNameToDataTypeMap();
 
             if(writer == null || writer.wasTableMetaDataRetrieved() == false ) {
-                log.error("*** TABLE METADATA not retrieved, retrying on next attempt");
+                log.error(String.format("*** TABLE METADATA not retrieved for Database(%s), table(%s), " +
+                        "retrying on next attempt", writer.getDatabaseName(), writer.getTableName()));
                 return false;
             }
         }

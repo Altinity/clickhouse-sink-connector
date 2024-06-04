@@ -93,7 +93,8 @@ public class QueryFormatter {
                     colNameToIndexMap.put(sourceColumnName, index++);
                 }
             } else {
-                log.error(String.format("Table Name: %s, Column(%s) ignored", tableName, sourceColumnNameWithBackTicks));
+                log.error(String.format("Table Name: %s, Database: %s,  Column(%s) ignored", tableName, dbName,
+                        sourceColumnNameWithBackTicks));
             }
         }
 
