@@ -283,9 +283,16 @@ public class ClickHouseBatchRunnable implements Runnable {
         String tableName = getTableFromTopic(topicName);
         // Note: getting records.get(0) is safe as the topic name is same for all records.
         ClickHouseStruct firstRecord =  records.get(0);
-        ClickHouseConnection databaseConn = getClickHouseConnection(firstRecord.getDatabase());
 
-        DbWriter writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
+        String databaseName = firstRecord.getDatabase();
+
+        // Check if user has overridden the database name.
+        if(this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+
+        ClickHouseConnection databaseConn = getClickHouseConnection(databaseName);
+
+        DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
@@ -295,7 +302,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error("*** TABLE METADATA not retrieved, retrying");
             if(writer == null) {
-                writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
+                writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
             }
             if(writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
@@ -329,8 +336,10 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
-            DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(), dbCredentials.getPort(), dbCredentials.getDatabase(),
-                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config, databaseConn);
+            DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(),
+                    dbCredentials.getPort(), dbCredentials.getDatabase(),
+                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(),
+                    this.config, databaseConn);
             try {
                 dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
             } catch (SQLException e) {
@@ -348,8 +357,10 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param queryToRecordsMap
      * @return
      */
-    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd, long maxBufferSize, PreparedStatementExecutor preparedStatementExecutor) throws Exception {
+    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer,
+                Map<MutablePair<String, Map<String, Integer>>,
+                List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
+        long maxBufferSize, PreparedStatementExecutor preparedStatementExecutor) throws Exception {
 
         boolean result = false;
 
