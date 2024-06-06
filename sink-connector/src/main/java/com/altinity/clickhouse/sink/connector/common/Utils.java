@@ -38,6 +38,11 @@ public class Utils {
     public static Map<String, String> parseSourceToDestinationDatabaseMap(String input) throws Exception {
         Map<String, String> srcToDestinationMap = new HashMap<>();
         boolean isInvalid = false;
+
+        if(input == null || input.isEmpty()) {
+            return srcToDestinationMap;
+        }
+
         for (String str : input.split(",")) {
             String[] tt = str.split(":");
 
