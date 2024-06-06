@@ -166,7 +166,6 @@ def regression(
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
-        "bash-tools": ("bash-tools",),
         "zookeeper": ("zookeeper",),
     }
 
