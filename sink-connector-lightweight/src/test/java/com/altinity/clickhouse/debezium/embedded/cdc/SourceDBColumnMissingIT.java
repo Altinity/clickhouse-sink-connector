@@ -118,15 +118,11 @@ public class SourceDBColumnMissingIT {
         }
         Thread.sleep(10000);
 
-        while(true) {
-            ;
-        }
-//
-//        assertTrue(col2 == 1);
-//        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
-//
-//        conn.close();
-//        executorService.shutdown();
+        assertTrue(col2 == 1);
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
+
+        conn.close();
+        executorService.shutdown();
     }
 
 }
