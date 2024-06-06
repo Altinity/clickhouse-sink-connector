@@ -25,7 +25,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Properties;
@@ -36,8 +35,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
 import static org.junit.Assert.assertTrue;
 
 @Testcontainers
-@DisplayName("Test that validates behavior when source columns mismatch with destination(ClickHouse).")
-public class SourceColumnMismatchIT {
+@DisplayName("Test that validates behavior when source column is not present in ClickHouse(Destination)")
+public class DestinationDBColumnMissingIT {
     private static final Logger log = LoggerFactory.getLogger(MultipleUpdatesWSameTimestampIT.class);
 
 
@@ -97,9 +96,9 @@ public class SourceColumnMismatchIT {
         Thread.sleep(25000);
 
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+        conn.prepareStatement("create table `newtable`(col111 varchar(255) not null, primary key(col111))").execute();
         // Insert a new row in the table
-        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+        conn.prepareStatement("insert into newtable values('a')").execute();
 
 
         Thread.sleep(10000);
@@ -124,7 +123,6 @@ public class SourceColumnMismatchIT {
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
-        // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
     }
 
