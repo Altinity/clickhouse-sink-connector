@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
@@ -31,7 +30,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree, rmtDeleteColumn);
-        log.info("**** AUTO CREATE TABLE " + createTableQuery);
+        log.info(String.format("**** AUTO CREATE TABLE for database(%s), Query :%s)", databaseName, createTableQuery));
         // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
     }
@@ -53,17 +52,17 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`").append("(");
 
-        for (Field f : fields) {
+        for(Field f: fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
             boolean isNull = false;
-            if (f.schema().isOptional() == true) {
+            if(f.schema().isOptional() == true) {
                 isNull = true;
             }
             createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
 
             // Ignore setting NULL OR not NULL for JSON and Array
-            if (dataType != null &&
+            if(dataType != null &&
                     (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name()) ||
                             dataType.contains(ClickHouseDataType.Array.name()))) {
                 // ignore adding nulls;
