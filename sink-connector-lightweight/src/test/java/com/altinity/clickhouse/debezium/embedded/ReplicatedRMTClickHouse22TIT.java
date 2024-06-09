@@ -76,7 +76,7 @@ public class ReplicatedRMTClickHouse22TIT {
     @CsvSource({
             "clickhouse/clickhouse-server:22.3"
     })
-    @DisplayName("Test that validates creation of Replicated Replacing Merge Tree")
+    @DisplayName("Test that validates creation of Replicated Replacing Merge Tree on ClickHouse 22.3 ")
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
