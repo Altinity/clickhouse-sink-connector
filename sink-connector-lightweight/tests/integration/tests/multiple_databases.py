@@ -99,7 +99,7 @@ def create_table_and_insert_values(
 
     with By("creating a sample table in MySQL"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
+            name=rf"\`{table_name}\`",
             mysql_columns=f"col1 varchar(255), col2 int",
             database_name=database_name,
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],

@@ -36,7 +36,7 @@ def create_table_with_datetime_column(self, table_name, data, precision):
 
     with By(f"creating a {table_name} table with datetime column"):
         create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
+            name=rf"\`{table_name}\`",
             mysql_columns=f"date DATETIME({precision})",
             clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
