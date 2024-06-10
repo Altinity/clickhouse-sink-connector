@@ -11,7 +11,6 @@ default_config = {
     "clickhouse.server.user": "root",
     "clickhouse.server.password": "root",
     "clickhouse.server.port": "8123",
-    "clickhouse.server.database": "test",
     "database.allowPublicKeyRetrieval": "true",
     "snapshot.mode": "initial",
     "offset.flush.interval.ms": "5000",
