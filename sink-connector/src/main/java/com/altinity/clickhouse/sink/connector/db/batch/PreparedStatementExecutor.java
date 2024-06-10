@@ -6,7 +6,6 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
@@ -35,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 public class PreparedStatementExecutor {
+    private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
 
     private String replacingMergeTreeDeleteColumn;
     private boolean replacingMergeTreeWithIsDeletedColumn;
@@ -45,22 +45,20 @@ public class PreparedStatementExecutor {
 
     private ZoneId serverTimeZone;
 
+    private String databaseName;
+
     public PreparedStatementExecutor(String replacingMergeTreeDeleteColumn,
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
-                                     ClickHouseConnection conn, ZoneId serverTimeZone) {
+                                     String databaseName, ZoneId serverTimeZone) {
         this.replacingMergeTreeDeleteColumn = replacingMergeTreeDeleteColumn;
         this.replacingMergeTreeWithIsDeletedColumn = replacingMergeTreeWithIsDeletedColumn;
 
         this.signColumn = signColumn;
         this.versionColumn = versionColumn;
-
         this.serverTimeZone = serverTimeZone;
-      //  serverTimeZone = BaseDbWriter.
-        //serverTimeZone = new DBMetadata().getServerTimeZone(conn);
+        this.databaseName = databaseName;
     }
-
-    private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
 
     /**
      * Function to iterate through records and add it to JDBC prepared statement
@@ -81,12 +79,14 @@ public class PreparedStatementExecutor {
         while(iter.hasNext()) {
             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
             String insertQuery = entry.getKey().getKey();
-            log.info("*** QUERY***" + insertQuery);
+            log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
 
-            if(false == executePreparedStatement(insertQuery, topicName, entry, bmd, config, conn, tableName, columnToDataTypeMap, engine)) {
-                log.error("**** ERROR: executing prepared statement");
+            if(false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+                    conn, tableName, columnToDataTypeMap, engine)) {
+                log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
+                        "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
                 result = false;
                 break;
             } else {
@@ -161,14 +161,17 @@ public class PreparedStatementExecutor {
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
-                        "task(" + taskId + ")" + " Thread ID: " + Thread.currentThread().getName() + " Result: " +
-                        batchResult.toString());
+                        "task(" + taskId + ")" + " Thread ID: " +
+                        Thread.currentThread().getName() + " Result: " +
+                        batchResult.toString() + " Database: "
+                        + databaseName + " Table: " + tableName);
                 result.set(true);
 
 
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
-                log.error("******* ERROR inserting Batch *****************", e);
+                log.error(String.format("******* ERROR inserting Batch Database(%s), Table(%s) *****************",
+                        databaseName, tableName), e);
                 failedRecords.addAll(batch);
                 throw new RuntimeException(e);
             }

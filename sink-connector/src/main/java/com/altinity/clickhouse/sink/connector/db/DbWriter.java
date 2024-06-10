@@ -91,7 +91,7 @@ public class DbWriter extends BaseDbWriter {
                     new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
                 }
             } catch(Exception e) {
-                log.error("Error creating Database", database);
+                log.error("Error creating Database: " + database);
             }
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
@@ -108,7 +108,8 @@ public class DbWriter extends BaseDbWriter {
             //ToDO: Is this a reliable way of checking if the table exists already.
             if (this.engine == null) {
                 if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
-                    log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) *** ",taskId, tableName));
+                    log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) *** ",taskId, tableName,
+                            database));
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
                         Field[] fields = null;
@@ -123,7 +124,7 @@ public class DbWriter extends BaseDbWriter {
                         act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
                                 isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree, rmtDeleteColumn);
                     } catch (Exception e) {
-                        log.error("**** Error creating table ***" + tableName, e);
+                        log.error(String.format("**** Error creating table(%s), database(%s) ***",tableName, database), e);
                     }
                 } else {
                     log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
