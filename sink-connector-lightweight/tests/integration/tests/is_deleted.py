@@ -164,7 +164,9 @@ def is_deleted_different_datatypes(self):
 
 
 @TestScenario
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special("1.0"))
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special("1.0")
+)
 def column_with_backticks(self):
     """Check that the table is replicated when the source table has columns created with backticks."""
     clickhouse_node = self.context.clickhouse_node
@@ -183,7 +185,10 @@ def column_with_backticks(self):
                     "__is_deleted" and "is_deleted" in clickhouse_data.output.strip()
                 ), error()
 
-@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special("1.0"))
+
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special("1.0")
+)
 @TestScenario
 def column_with_is_deleted_backticks(self):
     """Check that the table is replicated when the source table has columns created with is_deleted column having backticks."""
