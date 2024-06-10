@@ -7,6 +7,7 @@ default_config = {
     "database.user": "root",
     "database.password": "root",
     "database.server.name": "ER54",
+    "database.include.list": "test",
     "clickhouse.server.url": "clickhouse",
     "clickhouse.server.user": "root",
     "clickhouse.server.password": "root",
