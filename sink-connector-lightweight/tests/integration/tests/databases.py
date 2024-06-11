@@ -61,11 +61,10 @@ def databases_tables(
         )
 
     with Then(f"I check that data is replicated to the correct table"):
-        with Pool(2) as executor:
-            Check(test=check_if_table_was_created, parallel=True, executor=executor)(
+            Check(test=check_if_table_was_created)(
                 table_name=table_name, database_name=database_1
             )
-            Check(test=check_if_table_was_created, parallel=True, executor=executor)(
+            Check(test=check_if_table_was_created)(
                 table_name=table_name, database_name=database_2
             )
 
