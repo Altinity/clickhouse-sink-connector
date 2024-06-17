@@ -28,7 +28,6 @@ def databases_tables(
     with And(
         f"I create another database in Clickhouse and table with the same name {table_name} in it"
     ):
-
         create_clickhouse_database(name=database_2)
         create_mysql_database(database_name=database_2)
 
@@ -61,12 +60,12 @@ def databases_tables(
         )
 
     with Then(f"I check that data is replicated to the correct table"):
-            Check(test=check_if_table_was_created)(
-                table_name=table_name, database_name=database_1
-            )
-            Check(test=check_if_table_was_created)(
-                table_name=table_name, database_name=database_2
-            )
+        Check(test=check_if_table_was_created)(
+            table_name=table_name, database_name=database_1
+        )
+        Check(test=check_if_table_was_created)(
+            table_name=table_name, database_name=database_2
+        )
 
 
 @TestModule

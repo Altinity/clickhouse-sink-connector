@@ -26,18 +26,33 @@ def get_n_random_items(lst, n):
         return random.sample(lst, n)
 
 
+@TestOutline
+def remove_configuration_and_restart_sink(
+    self, configuration, configuration_name="multiple_databases.yml"
+):
+    """Remove the ClickHouse Sink Connector configuration and restart the sink connector."""
+    with By(
+        f"creating a ClickHouse Sink Connector configuration without {configuration} values specified"
+    ):
+        remove_sink_configuration(
+            key=configuration,
+            config_file=os.path.join(self.context.config_file, configuration_name),
+        )
+
+
 @TestStep(Given)
 def replicate_all_databases(self):
     """Set ClickHouse Sink Connector configuration to replicate all databases."""
-    with By(
-        "creating a ClickHouse Sink Connector configuration without database.include.list values specified"
-    ):
-        remove_sink_configuration(
-            key="database.include.list",
-            config_file=os.path.join(
-                self.context.config_file, "multiple_databases.yml"
-            ),
-        )
+
+    remove_configuration_and_restart_sink(configuration="database.include.list")
+
+
+@TestStep(Given)
+def remove_database_map(self):
+    """Remove the database map from the ClickHouse Sink Connector configuration."""
+    remove_configuration_and_restart_sink(
+        configuration="clickhouse.database.override.map"
+    )
 
 
 @TestStep(Given)
@@ -90,6 +105,45 @@ def set_list_of_databases_to_replicate(self, databases=None, config_name=None):
             "removing the list of databases from the ClickHouse Sink Connector configuration"
         ):
             replicate_all_databases()
+
+
+@TestStep(Given)
+def create_map_for_database_names(self, databases_map: dict = None, config_name=None):
+    """Create a map for the database names.
+    Example:
+        clickhouse.database.override.map: "employees:employees2, products:productsnew
+    """
+    config_file = self.context.config_file
+
+    new_database_map = []
+
+    for key, value in databases_map.items():
+        new_database_map.append(f"{key}:{value}")
+
+    configuration_value = ", ".join(new_database_map)
+
+    if config_name is None:
+        config_name = os.path.join(config_file, "override_multiple_database_names.yml")
+    else:
+        config_name = os.path.join(config_file, config_name)
+    try:
+        with By(
+            "setting the list of databases to replicate in the ClickHouse Sink Connector configuration",
+            description=f"MySQL to ClickHouse database map: {configuration_value}",
+        ):
+            change_sink_configuration(
+                values={"clickhouse.database.override.map": configuration_value},
+                config_file=config_name,
+            )
+        yield
+    finally:
+        with Finally(
+            "removing the list of databases from the ClickHouse Sink Connector configuration"
+        ):
+            remove_database_map()
+
+
+# clickhouse.database.override.map: "employees:employees2, products:productsnew
 
 
 def create_sample_values():
@@ -155,7 +209,23 @@ def create_source_and_destination_databases(self, database_name=None):
 
 
 @TestStep(Given)
-def create_databases(self, databases=None):
+def create_diff_name_dbs(self, databases):
+    """Create MySQL and ClickHouse databases with different names."""
+
+    with Pool(2) as pool:
+        for source, destination in databases.items():
+            Step(test=create_mysql_database, parallel=True, executor=pool)(
+                database_name=source
+            )
+            Step(test=create_clickhouse_database, parallel=True, executor=pool)(
+                name=destination
+            )
+
+        join()
+
+
+@TestStep(Given)
+def create_databases(self, databases: list = None):
     """Create MySQL and ClickHouse databases from a list of database names."""
     if databases is None:
         databases = []
@@ -627,6 +697,27 @@ def concurrent_actions(self, number_of_iterations=None):
     check_concurrent_actions(actions=actions)
 
 
+@TestScenario
+def different_database_names(self):
+    """Check that the tables are replicated when we have source and destination databases with different names."""
+    database_map = {"mysql1": "ch1", "mysql2": "ch2", "mysql3": "ch3", "mysql4": "ch4"}
+
+    with Given("I create the source and destination databases from a list"):
+        create_diff_name_dbs(databases=database_map)
+
+    with And("I set the new map between source and destination database names"):
+        create_map_for_database_names(databases_map=database_map)
+
+
+@TestSuite
+def source_destination_overrides(self):
+    """Check that the tables are replicated when we have source and destination databases with different names.
+    For example,
+        mysql1:ch1; mysql2:ch2
+    """
+    pass
+
+
 @TestFeature
 @Name("multiple databases")
 @Requirements(
@@ -682,6 +773,8 @@ def module(
             replicate_all_databases()
         elif engine == "ReplicatedReplacingMergeTree":
             replicate_all_databases_rrmt()
+
+    Scenario(run=different_database_names)
 
     with Pool(parallel_cases) as executor:
         Feature(run=inserts, parallel=True, executor=executor)
