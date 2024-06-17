@@ -132,7 +132,7 @@ def create_map_for_database_names(self, databases_map: dict = None, config_name=
             description=f"MySQL to ClickHouse database map: {configuration_value}",
         ):
             change_sink_configuration(
-                values={"clickhouse.database.override.map": configuration_value},
+                values={"clickhouse.database.override.map": f"{configuration_value}"},
                 config_file=config_name,
             )
         yield
@@ -697,6 +697,63 @@ def concurrent_actions(self, number_of_iterations=None):
     check_concurrent_actions(actions=actions)
 
 
+@TestOutline
+def create_table_mapped(
+    self,
+    source_database=None,
+    destination_database=None,
+    exists=None,
+    validate_values=True,
+):
+    """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
+
+    table_name = f"table_{getuid()}"
+
+    if exists is None:
+        exists = "1"
+
+    if source_database is None:
+        source_database = "test"
+
+    if destination_database is None:
+        destination_database = "test"
+
+    table_values = create_sample_values()
+
+    with By("creating a sample table in MySQL"):
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
+            database_name=source_database,
+        )
+
+    with And("inserting data into the table"):
+        insert(
+            table_name=table_name, database_name=source_database, values=table_values
+        )
+
+    if not validate_values:
+        table_values = ""
+
+    with And("validating that the table was replicated in ClickHouse"):
+        for retry in retries(timeout=40):
+            with retry:
+                check_if_table_was_created(
+                    table_name=table_name,
+                    database_name=destination_database,
+                    message=exists,
+                )
+        if validate_values:
+            for retry in retries(timeout=10, delay=1):
+                with retry:
+                    validate_data_in_clickhouse_table(
+                        table_name=table_name,
+                        expected_output=table_values.replace("'", ""),
+                        database_name=destination_database,
+                        statement="id, col1, col2",
+                    )
+
+
 @TestScenario
 def different_database_names(self):
     """Check that the tables are replicated when we have source and destination databases with different names."""
@@ -705,8 +762,15 @@ def different_database_names(self):
     with Given("I create the source and destination databases from a list"):
         create_diff_name_dbs(databases=database_map)
 
-    with And("I set the new map between source and destination database names"):
+    with When("I set the new map between source and destination database names"):
         create_map_for_database_names(databases_map=database_map)
+
+    with Then("I create table on each database and validate data"):
+        for source_database, destination_database in database_map.items():
+            create_table_mapped(
+                source_database=source_database,
+                destination_database=destination_database,
+            )
 
 
 @TestSuite
@@ -715,7 +779,7 @@ def source_destination_overrides(self):
     For example,
         mysql1:ch1; mysql2:ch2
     """
-    pass
+    Scenario(run=different_database_names)
 
 
 @TestFeature
@@ -774,7 +838,7 @@ def module(
         elif engine == "ReplicatedReplacingMergeTree":
             replicate_all_databases_rrmt()
 
-    Scenario(run=different_database_names)
+    Scenario(run=source_destination_overrides)
 
     with Pool(parallel_cases) as executor:
         Feature(run=inserts, parallel=True, executor=executor)
