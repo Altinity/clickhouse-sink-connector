@@ -17,6 +17,14 @@ services:
     extends:
       file: clickhouse-service.yml
       service: clickhouse
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
 
   clickhouse-sink-connector-lt:
     extends:
