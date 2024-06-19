@@ -50,7 +50,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`").append("(");
+        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`");
+        if(useReplicatedReplacingMergeTree == true) {
+            createTableSyntax.append(" ON CLUSTER `{cluster}` ");
+        }
+
+        createTableSyntax.append("(");
 
         for(Field f: fields) {
             String colName = f.name();
@@ -96,12 +101,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         if(isNewReplacingMergeTreeEngine == true ){
             if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
             } else
                 createTableSyntax.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
         } else {
             if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
             } else
                 createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         }
