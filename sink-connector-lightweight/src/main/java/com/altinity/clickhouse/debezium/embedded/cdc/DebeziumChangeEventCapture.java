@@ -321,14 +321,12 @@ public class DebeziumChangeEventCapture {
     private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
         try {
             DBCredentials dbCredentials = parseDBConfiguration(config);
-            //if (writer == null) {
-                String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "System");
-                ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "System", dbCredentials.getUserName(),
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        "system");
+            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
-            //}
 
             String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                     JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
