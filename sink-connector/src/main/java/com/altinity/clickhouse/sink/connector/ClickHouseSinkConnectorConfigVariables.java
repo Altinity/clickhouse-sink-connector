@@ -9,6 +9,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
     DEDUPLICATION_POLICY("deduplication.policy"),
 
     CLICKHOUSE_TOPICS_TABLES_MAP("clickhouse.topic2table.map"),
+    CLICKHOUSE_DATABASE_OVERRIDE_MAP("clickhouse.database.override.map"),
 
     CLICKHOUSE_URL("clickhouse.server.url"),
     CLICKHOUSE_USER("clickhouse.server.user"),

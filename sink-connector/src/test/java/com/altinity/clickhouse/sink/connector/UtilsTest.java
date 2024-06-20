@@ -31,5 +31,27 @@ public class UtilsTest {
 
         Assert.assertEquals(tableName, "employees");
     }
+
+    @Test
+    public void testIsValidDatabase() {
+        String database =  "a".repeat(64);
+        boolean result = Utils.isValidDatabaseName(database);
+        Assert.assertFalse(result);
+
+        String validDatabase = "test";
+        boolean validResult = Utils.isValidDatabaseName(validDatabase);
+        Assert.assertTrue(validResult);
+
+        // Database name with numbers.
+        String databaseWithNumbers = "test123";
+        boolean resultWithNumbers = Utils.isValidDatabaseName(databaseWithNumbers);
+        Assert.assertTrue(resultWithNumbers);
+
+        // Database name with special characters.
+        String databaseWithSpecialCharacters = "test_123";
+        boolean resultWithSpecialCharacters = Utils.isValidDatabaseName(databaseWithSpecialCharacters);
+        Assert.assertTrue(resultWithSpecialCharacters);
+
+    }
 }
 
