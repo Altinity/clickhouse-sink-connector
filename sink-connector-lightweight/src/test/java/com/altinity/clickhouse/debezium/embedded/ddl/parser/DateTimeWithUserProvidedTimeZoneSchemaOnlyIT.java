@@ -72,9 +72,6 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
 
                 Properties props = getDebeziumProperties();
                 props.setProperty("database.include.list", "datatypes");
-                props.setProperty("clickhouse.server.database", "datatypes");
-                // Override clickhouse server timezone.
-               // props.setProperty("clickhouse.datetime.timezone", "UTC");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
@@ -269,7 +266,6 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
         defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
         defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
 
         defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
