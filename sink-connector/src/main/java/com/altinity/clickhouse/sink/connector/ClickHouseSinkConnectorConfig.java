@@ -196,17 +196,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString())
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString(),
-                        Type.STRING,
-                        null,
-                        new ConfigDef.NonEmptyString(),
-                        Importance.HIGH,
-                        "ClickHouse database name",
-                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
-                        3,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString())
-                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString(),
                         Type.INT,
                         8123,
