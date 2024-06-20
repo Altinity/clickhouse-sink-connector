@@ -323,10 +323,10 @@ public class DebeziumChangeEventCapture {
             DBCredentials dbCredentials = parseDBConfiguration(config);
             //if (writer == null) {
                 String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        dbCredentials.getDatabase());
+                        "System");
                 ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
                 BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                        "System", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
             //}
 
@@ -576,6 +576,9 @@ public class DebeziumChangeEventCapture {
                             if (b == false) {
 
                                 log.error("Error starting connector" + throwable + " Message:" + s);
+                                if(throwable != null && throwable.getCause() != null && throwable.getCause().getLocalizedMessage() != null)
+                                    log.error("Error stating connector: Cause" + throwable.getCause().getLocalizedMessage());
+
                                 log.error("Retrying - try number:" + numRetries);
                                 if (numRetries++ <= MAX_RETRIES) {
                                     try {
