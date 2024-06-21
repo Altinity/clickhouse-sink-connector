@@ -246,8 +246,14 @@ public class PreparedStatementExecutor {
                 // Struct .get throws a DataException
                 // if the field is not present.
                 // If the record was not supplied, we need to set it as null.
-                ps.setNull(index, Types.OTHER);
+                // Ignore version and sign columns.
+                if(colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn)) {
 
+                } else {
+                    log.error(String.format("********** ERROR: Database(%s), ClickHouse column %s not present in source ************", databaseName, colName));
+                    log.error(String.format("********** ERROR: Database(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, colName));
+                }
+                ps.setNull(index, Types.OTHER);
                 continue;
             }
 
