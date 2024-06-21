@@ -298,14 +298,13 @@ public class DebeziumChangeEventCapture {
     private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
         try {
             DBCredentials dbCredentials = parseDBConfiguration(config);
-            //if (writer == null) {
-                String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+
+            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system");
-                ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        dbCredentials.getDatabase(), dbCredentials.getUserName(),
+            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                        "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
-            //}
 
             String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                     JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
@@ -561,6 +560,9 @@ public class DebeziumChangeEventCapture {
                             if (b == false) {
 
                                 log.error("Error starting connector" + throwable + " Message:" + s);
+                                if(throwable != null && throwable.getCause() != null && throwable.getCause().getLocalizedMessage() != null)
+                                    log.error("Error stating connector: Cause" + throwable.getCause().getLocalizedMessage());
+
                                 log.error("Retrying - try number:" + numRetries);
                                 if (numRetries++ <= MAX_RETRIES) {
                                     try {
