@@ -166,10 +166,10 @@ def regression(
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
-        "bash-tools": ("bash-tools",),
         "zookeeper": ("zookeeper",),
     }
 
+    self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
     create_default_sink_config()
@@ -197,6 +197,7 @@ def regression(
     self.context.env = env
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
+    self.context.clickhouse_table_engine = "ReplacingMergeTree"
 
     self.context.database = "test"
 

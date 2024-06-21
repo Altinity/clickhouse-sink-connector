@@ -11,7 +11,7 @@ def drop_database(self, database_name=None, node=None):
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
         node.query(
-            f"DROP DATABASE IF EXISTS {database_name} ON CLUSTER sharded_replicated_cluster;"
+            f"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
         )
 
 
@@ -66,7 +66,7 @@ def create_clickhouse_database(self, name=None, node=None):
             drop_database(database_name=name)
 
             node.query(
-                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER sharded_replicated_cluster"
+                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
             )
         yield
     finally:
@@ -143,9 +143,17 @@ def check_if_table_was_created(
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
-    retry(node.query, timeout=timeout, delay=3)(
-        f"EXISTS {database_name}.{table_name}", message=f"{message}"
-    )
+    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+        for node in self.context.cluster.nodes["clickhouse"]:
+            retry(self.context.cluster.node(node).query, timeout=timeout, delay=3)(
+                f"EXISTS {database_name}.{table_name}", message=f"{message}"
+            )
+    elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
+        retry(node.query, timeout=timeout, delay=3)(
+            f"EXISTS {database_name}.{table_name}", message=f"{message}"
+        )
+    else:
+        raise Exception("Unknown ClickHouse table engine")
 
 
 @TestStep(Then)
@@ -160,12 +168,27 @@ def validate_data_in_clickhouse_table(
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
-    for retry in retries(timeout=40):
-        with retry:
-            data = node.query(
-                f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
-            )
-            assert data.output.strip().replace('"', "") == expected_output, error()
+    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+        for node in self.context.cluster.nodes["clickhouse"]:
+            for retry in retries(timeout=40):
+                with retry:
+                    data = self.context.cluster.node(node).query(
+                        f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                    )
+
+                    assert (
+                        data.output.strip().replace('"', "") == expected_output
+                    ), error()
+    elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
+        for retry in retries(timeout=40):
+            with retry:
+                data = node.query(
+                    f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                )
+                assert data.output.strip().replace('"', "") == expected_output, error()
+
+    else:
+        raise Exception("Unknown ClickHouse table engine")
 
 
 @TestStep(Then)

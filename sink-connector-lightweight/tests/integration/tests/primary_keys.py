@@ -24,13 +24,10 @@ def check_different_primary_keys(
         f"I create MySQL to CH replicated table with some primary key",
         description=table_name,
     ):
-        create_mysql_to_clickhouse_replicated_table(
+        create_mysql_table(
             name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+            columns=mysql_columns,
             primary_key=primary_key,
-            engine=engine,
         )
 
     with When(f"I insert data in MySQL table {table_name}"):

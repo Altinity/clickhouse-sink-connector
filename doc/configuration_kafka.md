@@ -22,7 +22,6 @@ for both **Debezium** and **Sink**
 | clickhouse.server.url            |           | ClickHouse Server URL                                                                                                                                                 |
 | clickhouse.server.user           |           | ClickHouse Server username                                                                                                                                            |
 | clickhouse.server.password           |           | ClickHouse Server password                                                                                                                                            |
-| clickhouse.server.database       |           | ClickHouse Database name                                                                                                                                              |
 | clickhouse.server.port           | 8123      | ClickHouse Server port                                                                                                                                                |
 | clickhouse.topic2table.map       | No        | Map of Kafka topics to table names, <topic_name1>:<table_name1>,<topic_name2>:<table_name2> This variable will override the default mapping of topics to table names. |
 | store.kafka.metadata             | false     | If set to true, kafka metadata columns will be added to Clickhouse                                                                                                    |

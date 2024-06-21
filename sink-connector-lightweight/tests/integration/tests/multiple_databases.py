@@ -1,4 +1,5 @@
 from integration.helpers.common import change_sink_configuration
+from integration.helpers.create_config import include_all_databases_with_rrmt
 from integration.tests.steps.clickhouse import (
     check_if_table_was_created,
     create_clickhouse_database,
@@ -36,6 +37,19 @@ def replicate_all_databases(self):
             config_file=os.path.join(
                 self.context.config_file, "multiple_databases.yml"
             ),
+        )
+
+
+@TestStep(Given)
+def replicate_all_databases_rrmt(self):
+    """Set ClickHouse Sink Connector configuration to replicate all databases when tables have ReplicatedReplacingMergeTree engine."""
+    with By(
+        "creating a ClickHouse Sink Connector configuration without database.include.list values specified"
+    ):
+        include_all_databases_with_rrmt(
+            config_file=os.path.join(
+                self.context.config_file, "multiple_databases_rrmt.yml"
+            )
         )
 
 
@@ -98,11 +112,10 @@ def create_table_and_insert_values(
     table_values = create_sample_values()
 
     with By("creating a sample table in MySQL"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int",
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
             database_name=database_name,
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
     with And("inserting data into the table"):
@@ -636,6 +649,8 @@ def module(
     Check that auto table replication works when there are multiple databases in MySQL.
     """
 
+    engine = self.context.clickhouse_table_engine
+
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
 
@@ -655,12 +670,18 @@ def module(
     ):
         create_databases(databases=self.context.list_of_databases)
 
-    self.context.config_file = os.path.join("env", "auto", "configs")
+    if engine == "ReplacingMergeTree":
+        self.context.config_file = os.path.join("env", "auto", "configs")
+    elif engine == "ReplicatedReplacingMergeTree":
+        self.context.config_file = os.path.join("env", "auto_replicated", "configs")
 
     with And(
         "I create a new ClickHouse Sink Connector configuration to monitor all of the databases"
     ):
-        replicate_all_databases()
+        if engine == "ReplacingMergeTree":
+            replicate_all_databases()
+        elif engine == "ReplicatedReplacingMergeTree":
+            replicate_all_databases_rrmt()
 
     with Pool(parallel_cases) as executor:
         Feature(run=inserts, parallel=True, executor=executor)

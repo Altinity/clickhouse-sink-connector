@@ -97,35 +97,62 @@ def create_mysql_database(self, node=None, database_name=None):
         with Finally(f"I delete MySQL database {database_name}"):
             node.query(f"DROP DATABASE IF EXISTS {database_name};")
 
-
 @TestStep(Given)
-def create_mysql_table(self, name=None, statement=None, node=None, database_name=None):
-    """Creation of default MySQL table for tests."""
+def create_mysql_table(
+    self,
+    table_name,
+    columns,
+    mysql_node=None,
+    clickhouse_node=None,
+    database_name=None,
+    primary_key="id",
+    engine=True,
+    partition_by_mysql=False,
+):
+    """Create MySQL table that will be auto created in ClickHouse."""
 
     if database_name is None:
         database_name = "test"
-    if node is None:
-        node = self.context.cluster.node("mysql-master")
-    if name is None:
-        name = "users"
-    if statement is None:
-        statement = (
-            f"CREATE TABLE IF NOT EXISTS {database_name}.{name}"
-            f" (id INT AUTO_INCREMENT,"
-            f" age INT, PRIMARY KEY (id)) ORDER BY tuple() ENGINE = InnoDB;"
-        )
+
+    if mysql_node is None:
+        mysql_node = self.context.cluster.node("mysql-master")
+
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
 
     try:
-        with Given(f"I create MySQL table {name}"):
-            node.query(statement)
+        key = ""
+        if primary_key is not None:
+            key = f"{primary_key} INT NOT NULL,"
+
+        with Given(f"I create MySQL table", description=name):
+            query = f"CREATE TABLE IF NOT EXISTS {database_name}.{table_name} ({key}{columns}"
+
+            if primary_key is not None:
+                query += f", PRIMARY KEY ({primary_key}))"
+            else:
+                query += ")"
+
+            if engine:
+                query += f" ENGINE = InnoDB"
+
+            if partition_by_mysql:
+                query += f", PARTITION BY {partition_by_mysql}"
+
+            query += ";"
+
+            mysql_node.query(query)
+
         yield
     finally:
-        with Finally("I clean up by deleting table in MySQL"):
-            node.query(f"DROP TABLE IF EXISTS {name};")
-            self.context.cluster.node("clickhouse").query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+        with Finally(
+            "I clean up by deleting MySQL to ClickHouse replicated table",
+            description={name},
+        ):
+            mysql_node.query(f"DROP TABLE IF EXISTS {database_name}.{table_name};")
+            clickhouse_node.query(
+                f"DROP TABLE IF EXISTS {database_name}.{table_name} ON CLUSTER replicated_cluster;"
             )
-            time.sleep(5)
 
 
 @TestStep
@@ -156,59 +183,6 @@ def create_mysql_to_clickhouse_replicated_table(
         clickhouse_node = self.context.cluster.node("clickhouse")
 
     try:
-        if self.context.env.endswith("auto"):
-            if clickhouse_table_engine == "ReplacingMergeTree":
-                pass
-            else:
-                raise NotImplementedError(
-                    f"table '{clickhouse_table_engine}' not supported"
-                )
-
-        elif self.context.env.endswith("manual"):
-            if clickhouse_table_engine == "ReplicatedReplacingMergeTree":
-                with Given(
-                    f"I create ReplicatedReplacingMergeTree as a replication table",
-                    description=name,
-                ):
-                    clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
-                        f"(id Int32,{clickhouse_columns}, {sign_column} "
-                        f"Int8, {version_column} UInt64) "
-                        f"ENGINE = ReplicatedReplacingMergeTree("
-                        "'/clickhouse/tables/{shard}"
-                        f"/{name}',"
-                        " '{replica}',"
-                        f" {version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else 'ORDER BY tuple()'}"
-                        f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
-                        f" SETTINGS "
-                        f"index_granularity = 8192;",
-                    )
-            elif clickhouse_table_engine == "ReplacingMergeTree":
-                with Given(
-                    f"I create ClickHouse table as replication table to MySQL test.{name}"
-                ):
-                    clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} "
-                        f"(id Int32,{clickhouse_columns}, {sign_column} "
-                        f"Int8, {version_column} UInt64) "
-                        f"ENGINE = ReplacingMergeTree({version_column}) "
-                        f"{f'PRIMARY KEY ({primary_key}) ORDER BY ({primary_key})' if primary_key is not None else 'ORDER BY tuple()'}"
-                        f"{f'PARTITION BY ({partition_by})' if partition_by is not None else ''}"
-                        f" SETTINGS "
-                        f"index_granularity = 8192;",
-                    )
-
-            else:
-                raise NotImplementedError(
-                    f"table '{clickhouse_table_engine}' not supported"
-                )
-
-        else:
-            raise NotImplementedError(
-                f"table creation method '{self.context.env}' not supported"
-            )
-
         with Given(f"I create MySQL table", description=name):
             query = f"CREATE TABLE IF NOT EXISTS {database_name}.{name} (id INT NOT NULL,{mysql_columns}"
 
@@ -234,7 +208,7 @@ def create_mysql_to_clickhouse_replicated_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {database_name}.{name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS {database_name}.{name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP TABLE IF EXISTS {database_name}.{name} ON CLUSTER replicated_cluster;"
             )
             time.sleep(5)
 
@@ -350,7 +324,7 @@ def insert(self, table_name, values, node=None, database_name=None):
         node = self.context.cluster.node("mysql-master")
 
     with When("I insert data into MySQL table"):
-        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
+        node.query(rf"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
 
 
 @TestStep(Given)

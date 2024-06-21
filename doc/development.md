@@ -6,6 +6,13 @@ Requirements
 - Maven (mvn) (https://maven.apache.org/download.cgi)
 - Docker and Docker-compose
 
+Install JDK(For Mac)
+```
+brew install openjdk@17
+export JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.11/libexec/openjdk.jdk/Contents/Home/
+mvn -v
+# verify it's actual openjdk 17 used and continue with steps
+```
 
 1. Clone the ClickHouse Sink connector repository:
 ```bash

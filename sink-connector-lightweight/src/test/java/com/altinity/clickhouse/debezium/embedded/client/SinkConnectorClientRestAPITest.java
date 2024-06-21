@@ -74,7 +74,6 @@ public class SinkConnectorClientRestAPITest {
 
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty("database.include.list", "datatypes");
-        props.setProperty("clickhouse.server.database", "datatypes");
         // Override clickhouse server timezone.
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 

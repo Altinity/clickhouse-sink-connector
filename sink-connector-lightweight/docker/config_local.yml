@@ -24,7 +24,7 @@ database.server.name: "ER54"
 database.include.list: sbtest
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
-table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"
+#table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"
 
 # Clickhouse Server URL, Specify only the hostname.
 clickhouse.server.url: "localhost"
@@ -37,9 +37,6 @@ clickhouse.server.password: "root"
 
 # Clickhouse Server Port
 clickhouse.server.port: "8123"
-
-# Clickhouse Server Database
-clickhouse.server.database: "test"
 
 # database.allowPublicKeyRetrieval: "true" https://rmoff.net/2019/10/23/debezium-mysql-v8-public-key-retrieval-is-not-allowed/
 database.allowPublicKeyRetrieval: "true"
