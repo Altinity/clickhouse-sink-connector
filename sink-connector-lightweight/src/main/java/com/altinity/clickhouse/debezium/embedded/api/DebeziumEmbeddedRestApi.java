@@ -48,7 +48,11 @@ public class DebeziumEmbeddedRestApi {
                 response = debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1);
             } catch (Exception e) {
                 log.error("Client - Error getting status", e);
-                ctx.result(e.toString());
+                // Create JSON response
+                JSONObject jsonObject = new JSONObject();
+                jsonObject.put("error", e.toString());
+                response = jsonObject.toJSONString();
+                ctx.result(response);
                 ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
                 return;
             }
