@@ -23,6 +23,7 @@ import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -341,12 +342,13 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Function to get the status of Debezium storage.
+     *
      * @param props
      * @return
      */
-    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws Exception {
-        String response = "";
+    private Pair<String, String> getDebeziumStorageDatabaseName(Properties props) {
+
+
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         // if tablename is dbname.tablename and contains a dot.
@@ -359,6 +361,22 @@ public class DebeziumChangeEventCapture {
                 tableName = dbTableNameArray[1].replace("\"", "");
             }
         }
+
+        return Pair.of(tableName, databaseName);
+    }
+
+    /**
+     * Function to get the status of Debezium storage.
+     * @param props
+     * @return
+     */
+    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws Exception {
+        String response = "";
+
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
+
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
         if (writer == null  || writer.getConnection().isClosed() == true) {
@@ -429,8 +447,12 @@ public class DebeziumChangeEventCapture {
         long result = -1;
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
+
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
 
         String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
@@ -463,12 +485,14 @@ public class DebeziumChangeEventCapture {
                                             String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
 
 
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
+
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
 
@@ -494,12 +518,13 @@ public class DebeziumChangeEventCapture {
                                             String lsn) throws SQLException, ParseException {
 
 
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
 
@@ -724,6 +749,7 @@ public class DebeziumChangeEventCapture {
         dbCredentials.setPort(config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString()));
         dbCredentials.setUserName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString()));
         dbCredentials.setPassword(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString()));
+        dbCredentials.setDatabase("system");
 
         return dbCredentials;
     }
