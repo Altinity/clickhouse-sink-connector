@@ -345,21 +345,31 @@ public class DebeziumChangeEventCapture {
      * @param props
      * @return
      */
-    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws Exception {
         String response = "";
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        // if tablename is dbname.tablename and contains a dot.
+        String databaseName = "system";
+        // split tablename with dot.
+        if(tableName.contains(".")) {
+            String[] dbTableNameArray = tableName.split("\\.");
+            if(dbTableNameArray.length >= 2) {
+                databaseName = dbTableNameArray[0].replace("\"", "");
+                tableName = dbTableNameArray[1].replace("\"", "");
+            }
+        }
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
         if (writer == null  || writer.getConnection().isClosed() == true) {
             // Json error string
             log.error("**** Connection to ClickHouse is not established, re-initiating ****");
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    dbCredentials.getDatabase());
+                    databaseName);
             ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                     dbCredentials.getUserName(), dbCredentials.getPassword(), config);
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                    databaseName, dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config, conn);
         }
         //DBCredentials dbCredentials = parseDBConfiguration(config);

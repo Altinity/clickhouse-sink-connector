@@ -42,8 +42,17 @@ public class DebeziumEmbeddedRestApi {
         Properties finalProps1 = props;
         app.get("/status", ctx -> {
             ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+            String response = "";
 
-            ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
+            try {
+                response = debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1);
+            } catch (Exception e) {
+                log.error("Client - Error getting status", e);
+                ctx.result(e.toString());
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
 
         });
 
