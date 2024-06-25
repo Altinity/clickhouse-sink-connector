@@ -391,7 +391,7 @@ public class DebeziumChangeEventCapture {
                     dbCredentials.getPassword(), config, conn);
         }
         //DBCredentials dbCredentials = parseDBConfiguration(config);
-        String debeziumStorageStatusQuery = String.format("select * from %s limit 1", tableName);
+        String debeziumStorageStatusQuery = String.format("select * from %s limit 1", databaseName + "." + tableName);
         ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
 
         if(resultSet != null) {
