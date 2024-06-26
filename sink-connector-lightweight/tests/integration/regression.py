@@ -42,10 +42,15 @@ def regression(
 
     self.context.stress = stress
 
-    with Pool(2) as pool:
+    with Pool(1) as pool:
         try:
             Feature(
                 test=load("regression_auto", "regression"),
+                parallel=True,
+                executor=pool,
+            )(**args)
+            Feature(
+                test=load("regression_auto_replicated", "regression"),
                 parallel=True,
                 executor=pool,
             )(**args)

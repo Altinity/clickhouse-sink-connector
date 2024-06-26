@@ -85,9 +85,10 @@ def generate_mysqlsh_dump_tables_clause(dump_dir,
                                         schema_only,
                                         where,
                                         partition_map,
-                                        threads):
+                                        threads,
+                                        bytes_per_chunk):
     table_array_clause = tables_to_dump
-    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads}
+    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk}
     if partition_map and not schema_only:
         dump_options['partitions'] = partition_map
     logging.info(f"{dump_options}")
@@ -109,7 +110,9 @@ def generate_mysqlsh_command(dump_dir,
                              schema_only,
                              where,
                              partition_map,
-                             threads, temp_file):
+                             threads, 
+                             bytes_per_chunk,
+                             temp_file):
     mysql_user_clause = ""
     if mysql_user is not None:
         mysql_user_clause = f" --user {mysql_user}"
@@ -131,7 +134,8 @@ def generate_mysqlsh_command(dump_dir,
                                                       schema_only,
                                                       where,
                                                       partition_map,
-                                                      threads)
+                                                      threads,
+                                                      bytes_per_chunk)
     temp_file.write(dump_clause)
     temp_file.flush()
     cmd = f"""mysqlsh {defaults_file_clause} -h {mysql_host} {mysql_user_clause} {mysql_password_clause} {mysql_port_clause} -f {temp_file.name} """
@@ -160,6 +164,7 @@ def main():
     parser.add_argument('--include_partitions_regex', help='partitions regex', required=False, default=None)
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
+    parser.add_argument('--bytes_per_chunk', help='bytesPerChunk mysqlsh variable', required=False, default='64M')
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--schema_only', dest='schema_only',
@@ -258,6 +263,7 @@ def main():
                                        args.where,
                                        partition_map,
                                        args.threads,
+                                       args.bytes_per_chunk,
                                        temp_file
                                        )
           rc = run_command(cmd)

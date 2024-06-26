@@ -25,12 +25,9 @@ def virtual_column_names(
     table_name = f"virtual_columns_{getuid()}"
 
     with Given(f"I create MySQL table {table_name})"):
-        create_mysql_to_clickhouse_replicated_table(
-            version_column=version_column,
-            name=table_name,
-            clickhouse_columns=clickhouse_columns,
-            mysql_columns=mysql_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
     with Then(f"I make check that ClickHouse table virtual column names are correct"):

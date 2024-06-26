@@ -166,10 +166,10 @@ def regression(
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
-        "bash-tools": ("bash-tools",),
         "zookeeper": ("zookeeper",),
     }
 
+    self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
     create_default_sink_config()
@@ -197,6 +197,7 @@ def regression(
     self.context.env = env
 
     self.context.clickhouse_table_engines = ["ReplacingMergeTree"]
+    self.context.clickhouse_table_engine = "ReplacingMergeTree"
 
     self.context.database = "test"
 
@@ -206,7 +207,7 @@ def regression(
     self.context.node = cluster.node("clickhouse")
 
     with And("I create test database in ClickHouse"):
-        create_database(name="test")
+        create_clickhouse_database(name="test")
 
     with And("I start sink-connector-lightweight"):
         self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
@@ -275,11 +276,6 @@ def regression(
             executor=executor,
         )
         Feature(
-            run=load("tests.databases", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
             run=load("tests.table_names", "module"),
             parallel=True,
             executor=executor,
@@ -304,14 +300,17 @@ def regression(
             parallel=True,
             executor=executor,
         )
-
         join()
 
+    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )
     Feature(
         run=load("tests.sink_cli_commands", "module"),
+    )
+    Feature(
+        run=load("tests.multiple_databases", "module"),
     )
 
 

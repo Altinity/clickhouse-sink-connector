@@ -22,11 +22,9 @@ def partition_limits(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(f"I create MySQL table {table_name}"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
-            clickhouse_columns=clickhouse_columns,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
             partition_by="id",
         )
 

@@ -76,14 +76,7 @@ record_insert_seq:
 
 ```select event_time, database, table, rows, duration_ms,size_in_bytes from system.part_log where table='table' and event_type='NewPart' and event_time > now () - interval 30 minute and database='db' ;```
 
-
-## Sink Connector (Kafka) monitoring
-
-Sink Connector Config
-OpenJDK 11.0.14.1 
-
--Xms256M, -Xmx2G,
-
+## Grafana Dashboard
 JMX metrics of sink connector are exposed through the port
 
 The JMX_exporter docker image scrapes the JMX metrics from the sink connector
@@ -91,9 +84,22 @@ The metrics can be read through the following URL
 http://localhost:9072/metrics
 
 A Grafana dashboard is included to view JMX metrics.
+The docker-compose launches Grafana application which can be accessed in **http://localhost:3000**
+The default username/password is `admin/admin`
+![](img/Grafana_dashboard.png)
+![](img/Grafana_dashboard_2.png)
 
 
-Throughput
+**Memory**
+
+Sink Connector Config
+OpenJDK 11.0.14.1 
+
+-Xms256M, -Xmx2G,
+
+
+
+**Throughput**
 Increase the `fetch.min.bytes` property to increase the size of message
 consumed \
 [1] https://strimzi.io/blog/2021/01/07/consumer-tuning/

@@ -123,7 +123,6 @@ def regression(
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
 
-    Feature(run=load("tests.consistency", "module"))
 
 
 if __name__ == "__main__":

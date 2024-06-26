@@ -61,6 +61,9 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     private List<ClickHouseStruct> currentBatch = null;
 
+
+    private Map<String, String> databaseOverrideMap = new HashMap<>();
+
     public ClickHouseBatchRunnable(LinkedBlockingQueue<List<ClickHouseStruct>> records,
                                    ClickHouseSinkConnectorConfig config,
                                    Map<String, String> topic2TableMap) {
@@ -78,6 +81,14 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection();
+
+
+        try {
+            this.databaseOverrideMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+        } catch (Exception e) {
+            log.error("Error parsing database override map" + e);
+        }
     }
 
     private ClickHouseConnection createConnection() {
@@ -109,7 +120,6 @@ public class ClickHouseBatchRunnable implements Runnable {
         DBCredentials dbCredentials = new DBCredentials();
 
         dbCredentials.setHostName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString()));
-        dbCredentials.setDatabase(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString()));
         dbCredentials.setPort(config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString()));
         dbCredentials.setUserName(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString()));
         dbCredentials.setPassword(config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString()));
@@ -192,6 +202,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             try {
                 Thread.sleep(10000);
             } catch (InterruptedException ex) {
+                log.error("******* ERROR **** Thread interrupted *********", ex);
                 throw new RuntimeException(ex);
             }
         }
@@ -247,7 +258,6 @@ public class ClickHouseBatchRunnable implements Runnable {
         try {
             if(!userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-                //log.info("**** OVERRIDE TIMEZONE for DateTime:" + userProvidedTimeZone);
             }
         } catch (Exception e){
             log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
@@ -271,25 +281,34 @@ public class ClickHouseBatchRunnable implements Runnable {
         String tableName = getTableFromTopic(topicName);
         // Note: getting records.get(0) is safe as the topic name is same for all records.
         ClickHouseStruct firstRecord =  records.get(0);
-        ClickHouseConnection databaseConn = getClickHouseConnection(firstRecord.getDatabase());
 
-        DbWriter writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
+        String databaseName = firstRecord.getDatabase();
+
+        // Check if user has overridden the database name.
+        if(this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+
+        ClickHouseConnection databaseConn = getClickHouseConnection(databaseName);
+
+        DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(), writer.getVersionColumn(),
-                writer.getConnection(), getServerTimeZone(this.config));
+                writer.getDatabaseName(), getServerTimeZone(this.config));
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error("*** TABLE METADATA not retrieved, retrying");
+            log.error(String.format("*** TABLE METADATA not retrieved for Database(%), table(%s) retrying",
+                    writer.getDatabaseName(), writer.getTableName()));
             if(writer == null) {
-                writer = getDbWriterForTable(topicName, tableName, firstRecord.getDatabase(), firstRecord, databaseConn);
+                writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
             }
             if(writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
 
             if(writer == null || writer.wasTableMetaDataRetrieved() == false ) {
-                log.error("*** TABLE METADATA not retrieved, retrying on next attempt");
+                log.error(String.format("*** TABLE METADATA not retrieved for Database(%s), table(%s), " +
+                        "retrying on next attempt", writer.getDatabaseName(), writer.getTableName()));
                 return false;
             }
         }
@@ -317,8 +336,10 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_KAFKA_OFFSET.toString())) {
             log.info("***** KAFKA OFFSET MANAGEMENT ENABLED *****");
-            DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(), dbCredentials.getPort(), dbCredentials.getDatabase(),
-                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(), this.config, databaseConn);
+            DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbCredentials.getHostName(),
+                    dbCredentials.getPort(), dbCredentials.getDatabase(),
+                    "topic_offset_metadata", dbCredentials.getUserName(), dbCredentials.getPassword(),
+                    this.config, databaseConn);
             try {
                 dbKafkaOffsetWriter.insertTopicOffsetMetadata(partitionToOffsetMap);
             } catch (SQLException e) {
@@ -336,8 +357,10 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param queryToRecordsMap
      * @return
      */
-    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd, long maxBufferSize, PreparedStatementExecutor preparedStatementExecutor) throws Exception {
+    private boolean flushRecordsToClickHouse(String topicName, DbWriter writer,
+                Map<MutablePair<String, Map<String, Integer>>,
+                List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
+        long maxBufferSize, PreparedStatementExecutor preparedStatementExecutor) throws Exception {
 
         boolean result = false;
 

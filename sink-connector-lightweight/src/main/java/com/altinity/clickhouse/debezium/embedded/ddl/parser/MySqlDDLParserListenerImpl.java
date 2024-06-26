@@ -109,8 +109,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
         //this.query.append(" Engine=")
         String isDeletedColumn = IS_DELETED_COLUMN;
-        if(columnNames.contains(isDeletedColumn)) {
-            isDeletedColumn = "__" + IS_DELETED_COLUMN;
+        // Iterate through columnNames and match isDeletedColumn with elements in columnNames.
+        // remove the backticks from elements in columnNames.
+        for(String columnName: columnNames) {
+            if(columnName.contains("`")) {
+               // replace backticks with empty string.
+                columnName = columnName.replace("`", "");
+            }
+            if(columnName.equalsIgnoreCase(isDeletedColumn)) {
+                isDeletedColumn = "__" + IS_DELETED_COLUMN;
+                break;
+            }
         }
 
         // Check if the destination is ReplicatedReplacingMergeTree.
@@ -128,12 +137,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.append(")");
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
             if(isReplicatedReplacingMergeTree == true) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
             } else
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
         } else {
             if (isReplicatedReplacingMergeTree == true) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)",  VERSION_COLUMN));
             } else
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         }

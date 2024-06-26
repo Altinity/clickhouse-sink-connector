@@ -26,11 +26,11 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                ClickHouseConnection connection, boolean isNewReplacingMergeTree,
-                               boolean useReplicatedReplacingMergeTree) throws SQLException {
+                               boolean useReplicatedReplacingMergeTree, String rmtDeleteColumn) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,
-                isNewReplacingMergeTree, useReplicatedReplacingMergeTree);
-        log.info("**** AUTO CREATE TABLE " + createTableQuery);
+                isNewReplacingMergeTree, useReplicatedReplacingMergeTree, rmtDeleteColumn);
+        log.info(String.format("**** AUTO CREATE TABLE for database(%s), Query :%s)", databaseName, createTableQuery));
         // ToDO: need to run it before a session is created.
         this.runQuery(createTableQuery, connection);
     }
@@ -45,11 +45,17 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
     public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
                                               Map<String, String> columnToDataTypesMap,
                                               boolean isNewReplacingMergeTreeEngine,
-                                              boolean useReplicatedReplacingMergeTree) {
+                                              boolean useReplicatedReplacingMergeTree,
+                                              String rmtDeleteColumn) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`").append("(");
+        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`");
+        if(useReplicatedReplacingMergeTree == true) {
+            createTableSyntax.append(" ON CLUSTER `{cluster}` ");
+        }
+
+        createTableSyntax.append("(");
 
         for(Field f: fields) {
             String colName = f.name();
@@ -78,6 +84,10 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         String isDeletedColumn = IS_DELETED_COLUMN;
 
+        if(rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
+            isDeletedColumn = rmtDeleteColumn;
+        }
+
         if(isNewReplacingMergeTreeEngine == true) {
             createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             createTableSyntax.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -91,12 +101,12 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
 
         if(isNewReplacingMergeTreeEngine == true ){
             if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s, %s)", tableName, VERSION_COLUMN, isDeletedColumn));
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
             } else
                 createTableSyntax.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
         } else {
             if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/%s', '{replica}', %s)", tableName, VERSION_COLUMN));
+                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
             } else
                 createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
         }
