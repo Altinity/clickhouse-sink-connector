@@ -14,7 +14,7 @@ from integration.tests.steps.alter import (
     change_column,
     modify_column,
     drop_column,
-    add_primary_key,
+    add_primary_key, drop_primary_key,
 )
 
 
@@ -548,6 +548,7 @@ def add_primary_key_on_a_database(self, database):
         create_table_and_insert_values(table_name=table_name, database_name=database)
 
     with When("I add a primary key on the table"):
+        drop_primary_key(table_name=table_name, database=database)
         add_primary_key(table_name=table_name, database=database, column_name=column)
 
     with Then("I check that the primary key was added to the table"):
