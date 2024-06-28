@@ -6,7 +6,7 @@
 </a>
 <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/altinityinfra/clickhouse-sink-connector">
 ### Latest Releases
-https://github.com/Altinity/clickhouse-sink-connector/releases                                                                                  |
+https://github.com/Altinity/clickhouse-sink-connector/releases
 
 # Altinity Sink Connector for ClickHouse
 
@@ -17,7 +17,7 @@ for analysis.
 ## Features
 
 * Initial data dump and load 
-* Change data capture of new transactions using Debezium
+* Change data capture of new transactions using [Debezium](https://debezium.io/)
 * Automatic loading into ClickHouse
 * Sources: Support for MySQL, PostgreSQL (other databases experimental)
 * Target: Support for ClickHouse ReplacingMergeTree
