@@ -4,7 +4,7 @@
 
 ![arch](img/sink_connector_cli.drawio.png)
 
-The CLI application will translate the CLI commands to REST payload messages.
+The [CLI application](../sink-connector-client/sink-connector-client) will translate the CLI commands to REST payload messages.
 
 Option in sink connector lightweight to not start automatically unless
 the user specifies the **start_replica** flag.(skip-replica-start) in the yaml file.
