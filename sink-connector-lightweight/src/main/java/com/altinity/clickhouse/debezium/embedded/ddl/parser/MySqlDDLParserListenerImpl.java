@@ -7,6 +7,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -17,10 +18,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.time.ZoneId;
-import java.util.HashSet;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Set;
+import java.util.*;
 
 
 /**
@@ -71,7 +69,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterCreateDatabase(MySqlParser.CreateDatabaseContext createDatabaseContext) {
         for (ParseTree tree : createDatabaseContext.children) {
             if (tree instanceof MySqlParser.UidContext) {
-                this.query.append(String.format(Constants.CREATE_DATABASE, tree.getText()));
+
+                String databaseName = tree.getText();
+                if(!databaseName.isEmpty()) {
+                    // Check if the database is overridden
+                    Map<String, String> sourceToDestinationMap = new HashMap<>();
+
+                    try {
+                        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
+                            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+                    } catch(Exception e) {
+                        log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
+                    }
+
+                    if(sourceToDestinationMap.containsKey(databaseName)) {
+                        this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
+                    } else {
+                        this.query.append(String.format(Constants.CREATE_DATABASE, databaseName));
+                    }
+                }
             }
         }
     }
