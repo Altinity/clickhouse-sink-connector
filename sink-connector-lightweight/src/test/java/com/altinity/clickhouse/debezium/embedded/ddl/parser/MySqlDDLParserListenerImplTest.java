@@ -606,7 +606,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "create database test_ddl";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists test_ddl"));
     }
 
     @Test

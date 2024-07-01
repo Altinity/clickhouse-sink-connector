@@ -66,6 +66,8 @@ offset.storage.jdbc.user: "root"
 # offset.storage.jdbc.password: The password of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.password: "root"
 
+clickhouse.database.override.map: "sbtest:chtest"
+
 # offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 (

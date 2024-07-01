@@ -151,6 +151,9 @@ restart.event.loop: "true"
 #restart.event.loop.timeout.period.secs: Defines the restart timeout period.
 restart.event.loop.timeout.period.secs: "3000"
 
+# Flush time of the buffer in milliseconds. The buffer that is stored in memory before being flushed to ClickHouse.
+#buffer.flush.time.ms: "1000"
+
 # Max number of records for the flush buffer.
 #buffer.max.records: "10000"
 

@@ -138,17 +138,17 @@ public class PreparedStatementExecutor {
 
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                true, config, columnToDataTypeMap, engine);
+                                true, config, columnToDataTypeMap, engine, tableName);
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine);
+                                false, config, columnToDataTypeMap, engine, tableName);
                     } else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                    true, config, columnToDataTypeMap, engine);
+                                    true, config, columnToDataTypeMap, engine, tableName);
                         }
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine);
+                                false, config, columnToDataTypeMap, engine, tableName);
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -205,7 +205,7 @@ public class PreparedStatementExecutor {
                                         ClickHouseStruct record, Struct struct, boolean beforeSection,
                                         ClickHouseSinkConnectorConfig config,
                                         Map<String, String> columnNameToDataTypeMap,
-                                        DBMetadata.TABLE_ENGINE engine) throws Exception {
+                                        DBMetadata.TABLE_ENGINE engine, String tableName) throws Exception {
 
 
         // int index = 1;
@@ -247,11 +247,12 @@ public class PreparedStatementExecutor {
                 // if the field is not present.
                 // If the record was not supplied, we need to set it as null.
                 // Ignore version and sign columns.
-                if(colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn)) {
+                if(colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
+                        colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
 
                 } else {
-                    log.error(String.format("********** ERROR: Database(%s), ClickHouse column %s not present in source ************", databaseName, colName));
-                    log.error(String.format("********** ERROR: Database(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, colName));
+                    log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
+                    log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
                 }
                 ps.setNull(index, Types.OTHER);
                 continue;

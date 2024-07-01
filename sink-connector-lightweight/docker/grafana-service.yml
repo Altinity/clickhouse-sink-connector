@@ -10,4 +10,5 @@ services:
       - DS_PROMETHEUS=prometheus
       - GF_USERS_DEFAULT_THEME=light
       - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
-      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource,grafana-clickhouse-datasource
+      - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource
+      - GF_LOG_LEVEL=debug
