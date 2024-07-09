@@ -8,12 +8,9 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import com.google.common.collect.Maps;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -28,10 +25,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,10 +35,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
 import static org.junit.Assert.assertTrue;
 
 @Testcontainers
-@DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
-        + "by performing a lot of updates on the primary key.")
-public class MultipleUpdatesWSameTimestampIT {
-
+@DisplayName("Test that validates behavior when source columns are not present in ClickHouse.")
+public class SourceDBColumnMissingIT {
     private static final Logger log = LoggerFactory.getLogger(MultipleUpdatesWSameTimestampIT.class);
 
 
@@ -52,7 +45,7 @@ public class MultipleUpdatesWSameTimestampIT {
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
             .asCompatibleSubstituteFor("clickhouse"))
-            .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
+            .withInitScript("init_clickhouse_column_mismatch.sql")
             //   .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
             .withUsername("ch_user")
             .withPassword("password")
@@ -73,10 +66,8 @@ public class MultipleUpdatesWSameTimestampIT {
     }
 
 
-    @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
-            + "by performing a lot of updates on the primary key.")
     @Test
-    public void testIncrementingSequenceNumberWithUpdates() throws Exception {
+    public void testColumnMismatch() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
 
@@ -106,24 +97,8 @@ public class MultipleUpdatesWSameTimestampIT {
 
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-
         // Insert a new row in the table
         conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
-
-        // Generate and execute the update workload
-        String updateStatement = "UPDATE newtable SET col2 = ? WHERE col1 = ?";
-        try (PreparedStatement pstmt = conn.prepareStatement(updateStatement)) {
-            conn.setAutoCommit(false);
-            for (int i = 0; i < 20000; i++) {
-                // Set parameters for the update statement
-                pstmt.setInt(1, 10000 + i);
-                pstmt.setString(2, "a");
-
-                // Execute the update statement
-                pstmt.executeUpdate();
-            }
-            conn.commit();
-        }
 
 
         Thread.sleep(10000);
@@ -143,12 +118,11 @@ public class MultipleUpdatesWSameTimestampIT {
         }
         Thread.sleep(10000);
 
-
-        assertTrue(col2 == 29999);
+        assertTrue(col2 == 1);
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
-        // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
     }
+
 }

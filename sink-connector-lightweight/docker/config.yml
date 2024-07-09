@@ -41,9 +41,6 @@ clickhouse.server.password: "root"
 # Clickhouse Server Port
 clickhouse.server.port: "8123"
 
-# Clickhouse Server Database
-clickhouse.server.database: "test"
-
 # database.allowPublicKeyRetrieval: "true" https://rmoff.net/2019/10/23/debezium-mysql-v8-public-key-retrieval-is-not-allowed/
 database.allowPublicKeyRetrieval: "true"
 
@@ -123,6 +120,10 @@ auto.create.tables: "true"
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "UTC"
 
+# Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
+# provided, the MySQL database name will be used as the ClickHouse database name.
+#clickhouse.database.override.map: "employees:employees2, products:productsnew
+
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
 
@@ -146,6 +147,9 @@ restart.event.loop: "true"
 
 #restart.event.loop.timeout.period.secs: Defines the restart timeout period.
 restart.event.loop.timeout.period.secs: "3000"
+
+# Flush time of the buffer in milliseconds. The buffer that is stored in memory before being flushed to ClickHouse.
+#buffer.flush.time.ms: "1000"
 
 # Max number of records for the flush buffer.
 #buffer.max.records: "10000"

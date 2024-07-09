@@ -86,7 +86,7 @@ public class DebeziumOffsetStorage {
      */
     public String updateBinLogInformation(String record, String binLogFile, String binLogPosition, String gtids) throws ParseException {
         JSONObject jsonObject = new JSONObject();
-        if(record != null || !record.isEmpty()) {
+        if(record != null && !record.isEmpty()) {
             jsonObject = (JSONObject) new JSONParser().parse(record);
         } else {
             jsonObject.put("ts_sec", System.currentTimeMillis() / 1000);

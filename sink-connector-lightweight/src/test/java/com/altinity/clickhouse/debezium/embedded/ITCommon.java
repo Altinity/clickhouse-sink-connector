@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -28,6 +29,22 @@ public class ITCommon {
         return conn;
     }
 
+    // Function to connect to Postgres.
+    static public Connection connectToPostgreSQL(PostgreSQLContainer postgreSQLContainer) {
+        Connection conn = null;
+        try {
+
+            String connectionUrl = String.format("jdbc:postgresql://%s:%s/%s?user=%s&password=%s", postgreSQLContainer.getHost(),
+                    postgreSQLContainer.getFirstMappedPort(),
+                    postgreSQLContainer.getDatabaseName(), postgreSQLContainer.getUsername(), postgreSQLContainer.getPassword());
+            conn = DriverManager.getConnection(connectionUrl);
+
+        } catch (SQLException ex) {
+
+        }
+        return conn;
+    }
+
     static public Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
 
         // Start the debezium embedded application.
@@ -48,7 +65,6 @@ public class ITCommon {
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
         defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
         defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
 
         defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));

@@ -1,3 +1,5 @@
+apiVersion: 1
+
 datasources:
   - access: 'proxy'                       # make grafana perform the requests
     editable: true                        # whether it should be editable
@@ -8,18 +10,17 @@ datasources:
     url: 'http://prometheus:9090'       # url of the prom instance
     database: 'prometheus'
     version: 1                            # well, versioning
-  -  name: Clickhouse
-     type: vertamedia-clickhouse-datasource
-     access: 'proxy'
-     url: http://clickhouse:8123
-     basicAuth: true
-     withCredentials: true
-     user: "ch_user"
-     database: ""
-     secureJsonData:
-      password: "root"
+  - name: Clickhouse
+    type: vertamedia-clickhouse-datasource
+    access: proxy
+    url: http://clickhouse:8123
+    basicAuth: true
+    secureJsonData:
       basicAuthPassword: "root"
-     isDefault: false
-     readOnly: false
-     editable: true
-     version: 1
+    basicAuthUser: "root"
+    editable: true
+    jsonData:
+      addCorsHeader: true
+      usePOST: true
+      useCompression: true
+      compressionType: gzip
