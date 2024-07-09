@@ -214,14 +214,14 @@ public class DBMetadata {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
                 } else {
-                    log.error("Error: Table not found in system tables:" + tableName + " Database:" + database);
+                    log.debug("Error: Table not found in system tables:" + tableName + " Database:" + database);
                 }
                 rs.close();
                 stmt.close();
                 log.info("getTableEngineUsingSystemTables ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngineUsingSystemTables exception", e);
+            log.debug("getTableEngineUsingSystemTables exception", e);
         }
 
         return result;
