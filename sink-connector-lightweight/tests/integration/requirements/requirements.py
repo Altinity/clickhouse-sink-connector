@@ -2485,7 +2485,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValue
     type=None,
     uid=None,
     description=(
-        "[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to map the source database to a different database on the destination.\n"
+        "[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to allow the user to replicate the data from the source database to the destination database with a different name.\n"
         "\n"
         "For example, when using the following value in configuration,\n"
         "\n"
@@ -2493,7 +2493,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValue
         'clickhouse.database.override.map: "mysql1:ch1"\n'
         "```\n"
         "\n"
-        "The source database `mysql1` SHALL be mapped to the destination database `ch1`, and the data SHALL be replicated to the destination database.\n"
+        "The source database `mysql1` SHALL be mapped to the destination database `ch1`, and the data from the source `mysql1` SHALL only be replicated to the destination database `ch1`.\n"
         "\n"
         "```mermaid\n"
         "flowchart TD\n"
@@ -2524,7 +2524,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValue
         'clickhouse.database.override.map: "mysql1:ch1, mysql2:ch2"\n'
         "```\n"
         "\n"
-        "The source databases `mysql1` and `mysql2` SHALL be mapped to the destination databases `ch1` and `ch2`, and the data SHALL be replicated to the destination database.\n"
+        "The source databases `mysql1` and `mysql2` SHALL be mapped to the destination databases `ch1` and `ch2`, and the data from these source databases SHALL only be replicated to the destination databases `ch1` and `ch2`.\n"
         "\n"
         "```mermaid\n"
         "flowchart TD\n"
@@ -3511,7 +3511,11 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=4,
             num="34.4.2.1",
         ),
-        Heading(name="Overriding Database Name Mapping", level=2, num="34.5"),
+        Heading(
+            name="Overriding Source To Destination Database Name Mapping",
+            level=2,
+            num="34.5",
+        ),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap",
             level=3,
@@ -3983,7 +3987,7 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             * 34.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesincludelist)
         * 34.4.2 [Replicate All Databases](#replicate-all-databases)
             * 34.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesreplicateall)
-    * 34.5 [Overriding Database Name Mapping](#overriding-database-name-mapping)
+    * 34.5 [Overriding Source To Destination Database Name Mapping](#overriding-source-to-destination-database-name-mapping)
         * 34.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemap)
         * 34.5.2 [Multiple Database Names](#multiple-database-names)
             * 34.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemapmultiplevalues)
@@ -5668,12 +5672,12 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support the ability to monitor all databases from the source and replicate them to the destination without specifying the `database.include.list` configuration value.
 
-### Overriding Database Name Mapping
+### Overriding Source To Destination Database Name Mapping
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap
 version: 1.0
 
-[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to map the source database to a different database on the destination.
+[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to allow the user to replicate the data from the source database to the destination database with a different name.
 
 For example, when using the following value in configuration,
 
@@ -5681,7 +5685,7 @@ For example, when using the following value in configuration,
 clickhouse.database.override.map: "mysql1:ch1"
 ```
 
-The source database `mysql1` SHALL be mapped to the destination database `ch1`, and the data SHALL be replicated to the destination database.
+The source database `mysql1` SHALL be mapped to the destination database `ch1`, and the data from the source `mysql1` SHALL only be replicated to the destination database `ch1`.
 
 ```mermaid
 flowchart TD
@@ -5703,7 +5707,7 @@ For example, when using the following value in configuration,
 clickhouse.database.override.map: "mysql1:ch1, mysql2:ch2"
 ```
 
-The source databases `mysql1` and `mysql2` SHALL be mapped to the destination databases `ch1` and `ch2`, and the data SHALL be replicated to the destination database.
+The source databases `mysql1` and `mysql2` SHALL be mapped to the destination databases `ch1` and `ch2`, and the data from these source databases SHALL only be replicated to the destination databases `ch1` and `ch2`.
 
 ```mermaid
 flowchart TD
