@@ -277,8 +277,8 @@
             * 34.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesreplicateall)
     * 34.5 [Overriding Database Name Mapping](#overriding-database-name-mapping)
         * 34.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemap)
-            * 34.5.1.1 [Overriding Database Name Mapping with Multiple Names](#overriding-database-name-mapping-with-multiple-names)
-                * 34.5.1.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemapmultiplevalues)
+        * 34.5.2 [Multiple Database Names](#multiple-database-names)
+            * 34.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemapmultiplevalues)
     * 34.6 [Table Operations](#table-operations)
         * 34.6.1 [Specify Database Name in Table Operations](#specify-database-name-in-table-operations)
             * 34.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
@@ -1967,9 +1967,7 @@ version: 1.0
 
 [Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to map the source database to a different database on the destination.
 
-For example,
-
-When specifying the following configuration value,
+For example, when using the following value in configuration,
 
 ```yaml
 clickhouse.database.override.map: "mysql1:ch1"
@@ -1984,16 +1982,14 @@ flowchart TD
     E --> F[Replicate Data to ch1]
 ```
 
-##### Overriding Database Name Mapping with Multiple Names
+#### Multiple Database Names
 
-###### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues
 version: 1.0
 
 [Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to map multiple source databases to different databases on the destination.
 
-For example,
-
-When specifying the following configuration value,
+For example, when using the following value in configuration,
 
 ```yaml
 clickhouse.database.override.map: "mysql1:ch1, mysql2:ch2"
