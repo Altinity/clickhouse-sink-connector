@@ -188,6 +188,7 @@ def add_primary_key(self, table_name, column_name, node=None, database=None):
         rf"ALTER TABLE {database}.\`{table_name}\` ADD PRIMARY KEY ({column_name});"
     )
 
+
 @TestStep(When)
 def drop_primary_key(self, table_name, node=None, database=None):
     """DROP PRIMARY KEY"""
@@ -197,6 +198,4 @@ def drop_primary_key(self, table_name, node=None, database=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(
-        rf"ALTER TABLE {database}.\`{table_name}\` DROP PRIMARY KEY;"
-    )
+    node.query(rf"ALTER TABLE {database}.\`{table_name}\` DROP PRIMARY KEY;")

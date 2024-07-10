@@ -829,7 +829,14 @@ def concurrent_actions(self, number_of_iterations=None):
 
 
 @TestSuite
-@Requirements()
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValues_OverrideMap(
+        "1.0"
+    ),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValues_OverrideMap_MultipleValues(
+        "1.0"
+    ),
+)
 def source_destination_overrides(self):
     """Check that the tables are replicated when we have source and destination databases with different names.
     For example,
