@@ -11,7 +11,7 @@ def drop_database(self, database_name=None, node=None):
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
         node.query(
-            f"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
+            rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
         )
 
 
@@ -66,7 +66,7 @@ def create_clickhouse_database(self, name=None, node=None):
             drop_database(database_name=name)
 
             node.query(
-                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
+                rf"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
             )
         yield
     finally:
