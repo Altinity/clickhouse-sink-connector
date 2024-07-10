@@ -54,6 +54,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Mutable Data Handling](doc/mutable_data.md)
 * [ClickHouse Table Engine Types](doc/clickhouse_engines.md)
 * [Troubleshooting](doc/Troubleshooting.md)
+* [Logging](doc/Logging.md)
 
 ### Operations
 
