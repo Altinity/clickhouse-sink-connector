@@ -935,7 +935,7 @@ class MySQLNode(DatabaseNode):
         """
         if client_command is None:
             client_command = (
-                "mysql -h mysql-master -u root --password=root --database=test"
+                "mariadb --user=root --password=root --host=mysql-master test"
             )
 
         return super(MySQLNode, self).query(

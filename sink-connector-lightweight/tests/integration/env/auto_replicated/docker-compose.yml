@@ -3,7 +3,7 @@ version: "2.3"
 
 services:
   mysql-master:
-    image: docker.io/bitnami/mysql:8.0.36
+    image: mariadb
     restart: "no"
     expose:
       - "3306"
@@ -13,14 +13,17 @@ services:
       - MYSQL_REPLICATION_MODE=master
       - MYSQL_REPLICATION_USER=repl_user
       - ALLOW_EMPTY_PASSWORD=yes
+      - MYSQL_BINLOG_FORMAT=row
     volumes:
-     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+#     - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+     - ./my.cnf:/etc/mysql/my.cnf
      - "${CLICKHOUSE_TESTS_DIR}/_instances_auto/share_folder:/tmp/share_folder"
     healthcheck:
-      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
-      interval: 15s
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
       timeout: 5s
-      retries: 6
+      retries: 3
 
 
   clickhouse-sink-connector-lt:

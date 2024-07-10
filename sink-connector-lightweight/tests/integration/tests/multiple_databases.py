@@ -14,7 +14,8 @@ from integration.tests.steps.alter import (
     change_column,
     modify_column,
     drop_column,
-    add_primary_key, drop_primary_key,
+    add_primary_key,
+    drop_primary_key,
 )
 
 
@@ -118,6 +119,8 @@ def create_map_for_database_names(self, databases_map: dict = None, config_name=
     new_database_map = []
 
     for key, value in databases_map.items():
+        key = key.strip("\`")
+        value = value.strip("\`")
         new_database_map.append(f"{key}:{value}")
 
     configuration_value = ", ".join(new_database_map)
@@ -143,7 +146,61 @@ def create_map_for_database_names(self, databases_map: dict = None, config_name=
             remove_database_map()
 
 
-# clickhouse.database.override.map: "employees:employees2, products:productsnew
+@TestOutline
+def create_table_mapped(
+    self,
+    source_database=None,
+    destination_database=None,
+    exists=None,
+    validate_values=True,
+):
+    """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
+
+    table_name = f"table_{getuid()}"
+
+    if exists is None:
+        exists = "1"
+
+    if source_database is None:
+        source_database = "test"
+
+    if destination_database is None:
+        destination_database = "test"
+
+    table_values = create_sample_values()
+
+    with By("creating a sample table in MySQL"):
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
+            database_name=source_database,
+        )
+
+    with And("inserting data into the table"):
+        insert(
+            table_name=table_name, database_name=source_database, values=table_values
+        )
+
+    if not validate_values:
+        table_values = ""
+
+    with And("validating that the table was replicated in ClickHouse"):
+        for retry in retries(timeout=40):
+            with retry:
+                check_if_table_was_created(
+                    table_name=table_name,
+                    database_name=destination_database,
+                    message=exists,
+                )
+        if validate_values:
+            for retry in retries(timeout=10, delay=1):
+                with retry:
+                    validate_data_in_clickhouse_table(
+                        table_name=table_name,
+                        expected_output=table_values.replace("'", ""),
+                        database_name=destination_database,
+                        statement="id, col1, col2",
+                    )
 
 
 def create_sample_values():
@@ -555,6 +612,79 @@ def add_primary_key_on_a_database(self, database):
         check_column(table_name=table_name, database=database, column_name=column)
 
 
+@TestOutline
+def check_different_database_names(self, database_map):
+    """Check that the tables are replicated when we have source and destination databases with different names."""
+
+    with Given("I create the source and destination databases from a list"):
+        create_diff_name_dbs(databases=database_map)
+
+    with When("I set the new map between source and destination database names"):
+        create_map_for_database_names(databases_map=database_map)
+
+    with Then("I create table on each database and validate data"):
+        for source_database, destination_database in database_map.items():
+            create_table_mapped(
+                source_database=source_database,
+                destination_database=destination_database,
+            )
+
+
+@TestScenario
+def different_database_names(self):
+    """Check that the tables are replicated when we have source and destination databases with different names."""
+    database_map = {"mysql1": "ch1", "mysql2": "ch2", "mysql3": "ch3", "mysql4": "ch4"}
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_source_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with different names and source database name contains backticks."""
+    database_map = {
+        "\`mysql1\`": "ch1",
+        "\`mysql2\`": "ch2",
+        "\`mysql3\`": "ch3",
+        "\`mysql4\`": "ch4",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_destination_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with different names and destination database name contains backticks."""
+    database_map = {
+        "mysql1": "\`ch1\`",
+        "mysql2": "\`ch2\`",
+        "mysql3": "\`ch3\`",
+        "mysql4": "\`ch4\`",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with the same names and they contain backticks."""
+    database_map = {
+        "\`mysql1\`": "\`ch1\`",
+        "\`mysql2\`": "\`ch2\`",
+        "\`mysql3\`": "\`ch3\`",
+        "\`mysql4\`": "\`ch4\`",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def same_database_names(self):
+    """Check that the tables are replicated when we have source and destination databases with the same names."""
+    database_map = {
+        "mysql1": "mysql1",
+        "mysql2": "mysql2",
+        "mysql3": "mysql3",
+        "mysql4": "mysql4",
+    }
+    check_different_database_names(database_map=database_map)
+
+
 @TestCheck
 def check_alters(self, alter_1, alter_2, database_1, database_2):
     """Run multiple alter statements on different databases."""
@@ -698,89 +828,18 @@ def concurrent_actions(self, number_of_iterations=None):
     check_concurrent_actions(actions=actions)
 
 
-@TestOutline
-def create_table_mapped(
-    self,
-    source_database=None,
-    destination_database=None,
-    exists=None,
-    validate_values=True,
-):
-    """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
-
-    table_name = f"table_{getuid()}"
-
-    if exists is None:
-        exists = "1"
-
-    if source_database is None:
-        source_database = "test"
-
-    if destination_database is None:
-        destination_database = "test"
-
-    table_values = create_sample_values()
-
-    with By("creating a sample table in MySQL"):
-        create_mysql_table(
-            table_name=rf"\`{table_name}\`",
-            columns=f"col1 varchar(255), col2 int",
-            database_name=source_database,
-        )
-
-    with And("inserting data into the table"):
-        insert(
-            table_name=table_name, database_name=source_database, values=table_values
-        )
-
-    if not validate_values:
-        table_values = ""
-
-    with And("validating that the table was replicated in ClickHouse"):
-        for retry in retries(timeout=40):
-            with retry:
-                check_if_table_was_created(
-                    table_name=table_name,
-                    database_name=destination_database,
-                    message=exists,
-                )
-        if validate_values:
-            for retry in retries(timeout=10, delay=1):
-                with retry:
-                    validate_data_in_clickhouse_table(
-                        table_name=table_name,
-                        expected_output=table_values.replace("'", ""),
-                        database_name=destination_database,
-                        statement="id, col1, col2",
-                    )
-
-
-@TestScenario
-def different_database_names(self):
-    """Check that the tables are replicated when we have source and destination databases with different names."""
-    database_map = {"mysql1": "ch1", "mysql2": "ch2", "mysql3": "ch3", "mysql4": "ch4"}
-
-    with Given("I create the source and destination databases from a list"):
-        create_diff_name_dbs(databases=database_map)
-
-    with When("I set the new map between source and destination database names"):
-        create_map_for_database_names(databases_map=database_map)
-
-    with Then("I create table on each database and validate data"):
-        for source_database, destination_database in database_map.items():
-            create_table_mapped(
-                source_database=source_database,
-                destination_database=destination_database,
-            )
-
-
 @TestSuite
+@Requirements()
 def source_destination_overrides(self):
     """Check that the tables are replicated when we have source and destination databases with different names.
     For example,
         mysql1:ch1; mysql2:ch2
     """
     Scenario(run=different_database_names)
+    Scenario(run=different_database_names_with_source_backticks)
+    Scenario(run=different_database_names_with_destination_backticks)
+    Scenario(run=different_database_names_with_backticks)
+    Scenario(run=same_database_names)
 
 
 @TestFeature

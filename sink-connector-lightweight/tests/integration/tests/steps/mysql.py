@@ -82,12 +82,12 @@ def create_mysql_database(self, node=None, database_name=None):
 
     try:
         with Given(f"I create MySQL database {database_name}"):
-            node.query(f"DROP DATABASE IF EXISTS {database_name};")
-            node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
+            node.query(rf"CREATE DATABASE IF NOT EXISTS {database_name};")
         yield
     finally:
         with Finally(f"I delete MySQL database {database_name}"):
-            node.query(f"DROP DATABASE IF EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
 
 
 @TestStep(Given)
