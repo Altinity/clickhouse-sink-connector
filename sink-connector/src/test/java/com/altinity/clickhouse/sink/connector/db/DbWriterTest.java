@@ -129,7 +129,7 @@ public class DbWriterTest {
     public void testGetEngineType() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "system";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
@@ -283,7 +283,7 @@ public class DbWriterTest {
         ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
         PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(null,
-                false, null, null, dbWriter.getConnection(), ZoneId.of("UTC"));
+                false, null, null, database, ZoneId.of("UTC"));
 
         ClickHouseDataType dt1 = preparedStatementExecutor.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
         Assert.assertTrue(dt1 == ClickHouseDataType.Date);

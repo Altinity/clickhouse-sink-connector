@@ -8,8 +8,8 @@ import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -24,7 +24,7 @@ public class ClickHouseTableOperationsBase {
     public ClickHouseTableOperationsBase() {
 
     }
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseTableOperationsBase.class.getName());
+    private static final Logger log = LogManager.getLogger(ClickHouseTableOperationsBase.class.getName());
 
 
     /**
@@ -80,10 +80,7 @@ public class ClickHouseTableOperationsBase {
             }else {
                 log.error(" **** DATA TYPE MAPPING not found: " + "TYPE:" + type.getName() + "SCHEMA NAME:" + schemaName);
             }
-//
-//            if(columnToDataTypesMap.isEmpty() == false) {
-//                String createTableQuery = this.createTableSyntax(primaryKey, tableName, columnToDataTypesMap);
-//            }
+
         }
 
         return columnToDataTypesMap;

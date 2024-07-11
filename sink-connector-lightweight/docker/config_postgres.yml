@@ -3,6 +3,8 @@
 # name: Unique name for the connector. Attempting to register again with the same name will fail.
 name: "debezium-embedded-postgres"
 
+auto.create.tables.replicated: "true"
+
 # database.hostname: IP address or hostname of the PostgreSQL database server.
 database.hostname: "postgres"
 
@@ -19,13 +21,15 @@ database.password: "root"
 database.server.name: "ER54"
 
 # schema.include.list: An optional list of regular expressions that match schema names to be monitored;
-schema.include.list: public
+schema.include.list: public,public2
+
+slot.name: connector2
 
 # plugin.name:  The name of the PostgreSQL logical decoding plug-in installed on the PostgreSQL server. Supported values are decoderbufs, and pgoutput.
 plugin.name: "pgoutput"
 
 # table.include.list: An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
-table.include.list: "public.tm,public.tm2"
+#table.include.list: "public.tm,public.tm2"
 
 # clickhouse.server.url: Specify only the hostname of the Clickhouse Server.
 clickhouse.server.url: "clickhouse"
@@ -38,9 +42,6 @@ clickhouse.server.password: "root"
 
 # clickhouse.server.port: Clickhouse Server Port
 clickhouse.server.port: "8123"
-
-# clickhouse.server.database: Clickhouse Server Database
-clickhouse.server.database: "test"
 
 # database.allowPublicKeyRetrieval: "true" https://rmoff.net/2019/10/23/debezium-mysql-v8-public-key-retrieval-is-not-allowed/
 database.allowPublicKeyRetrieval: "true"
@@ -81,7 +82,7 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
-SETTINGS index_granularity = 8198"
+SETTINGS index_granularity = 8192"
 offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
 schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"

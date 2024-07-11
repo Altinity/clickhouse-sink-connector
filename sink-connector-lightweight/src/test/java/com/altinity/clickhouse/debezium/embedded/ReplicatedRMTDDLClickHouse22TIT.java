@@ -47,7 +47,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
 
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types_test.sql")
@@ -68,7 +68,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
                 .withExposedPorts(8123)
                         .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
-        clickHouseContainer.withNetwork(network);
+        clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
 
@@ -85,7 +85,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
+        //props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
 
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
@@ -94,7 +94,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -135,11 +135,39 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         }
         Assert.assertTrue(dataValidated);
 
+        // Create a new table in MySQL
+        conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n" +
+                " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                "  `dt_tz` int DEFAULT NULL,\n" +
+                "  `lat` decimal(9,7) DEFAULT NULL,\n" +
+                "  `long` decimal(10,7) DEFAULT NULL,\n" +
+                "  `did` int unsigned DEFAULT NULL,\n" +
+                "   `lname_id` int unsigned DEFAULT NULL,\n" +
+                " PRIMARY KEY (`uid`,`dt`),\n" +
+                "KEY `st` (`st`)\n" +
+                " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
+
+        Thread.sleep(10000);
+
+        // Verify on ClickHouse if the table is created.
+        rs = writer.executeQueryWithResultSet("show create table l1");
+        // Validate that all the tables are created.
+        resultValidated = false;
+        while(rs.next()) {
+            resultValidated = true;
+            String createTableDML = rs.getString(1);
+            System.out.println(createTableDML);
+            assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
+        }
+        Assert.assertTrue(resultValidated);
+
         if(engine.get() != null) {
             engine.get().stop();
         }
+        conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-    }
+   }
 
 }

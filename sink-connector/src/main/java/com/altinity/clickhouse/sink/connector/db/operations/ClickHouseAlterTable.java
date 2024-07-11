@@ -3,8 +3,8 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -15,7 +15,7 @@ import java.util.Map;
  * in ClickHouse(Schema Evolution)
  */
 public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseAlterTable.class.getName());
+    private static final Logger log = LogManager.getLogger(ClickHouseAlterTable.class.getName());
 
     public enum ALTER_TABLE_OPERATION {
         ADD("add"),

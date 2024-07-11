@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -16,15 +17,13 @@ def mysql_to_clickhouse_connection(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         complex_insert(
             node=mysql,
             table_name=table_name,
@@ -37,7 +36,7 @@ def mysql_to_clickhouse_connection(
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             clickhouse_table_engine=clickhouse_table_engine,
             statement="count(*)",
@@ -66,7 +65,7 @@ def mysql_to_clickhouse(
 @TestModule
 @Name("manual section")
 def module(self):
-    """MySql to ClickHouse replication manual checks section."""
+    """MySQL to ClickHouse replication manual checks section."""
 
     with Pool(1) as executor:
         try:

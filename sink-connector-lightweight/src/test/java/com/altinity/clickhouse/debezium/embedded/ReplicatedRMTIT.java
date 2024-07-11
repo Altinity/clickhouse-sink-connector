@@ -47,7 +47,7 @@ public class ReplicatedRMTIT {
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
 
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types_test.sql")
@@ -68,7 +68,7 @@ public class ReplicatedRMTIT {
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
                 .withExposedPorts(8123)
                         .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
-        clickHouseContainer.withNetwork(network);
+        clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
 
@@ -96,12 +96,12 @@ public class ReplicatedRMTIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         });
-
 
         Thread.sleep(30000);
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);

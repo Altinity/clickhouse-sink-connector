@@ -1,3 +1,4 @@
+
 CREATE TABLE "tm" (
 id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
 secid uuid,
@@ -134,3 +135,6 @@ INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Pe
 --);
 --
 
+create schema public2;
+set schema 'public2';
+CREATE TABLE "tm2" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);

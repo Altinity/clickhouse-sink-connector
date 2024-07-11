@@ -51,7 +51,7 @@ public class MySQLGenerateColumnsTest {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
               //  .withInitScript("data_types.sql")
@@ -76,7 +76,8 @@ public class MySQLGenerateColumnsTest {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

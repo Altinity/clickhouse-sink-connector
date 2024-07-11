@@ -48,6 +48,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * @param args arguments
      * @throws Exception Exception
      */
+
     public static void main(String[] args) throws Exception {
         System.setProperty("log4j.configurationFile", "resources/log4j2.xml");
 
@@ -141,6 +142,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void stop() throws IOException {
         debeziumChangeEventCapture.stop();
 
+        //Stop Rest API
+        //DebeziumEmbeddedRestApi.stop();
     }
 
     /**
@@ -187,8 +190,10 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         start(injector.getInstance(DebeziumRecordParserService.class),
                                 injector.getInstance(DDLParserService.class), props, true);
                     } catch (IOException e) {
+                        log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);
                     } catch (Exception e) {
+                        log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);
                     }
 

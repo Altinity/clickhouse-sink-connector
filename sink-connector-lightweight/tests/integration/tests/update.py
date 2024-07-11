@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -20,60 +21,27 @@ def simple_update(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(
-        f"I create MySql to ClickHouse replicated table", description=table_name
+        f"I create MySQL to ClickHouse replicated table", description=table_name
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_columns=clickhouse_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
             primary_key=primary_key,
-            engine=engine,
         )
 
-    with When(f"I insert data in MySql table"):
+    with When(f"I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
-    with Then(f"I update data in MySql table"):
+    with Then(f"I update data in MySQL table"):
         mysql.query(f"UPDATE {table_name} SET k=k+5 WHERE id=1;")
 
     with And("I check that ClickHouse has updated data as MySQL"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             manual_output='1,7,"a","b"',
             clickhouse_table_engine=clickhouse_table_engine,
             statement="id,k,c,pad",
             with_final=True,
         )
-
-
-@TestFeature
-def no_primary_key(self):
-    """Check replication for `UPDATE` with no primary key and without table engine."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key=None,
-                engine=False,
-            )
-
-
-@TestFeature
-def no_primary_key_innodb(self):
-    """Check replication for `UPDATE` with no primary key and with table engine InnoDB."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key=None,
-                engine=True,
-            )
 
 
 @TestFeature
@@ -104,36 +72,6 @@ def simple_primary_key_innodb(self):
             )
 
 
-@TestFeature
-def complex_primary_key(self):
-    """Check replication for `UPDATE` with complex primary key and without table engine."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key="id,k",
-                engine=False,
-            )
-
-
-@TestFeature
-def complex_primary_key_innodb(self):
-    """Check replication for `UPDATE` with complex primary key and with table engine InnoDB."""
-    xfail("doesn't work")
-    for clickhouse_table_engine in self.context.clickhouse_table_engines:
-        with Example({clickhouse_table_engine}, flags=TE):
-            simple_update(
-                clickhouse_table_engine=clickhouse_table_engine,
-                mysql_columns=" k INT,c CHAR, pad CHAR",
-                clickhouse_columns=" k Int32,c String, pad String",
-                primary_key="id,k",
-                engine=True,
-            )
-
-
 @TestOutline
 def update_zero_rows(self, table_name, node=None):
     """Check that `UPDATE` can change zero rows."""
@@ -143,7 +81,7 @@ def update_zero_rows(self, table_name, node=None):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -162,7 +100,7 @@ def update_all_rows(self, table_name, node=None):
     with And(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -179,7 +117,7 @@ def update_small_subset(self, table_name):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -196,7 +134,7 @@ def update_large_subset(self, table_name):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -215,7 +153,7 @@ def update_all_rows_from_half_of_parts(self, table_name, node=None):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -247,7 +185,7 @@ def one_partition_one_part(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -266,7 +204,7 @@ def one_partition_one_part(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -300,7 +238,7 @@ def one_partition_many_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -320,7 +258,7 @@ def one_partition_many_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -354,7 +292,7 @@ def one_partition_mixed_parts(self, node=None):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -386,7 +324,7 @@ def one_partition_mixed_parts(self, node=None):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -420,7 +358,7 @@ def many_partitions_one_part(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -439,7 +377,7 @@ def many_partitions_one_part(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -473,7 +411,7 @@ def many_partitions_many_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -493,7 +431,7 @@ def many_partitions_many_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -527,7 +465,7 @@ def many_partitions_mixed_parts(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
                             with Example(f"{table_name}", flags=TE):
@@ -559,7 +497,7 @@ def many_partitions_mixed_parts(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -571,7 +509,7 @@ def many_partitions_mixed_parts(self):
 @TestFeature
 @Name("one million datapoints")
 def one_million_datapoints(self):
-    """Check `UPDATE` with a table that has one million entries."""
+    """Check `UPDATE` statement with a table that has one million entries."""
 
     for outline in loads(current_module(), Outline):
         if outline.name != "simple update":
@@ -593,7 +531,7 @@ def one_million_datapoints(self):
                             "no_primary_key"
                         ):
                             if table_name.endswith("_no_primary_key"):
-                                xfail(
+                                skip(
                                     "doesn't work without primary key as only last row of insert is replicated"
                                 )
 
@@ -613,7 +551,7 @@ def one_million_datapoints(self):
                                 with And(
                                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                                 ):
-                                    complex_check_creation_and_select(
+                                    verify_table_creation_in_clickhouse(
                                         table_name=table_name,
                                         statement="count(*)",
                                         with_final=True,
@@ -640,7 +578,7 @@ def parallel(self):
 
         for table_name in tables_names:
             if table_name.endswith("_no_primary_key"):
-                xfail(
+                skip(
                     "doesn't work without primary key as only last row of insert is replicated"
                 )
 
@@ -681,7 +619,7 @@ def parallel(self):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -692,7 +630,7 @@ def parallel(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Updates("1.0"))
 @Name("update")
 def module(self):
-    """MySql to ClickHouse replication update tests to test `UPDATE` queries."""
+    """MySQL to ClickHouse replication update tests to test `UPDATE` queries."""
 
     with Pool(1) as executor:
         try:

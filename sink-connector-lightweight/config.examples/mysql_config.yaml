@@ -8,7 +8,6 @@ clickhouse.server.url: "localhost"
 clickhouse.server.user: "root"
 clickhouse.server.password: "root"
 clickhouse.server.port: "8123"
-clickhouse.server.database: "test"
 database.allowPublicKeyRetrieval: "true"
 snapshot.mode: "schema_only"
 connector.class: "io.debezium.connector.mysql.MySqlConnector"
@@ -28,7 +27,7 @@ offset.storage.offset.storage.jdbc.offset.table.ddl: "CREATE TABLE %s
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
-SETTINGS index_granularity = 8198"
+SETTINGS index_granularity = 8192"
 offset.storage.offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
 schema.history.internal: io.debezium.storage.jdbc.history.JdbcSchemaHistory
 schema.history.internal.jdbc.url: "jdbc:clickhouse://localhost:8123"

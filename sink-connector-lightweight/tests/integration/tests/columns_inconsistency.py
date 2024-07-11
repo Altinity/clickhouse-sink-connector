@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -12,20 +13,18 @@ def mysql_to_clickhouse_insert(
     table_name = f"columns_inconsistency_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
-            clickhouse_columns=clickhouse_columns,
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
-    with When("I insert data in MySql table"):
+    with When("I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
         time.sleep(20)
 
     with Then("I check data inserted correct"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             manual_output=output,
             clickhouse_table_engine=clickhouse_table_engine,
@@ -124,7 +123,7 @@ def equal_columns_some_different_names(
 )
 @Name("columns inconsistency")
 def module(self):
-    """Check for different columns inconsistency."""
+    """Check for different columns' inconsistency."""
 
     with Pool(1) as executor:
         try:

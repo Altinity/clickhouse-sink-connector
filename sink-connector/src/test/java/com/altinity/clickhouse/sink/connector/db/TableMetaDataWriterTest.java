@@ -6,14 +6,14 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class TableMetaDataWriterTest {
 
-    public static final Logger log = LoggerFactory.getLogger(TableMetaDataWriter.class);
+    public static final Logger log = LogManager.getLogger(TableMetaDataWriter.class);
     @Test
     public void testConvertRecordToJSON() {
         Schema kafkaConnectSchema = SchemaBuilder

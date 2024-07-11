@@ -8,6 +8,7 @@
         <session_timeout_ms>15000</session_timeout_ms>
     </zookeeper>
     <macros>
+        <cluster>default</cluster> 
         <replica>clickhouse</replica>
         <shard>02</shard>
     </macros>

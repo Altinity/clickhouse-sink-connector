@@ -1,8 +1,9 @@
 import time
 from itertools import combinations
 from testflows.connect import Shell
-from integration.tests.steps.sql import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -26,10 +27,10 @@ def stop_start_parallel(self, services, loops=10):
         )
 
     with When(
-        "I insert, update, delete  data in MySql table with concurrently unavailable service"
+        "I insert, update, delete  data in MySQL table with concurrently unavailable service"
     ):
         Given(
-            "I insert, update, delete data in MySql table",
+            "I insert, update, delete data in MySQL table",
             test=concurrent_queries,
             parallel=True,
         )(

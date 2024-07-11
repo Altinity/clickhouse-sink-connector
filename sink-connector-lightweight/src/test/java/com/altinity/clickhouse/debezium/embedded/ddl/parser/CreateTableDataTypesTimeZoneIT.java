@@ -2,8 +2,6 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
-import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -46,7 +44,7 @@ public class CreateTableDataTypesTimeZoneIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types.sql")
@@ -69,11 +67,10 @@ public class CreateTableDataTypesTimeZoneIT {
 
                 Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 props.setProperty("database.include.list", "datatypes");
-                props.setProperty("clickhouse.server.database", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

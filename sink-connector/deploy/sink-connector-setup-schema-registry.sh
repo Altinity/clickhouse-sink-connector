@@ -43,7 +43,6 @@ if [[ $2 == "apicurio" ]]; then
         "clickhouse.server.url": "${CLICKHOUSE_HOST}",
         "clickhouse.server.user": "${CLICKHOUSE_USER}",
         "clickhouse.server.password": "${CLICKHOUSE_PASSWORD}",
-        "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
         "clickhouse.server.port": ${CLICKHOUSE_PORT},
         "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
         "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
@@ -73,9 +72,7 @@ if [[ $2 == "apicurio" ]]; then
         "replacingmergetree.delete.column": "_sign",
 
         "auto.create.tables": false,
-        "schema.evolution": false,
-
-        "deduplication.policy": "off"
+        "schema.evolution": false
         }
     }
 EOF
@@ -92,7 +89,6 @@ else
       "clickhouse.server.url": "${CLICKHOUSE_HOST}",
       "clickhouse.server.user": "${CLICKHOUSE_USER}",
       "clickhouse.server.password": "${CLICKHOUSE_PASSWORD}",
-      "clickhouse.server.database": "${CLICKHOUSE_DATABASE}",
       "clickhouse.server.port": ${CLICKHOUSE_PORT},
       "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
       "key.converter": "io.confluent.connect.avro.AvroConverter",
@@ -117,9 +113,7 @@ else
       "replacingmergetree.delete.column": "_sign",
 
       "auto.create.tables": true,
-      "schema.evolution": false,
-
-      "deduplication.policy": "off"
+      "schema.evolution": false
       }
   }
 EOF

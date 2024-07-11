@@ -15,13 +15,16 @@ public class SnowFlakeId {
 
     private static final long SNOWFLAKE_EPOCH = 1288834974657L;
 
-    public static long generate(long timestamp, long gtId) {
+    public static long generate(long timestamp, long gtId, boolean ignoreSnowflakeEpoch) {
         // 1. Create bitset with 64 bits
         BitSet result = new BitSet(64);
 
         // 2. Create bitset from long (timestamp) - 41 bits
         long tsDiff = timestamp - SNOWFLAKE_EPOCH;
         BitSet tsBitSet = BitSet.valueOf(new long[] {tsDiff});
+        if(ignoreSnowflakeEpoch) {
+            tsBitSet = BitSet.valueOf(new long[] {timestamp});
+        }
 
         // 3. Create bitset from Gtid - 22 bits
         BitSet gtIdBitSet = BitSet.valueOf(new long[] {gtId});

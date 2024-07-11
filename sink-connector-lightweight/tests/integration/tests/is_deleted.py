@@ -2,10 +2,9 @@ from integration.requirements.requirements import (
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
 )
 from integration.tests.steps.alter import drop_column
-from integration.tests.steps.common import generate_sample_mysql_value
-from integration.tests.steps.service_settings_steps import *
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import all_mysql_datatypes_dict
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import all_mysql_datatypes_dict
 
 
 @TestStep(Given)
@@ -19,10 +18,9 @@ def create_table_with_is_deleted(
     with By(
         f"creating a {table_name} table with is_deleted column and {datatype} datatype"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"col1 varchar(255), col2 int, {column} {datatype}",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int, {column} {datatype}",
         )
 
     with And(f"inserting data into the {table_name} table"):

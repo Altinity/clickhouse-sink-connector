@@ -6,10 +6,7 @@
 </a>
 <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/altinityinfra/clickhouse-sink-connector">
 ### Latest Releases
-| Component            | Docker Tag                                                                              |
-|----------------------|-----------------------------------------------------------------------------------------|
-| Lightweight          |         altinity/clickhouse-sink-connector:2.0.1-lt                                      |
-| Kafka Sink Connector |   altinity/clickhouse-sink-connector:latest                                                                                       |
+https://github.com/Altinity/clickhouse-sink-connector/releases                                                                                  |
 
 # Altinity Sink Connector for ClickHouse
 
@@ -29,8 +26,8 @@ for analysis.
 * Checksum-based table comparisons
 * Scalable to 1000s of tables
 * Multiple deployment models
-  * Lightweight: single process that transfers from source to target (prod)
-  * Kafka: separate source and target processes using Kafka as transport (experimental)
+  * Lightweight: single process that transfers from source to target.
+  * Kafka: separate source and target processes using Kafka as transport.
 * Distribution as [Docker](https://hub.docker.com/layers/altinityinfra/clickhouse-sink-connector/408-97b1d3d83ef93c1b76a2b1c4d9c544dc67fbbec3-lt/images/sha256-d134bc05e50df7f63025e776ab6e3216c6622cd159eb0f2d459ea2ce8975f396?context=explore)
  container
 
@@ -65,6 +62,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ### Development
 
+* [Development](doc/development.md)
 * [Testing](doc/TESTING.md)
 
 ## Roadmap 

@@ -11,8 +11,6 @@ import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,14 +24,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Singleton
 public class MySQLDDLParserService implements DDLParserService {
 
+    private String databaseName;
+
     private ClickHouseSinkConnectorConfig config;
 
     @Inject
     public MySQLDDLParserService() {
 
     }
-    public MySQLDDLParserService(ClickHouseSinkConnectorConfig config) {
+    public MySQLDDLParserService(ClickHouseSinkConnectorConfig config, String databaseName) {
         this.config = config;
+        this.databaseName = databaseName;
     }
 
     @Override
@@ -50,7 +51,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, databaseName, config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -58,7 +59,7 @@ public class MySQLDDLParserService implements DDLParserService {
     }
 
     @Override
-    public String parseSql(String sql, String tableName, StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
+    public String parseSql(String sql, String tableName,  StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
         String clickHouseResult = null;
 
         MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));
@@ -70,7 +71,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, this.config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, databaseName, this.config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 

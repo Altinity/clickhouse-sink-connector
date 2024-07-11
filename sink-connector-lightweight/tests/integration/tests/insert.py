@@ -1,8 +1,9 @@
 from testflows.core import *
 
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestOutline
@@ -17,18 +18,16 @@ def simple_insert(
     with Given(
         f"I create MySQL to ClickHouse replicated table", description=table_name
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
-            clickhouse_columns=clickhouse_columns,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
         )
 
     with When("I insert data in MySQL table"):
         mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
 
     with Then("I check data inserted correct"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             manual_output=output,
             clickhouse_table_engine=clickhouse_table_engine,
@@ -170,7 +169,7 @@ def one_partition_one_part(self, node=None):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -211,7 +210,7 @@ def one_partition_many_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -265,7 +264,7 @@ def one_partition_mixed_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -311,7 +310,7 @@ def many_partitions_one_part(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -352,7 +351,7 @@ def many_partitions_many_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -406,7 +405,7 @@ def many_partitions_mixed_parts(self, node=None):
                     with Then(
                         "I check that MySQL tables and Clickhouse replication tables have the same data"
                     ):
-                        complex_check_creation_and_select(
+                        verify_table_creation_in_clickhouse(
                             table_name=table_name,
                             statement="count(*)",
                             with_final=True,
@@ -450,7 +449,7 @@ def one_million_datapoints(self, node=None):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -515,7 +514,7 @@ def parallel(self):
                 with Then(
                     "I check that MySQL tables and Clickhouse replication tables have the same data"
                 ):
-                    complex_check_creation_and_select(
+                    verify_table_creation_in_clickhouse(
                         table_name=table_name,
                         statement="count(*)",
                         with_final=True,
@@ -526,7 +525,7 @@ def parallel(self):
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts("1.0"))
 @Name("insert")
 def module(self):
-    """MySql to ClickHouse replication insert tests to test `INSERT` queries."""
+    """MySQL to ClickHouse replication insert tests to test `INSERT` queries."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

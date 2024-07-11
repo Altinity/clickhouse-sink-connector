@@ -47,7 +47,7 @@ CREATE TABLE altinity_sink_connector.replica_source_info
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
-SETTINGS index_granularity = 8198;
+SETTINGS index_granularity = 8192;
 
 USE employees;
 CREATE TABLE employees.dt

@@ -1,4 +1,7 @@
-from integration.tests.steps.sql import *
+from integration.requirements.requirements import (
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnNames_Special,
+)
+from integration.tests.steps.mysql import *
 
 
 @TestStep(Then)
@@ -30,11 +33,10 @@ def string_concatenation(self):
     with Given(
         f"I create a {table_name} table with calculated column with string concatenation"
     ):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"first_name VARCHAR(50) NOT NULL,last_name VARCHAR(50) NOT NULL,fullname varchar(101) "
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"first_name VARCHAR(50) NOT NULL,last_name VARCHAR(50) NOT NULL,fullname varchar(101) "
             f"GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),email VARCHAR(100) NOT NULL",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
         )
 
     with And(f"inserting data into the {table_name} table"):
@@ -57,10 +59,9 @@ def basic_arithmetic_operations(self):
     b = 4
 
     with Given(f"I create a {table_name} table with calculated column"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"a INT, b INT, sum_col INT AS (a + b), diff_col INT AS (a - b), prod_col INT AS (a * b), div_col DOUBLE AS (a / b)",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"a INT, b INT, sum_col INT AS (a + b), diff_col INT AS (a - b), prod_col INT AS (a * b), div_col DOUBLE AS (a / b)",
         )
 
     with And(f"inserting data into the {table_name} table"):
@@ -84,10 +85,9 @@ def complex_expressions(self):
     bonus_rate = "520.65"
 
     with Given(f"I create a {table_name} table with calculated column"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"base_salary DECIMAL(10,2), bonus_rate DECIMAL(5,2), total_compensation DECIMAL(12,2) AS (base_salary + (base_salary * bonus_rate / 100))",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"base_salary DECIMAL(10,2), bonus_rate DECIMAL(5,2), total_compensation DECIMAL(12,2) AS (base_salary + (base_salary * bonus_rate / 100))",
         )
 
     with And(f"inserting data into the {table_name} table"):
@@ -113,10 +113,9 @@ def nested(self):
     b = "2"
 
     with Given(f"I create a {table_name} table with calculated column"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=f"\`{table_name}\`",
-            mysql_columns=f"a INT, b INT, c INT AS (a + b), d INT AS (c * 2)",
-            clickhouse_table_engine=self.context.clickhouse_table_engines[0],
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"a INT, b INT, c INT AS (a + b), d INT AS (c * 2)",
         )
 
     with And(f"inserting data into the {table_name} table"):

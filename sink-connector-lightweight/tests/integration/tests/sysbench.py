@@ -1,6 +1,6 @@
 from datetime import datetime
-from integration.tests.steps.sql import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.service_settings import *
 
 
 @TestScenario
@@ -37,8 +37,6 @@ def sysbench_tests(
                 f"/manual_scripts/sysbench/{script} -t " f"{test_name}",
                 message="Threads started!",
             )
-        #     <test_name>, test_name should be one of the following
-        #               bulk_insert, oltp_insert, oltp_delete, oltp_update_index, oltp_update_non_index"
         else:
             self.context.cluster.node("bash-tools").cmd(
                 "/manual_scripts/sysbench/" f"{script}", message="Threads started!"
@@ -130,7 +128,7 @@ def read_write_load_test(self):
 @TestScenario
 @Repeat(1)
 def update_index(self):
-    """Check MySQl by sysbench "update index" test."""
+    """Check MySQL by sysbench "update index" test."""
     xfail("expected")
     sysbench_tests(script="run_sysbench_update_index.sh")
 

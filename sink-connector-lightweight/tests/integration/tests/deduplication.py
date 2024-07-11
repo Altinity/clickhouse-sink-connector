@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.clickhouse import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -13,28 +14,26 @@ def deduplication(
 
     mysql = self.context.cluster.node("mysql-master")
 
-    with Given(f"I create MySql to CH replicated table", description=table_name):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns="age INT",
-            clickhouse_columns="age Int32",
-            clickhouse_table_engine=clickhouse_table_engine,
+    with Given(f"I create MySQL to CH replicated table", description=table_name):
+        create_mysql_table(
+            table_name=table_name,
+            columns="age INT",
         )
 
     if inserts:
-        with When(f"I insert {insert_number} rows of data in MySql table"):
+        with When(f"I insert {insert_number} rows of data in MySQL table"):
             for i in range(1, insert_number + 1):
                 mysql.query(f"insert into {table_name} values ({i},777)")
             metric(name="map insert time", value=current_time(), units="sec")
     elif big_insert:
-        with When(f"I make one insert on {insert_number} rows data in MySql table"):
+        with When(f"I make one insert on {insert_number} rows data in MySQL table"):
             mysql.query(
                 f"insert into {table_name} "
                 f"values {','.join([f'({i},777)' for i in range(1, insert_number + 1)])}"
             )
 
     with Then(f"I wait unique values from CLickHouse table equal to MySQL table"):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             manual_output=insert_number,
             table_name=table_name,
             statement="count(*)",
@@ -74,7 +73,7 @@ def deduplication_on_many_inserts(self):
 )
 @Name("deduplication")
 def module(self):
-    """MySql to ClickHouse replication tests to check
+    """MySQL to ClickHouse replication tests to check
     for non-duplication data on big inserts."""
 
     with Pool(1) as executor:

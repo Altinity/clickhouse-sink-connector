@@ -4,7 +4,7 @@ version: "2.3"
 services:
   mysql-master:
     container_name: mysql-master
-    image: docker.io/bitnami/mysql:8.0
+    image: docker.io/bitnami/mysql:8.0.36
     restart: "no"
     expose:
       - "3306"
@@ -135,7 +135,7 @@ services:
 
   bash-tools:
     container_name: bash-tools
-    image: registry.gitlab.com/altinity-public/container-images/test/bash-tools:2.0
+    image: altinityinfra/bash-tools:1.0
     hostname: "bash-tools"
     restart: "no"
     entrypoint:

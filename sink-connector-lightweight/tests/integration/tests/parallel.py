@@ -1,6 +1,7 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
+from integration.tests.steps.clickhouse import *
 
 
 @TestFeature
@@ -10,11 +11,9 @@ def insert_update_delete(self):
 
     with Given("I create MySQL to ClickHouse replicated table"):
         for clickhouse_table_engine in self.context.clickhouse_table_engines:
-            create_mysql_to_clickhouse_replicated_table(
-                name=table_name,
-                mysql_columns="x INT",
-                clickhouse_columns="x Int32",
-                clickhouse_table_engine=clickhouse_table_engine,
+            create_mysql_table(
+                table_name=table_name,
+                columns="x INT",
             )
 
     with When(
@@ -32,7 +31,7 @@ def insert_update_delete(self):
 
         By(
             f"delete rows with `x` column value less then 10",
-            test=delete,
+            test=delete_rows,
             parallel=True,
         )(row_delete=True, table_name=table_name, condition="x < 10")
 
@@ -44,7 +43,7 @@ def insert_update_delete(self):
 
         By(
             f"delete rows with `x` column value less then 100",
-            test=delete,
+            test=delete_rows,
             parallel=True,
         )(row_delete=True, table_name=table_name, condition="x < 100")
 
@@ -59,7 +58,7 @@ def insert_update_delete(self):
     with Then(
         "I check that MySQL tables and Clickhouse replication tables have the same data"
     ):
-        complex_check_creation_and_select(
+        verify_table_creation_in_clickhouse(
             table_name=table_name,
             statement="count(*)",
             with_final=True,
@@ -69,7 +68,7 @@ def insert_update_delete(self):
 @TestModule
 @Name("parallel")
 def module(self):
-    """Check for MySql to ClickHouse replication of parallel inserts, updates and deletes."""
+    """Check for MySQL to ClickHouse replication of parallel inserts, updates and deletes."""
     with Pool(1) as executor:
         try:
             for feature in loads(current_module(), Feature):

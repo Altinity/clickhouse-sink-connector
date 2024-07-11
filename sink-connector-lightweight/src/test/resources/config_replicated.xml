@@ -8,6 +8,17 @@
         </local_directory>
     </user_directories>
     <timezone>America/Chicago</timezone>
+    <remote_servers >
+        <cluster-one>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>clickhouse</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </cluster-one>
+    </remote_servers>
     <zookeeper>
         <node>
             <host>zookeeper</host>

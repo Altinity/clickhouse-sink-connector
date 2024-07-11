@@ -8,6 +8,10 @@ on:
         description: "Lightweight connector docker image"
         required: true
         type: string
+      package:
+        description: "Package either 'docker://' or 'https://'. Example: 'https://s3.amazonaws.com/clickhouse-builds/23.3/.../package_release/clickhouse-common-static_23.3.1.64_amd64.deb', or 'docker://altinity/clickhouse-server:23.8.8'"
+        type: string
+        default: docker://clickhouse/clickhouse-server:23.3
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -23,6 +27,10 @@ on:
         description: "Lightweight connector docker image"
         required: true
         type: string
+      package:
+        description: "Package either 'docker://' or 'https://'. Example: 'https://s3.amazonaws.com/clickhouse-builds/23.3/.../package_release/clickhouse-common-static_23.3.1.64_amd64.deb', or 'docker://altinity/clickhouse-server:23.8.8'"
+        type: string
+        default: docker://clickhouse/clickhouse-server:23.3
       extra_args:
         description: "Specific Suite To Run (Default * to run everything)."
         required: false
@@ -56,6 +64,18 @@ jobs:
         working-directory: sink-connector/tests/integration
         run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
 
+      - name: Create a virtual environment
+        run: |
+          echo "Install Python modules..."
+          sudo apt-get clean
+          sudo apt-get update
+          sudo apt-get install -y python3.12-venv
+          
+          echo "Create and activate Python virtual environment..."
+          python3 -m venv venv
+          source venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+
       - name: Install all dependencies
         working-directory: sink-connector-lightweight/tests/integration
         run: pip3 install -r requirements.txt
@@ -71,7 +91,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: sink-connector-lightweight/tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/mysql to clickhouse replication auto/${{ inputs.extra_args != '' && inputs.extra_args || '*' }}" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:23.3 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/auto table creation/${{ inputs.extra_args != '' && inputs.extra_args || '*' }}" --clickhouse-binary-path="${{inputs.package}}" --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
       - name: Create tfs results report
         if: always()
@@ -85,7 +105,7 @@ jobs:
 
       - name: Upload artifacts to Altinity Test Reports S3 bucket
         if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
-        working-directory: sink-connector/tests/integration/logs
+        working-directory: sink-connector-lightweight/tests/integration/logs
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -98,5 +118,84 @@ jobs:
           name: testflows-sink-connector-lightweight-artefacts
           path: |
             sink-connector-lightweight/tests/integration/logs/*.log
+            sink-connector-lightweight/tests/integration/env/auto/configs/*.yml
+          if-no-files-found: error
+          retention-days: 60
+  testflows-lightweight-replicated:
+    runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions/download-artifact@v3
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        with:
+          name: clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+
+      - name: Load Docker image
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          docker load  < clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+          docker image ls
+
+      - name: Runner ssh command
+        working-directory: sink-connector/tests/integration
+        run: echo "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$(hostname -I | cut -d ' ' -f 1)"
+
+      - name: Create a virtual environment
+        run: |
+          echo "Install Python modules..."
+          sudo apt-get clean
+          sudo apt-get update
+          sudo apt-get install -y python3.12-venv
+
+          echo "Create and activate Python virtual environment..."
+          python3 -m venv venv
+          source venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+
+      - name: Install all dependencies
+        working-directory: sink-connector-lightweight/tests/integration
+        run: pip3 install -r requirements.txt
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d_%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Add ~./local/bin to the PATH
+        if: always()
+        working-directory: sink-connector-lightweight/tests/integration
+        run: echo ~/.local/bin >> $GITHUB_PATH
+
+      - name: Run testflows tests
+        working-directory: sink-connector-lightweight/tests/integration
+        run: python3 -u regression.py --only "/mysql to clickhouse replication/auto replicated table creation/${{ inputs.extra_args != '' && inputs.extra_args || '*' }}" --clickhouse-binary-path="${{inputs.package}}" --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+
+      - name: Create tfs results report
+        if: always()
+        working-directory: sink-connector-lightweight/tests/integration/logs
+        run: cat raw.log | tfs report results | tfs document convert > report.html
+
+      - name: Create tfs coverage report
+        if: always()
+        working-directory: sink-connector-lightweight/tests/integration/logs
+        run: cat raw.log | tfs report coverage ../requirements/requirements.py | tfs document convert > coverage.html
+
+      - name: Upload artifacts to Altinity Test Reports S3 bucket
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        working-directory: sink-connector-lightweight/tests/integration/logs
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'eu-west-2'
+        run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_sink_lw/ --recursive --exclude "*" --include "*.log" --include "*.html"
+
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: testflows-sink-connector-lightweight-replicated-artefacts
+          path: |
+            sink-connector-lightweight/tests/integration/logs/*.log
+            sink-connector-lightweight/tests/integration/env/auto_replicated/configs/*.yml
           if-no-files-found: error
           retention-days: 60

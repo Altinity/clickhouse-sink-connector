@@ -46,7 +46,7 @@ public class ReplicatedRMTClickHouse22TIT {
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
 
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types_test.sql")
@@ -67,7 +67,7 @@ public class ReplicatedRMTClickHouse22TIT {
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
                 .withExposedPorts(8123)
                         .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
-        clickHouseContainer.withNetwork(network);
+        clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
 
@@ -76,7 +76,7 @@ public class ReplicatedRMTClickHouse22TIT {
     @CsvSource({
             "clickhouse/clickhouse-server:22.3"
     })
-    @DisplayName("Test that validates creation of Replicated Replacing Merge Tree")
+    @DisplayName("Test that validates creation of Replicated Replacing Merge Tree on ClickHouse 22.3 ")
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
@@ -92,7 +92,7 @@ public class ReplicatedRMTClickHouse22TIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -132,7 +132,6 @@ public class ReplicatedRMTClickHouse22TIT {
             Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
         }
         Assert.assertTrue(dataValidated);
-
         if(engine.get() != null) {
             engine.get().stop();
         }

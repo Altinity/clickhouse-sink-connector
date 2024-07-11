@@ -1,12 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorageIT;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
@@ -22,7 +20,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -40,7 +37,7 @@ public class OffsetManagementIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 //  .withInitScript("data_types.sql")
@@ -97,7 +94,7 @@ public class OffsetManagementIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())),false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"),false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

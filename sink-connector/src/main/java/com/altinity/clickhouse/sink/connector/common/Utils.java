@@ -16,18 +16,80 @@
 package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class Utils {
-    private static final Logger LOGGER = LoggerFactory.getLogger(Utils.class);
+    private static final Logger LOGGER = LogManager.getLogger(Utils.class);
 
     public static final String TASK_ID = "task_id";
     // Connector version, change every release
     public static final String VERSION = "1.0.0";
+
+    /**
+     * Function to parse the topic to table configuration parameter
+     *
+     * @param input Delimiter separated list.
+     * @return key/value pair of configuration.
+     */
+    public static Map<String, String> parseSourceToDestinationDatabaseMap(String input) throws Exception {
+        Map<String, String> srcToDestinationMap = new HashMap<>();
+        boolean isInvalid = false;
+
+        if(input == null || input.isEmpty()) {
+            return srcToDestinationMap;
+        }
+
+        for (String str : input.split(",")) {
+            String[] tt = str.split(":");
+
+            if (tt.length != 2 || tt[0].trim().isEmpty() || tt[1].trim().isEmpty()) {
+                LOGGER.error(
+                        Logging.logMessage(
+                                "Invalid {} config format: {}",
+                                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
+                                input));
+                return null;
+            }
+
+            String srcDatabase = tt[0].trim();
+            String dstDatabase = tt[1].trim();
+
+            if (!isValidDatabaseName(srcDatabase)) {
+                LOGGER.error(
+                        Logging.logMessage(
+                                "database name{} should have at least 2 "
+                                        + "characters, start with _a-zA-Z, and only contains "
+                                        + "_$a-zA-z0-9",
+                                srcDatabase));
+                isInvalid = true;
+            }
+
+            if (!isValidDatabaseName(dstDatabase)) {
+                LOGGER.error(
+                        Logging.logMessage(
+                                "database name{} should have at least 2 "
+                                        + "characters, start with _a-zA-Z, and only contains "
+                                        + "_$a-zA-z0-9",
+                                dstDatabase));
+                isInvalid = true;
+            }
+
+            if (srcToDestinationMap.containsKey(srcDatabase)) {
+                LOGGER.error(Logging.logMessage("source database name {} is duplicated", srcDatabase));
+                isInvalid = true;
+            }
+
+            srcToDestinationMap.put(tt[0].trim(), tt[1].trim());
+        }
+        if (isInvalid) {
+            throw new Exception("Invalid clickhouse table");
+        }
+        return srcToDestinationMap;
+    }
 
     /**
      * Function to parse the topic to table configuration parameter
@@ -107,5 +169,29 @@ public class Utils {
     public static boolean isValidTable(String tableName) {
         return true;
     }
+
+    public static boolean isValidDatabaseName(String dbName) {
+        // Check if the name is empty or longer than 63 characters
+        if (dbName == null || dbName.isEmpty() || dbName.length() > 63) {
+            return false;
+        }
+
+        // Check the first character: must be a letter or an underscore
+        char firstChar = dbName.charAt(0);
+        if (!(Character.isLetter(firstChar) || firstChar == '_')) {
+            return false;
+        }
+
+        // Check the remaining characters
+        for (int i = 1; i < dbName.length(); i++) {
+            char ch = dbName.charAt(i);
+            if (!(Character.isLetterOrDigit(ch) || ch == '_' || ch == '.')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 
 }

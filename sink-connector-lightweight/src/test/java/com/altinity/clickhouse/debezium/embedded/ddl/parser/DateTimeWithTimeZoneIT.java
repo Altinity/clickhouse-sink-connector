@@ -45,7 +45,7 @@ public class DateTimeWithTimeZoneIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("datetime.sql")
@@ -68,11 +68,10 @@ public class DateTimeWithTimeZoneIT {
 
                 Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 props.setProperty("database.include.list", "datatypes");
-                props.setProperty("clickhouse.server.database", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>())), false);
+                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -86,17 +85,9 @@ public class DateTimeWithTimeZoneIT {
         ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
+
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
-
-        writer.getConnection().close();
-        //Thread.sleep(10000);
-        ClickHouseConnection conn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-
-        writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
 
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");

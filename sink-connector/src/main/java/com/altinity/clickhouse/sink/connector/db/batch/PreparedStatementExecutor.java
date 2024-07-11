@@ -6,7 +6,6 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
@@ -22,8 +21,8 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -35,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 public class PreparedStatementExecutor {
+    private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
 
     private String replacingMergeTreeDeleteColumn;
     private boolean replacingMergeTreeWithIsDeletedColumn;
@@ -45,22 +45,20 @@ public class PreparedStatementExecutor {
 
     private ZoneId serverTimeZone;
 
+    private String databaseName;
+
     public PreparedStatementExecutor(String replacingMergeTreeDeleteColumn,
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
-                                     ClickHouseConnection conn, ZoneId serverTimeZone) {
+                                     String databaseName, ZoneId serverTimeZone) {
         this.replacingMergeTreeDeleteColumn = replacingMergeTreeDeleteColumn;
         this.replacingMergeTreeWithIsDeletedColumn = replacingMergeTreeWithIsDeletedColumn;
 
         this.signColumn = signColumn;
         this.versionColumn = versionColumn;
-
         this.serverTimeZone = serverTimeZone;
-      //  serverTimeZone = BaseDbWriter.
-        //serverTimeZone = new DBMetadata().getServerTimeZone(conn);
+        this.databaseName = databaseName;
     }
-
-    private static final Logger log = LoggerFactory.getLogger(PreparedStatementExecutor.class);
 
     /**
      * Function to iterate through records and add it to JDBC prepared statement
@@ -81,12 +79,14 @@ public class PreparedStatementExecutor {
         while(iter.hasNext()) {
             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
             String insertQuery = entry.getKey().getKey();
-            log.info("*** QUERY***" + insertQuery);
+            log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
 
-            if(false == executePreparedStatement(insertQuery, topicName, entry, bmd, config, conn, tableName, columnToDataTypeMap, engine)) {
-                log.error("**** ERROR: executing prepared statement");
+            if(false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+                    conn, tableName, columnToDataTypeMap, engine)) {
+                log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
+                        "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
                 result = false;
                 break;
             } else {
@@ -116,11 +116,15 @@ public class PreparedStatementExecutor {
         // Split the records into batches.
         Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
 
+            String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
             try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : batch) {
+                    if(record.getDatabase() != null)
+                        databaseName = record.getDatabase();
+
                     try {
                         bmd.update(record);
                     } catch (Exception e) {
@@ -134,17 +138,17 @@ public class PreparedStatementExecutor {
 
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                true, config, columnToDataTypeMap, engine);
+                                true, config, columnToDataTypeMap, engine, tableName);
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine);
+                                false, config, columnToDataTypeMap, engine, tableName);
                     } else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                    true, config, columnToDataTypeMap, engine);
+                                    true, config, columnToDataTypeMap, engine, tableName);
                         }
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine);
+                                false, config, columnToDataTypeMap, engine, tableName);
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -157,27 +161,32 @@ public class PreparedStatementExecutor {
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
-                        "task(" + taskId + ")" + " Thread ID: " + Thread.currentThread().getName() + " Result: " +
-                        batchResult.toString());
+                        "task(" + taskId + ")" + " Thread ID: " +
+                        Thread.currentThread().getName() + " Result: " +
+                        batchResult.toString() + " Database: "
+                        + databaseName + " Table: " + tableName);
                 result.set(true);
 
 
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
-                log.error("******* ERROR inserting Batch *****************", e);
+                log.error(String.format("******* ERROR inserting Batch Database(%s), Table(%s) *****************",
+                        databaseName, tableName), e);
                 failedRecords.addAll(batch);
                 throw new RuntimeException(e);
             }
             if (!truncatedRecords.isEmpty()) {
                 PreparedStatement ps = null;
                 try {
-                    ps = conn.prepareStatement("TRUNCATE TABLE " + tableName);
+                    ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
                 } catch (SQLException e) {
+                    log.error("*** Error: Truncate table statement error ****", e);
                     throw new RuntimeException(e);
                 }
                 try {
                     ps.execute();
                 } catch (SQLException e) {
+                    log.error("*** Error: Truncate table statement execute error ****", e);
                     throw new RuntimeException(e);
                 }
             }
@@ -196,7 +205,7 @@ public class PreparedStatementExecutor {
                                         ClickHouseStruct record, Struct struct, boolean beforeSection,
                                         ClickHouseSinkConnectorConfig config,
                                         Map<String, String> columnNameToDataTypeMap,
-                                        DBMetadata.TABLE_ENGINE engine) throws Exception {
+                                        DBMetadata.TABLE_ENGINE engine, String tableName) throws Exception {
 
 
         // int index = 1;
@@ -237,8 +246,15 @@ public class PreparedStatementExecutor {
                 // Struct .get throws a DataException
                 // if the field is not present.
                 // If the record was not supplied, we need to set it as null.
-                ps.setNull(index, Types.OTHER);
+                // Ignore version and sign columns.
+                if(colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
+                        colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
 
+                } else {
+                    log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
+                    log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
+                }
+                ps.setNull(index, Types.OTHER);
                 continue;
             }
 
@@ -310,12 +326,12 @@ public class PreparedStatementExecutor {
                     if(columnNameToIndexMap.containsKey(versionColumn)) {
                         if (record.getGtid() != -1) {
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid()));
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
                             } else {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                             }
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getTs_ms());
+                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
                         }
                     }
 

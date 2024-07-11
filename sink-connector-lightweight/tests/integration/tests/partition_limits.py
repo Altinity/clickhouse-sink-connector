@@ -1,6 +1,6 @@
-from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.mysql import *
+from integration.tests.steps.datatypes import *
+from integration.tests.steps.service_settings import *
 
 
 @TestOutline
@@ -22,16 +22,14 @@ def partition_limits(
     mysql = self.context.cluster.node("mysql-master")
 
     with Given(f"I create MySQL table {table_name}"):
-        create_mysql_to_clickhouse_replicated_table(
-            name=table_name,
-            mysql_columns=mysql_columns,
-            clickhouse_table_engine=clickhouse_table_engine,
-            clickhouse_columns=clickhouse_columns,
+        create_mysql_table(
+            table_name=table_name,
+            columns=mysql_columns,
             partition_by="id",
         )
 
     with When(
-        "I insert data in MySql table wtih more than 100 partitions per insert block"
+        "I insert data in MySQL table with more than 100 partitions per insert block"
     ):
         complex_insert(
             node=mysql,

@@ -3,14 +3,16 @@ package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
+import com.altinity.clickhouse.sink.connector.validators.DatabaseOverrideValidator;
 import com.altinity.clickhouse.sink.connector.validators.KafkaProviderValidator;
 import com.altinity.clickhouse.sink.connector.validators.TopicToTableValidator;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 
 import java.util.Map;
 
@@ -23,7 +25,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
 
     public static long BUFFER_COUNT_DEFAULT = 100;
 
-    private static final Logger log = LoggerFactory.getLogger(ClickHouseSinkConnectorConfig.class.getName());
+    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
 
     // Configuration groups
 
@@ -102,6 +104,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         0,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString())
+                // Define overrides map for ClickHouse Database
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
+                        Type.STRING,
+                        "",
+                        new DatabaseOverrideValidator(),
+                        Importance.LOW,
+                        "Map of source to destination database(override) (optional). Format : comma-separated tuples, e.g."
+                                + " <src_database-1>:<destination_database-1>,<src_database-2>:<destination_database-2>,... ",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
                         Type.LONG,
@@ -180,17 +195,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         2,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString())
-                .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString(),
-                        Type.STRING,
-                        null,
-                        new ConfigDef.NonEmptyString(),
-                        Importance.HIGH,
-                        "ClickHouse database name",
-                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
-                        3,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString(),
                         Type.INT,
