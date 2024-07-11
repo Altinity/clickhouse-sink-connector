@@ -55,6 +55,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [ClickHouse Table Engine Types](doc/clickhouse_engines.md)
 * [Troubleshooting](doc/Troubleshooting.md)
 * [Logging](doc/Logging.md)
+* [Production Setup](doc/production_setup.md)
 
 ### Operations
 
