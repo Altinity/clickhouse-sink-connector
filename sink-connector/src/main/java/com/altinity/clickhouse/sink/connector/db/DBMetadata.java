@@ -128,7 +128,7 @@ public class DBMetadata {
                 log.info("getTableEngineUsingShowTable ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngineUsingShowTable exception", e);
+            log.info("getTableEngineUsingShowTable exception", e);
         }
 
         return result;
