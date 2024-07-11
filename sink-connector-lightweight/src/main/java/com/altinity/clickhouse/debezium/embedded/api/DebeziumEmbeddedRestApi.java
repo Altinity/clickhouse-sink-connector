@@ -41,9 +41,7 @@ public class DebeziumEmbeddedRestApi {
         Properties finalProps1 = props;
         app.get("/status", ctx -> {
             ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
-
             ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
-
         });
 
         app.post("/binlog", ctx -> {
@@ -82,7 +80,6 @@ public class DebeziumEmbeddedRestApi {
 
             if(userProperties.size() > 0) {
                 log.info("User Overridden properties: " + userProperties);
-
             }
 
             debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,

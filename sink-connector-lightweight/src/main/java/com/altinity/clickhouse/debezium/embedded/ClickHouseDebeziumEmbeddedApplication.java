@@ -30,7 +30,6 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     private static DebeziumChangeEventCapture debeziumChangeEventCapture;
 
-
     private static Properties userProperties = new Properties();
 
     private static Injector injector;
@@ -41,21 +40,21 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     private static TimerTask monitoringTimerTask;
 
+    // store the configuration file
+    // so that it can be refreshed on restart.
+    private static String configurationFile;
     /**
      * Main Entry for the application
      * @param args arguments
      * @throws Exception Exception
      */
     public static void main(String[] args) throws Exception {
-        //BasicConfigurator.configure();
         System.setProperty("log4j.configurationFile", "resources/log4j2.xml");
 
-        //org.apache.log4j.Logger root = org.apache.logging.log4j.getRootLogger();
-       // root.addAppender(new ConsoleAppender(new PatternLayout("%r %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %p %c %x - %m%n")));
-
+        embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
         String loggingLevel = System.getenv("LOGGING_LEVEL");
         if(loggingLevel != null) {
-            // If the user passes a wrong level, it defaults to DEBUG
+            // If the user passes a wrong level, it defaults to DEBUGl
             LogManager.getRootLogger().atLevel(Level.toLevel(loggingLevel));
         } else {
             LogManager.getRootLogger().atLevel(Level.INFO);
@@ -67,21 +66,15 @@ public class ClickHouseDebeziumEmbeddedApplication {
             log.info(String.format("****** CONFIGURATION FILE: %s ********", args[0]));
 
             try {
-                Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
-
-                props.putAll(defaultProperties);
-                Properties fileProps = new ConfigLoader().loadFromFile(args[0]);
-                props.putAll(fileProps);
+                configurationFile = args[0];
+                embeddedApplication.loadPropertiesFile(configurationFile);
             } catch(Exception e) {
                 log.error("Error parsing configuration file, USAGE: java -jar <jar_file> <yaml_config_file>: \n" + e.toString());
                 System.exit(-1);
             }
         } else {
-
             props = injector.getInstance(ConfigurationService.class).parse();
         }
-
-        embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 
         setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
@@ -96,7 +89,20 @@ public class ClickHouseDebeziumEmbeddedApplication {
     }
 
     /**
-     * Force start replication from REST API.
+     * Function to load properties from user provided file path
+     * @param filePath user provided file path
+     * @throws Exception
+     */
+    private static void loadPropertiesFile(String filePath) throws Exception {
+        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+        props.putAll(defaultProperties);
+        Properties fileProps = new ConfigLoader().loadFromFile(filePath);
+        props.putAll(fileProps);
+
+    }
+
+    /**
+     * Force start replication from REST API.l
      * @param injector
      * @param props
      * @return
@@ -122,11 +128,13 @@ public class ClickHouseDebeziumEmbeddedApplication {
     public static void start(DebeziumRecordParserService recordParserService,
                              DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
 
-
+        if(forceStart == true) {
+            // Reload the configuration file.
+            log.info(String.format("******* Reloading configuration file (%s) from disk ******", configurationFile));
+            loadPropertiesFile(configurationFile);
+        }
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
-
-
     }
 
     public static void stop() throws IOException {
