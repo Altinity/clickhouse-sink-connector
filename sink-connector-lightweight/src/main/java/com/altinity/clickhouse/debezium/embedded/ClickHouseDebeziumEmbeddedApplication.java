@@ -94,6 +94,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * @throws Exception
      */
     private static void loadPropertiesFile(String filePath) throws Exception {
+        props.clear();
         Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
         props.putAll(defaultProperties);
         Properties fileProps = new ConfigLoader().loadFromFile(filePath);
