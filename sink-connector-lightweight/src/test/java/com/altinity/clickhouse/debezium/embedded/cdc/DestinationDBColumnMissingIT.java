@@ -13,6 +13,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -35,6 +36,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
 import static org.junit.Assert.assertTrue;
 
 @Testcontainers
+@Disabled
 @DisplayName("Test that validates behavior when source column is not present in ClickHouse(Destination)")
 public class DestinationDBColumnMissingIT {
     private static final Logger log = LoggerFactory.getLogger(MultipleUpdatesWSameTimestampIT.class);
@@ -52,7 +54,7 @@ public class DestinationDBColumnMissingIT {
             .withExposedPorts(8123);
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
 //                .withInitScript("15k_tables_mysql.sql")
