@@ -18,16 +18,16 @@ def generate_sample_mysql_value(data_type):
         return str(number)
     elif data_type.startswith("DOUBLE"):
         # Adjusting the range to avoid overflow, staying within a reasonable limit
-        return f"'{str(random.uniform(-1.7e307, 1.7e307))}'"
+        return rf"'{str(random.uniform(-1.7e307, 1.7e307))}'"
     elif data_type == "DATE NOT NULL":
-        return f'\'{(datetime.today() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d")}\''
+        return rf'\'{(datetime.today() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d")}\''
     elif data_type.startswith("DATETIME"):
-        return f'\'{(datetime.now() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d %H:%M:%S.%f")[:19]}\''
+        return rf'\'{(datetime.now() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d %H:%M:%S.%f")[:19]}\''
     elif data_type.startswith("TIME"):
         if "6" in data_type:
-            return f'\'{(datetime.now()).strftime("%H:%M:%S.%f")[: 8 + 3]}\''
+            return rf'\'{(datetime.now()).strftime("%H:%M:%S.%f")[: 8 + 3]}\''
         else:
-            return f'\'{(datetime.now()).strftime("%H:%M:%S")}\''
+            return rf'\'{(datetime.now()).strftime("%H:%M:%S")}\''
     elif "INT" in data_type:
         if "TINYINT" in data_type:
             return str(
@@ -54,7 +54,7 @@ def generate_sample_mysql_value(data_type):
                 else random.randint(-(2**63), 2**63 - 1)
             )
         else:  # INT
-            return f'\'{str(random.randint(0, 4294967295) if "UNSIGNED" in data_type else random.randint(-2147483648, 2147483647))}\''
+            return rf'\'{str(random.randint(0, 4294967295) if "UNSIGNED" in data_type else random.randint(-2147483648, 2147483647))}\''
     elif (
         data_type.startswith("CHAR")
         or data_type.startswith("VARCHAR")
@@ -317,7 +317,7 @@ def insert(self, table_name, values, node=None, database_name=None):
         node = self.context.cluster.node("mysql-master")
 
     with When("I insert data into MySQL table"):
-        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
+        node.query(rf"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
 
 
 @TestStep(Given)

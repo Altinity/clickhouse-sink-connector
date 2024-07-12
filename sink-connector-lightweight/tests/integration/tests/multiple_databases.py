@@ -121,7 +121,7 @@ def create_map_for_database_names(self, databases_map: dict = None, config_name=
     for key, value in databases_map.items():
         key = key.strip(r"\`")
         value = value.strip(r"\`")
-        new_database_map.append(f"{key}:{value}")
+        new_database_map.append(rf"{key}:{value}")
 
     configuration_value = ", ".join(new_database_map)
 
