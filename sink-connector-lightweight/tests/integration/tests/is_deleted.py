@@ -18,7 +18,7 @@ def create_table_with_is_deleted(
     if not backticks:
         columns = "col1 varchar(255), col2 int, "
     else:
-        columns = r"\`col1\` varchar(255), \`col2\` int, "
+        columns = "\`col1\` varchar(255), \`col2\` int, "
 
     with By(
         f"creating a {table_name} table with is_deleted column and {datatype} datatype"
@@ -196,7 +196,7 @@ def column_with_is_deleted_backticks(self):
     table_name = "tb_" + getuid()
 
     with Given(f"I create the {table_name} table and populate it with data"):
-        create_table_with_is_deleted(table_name=table_name, column=r"\`is_deleted\`")
+        create_table_with_is_deleted(table_name=table_name, column="\`is_deleted\`")
 
     with Then("I check that the data was inserted correctly into the ClickHouse table"):
         for retry in retries(timeout=40, delay=1):
