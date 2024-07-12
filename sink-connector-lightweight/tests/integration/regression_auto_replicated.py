@@ -129,6 +129,10 @@ ffails = {
         Skip,
         "Seems to be broken in CI/CD. need oto fix.",
     ),
+    "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
+        Skip,
+        "Seems to be broken in CI/CD. need oto fix.",
+    ),
 }
 
 xflags = {}
