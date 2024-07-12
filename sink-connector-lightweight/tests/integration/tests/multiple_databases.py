@@ -905,10 +905,9 @@ def module(
         elif engine == "ReplicatedReplacingMergeTree":
             replicate_all_databases_rrmt()
 
-    Scenario(run=source_destination_overrides)
-
     with Pool(parallel_cases) as executor:
         Feature(run=inserts, parallel=True, executor=executor)
         Feature(run=alters, parallel=True, executor=executor)
         Feature(run=concurrent_actions, parallel=True, executor=executor)
+        Feature(run=source_destination_overrides, parallel=False, executor=executor)
         join()

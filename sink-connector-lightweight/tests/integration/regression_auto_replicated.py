@@ -127,11 +127,11 @@ ffails = {
     ),
     "/mysql to clickhouse replication/auto replicated table creation/schema only/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
     ),
     "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
     ),
 }
 
