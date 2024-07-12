@@ -307,37 +307,49 @@ public class DebeziumChangeEventCapture {
                         "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
 
-            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                    JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
-            if(tableName.contains(".")) {
-                String[] dbTableNameArray = tableName.split("\\.");
-                if(dbTableNameArray.length >= 2) {
-                    String dbName = dbTableNameArray[0].replace("\"", "");
-                    String createDbQuery = String.format("create database if not exists %s", dbName);
-                    log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-                    writer.executeQuery(createDbQuery);
+            Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+            String databaseName = tableNameDatabaseName.getRight();
 
+            String createDbQuery = String.format("create database if not exists %s", databaseName);
+            log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
+            writer.executeQuery(createDbQuery);
 
-                    // Also create view.
-                    String view = " CREATE VIEW IF NOT EXISTS %s.show_replica_status\n" +
-                            "                                        AS\n" +
-                            "                                         SELECT\n" +
-                            "                                             now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,\n" +
-                            "                                             toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time,\n" +
-                            "                                             fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time,\n" +
-                            "                                             *\n" +
-                            "                                         FROM %s\n" +
-                            "                                         FINAL";
-                    String formattedView = String.format(view, dbName, tableName);
-                    try {
-                        writer.executeQuery(formattedView);
-                    } catch(Exception e) {
-                        log.error("**** Error creating VIEW **** " + formattedView);
-                    }
-                }
-            }
         } catch(Exception e) {
             log.error("Error creating Debezium storage database", e);
+        }
+    }
+
+    /**
+     * Function to create view for show_replica_status
+     * @param config
+     * @param props
+     */
+    private void createViewForShowReplicaStatus(ClickHouseSinkConnectorConfig config, Properties props) {
+        String view = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString());
+        if(view == null || view.isEmpty() == true) {
+            log.warn("Skipping creating view for replica_status as the query was not provided in configuration");
+            return;
+        }
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system");
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system", dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config, conn);
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+
+        String tableName = tableNameDatabaseName.getLeft();
+        String dbName = tableNameDatabaseName.getRight();
+
+        String formattedView = String.format(view, dbName, dbName + "." + tableName);
+        // Remove quotes.
+        formattedView = formattedView.replace("\"", "");
+        try {
+            writer.executeQuery(formattedView);
+        } catch(Exception e) {
+            log.error("**** Error creating VIEW **** " + formattedView);
         }
     }
 
@@ -623,6 +635,8 @@ public class DebeziumChangeEventCapture {
                                 public void connectorStarted() {
                                     isReplicationRunning = true;
                                     log.debug("Connector started");
+                                    // Create view.
+                                    createViewForShowReplicaStatus(config, props);
                                 }
 
                                 @Override
