@@ -641,10 +641,10 @@ def different_database_names(self):
 def different_database_names_with_source_backticks(self):
     """Check that the tables are replicated when we have source and destination databases with different names and source database name contains backticks."""
     database_map = {
-        "\`mysql1\`": "ch1",
-        "\`mysql2\`": "ch2",
-        "\`mysql3\`": "ch3",
-        "\`mysql4\`": "ch4",
+        r"\`mysql1\`": "ch1",
+        r"\`mysql2\`": "ch2",
+        r"\`mysql3\`": "ch3",
+        r"\`mysql4\`": "ch4",
     }
     check_different_database_names(database_map=database_map)
 
@@ -653,10 +653,10 @@ def different_database_names_with_source_backticks(self):
 def different_database_names_with_destination_backticks(self):
     """Check that the tables are replicated when we have source and destination databases with different names and destination database name contains backticks."""
     database_map = {
-        "mysql1": "\`ch1\`",
-        "mysql2": "\`ch2\`",
-        "mysql3": "\`ch3\`",
-        "mysql4": "\`ch4\`",
+        "mysql1": r"\`ch1\`",
+        "mysql2": r"\`ch2\`",
+        "mysql3": r"\`ch3\`",
+        "mysql4": r"\`ch4\`",
     }
     check_different_database_names(database_map=database_map)
 
@@ -665,10 +665,10 @@ def different_database_names_with_destination_backticks(self):
 def different_database_names_with_backticks(self):
     """Check that the tables are replicated when we have source and destination databases with the same names and they contain backticks."""
     database_map = {
-        "\`mysql1\`": "\`ch1\`",
-        "\`mysql2\`": "\`ch2\`",
-        "\`mysql3\`": "\`ch3\`",
-        "\`mysql4\`": "\`ch4\`",
+        r"\`mysql1\`": r"\`ch1\`",
+        r"\`mysql2\`": r"\`ch2\`",
+        r"\`mysql3\`": r"\`ch3\`",
+        r"\`mysql4\`": r"\`ch4\`",
     }
     check_different_database_names(database_map=database_map)
 
