@@ -1,6 +1,31 @@
 ## Time Zone
+Ideally the timezone of the source database(MySQL/PostgreSQL) should be the same as the timezone of ClickHouse.(Preferably UTC)
+If for some reason they are different, the following instructions can be used to set the timezone of the source database and ClickHouse.
 
-### MySQL
+### Configuring the timezone for MySQL
+The timezone of the source database(MySQL) can be set using the `database.connectionTimezone` configuration in the config.yml file.
+
+## Overriding the ClickHouse server timezone
+The timezone of ClickHouse can be set using the `clickhouse.datetime.timezone` configuration in the config.yml file.
+
+## Debezium handling of time fields.
+Its important to read this section to understand how the DATETIME/TIMESTAMP fields are handled by Debezium.
+https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-temporal-types
+
+```
+The DATETIME type represents a local date and time such as "2018-01-13 09:48:27". As you can see, there is no time zone information. Such columns are converted into epoch milliseconds or microseconds based on the column’s precision by using UTC. The TIMESTAMP type represents a timestamp without time zone information. It is converted by MySQL from the server (or session’s) current time zone into UTC when writing and from UTC into the server (or session’s) current time zone when reading back the value. For example:
+
+DATETIME with a value of 2018-06-20 06:37:03 becomes 1529476623000.
+
+TIMESTAMP with a value of 2018-06-20 06:37:03 becomes 2018-06-20T13:37:03Z.
+
+Such columns are converted into an equivalent io.debezium.time.ZonedTimestamp in UTC based on the server (or session’s) current time zone. The time zone will be queried from the server by default. If this fails, it must be specified explicitly by the database connectionTimeZone MySQL configuration option. For example, if the database’s time zone (either globally or configured for the connector by means of the connectionTimeZone option) is "America/Los_Angeles", the TIMESTAMP value "2018-06-20 06:37:03" is represented by a ZonedTimestamp with the value "2018-06-20T13:37:03Z".
+
+```
+
+
+### Example of setting the timezone for MySQL and ClickHouse for DATETIME fields.
+
 1. The environment variable `TZ=US/Central` in docker-compose under mysql can be used to set the timezone for MySQL.
 
 2. To make sure the timezone is properly set in MySQL, run the following SQL  on MySQL Server.

@@ -3,7 +3,7 @@ version: "3.4"
 services:
   clickhouse-sink-connector-lt:
     image: ${CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE}
-    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
+    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
     restart: "no"
     ports:
       - "8083:8083"
@@ -12,4 +12,5 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      - ./log4j2.xml:/log4j2.xml
       - ./config.yml:/config.yml

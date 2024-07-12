@@ -1289,6 +1289,36 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     }
 
     @Override
+    public void enterPartitionSystemVersion(MySqlParser.PartitionSystemVersionContext partitionSystemVersionContext) {
+
+    }
+
+    @Override
+    public void exitPartitionSystemVersion(MySqlParser.PartitionSystemVersionContext partitionSystemVersionContext) {
+
+    }
+
+    @Override
+    public void enterPartitionSystemVersionDefinitions(MySqlParser.PartitionSystemVersionDefinitionsContext partitionSystemVersionDefinitionsContext) {
+
+    }
+
+    @Override
+    public void exitPartitionSystemVersionDefinitions(MySqlParser.PartitionSystemVersionDefinitionsContext partitionSystemVersionDefinitionsContext) {
+
+    }
+
+    @Override
+    public void enterPartitionSystemVersionDefinition(MySqlParser.PartitionSystemVersionDefinitionContext partitionSystemVersionDefinitionContext) {
+
+    }
+
+    @Override
+    public void exitPartitionSystemVersionDefinition(MySqlParser.PartitionSystemVersionDefinitionContext partitionSystemVersionDefinitionContext) {
+
+    }
+
+    @Override
     public void enterSubPartitionFunctionHash(MySqlParser.SubPartitionFunctionHashContext subPartitionFunctionHashContext) {
 
     }
