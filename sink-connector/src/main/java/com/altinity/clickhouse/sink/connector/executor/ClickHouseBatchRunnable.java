@@ -149,10 +149,16 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 if(currentBatch == null) {
                     currentBatch = records.poll();
+                    if(currentBatch == null) {
+                        // No records in the queue.
+                        continue;
+                    }
                 } else {
                     log.debug("***** RETRYING the same batch again");
-
                 }
+
+
+
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
                 DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);

@@ -191,6 +191,18 @@
             <artifactId>log4j-api</artifactId>
             <version>2.17.1</version>
         </dependency>
+       <!-- <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>3.0.0-beta2</version>
+        </dependency> -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j2-impl</artifactId>
+            <version>2.23.1</version>
+            <!-- <scope>test</scope>-->
+        </dependency>
+
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
@@ -394,6 +406,13 @@
             <artifactId>log4j-api</artifactId>
             <version>2.23.1</version>
             <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-jul</artifactId>
+            <version>2.23.1</version>
+            <!-- <scope>runtime</scope> -->
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
