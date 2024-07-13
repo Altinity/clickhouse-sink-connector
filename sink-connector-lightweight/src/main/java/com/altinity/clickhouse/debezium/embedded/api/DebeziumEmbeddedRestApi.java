@@ -96,7 +96,6 @@ public class DebeziumEmbeddedRestApi {
 
             if(userProperties.size() > 0) {
                 log.info("User Overridden properties: " + userProperties);
-
             }
 
             debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
@@ -122,6 +121,15 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication...., this might take 60 seconds....");
         });
 
+        app.get("/restart", ctx -> {
+            log.info("Restarting sink connector");
+            ClickHouseDebeziumEmbeddedApplication.stop();
+
+            finalProps.putAll(userProperties);
+            CompletableFuture<String> cf = ClickHouseDebeziumEmbeddedApplication.startDebeziumEventLoop(injector, finalProps);
+            ctx.result("Started Replication....");
+
+        });
     }
     // Stop the javalin server
     public static void stop() {
