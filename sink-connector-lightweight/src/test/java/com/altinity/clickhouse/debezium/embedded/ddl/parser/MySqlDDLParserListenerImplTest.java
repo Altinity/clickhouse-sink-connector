@@ -294,6 +294,20 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testAlterDatabaseAddEntity() {
+
+        String clickhouseExpectedQuery = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterDBAddColumn = "alter table db1.table1 add column entity Nullable(String)";
+        mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY" + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
+    @Test
     public void testAlterDatabaseAddColumnNullable() {
 
         String addColumnNullable = "ALTER TABLE employees add column ssn_number varchar(100)";
