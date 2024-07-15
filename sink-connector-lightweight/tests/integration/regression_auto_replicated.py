@@ -133,7 +133,7 @@ ffails = {
         Skip,
         "Seems to be broken in CI/CD. need to fix.",
     ),
-    "/mysql to clickhouse replication/auto table creation/parallel alters/multiple parallel add modify drop column": (
+    "/mysql to clickhouse replication/auto replicated table creation/parallel alters/multiple parallel add modify drop column": (
         Skip,
         "Test requires fixing.",
     ),
