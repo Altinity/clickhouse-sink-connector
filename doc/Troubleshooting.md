@@ -51,3 +51,7 @@ There are two solutions to get past this error.
 
 ###  A slave with the same server_uuid/server_id as this slave has connected to the master;
 https://stackoverflow.com/questions/63523998/multiple-debezium-connector-for-one-mysql-db , As mentioned here the `database.server.id` configuration variable has to be unique if there are multiple connectors connecting to the same database.
+
+
+###  PostgreSQL - ERROR - Error starting connectorio.debezium.DebeziumException: Creation of replication slot failed; when setting up multiple connectors for the same database host, please make sure to use a distinct replication slot name for each.  
+Make sure to add `slot.name` to the configuration(config.yml) and change it to a unique name.
