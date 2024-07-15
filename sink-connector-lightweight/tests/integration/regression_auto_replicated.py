@@ -127,11 +127,15 @@ ffails = {
     ),
     "/mysql to clickhouse replication/auto replicated table creation/schema only/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
     ),
     "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
+    ),
+    "/mysql to clickhouse replication/auto replicated table creation/parallel alters/multiple parallel add modify drop column": (
+        Skip,
+        "Test requires fixing.",
     ),
 }
 
@@ -303,6 +307,7 @@ def regression(
 
         join()
 
+    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )

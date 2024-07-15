@@ -190,6 +190,8 @@
 * 28 [Column Names](#column-names)
     * 28.1 [Replicate Tables With Special Column Names](#replicate-tables-with-special-column-names)
         * 28.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Special](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesspecial)
+    * 28.2 [Replicate Tables With Backticks in Column Names](#replicate-tables-with-backticks-in-column-names)
+        * 28.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks](#rqsrs-030clickhousemysqltoclickhousereplicationcolumnnamesbackticks)
 * 29 [Replication Interruption](#replication-interruption)
     * 29.1 [Retry Replication When ClickHouse Instance Is Not Active](#retry-replication-when-clickhouse-instance-is-not-active)
         * 29.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Interruption.ClickHouse.Instance.Stopped](#rqsrs-030clickhousemysqltoclickhousereplicationinterruptionclickhouseinstancestopped)
@@ -273,17 +275,21 @@
             * 34.4.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.IncludeList](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesincludelist)
         * 34.4.2 [Replicate All Databases](#replicate-all-databases)
             * 34.4.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.ReplicateAll](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesreplicateall)
-    * 34.5 [Table Operations](#table-operations)
-        * 34.5.1 [Specify Database Name in Table Operations](#specify-database-name-in-table-operations)
-            * 34.5.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
-        * 34.5.2 [Table Operations Without Specifying Database Name](#table-operations-without-specifying-database-name)
-            * 34.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsnospecifydatabasename)
-    * 34.6 [Error Handling](#error-handling)
-        * 34.6.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
-            * 34.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
-    * 34.7 [Concurrent Actions](#concurrent-actions)
-        * 34.7.1 [Perform Table Operations on Each Database Concurrently](#perform-table-operations-on-each-database-concurrently)
-            * 34.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconcurrentactions)
+    * 34.5 [Overriding Source To Destination Database Name Mapping](#overriding-source-to-destination-database-name-mapping)
+        * 34.5.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemap)
+        * 34.5.2 [Multiple Database Names](#multiple-database-names)
+            * 34.5.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconfigvaluesoverridemapmultiplevalues)
+    * 34.6 [Table Operations](#table-operations)
+        * 34.6.1 [Specify Database Name in Table Operations](#specify-database-name-in-table-operations)
+            * 34.6.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.SpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsspecifydatabasename)
+        * 34.6.2 [Table Operations Without Specifying Database Name](#table-operations-without-specifying-database-name)
+            * 34.6.2.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.TableOperations.NoSpecifyDatabaseName](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasestableoperationsnospecifydatabasename)
+    * 34.7 [Error Handling](#error-handling)
+        * 34.7.1 [When Replicated Database Does Not Exist on the Destination](#when-replicated-database-does-not-exist-on-the-destination)
+            * 34.7.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ErrorHandling.DatabaseNotExist](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabaseserrorhandlingdatabasenotexist)
+    * 34.8 [Concurrent Actions](#concurrent-actions)
+        * 34.8.1 [Perform Table Operations on Each Database Concurrently](#perform-table-operations-on-each-database-concurrently)
+            * 34.8.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConcurrentActions](#rqsrs-030clickhousemysqltoclickhousereplicationmultipledatabasesconcurrentactions)
 
 ## Introduction
 
@@ -1458,6 +1464,21 @@ CREATE TABLE new_table(col1 VARCHAR(255), col2 INT, is_deleted INT)
 
 The `ReplacingMergeTree` table created on ClickHouse side SHALL be updated and the `is_deleted` column should be renamed to  `_is_deleted` so there are no column name conflicts between ClickHouse and source table.
 
+### Replicate Tables With Backticks in Column Names
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.ColumnNames.Backticks
+version: 1.0
+
+[Altinity Sink Connector] SHALL support replication from the source tables that have backticks in column names.
+
+For example,
+
+If we create a source table that contains the column with the `is_deleted` name,
+
+```sql
+CREATE TABLE new_table(col1 VARCHAR(255), `col2` INT, `is_deleted` INT)
+```
+
 ## Replication Interruption
 
 ### Retry Replication When ClickHouse Instance Is Not Active
@@ -1796,10 +1817,12 @@ Multiple Databases:
       actions:
           - Perform table operations on each database sequentially
           - Perform table operations on all databases simultaneously
+          - Create database on source and map it to the database with different name on destination
           - Remove database
       configValues: 
-        - database.include.list: database1, database2, ... , databaseN
         - Don't specify database.include.list
+        - database.include.list: database1, database2, ... , databaseN
+        - clickhouse.database.override.map: "test:test2, products:products2"
       TableOperations:
         - types:
             - With database name
@@ -1936,6 +1959,53 @@ This configuration value SHALL ensure that only the databases specified in the l
 version: 1.0
 
 [Altinity Sink Connector] SHALL support the ability to monitor all databases from the source and replicate them to the destination without specifying the `database.include.list` configuration value.
+
+### Overriding Source To Destination Database Name Mapping
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to allow the user to replicate the data from the source database to the destination database with a different name.
+
+For example, when using the following value in configuration,
+
+```yaml
+clickhouse.database.override.map: "mysql1:ch1"
+```
+
+The source database `mysql1` SHALL be mapped to the destination database `ch1`, and the data from the source `mysql1` SHALL only be replicated to the destination database `ch1`.
+
+```mermaid
+flowchart TD
+    B[Read clickhouse.database.override.map] --> D[Identify Source Database mysql1]
+    D --> E[Map to Destination Database ch1]
+    E --> F[Replicate Data to ch1]
+```
+
+#### Multiple Database Names
+
+##### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.MultipleDatabases.ConfigValues.OverrideMap.MultipleValues
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the usage of the `clickhouse.database.override.map` configuration value to map multiple source databases to different databases on the destination.
+
+For example, when using the following value in configuration,
+
+```yaml
+clickhouse.database.override.map: "mysql1:ch1, mysql2:ch2"
+```
+
+The source databases `mysql1` and `mysql2` SHALL be mapped to the destination databases `ch1` and `ch2`, and the data from these source databases SHALL only be replicated to the destination databases `ch1` and `ch2`.
+
+```mermaid
+flowchart TD
+    B[Read clickhouse.database.override.map]
+    B --> C[Parse Override Map]
+    C --> E[Map mysql1 to ch1]
+    C --> F[Map mysql2 to ch2]
+    E --> G[Replicate Data from mysql1 to ch1]
+    F --> H[Replicate Data from mysql2 to ch2]
+```
 
 ### Table Operations
 

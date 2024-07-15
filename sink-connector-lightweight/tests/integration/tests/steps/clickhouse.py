@@ -11,7 +11,7 @@ def drop_database(self, database_name=None, node=None):
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
         node.query(
-            f"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
+            rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER replicated_cluster;"
         )
 
 
@@ -66,7 +66,7 @@ def create_clickhouse_database(self, name=None, node=None):
             drop_database(database_name=name)
 
             node.query(
-                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
+                rf"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
             )
         yield
     finally:
@@ -158,7 +158,13 @@ def check_if_table_was_created(
 
 @TestStep(Then)
 def validate_data_in_clickhouse_table(
-    self, table_name, expected_output, statement="*", node=None, database_name=None
+    self,
+    table_name,
+    expected_output,
+    statement="*",
+    node=None,
+    database_name=None,
+    timeout=40,
 ):
     """Validate data in ClickHouse table."""
 
@@ -170,22 +176,34 @@ def validate_data_in_clickhouse_table(
 
     if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
         for node in self.context.cluster.nodes["clickhouse"]:
-            for retry in retries(timeout=40):
+            for retry in retries(timeout=timeout, delay=1):
                 with retry:
-                    data = self.context.cluster.node(node).query(
-                        f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                    data = (
+                        self.context.cluster.node(node)
+                        .query(
+                            f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                        )
+                        .output.strip()
+                        .replace('"', "")
                     )
 
                     assert (
-                        data.output.strip().replace('"', "") == expected_output
-                    ), error()
+                        data == expected_output
+                    ), f"Expected: {expected_output}, Actual: {data}"
     elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
-        for retry in retries(timeout=40):
+        for retry in retries(timeout=timeout, delay=1):
             with retry:
-                data = node.query(
-                    f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                data = (
+                    node.query(
+                        f"SELECT {statement} FROM {database_name}.{table_name} ORDER BY tuple(*) FORMAT CSV"
+                    )
+                    .output.strip()
+                    .replace('"', "")
                 )
-                assert data.output.strip().replace('"', "") == expected_output, error()
+
+                assert (
+                    data == expected_output
+                ), f"Expected: {expected_output}, Actual: {data}"
 
     else:
         raise Exception("Unknown ClickHouse table engine")
