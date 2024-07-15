@@ -35,11 +35,12 @@ const (
 	UPDATE_LSN_COMMAND        = "lsn"
 )
 const (
-	START_REPLICATION = "start"
-	STOP_REPLICATION  = "stop"
-	STATUS            = "status"
-	UPDATE_BINLOG     = "binlog"
-	UPDATE_LSN        = "lsn"
+	START_REPLICATION   = "start"
+	STOP_REPLICATION    = "stop"
+	RESTART_REPLICATION = "restart"
+	STATUS              = "status"
+	UPDATE_BINLOG       = "binlog"
+	UPDATE_LSN          = "lsn"
 )
 
 // Fetches the repos for the given Github users
@@ -77,6 +78,7 @@ func getServerUrl(action string, c *cli.Context) string {
 
 func main() {
 	app := cli.NewApp()
+	app.EnableBashCompletion = true
 	app.Name = "Sink Connector Lightweight CLI"
 	app.Usage = "CLI for Sink Connector Lightweight, operations to get status, start/stop replication and set binlog/gtid position"
 	app.Flags = []cli.Flag{
@@ -119,6 +121,19 @@ func main() {
 				resp := getHTTPCall(serverUrl)
 				log.Println(resp.String())
 				log.Println("***** Replication stopped successfully *****")
+				return nil
+			},
+		},
+		// Restart
+		{
+			Name:  RESTART_REPLICATION,
+			Usage: "Restart the replication, this was also reload the configuration file from disk",
+			Action: func(c *cli.Context) error {
+				log.Println("***** Restarting replication..... *****")
+				var serverUrl = getServerUrl(RESTART_REPLICATION, c)
+				resp := getHTTPCall(serverUrl)
+				log.Println(resp.String())
+				log.Println("***** Replication restarted successfully and configuration file reloaded from disk *****")
 				return nil
 			},
 		},

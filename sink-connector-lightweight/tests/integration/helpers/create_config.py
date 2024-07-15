@@ -26,7 +26,8 @@ class SinkConfig:
 
     def remove(self, key):
         """Remove the ClickHouse Sink Connector configuration key."""
-        self.data.pop(key)
+        if key in self.data:
+            self.data.pop(key)
 
     def display_config(self):
         """Print out the ClickHouse Sink Connector configuration."""

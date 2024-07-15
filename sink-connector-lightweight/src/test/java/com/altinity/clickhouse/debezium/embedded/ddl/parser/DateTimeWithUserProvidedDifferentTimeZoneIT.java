@@ -47,7 +47,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:latest")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("datetime.sql")
@@ -290,7 +290,6 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
         defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
         defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-        defaultProps.setProperty("clickhouse.server.database", "employees");
 
         defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));

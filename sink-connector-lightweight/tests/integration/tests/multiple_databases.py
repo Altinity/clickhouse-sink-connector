@@ -15,6 +15,7 @@ from integration.tests.steps.alter import (
     modify_column,
     drop_column,
     add_primary_key,
+    drop_primary_key,
 )
 
 
@@ -26,18 +27,33 @@ def get_n_random_items(lst, n):
         return random.sample(lst, n)
 
 
+@TestOutline
+def remove_configuration_and_restart_sink(
+    self, configuration, configuration_name="multiple_databases.yml"
+):
+    """Remove the ClickHouse Sink Connector configuration and restart the sink connector."""
+    with By(
+        f"creating a ClickHouse Sink Connector configuration without {configuration} values specified"
+    ):
+        remove_sink_configuration(
+            key=configuration,
+            config_file=os.path.join(self.context.config_file, configuration_name),
+        )
+
+
 @TestStep(Given)
 def replicate_all_databases(self):
     """Set ClickHouse Sink Connector configuration to replicate all databases."""
-    with By(
-        "creating a ClickHouse Sink Connector configuration without database.include.list values specified"
-    ):
-        remove_sink_configuration(
-            key="database.include.list",
-            config_file=os.path.join(
-                self.context.config_file, "multiple_databases.yml"
-            ),
-        )
+
+    remove_configuration_and_restart_sink(configuration="database.include.list")
+
+
+@TestStep(Given)
+def remove_database_map(self):
+    """Remove the database map from the ClickHouse Sink Connector configuration."""
+    remove_configuration_and_restart_sink(
+        configuration="clickhouse.database.override.map"
+    )
 
 
 @TestStep(Given)
@@ -92,6 +108,101 @@ def set_list_of_databases_to_replicate(self, databases=None, config_name=None):
             replicate_all_databases()
 
 
+@TestStep(Given)
+def create_map_for_database_names(self, databases_map: dict = None, config_name=None):
+    """Create a map for the database names.
+    Example:
+        clickhouse.database.override.map: "employees:employees2, products:productsnew
+    """
+    config_file = self.context.config_file
+
+    new_database_map = []
+
+    for key, value in databases_map.items():
+        key = key.strip(r"\`")
+        value = value.strip(r"\`")
+        new_database_map.append(rf"{key}:{value}")
+
+    configuration_value = ", ".join(new_database_map)
+
+    if config_name is None:
+        config_name = os.path.join(config_file, "override_multiple_database_names.yml")
+    else:
+        config_name = os.path.join(config_file, config_name)
+    try:
+        with By(
+            "setting the list of databases to replicate in the ClickHouse Sink Connector configuration",
+            description=f"MySQL to ClickHouse database map: {configuration_value}",
+        ):
+            change_sink_configuration(
+                values={"clickhouse.database.override.map": f"{configuration_value}"},
+                config_file=config_name,
+            )
+        yield
+    finally:
+        with Finally(
+            "removing the list of databases from the ClickHouse Sink Connector configuration"
+        ):
+            remove_database_map()
+
+
+@TestOutline
+def create_table_mapped(
+    self,
+    source_database=None,
+    destination_database=None,
+    exists=None,
+    validate_values=True,
+):
+    """Create a sample table in MySQL and validate that it was replicated in ClickHouse."""
+
+    table_name = f"table_{getuid()}"
+
+    if exists is None:
+        exists = "1"
+
+    if source_database is None:
+        source_database = "test"
+
+    if destination_database is None:
+        destination_database = "test"
+
+    table_values = create_sample_values()
+
+    with By("creating a sample table in MySQL"):
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"col1 varchar(255), col2 int",
+            database_name=source_database,
+        )
+
+    with And("inserting data into the table"):
+        insert(
+            table_name=table_name, database_name=source_database, values=table_values
+        )
+
+    if not validate_values:
+        table_values = ""
+
+    with And("validating that the table was replicated in ClickHouse"):
+        for retry in retries(timeout=40):
+            with retry:
+                check_if_table_was_created(
+                    table_name=table_name,
+                    database_name=destination_database,
+                    message=exists,
+                )
+        if validate_values:
+            for retry in retries(timeout=10, delay=1):
+                with retry:
+                    validate_data_in_clickhouse_table(
+                        table_name=table_name,
+                        expected_output=table_values.replace("'", ""),
+                        database_name=destination_database,
+                        statement="id, col1, col2",
+                    )
+
+
 def create_sample_values():
     """Create sample values to insert into the table."""
     return f'{generate_sample_mysql_value("INT")},{generate_sample_mysql_value("VARCHAR")},{generate_sample_mysql_value("INT")}'
@@ -113,7 +224,7 @@ def create_table_and_insert_values(
 
     with By("creating a sample table in MySQL"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"col1 varchar(255), col2 int",
             database_name=database_name,
         )
@@ -155,7 +266,23 @@ def create_source_and_destination_databases(self, database_name=None):
 
 
 @TestStep(Given)
-def create_databases(self, databases=None):
+def create_diff_name_dbs(self, databases):
+    """Create MySQL and ClickHouse databases with different names."""
+
+    with Pool(2) as pool:
+        for source, destination in databases.items():
+            Step(test=create_mysql_database, parallel=True, executor=pool)(
+                database_name=source
+            )
+            Step(test=create_clickhouse_database, parallel=True, executor=pool)(
+                name=destination
+            )
+
+        join()
+
+
+@TestStep(Given)
+def create_databases(self, databases: list = None):
     """Create MySQL and ClickHouse databases from a list of database names."""
     if databases is None:
         databases = []
@@ -478,10 +605,84 @@ def add_primary_key_on_a_database(self, database):
         create_table_and_insert_values(table_name=table_name, database_name=database)
 
     with When("I add a primary key on the table"):
+        drop_primary_key(table_name=table_name, database=database)
         add_primary_key(table_name=table_name, database=database, column_name=column)
 
     with Then("I check that the primary key was added to the table"):
         check_column(table_name=table_name, database=database, column_name=column)
+
+
+@TestOutline
+def check_different_database_names(self, database_map):
+    """Check that the tables are replicated when we have source and destination databases with different names."""
+
+    with Given("I create the source and destination databases from a list"):
+        create_diff_name_dbs(databases=database_map)
+
+    with When("I set the new map between source and destination database names"):
+        create_map_for_database_names(databases_map=database_map)
+
+    with Then("I create table on each database and validate data"):
+        for source_database, destination_database in database_map.items():
+            create_table_mapped(
+                source_database=source_database,
+                destination_database=destination_database,
+            )
+
+
+@TestScenario
+def different_database_names(self):
+    """Check that the tables are replicated when we have source and destination databases with different names."""
+    database_map = {"mysql1": "ch1", "mysql2": "ch2", "mysql3": "ch3", "mysql4": "ch4"}
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_source_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with different names and source database name contains backticks."""
+    database_map = {
+        "\`mysql1\`": "ch1",
+        "\`mysql2\`": "ch2",
+        "\`mysql3\`": "ch3",
+        "\`mysql4\`": "ch4",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_destination_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with different names and destination database name contains backticks."""
+    database_map = {
+        "mysql1": "\`ch1\`",
+        "mysql2": "\`ch2\`",
+        "mysql3": "\`ch3\`",
+        "mysql4": "\`ch4\`",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def different_database_names_with_backticks(self):
+    """Check that the tables are replicated when we have source and destination databases with the same names and they contain backticks."""
+    database_map = {
+        "\`mysql1\`": "\`ch1\`",
+        "\`mysql2\`": "\`ch2\`",
+        "\`mysql3\`": "\`ch3\`",
+        "\`mysql4\`": "\`ch4\`",
+    }
+    check_different_database_names(database_map=database_map)
+
+
+@TestScenario
+def same_database_names(self):
+    """Check that the tables are replicated when we have source and destination databases with the same names."""
+    database_map = {
+        "mysql1": "mysql1",
+        "mysql2": "mysql2",
+        "mysql3": "mysql3",
+        "mysql4": "mysql4",
+    }
+    check_different_database_names(database_map=database_map)
 
 
 @TestCheck
@@ -627,6 +828,27 @@ def concurrent_actions(self, number_of_iterations=None):
     check_concurrent_actions(actions=actions)
 
 
+@TestSuite
+@Requirements(
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValues_OverrideMap(
+        "1.0"
+    ),
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MultipleDatabases_ConfigValues_OverrideMap_MultipleValues(
+        "1.0"
+    ),
+)
+def source_destination_overrides(self):
+    """Check that the tables are replicated when we have source and destination databases with different names.
+    For example,
+        mysql1:ch1; mysql2:ch2
+    """
+    Scenario(run=different_database_names)
+    Scenario(run=different_database_names_with_source_backticks)
+    Scenario(run=different_database_names_with_destination_backticks)
+    Scenario(run=different_database_names_with_backticks)
+    Scenario(run=same_database_names)
+
+
 @TestFeature
 @Name("multiple databases")
 @Requirements(
@@ -683,8 +905,7 @@ def module(
         elif engine == "ReplicatedReplacingMergeTree":
             replicate_all_databases_rrmt()
 
-    with Pool(parallel_cases) as executor:
-        Feature(run=inserts, parallel=True, executor=executor)
-        Feature(run=alters, parallel=True, executor=executor)
-        Feature(run=concurrent_actions, parallel=True, executor=executor)
-        join()
+    Feature(run=inserts)
+    Feature(run=alters)
+    Feature(run=concurrent_actions)
+    Feature(run=source_destination_overrides)

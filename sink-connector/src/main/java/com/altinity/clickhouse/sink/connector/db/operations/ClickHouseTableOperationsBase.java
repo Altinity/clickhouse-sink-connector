@@ -80,10 +80,7 @@ public class ClickHouseTableOperationsBase {
             }else {
                 log.error(" **** DATA TYPE MAPPING not found: " + "TYPE:" + type.getName() + "SCHEMA NAME:" + schemaName);
             }
-//
-//            if(columnToDataTypesMap.isEmpty() == false) {
-//                String createTableQuery = this.createTableSyntax(primaryKey, tableName, columnToDataTypesMap);
-//            }
+
         }
 
         return columnToDataTypesMap;

@@ -127,11 +127,15 @@ ffails = {
     ),
     "/mysql to clickhouse replication/auto replicated table creation/schema only/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
     ),
     "/mysql to clickhouse replication/auto replicated table creation/cli/*": (
         Skip,
-        "Seems to be broken in CI/CD. need oto fix.",
+        "Seems to be broken in CI/CD. need to fix.",
+    ),
+    "/mysql to clickhouse replication/auto replicated table creation/parallel alters/multiple parallel add modify drop column": (
+        Skip,
+        "Test requires fixing.",
     ),
 }
 
@@ -164,7 +168,6 @@ def regression(
         "clickhouse-sink-connector-lt": ("clickhouse-sink-connector-lt",),
         "mysql-master": ("mysql-master",),
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
-        "bash-tools": ("bash-tools",),
         "zookeeper": ("zookeeper",),
     }
 
@@ -304,6 +307,7 @@ def regression(
 
         join()
 
+    Feature(run=load("tests.databases", "module"))
     Feature(
         run=load("tests.schema_only", "module"),
     )

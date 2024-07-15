@@ -125,10 +125,10 @@ public class DBMetadata {
                 }
                 rs.close();
                 stmt.close();
-                log.info("ResultSet" + rs);
+                log.info("getTableEngineUsingShowTable ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngineUsingShowTable exception", e);
+            log.info("getTableEngineUsingShowTable exception", e);
         }
 
         return result;
@@ -214,14 +214,14 @@ public class DBMetadata {
                     String response =  rs.getString(1);
                     result = getEngineFromResponse(response);
                 } else {
-                    log.error("Error: Table not found in system tables:" + tableName + " Database:" + database);
+                    log.debug("Error: Table not found in system tables:" + tableName + " Database:" + database);
                 }
                 rs.close();
                 stmt.close();
-                log.info("ResultSet" + rs);
+                log.info("getTableEngineUsingSystemTables ResultSet" + rs);
             }
         } catch(Exception e) {
-            log.error("getTableEngineUsingSystemTables exception", e);
+            log.debug("getTableEngineUsingSystemTables exception", e);
         }
 
         return result;

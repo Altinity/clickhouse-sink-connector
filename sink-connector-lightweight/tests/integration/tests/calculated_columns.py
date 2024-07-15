@@ -34,7 +34,7 @@ def string_concatenation(self):
         f"I create a {table_name} table with calculated column with string concatenation"
     ):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"first_name VARCHAR(50) NOT NULL,last_name VARCHAR(50) NOT NULL,fullname varchar(101) "
             f"GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),email VARCHAR(100) NOT NULL",
         )
@@ -60,7 +60,7 @@ def basic_arithmetic_operations(self):
 
     with Given(f"I create a {table_name} table with calculated column"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"a INT, b INT, sum_col INT AS (a + b), diff_col INT AS (a - b), prod_col INT AS (a * b), div_col DOUBLE AS (a / b)",
         )
 
@@ -86,7 +86,7 @@ def complex_expressions(self):
 
     with Given(f"I create a {table_name} table with calculated column"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"base_salary DECIMAL(10,2), bonus_rate DECIMAL(5,2), total_compensation DECIMAL(12,2) AS (base_salary + (base_salary * bonus_rate / 100))",
         )
 
@@ -114,7 +114,7 @@ def nested(self):
 
     with Given(f"I create a {table_name} table with calculated column"):
         create_mysql_table(
-            table_name=f"\`{table_name}\`",
+            table_name=rf"\`{table_name}\`",
             columns=f"a INT, b INT, c INT AS (a + b), d INT AS (c * 2)",
         )
 
