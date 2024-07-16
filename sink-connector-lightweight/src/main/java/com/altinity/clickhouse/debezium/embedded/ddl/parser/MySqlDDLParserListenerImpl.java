@@ -11,6 +11,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
+import io.debezium.relational.ddl.DataType;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNodeImpl;
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -329,8 +330,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         String chDataType = null;
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
+        DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
+        if(dt.name().equalsIgnoreCase("ENUM"))
+        {
+            // Dont try to get precision/scale for enums
+        }
+        else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
             try {
                 precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
                 scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
