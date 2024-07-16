@@ -4,8 +4,27 @@ Sink connector uses the log4j version 2 directly, however the dependendent libra
 use different logging frameworks(JUL, slf4j).
 There is logic to use adapters to bridge the logging frameworks.
 
-Logging is controlled by the `log4j2.xml` file in the 'docker' directory.
+Logging is controlled by the [`log4j2.xml` ](https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/log4j2.xml)file in the 'docker' directory.
 This file is mounted into the container and is passed to the JVM as a system property.(-Dlog4j.configurationFile)
+
+```
+version: "3.4"
+
+services:
+  clickhouse-sink-connector-lt:
+    image: ${CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE}
+    entrypoint: ["sh", "-c", "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
+    restart: "no"
+    ports:
+      - "8083:8083"
+      - "5005:5005"
+      - "7000:7000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./log4j2.xml:/log4j2.xml
+      - ./config.yml:/config.yml
+```
 
 ### Log Levels
 If you need to change the Logging level , you can modify the rootLogger level in the `log4j2.xml` file.
