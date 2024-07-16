@@ -27,7 +27,7 @@ services:
 ```
 
 ### Log Levels
-If you need to change the Logging level , you can modify the rootLogger level in the `log4j2.xml` file.
+If you need to change the Logging level , you can modify the rootLogger level in the [`log4j2.xml` ](https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/log4j2.xml) file.
 By default its set to `info` level.
 
 ```xml
@@ -36,7 +36,7 @@ By default its set to `info` level.
 ```
 
 ## Changing Layout (Example JSON)
-If you want to change the layout of the logs, you can modify the `log4j2.xml` file.
+If you want to change the layout of the logs, you can modify the [`log4j2.xml` ](https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/log4j2.xml) file.
 You can comment out the default `PatternLayout` and enable `JSONLayout`
 
 ```
