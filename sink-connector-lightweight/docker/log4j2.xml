@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="INFO">
+    <Appenders>
+        <Console name="console" target="SYSTEM_OUT">
+            <!-- <JSONLayout compact="true" eventEol="true" properties="true" stacktraceAsString="true" includeTimeMillis="true" /> -->
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n"/> 
+        </Console>
+    </Appenders>
+    <Loggers>
+        <!-- <Logger name="org.slf4j" level="DEBUG"
+                additivity="false">
+        <AppenderRef ref="console"/>
+        </Logger>-->
+            <Logger name="com.clickhouse" level="ERROR"
+                additivity="false">
+            <AppenderRef ref="console"/>
+        </Logger>
+
+    <Root level="info" additivity="false">
+            <AppenderRef ref="console" />
+        </Root>
+    </Loggers>
+</Configuration>
