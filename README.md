@@ -55,7 +55,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [ClickHouse Table Engine Types](doc/clickhouse_engines.md)
 * [Troubleshooting](doc/Troubleshooting.md)
 * [TimeZone and DATETIME/TIMESTAMP](doc/timezone.md)
-* [Logging](doc/Logging.md)
+* [Logging](doc/logging.md)
 * [Production Setup](doc/production_setup.md)
 
 ### Operations
