@@ -57,6 +57,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [TimeZone and DATETIME/TIMESTAMP](doc/timezone.md)
 * [Logging](doc/logging.md)
 * [Production Setup](doc/production_setup.md)
+* [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
 
 ### Operations
 
