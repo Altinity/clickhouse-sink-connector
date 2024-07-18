@@ -19,7 +19,7 @@ Restart the sink connector, either using the `sink-connector-client restart` or 
 
 **Step 3**: Insert a new row to the `signaling` table created in Step 1 with the new table information.
 ```
-INSERT INTO dbane.dbz_signal VALUES ('d139b9b7–7777–4547–917d-e1775ea61d61', 'execute-snapshot', '{"data-collections": ["dbname.table1, dbname.table2"]}')
+INSERT INTO dbname.dbz_signal VALUES ('d139b9b7–7777–4547–917d-e1775ea61d61', 'execute-snapshot', '{"data-collections": ["dbname.table1, dbname.table2"]}')
 ```
 
 This step should trigger the snapshot process in parallel to the regular streaming.
