@@ -1,7 +1,6 @@
 available_clickhouse_tables = [
     ("auto", "ReplacingMergeTree"),
     ("manual", "ReplacingMergeTree"),
-    ("manual", "ReplicatedReplacingMergeTree"),
 ]
 
 all_nullable_mysql_datatypes = (
