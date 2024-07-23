@@ -297,7 +297,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterAddColumnWithColumnKeyword() {
 
         String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN ssn_number Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE db1.table1 ADD COLUMN entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
