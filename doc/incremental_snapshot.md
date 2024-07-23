@@ -6,7 +6,7 @@ https://debezium.io/blog/2021/10/07/incremental-snapshots/
 
 **Step 1**: Create the `signaling` table in Source using the following schema
 ```
-CREATE TABLE dbz_signal (id VARCHAR(<varcharValue>) PRIMARY KEY,
+CREATE TABLE dbz_signal (id VARCHAR(255) PRIMARY KEY,
 type VARCHAR(32) NOT NULL,
 data VARCHAR(2048) NULL);
 ```
@@ -23,3 +23,8 @@ INSERT INTO dbname.dbz_signal VALUES ('d139b9b7–7777–4547–917d-e1775ea61d6
 ```
 
 This step should trigger the snapshot process in parallel to the regular streaming.
+
+On the sink connector logs, you should notice a new log message that indicates start of `INCREMENTAL` snapshot
+```
+2024-07-23 13:24:44.040 INFO  - Requested 'INCREMENTAL' snapshot of data collections '[public.tm2]' with additional conditions '[]' and surrogate key 'PK of table will be used'
+```
