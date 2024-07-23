@@ -297,6 +297,7 @@ def complex_check_creation_and_select(
     with_final=False,
     with_optimize=False,
     order_by=None,
+    replicated=False
 ):
     """
     Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySql
@@ -315,7 +316,7 @@ def complex_check_creation_and_select(
     clickhouse3 = self.context.cluster.node("clickhouse3")
     mysql = self.context.cluster.node("mysql-master")
 
-    if clickhouse_table[1].startswith("Replicated"):
+    if replicated:
         with Then("I check table creation on few nodes"):
             retry(clickhouse.query, timeout=30, delay=3)(
                 "SHOW TABLES FROM test", message=f"{table_name}"

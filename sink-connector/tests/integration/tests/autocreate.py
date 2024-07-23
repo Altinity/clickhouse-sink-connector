@@ -4,7 +4,7 @@ from integration.tests.steps.statements import *
 
 
 @TestOutline
-def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table):
+def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table, auto_create_replicated=False):
     """Check auto-creation of replicated MySQL table
     which contains all supported data types.
     """
@@ -13,7 +13,7 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
     mysql = self.context.cluster.node("mysql-master")
 
     init_sink_connector(
-        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}"
+        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}", auto_create_replicated_tables=auto_create_replicated
     )
 
     with Given(
@@ -43,6 +43,7 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
             clickhouse_table=clickhouse_table,
             statement="count(*)",
             with_final=True,
+            replicated=auto_create_replicated
         )
 
 
@@ -64,6 +65,24 @@ def create_all_data_types_null_table(
                 clickhouse_table=clickhouse_table,
             )
 
+@TestFeature
+def create_all_data_types_null_table_replicated(
+    self,
+    mysql_columns=all_mysql_datatypes,
+    clickhouse_columns=all_ch_datatypes,
+):
+    """Check all availabe methods and tables creation of replicated MySQL to Ch table that
+    contains all supported "NULL" data types.
+    """
+
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            create_all_data_types(
+                mysql_columns=mysql_columns,
+                clickhouse_columns=clickhouse_columns,
+                clickhouse_table=clickhouse_table,
+                auto_create_replicated=True,
+            )
 
 @TestFeature
 def create_all_data_types_not_null_table_manual(
@@ -80,6 +99,24 @@ def create_all_data_types_not_null_table_manual(
                 mysql_columns=mysql_columns,
                 clickhouse_columns=clickhouse_columns,
                 clickhouse_table=clickhouse_table,
+            )
+
+@TestFeature
+def create_all_data_types_not_null_table_manual_replicated(
+    self,
+    mysql_columns=all_nullable_mysql_datatypes,
+    clickhouse_columns=all_nullable_ch_datatypes,
+):
+    """Check all availabe methods and tables creation of replicated MySQL to CH table
+    which contains all supported "NOT NULL" data types.
+    """
+    for clickhouse_table in available_clickhouse_tables:
+        with Example({clickhouse_table}, flags=TE):
+            create_all_data_types(
+                mysql_columns=mysql_columns,
+                clickhouse_columns=clickhouse_columns,
+                clickhouse_table=clickhouse_table,
+                auto_create_replicated=True,
             )
 
 
