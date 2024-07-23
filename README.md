@@ -8,7 +8,7 @@
 ### Latest Releases
 https://github.com/Altinity/clickhouse-sink-connector/releases
 
-# Altinity Sink Connector for ClickHouse
+# Altinity Sink Connector for ClickHouse®
 
 The Altinity Sink Connector moves data automatically from 
 transactional database tables in MySQL and PostgreSQL to ClickHouse
@@ -57,6 +57,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [TimeZone and DATETIME/TIMESTAMP](doc/timezone.md)
 * [Logging](doc/logging.md)
 * [Production Setup](doc/production_setup.md)
+* [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
 
 ### Operations
 

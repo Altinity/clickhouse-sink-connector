@@ -39,14 +39,14 @@ cd deploy/docker
 
 ### Postgres using Confluent Schema Registry:
 ```bash
-export SINK_VERSION=latest
+export SINK_VERSION=2.1.0-kafka
 cd deploy/docker
 docker-compose -f docker-compose.yaml -f docker-compose-postgresql.override.yaml up
 ```
 
 ### Postgres using Apicurio Schema Registry:
 ```bash
-export SINK_VERSION=latest
+export SINK_VERSION=2.1.0-kafka
 cd deploy/docker
 docker-compose -f docker-compose.yaml -f docker-compose-postgresql-apicurio-schema-registry.override.yaml up
 ```

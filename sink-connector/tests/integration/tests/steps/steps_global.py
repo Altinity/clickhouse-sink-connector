@@ -10,11 +10,11 @@ def create_database(self, name="test", node=None):
     try:
         with By(f"adding {name} database if not exists"):
             node.query(
-                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER sharded_replicated_cluster"
+                f"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
             )
         yield
     finally:
         with Finally(f"I delete {name} database if exists"):
             node.query(
-                f"DROP DATABASE IF EXISTS {name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP DATABASE IF EXISTS {name} ON CLUSTER replicated_cluster;"
             )
