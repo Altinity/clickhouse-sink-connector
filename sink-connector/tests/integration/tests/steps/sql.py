@@ -30,7 +30,7 @@ def create_mysql_table(self, name=None, statement=None, node=None):
         with Finally("I clean up by deleting table in MySQL"):
             node.query(f"DROP TABLE IF EXISTS {name};")
             self.context.cluster.node("clickhouse").query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;;"
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER replicated_cluster;;"
             )
             time.sleep(5)
 
@@ -65,7 +65,7 @@ def create_clickhouse_table(
     finally:
         with Finally("I clean up by deleting table in ClickHouse"):
             node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;"
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER replicated_cluster;"
             )
 
 
@@ -111,22 +111,14 @@ def create_mysql_to_clickhouse_replicated_table(
                 f"{' ENGINE = InnoDB;' if engine else ''}",
             )
 
-        if clickhouse_table[0] == "auto":
-            if clickhouse_table[1] == "ReplacingMergeTree":
-                pass
-            else:
-                raise NotImplementedError(
-                    f"table '{clickhouse_table[1]}' not supported"
-                )
-
-        elif clickhouse_table[0] == "manual":
+        if clickhouse_table[0] == "manual":
             if clickhouse_table[1] == "ReplicatedReplacingMergeTree":
                 with And(
                     f"I create ReplicatedReplacingMergeTree as a replication table",
                     description=name,
                 ):
                     clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER sharded_replicated_cluster"
+                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER replicated_cluster"
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplicatedReplacingMergeTree("
@@ -144,7 +136,7 @@ def create_mysql_to_clickhouse_replicated_table(
                     f"I create ClickHouse table as replication table to MySQL test.{name}"
                 ):
                     clickhouse_node.query(
-                        f"CREATE TABLE IF NOT EXISTS test.{name} "
+                        f"CREATE TABLE IF NOT EXISTS test.{name} ON CLUSTER replicated_cluster"
                         f"(id Int32,{clickhouse_columns}, {sign_column} "
                         f"Int8, {version_column} UInt64) "
                         f"ENGINE = ReplacingMergeTree({version_column}) "
@@ -153,17 +145,6 @@ def create_mysql_to_clickhouse_replicated_table(
                         f" SETTINGS "
                         f"index_granularity = 8192;",
                     )
-
-            else:
-                raise NotImplementedError(
-                    f"table '{clickhouse_table[1]}' not supported"
-                )
-
-        else:
-            raise NotImplementedError(
-                f"table creation method '{clickhouse_table[0]}' not supported"
-            )
-
         yield
     finally:
         with Finally(
@@ -171,7 +152,7 @@ def create_mysql_to_clickhouse_replicated_table(
         ):
             mysql_node.query(f"DROP TABLE IF EXISTS {name};")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER sharded_replicated_cluster;;"
+                f"DROP TABLE IF EXISTS test.{name} ON CLUSTER replicated_cluster;;"
             )
             time.sleep(5)
 
