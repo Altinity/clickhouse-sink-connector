@@ -28,3 +28,12 @@ On the sink connector logs, you should notice a new log message that indicates s
 ```
 2024-07-23 13:24:44.040 INFO  - Requested 'INCREMENTAL' snapshot of data collections '[public.tm2]' with additional conditions '[]' and surrogate key 'PK of table will be used'
 ```
+
+## Capturing Schema changes in Incremental Snapshot
+
+Specifies whether the connector allows schema changes during an incremental snapshot. When the value is set to true, the connector detects schema change during an incremental snapshot, and re-select a current chunk to avoid locking DDLs.
+https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-property-incremental-snapshot-allow-schema-changes
+
+```
+incremental.snapshot.allow.schema.changes: true
+````
