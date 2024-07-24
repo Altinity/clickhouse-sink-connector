@@ -48,7 +48,7 @@ xflags = {}
 @ArgumentParser(argparser)
 @XFails(xfails)
 @XFlags(xflags)
-@Name("mysql to clickhouse replication")
+@Name("regression")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
@@ -74,7 +74,7 @@ def regression(
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "bash-tools": ("bash-tools",),
         "schemaregistry": ("schemaregistry",),
-        "sink": ("sink",),
+        "clickhouse-sink-connector-kafka": ("clickhouse-sink-connector-kafka",),
         "zookeeper": ("zookeeper",),
     }
 

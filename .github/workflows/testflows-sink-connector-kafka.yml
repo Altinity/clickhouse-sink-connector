@@ -1,4 +1,5 @@
 name: Kafka - TestFlows Tests
+run-name: ${{ inputs.custom_run_name || 'Kafka - TestFlows Tests' }}
 
 on:
   workflow_call:
@@ -22,7 +23,17 @@ on:
         description: "Kafka connector docker image"
         required: true
         type: string
-
+      package:
+        description: "Package either 'docker://' or 'https://'. Example: 'https://s3.amazonaws.com/clickhouse-builds/23.3/.../package_release/clickhouse-common-static_23.3.1.64_amd64.deb', or 'docker://altinity/clickhouse-server:23.8.8'"
+        type: string
+        default: docker://clickhouse/clickhouse-server:23.3
+      extra_args:
+        description: "Specific Suite To Run (Default * to run everything)."
+        required: false
+        type: string
+      custom_run_name:
+        description: 'Custom run name (optional)'
+        required: false
 env:
   SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
 
@@ -75,7 +86,7 @@ jobs:
 
       - name: Run testflows tests
         working-directory: sink-connector/tests/integration
-        run: python3 -u regression.py --only "/mysql to clickhouse replication/*" --clickhouse-binary-path=docker://clickhouse/clickhouse-server:22.8 --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+        run: python3 -u regression.py --only "/regression/${{ inputs.extra_args != '' && inputs.extra_args || '*' }}" --clickhouse-binary-path="${{inputs.package}}" --test-to-end -o classic --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="altinity/clickhouse-sink-connector:${SINK_CONNECTOR_VERSION}" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
       - name: Create tfs results report
         if: always()

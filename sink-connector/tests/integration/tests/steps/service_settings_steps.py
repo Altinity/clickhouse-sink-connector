@@ -29,7 +29,7 @@ def init_sink_connector(
 
     # "topics": "SERVER5432.test.users",
     sink_settings_transfer_command_confluent = (
-        """cat <<EOF | curl --request POST --url "http://sink:8083/connectors" --header 'Content-Type: application/json' --data @-
+        """cat <<EOF | curl --request POST --url "http://clickhouse-sink-connector-kafka:8083/connectors" --header 'Content-Type: application/json' --data @-
       {
         "name": "sink-connector",
         "config": {
@@ -92,7 +92,7 @@ EOF"""
         with Finally("I delete sink and debezium connections"):
             with By("deleteing sink connector", flags=TE):
                 node.cmd(
-                    'curl -X DELETE -H "Accept:application/json" "http://sink:8083/connectors/sink-connector" '
+                    'curl -X DELETE -H "Accept:application/json" "http://clickhouse-sink-connector-kafka:8083/connectors/sink-connector" '
                     "2>/dev/null | jq ."
                 )
 
