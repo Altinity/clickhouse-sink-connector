@@ -115,8 +115,8 @@ public class PostgresInitialDockerIT {
         // Get the columns in re_data.
         Map<String, String> reDataColumns = writer.getColumnsDataTypesForTable("redata");
 
-        Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64,18)"));
-        Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21,5)"));
+        Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
+        Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue(tmCount == 2);
 
         if(engine.get() != null) {
