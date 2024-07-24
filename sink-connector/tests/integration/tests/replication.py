@@ -34,5 +34,5 @@ def updates(self):
 @TestFeature
 @Name("replication")
 def feature(self):
-    """Check that replication works"""
+    """Check that actions performed on the source database are replicated on the destination database."""
     pass
