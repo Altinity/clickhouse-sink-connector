@@ -6,14 +6,13 @@ import sys
 
 from testflows.core import *
 
-
 append_path(sys.path, "..")
 
+from integration.tests.steps.clickhouse import create_clickhouse_database
 from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
-from integration.tests.steps.steps_global import *
 
 xfails = {
     "schema changes/table recreation with different datatypes": [
@@ -108,7 +107,7 @@ def regression(
     self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
-        create_database(name="test")
+        create_clickhouse_database(name="test")
 
     modules = [
         "autocreate",
@@ -122,7 +121,6 @@ def regression(
     ]
     for module in modules:
         Feature(run=load(f"tests.{module}", "module"))
-
 
 
 if __name__ == "__main__":

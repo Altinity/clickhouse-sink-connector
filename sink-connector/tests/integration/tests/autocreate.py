@@ -4,7 +4,13 @@ from integration.tests.steps.statements import *
 
 
 @TestOutline
-def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_table, auto_create_replicated=False):
+def create_all_data_types(
+    self,
+    mysql_columns,
+    clickhouse_columns,
+    clickhouse_table,
+    auto_create_replicated=False,
+):
     """Check auto-creation of replicated MySQL table
     which contains all supported data types.
     """
@@ -13,7 +19,9 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
     mysql = self.context.cluster.node("mysql-master")
 
     init_sink_connector(
-        auto_create_tables=clickhouse_table[0], topics=f"SERVER5432.test.{table_name}", auto_create_replicated_tables=auto_create_replicated
+        auto_create_tables=clickhouse_table[0],
+        topics=f"SERVER5432.test.{table_name}",
+        auto_create_replicated_tables=auto_create_replicated,
     )
 
     with Given(
@@ -43,7 +51,7 @@ def create_all_data_types(self, mysql_columns, clickhouse_columns, clickhouse_ta
             clickhouse_table=clickhouse_table,
             statement="count(*)",
             with_final=True,
-            replicated=auto_create_replicated
+            replicated=auto_create_replicated,
         )
 
 
@@ -65,6 +73,7 @@ def create_all_data_types_null_table(
                 clickhouse_table=clickhouse_table,
             )
 
+
 @TestFeature
 def create_all_data_types_null_table_replicated(
     self,
@@ -84,6 +93,7 @@ def create_all_data_types_null_table_replicated(
                 auto_create_replicated=True,
             )
 
+
 @TestFeature
 def create_all_data_types_not_null_table_manual(
     self,
@@ -100,6 +110,7 @@ def create_all_data_types_not_null_table_manual(
                 clickhouse_columns=clickhouse_columns,
                 clickhouse_table=clickhouse_table,
             )
+
 
 @TestFeature
 def create_all_data_types_not_null_table_manual_replicated(
