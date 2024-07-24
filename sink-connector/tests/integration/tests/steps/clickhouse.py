@@ -14,9 +14,7 @@ def drop_database(self, database_name=None, node=None, cluster=None):
     if node is None:
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
-        node.query(
-            rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER {cluster};"
-        )
+        node.query(rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER {cluster};")
 
 
 @TestStep(Then)
@@ -53,8 +51,9 @@ def check_column(
                     else f"{column_name}	{column_type}"
                 )
 
-                assert column.output.strip() == expected_output, error()
-
+                assert (
+                    column.output.strip() == expected_output
+                ), f"expected {expected_output} but got {column.output.strip()}"
 
 
 @TestStep(Given)
@@ -141,7 +140,13 @@ def select(
 
 @TestStep(Then)
 def check_if_table_was_created(
-    self, table_name, database_name=None, node=None, timeout=40, message=1, replicated=False
+    self,
+    table_name,
+    database_name=None,
+    node=None,
+    timeout=40,
+    message=1,
+    replicated=False,
 ):
     """Check if table was created in ClickHouse."""
     if database_name is None:
@@ -170,6 +175,7 @@ def validate_data_in_clickhouse_table(
     node=None,
     database_name=None,
     timeout=40,
+    replicated=False,
 ):
     """Validate data in ClickHouse table."""
 
@@ -179,7 +185,7 @@ def validate_data_in_clickhouse_table(
     if node is None:
         node = self.context.cluster.node("clickhouse")
 
-    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+    if replicated:
         for node in self.context.cluster.nodes["clickhouse"]:
             for retry in retries(timeout=timeout, delay=1):
                 with retry:
@@ -195,7 +201,7 @@ def validate_data_in_clickhouse_table(
                     assert (
                         data == expected_output
                     ), f"Expected: {expected_output}, Actual: {data}"
-    elif self.context.clickhouse_table_engine == "ReplacingMergeTree":
+    else:
         for retry in retries(timeout=timeout, delay=1):
             with retry:
                 data = (
@@ -209,9 +215,6 @@ def validate_data_in_clickhouse_table(
                 assert (
                     data == expected_output
                 ), f"Expected: {expected_output}, Actual: {data}"
-
-    else:
-        raise Exception("Unknown ClickHouse table engine")
 
 
 @TestStep(Then)
@@ -246,11 +249,10 @@ def verify_table_creation_in_clickhouse(
     manual_output=None,
     with_final=False,
     with_optimize=False,
-    replicated=False
+    replicated=False,
 ):
     """
-    Verify the creation of tables on all ClickHouse nodes where they are expected, and ensure data consistency with
-    MySQL.
+    Verify the creation of tables on all ClickHouse nodes where they are expected, and ensure data consistency with MySQL.
     """
 
     if clickhouse_node is None:
@@ -258,8 +260,6 @@ def verify_table_creation_in_clickhouse(
 
     if database_name is None:
         database_name = "test"
-
-
 
     if replicated:
         with Then("I check table creation on few nodes"):
