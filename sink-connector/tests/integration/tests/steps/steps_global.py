@@ -15,6 +15,4 @@ def create_database(self, name="test", node=None):
         yield
     finally:
         with Finally(f"I delete {name} database if exists"):
-            node.query(
-                f"DROP DATABASE IF EXISTS {name} ON CLUSTER replicated_cluster;"
-            )
+            node.query(f"DROP DATABASE IF EXISTS {name} ON CLUSTER replicated_cluster;")

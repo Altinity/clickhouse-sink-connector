@@ -225,7 +225,7 @@ def select(
     with_optimize=False,
     sign_column="_sign",
     timeout=100,
-    order_by=None
+    order_by=None,
 ):
     """SELECT with an option to either with FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'
     :param insert: expected insert data if None compare with MySQL table
@@ -293,11 +293,14 @@ def complex_check_creation_and_select(
     clickhouse_table,
     statement,
     timeout=50,
+    message=1,
+    clickhouse_node=None,
+    database_name=None,
     manual_output=None,
     with_final=False,
     with_optimize=False,
     order_by=None,
-    replicated=False
+    replicated=False,
 ):
     """
     Check for table creation on all clickhouse nodes where it is expected and select data consistency with MySql
@@ -310,29 +313,22 @@ def complex_check_creation_and_select(
     :param with_optimize:
     :return:
     """
-    clickhouse = self.context.cluster.node("clickhouse")
-    clickhouse1 = self.context.cluster.node("clickhouse1")
-    clickhouse2 = self.context.cluster.node("clickhouse2")
-    clickhouse3 = self.context.cluster.node("clickhouse3")
-    mysql = self.context.cluster.node("mysql-master")
+    if clickhouse_node is None:
+        clickhouse_node = self.context.cluster.node("clickhouse")
+
+    if database_name is None:
+        database_name = "test"
 
     if replicated:
         with Then("I check table creation on few nodes"):
-            retry(clickhouse.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse1.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse2.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
-            retry(clickhouse3.query, timeout=30, delay=3)(
-                "SHOW TABLES FROM test", message=f"{table_name}"
-            )
+            for node in self.context.cluster.nodes["clickhouse"]:
+                retry(self.context.cluster.node(node).query, timeout=timeout, delay=3)(
+                    f"EXISTS {database_name}.{table_name}", message=f"{message}"
+                )
+
     else:
         with Then("I check table creation"):
-            retry(clickhouse.query, timeout=30, delay=3)(
+            retry(clickhouse_node.query, timeout=30, delay=3)(
                 "SHOW TABLES FROM test", message=f"{table_name}"
             )
 
