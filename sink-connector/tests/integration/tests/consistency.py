@@ -2,7 +2,7 @@ import time
 from itertools import combinations
 from testflows.connect import Shell
 from integration.tests.steps.sql import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.service_configurations import *
 
 
 @TestOutline

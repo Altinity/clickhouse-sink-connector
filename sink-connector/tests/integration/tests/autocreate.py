@@ -1,5 +1,5 @@
 from integration.tests.steps.sql import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.service_configurations import *
 from integration.tests.steps.statements import *
 
 
