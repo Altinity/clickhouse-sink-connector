@@ -21,7 +21,7 @@ default_config = {
     "offset.storage.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "offset.storage.jdbc.user": "root",
     "offset.storage.jdbc.password": "root",
-    "offset.storage.jdbc.offset.table.ddl": """CREATE TABLE if not exists %s on cluster '{cluster}'
+    "offset.storage.jdbc.offset.table.ddl": """CREATE TABLE if not exists %s
 (
     `id` String,
     `offset_key` String,
