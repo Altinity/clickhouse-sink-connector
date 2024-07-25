@@ -6,4 +6,5 @@
         <shard>01</shard>
 <!--        <shard2>01</shard2>-->
     </macros>
+    <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
 </clickhouse>

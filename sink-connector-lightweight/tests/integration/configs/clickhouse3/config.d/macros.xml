@@ -5,4 +5,5 @@
         <replica>clickhouse3</replica>
         <shard>01</shard>
     </macros>
+    <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
 </clickhouse>

@@ -21,18 +21,16 @@ default_config = {
     "offset.storage.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "offset.storage.jdbc.user": "root",
     "offset.storage.jdbc.password": "root",
-    "offset.storage.jdbc.offset.table.ddl": """CREATE TABLE if not exists %s
+    "offset.storage.jdbc.offset.table.ddl": """CREATE TABLE if not exists %s on cluster '{cluster}'
 (
     `id` String,
     `offset_key` String,
     `offset_val` String,
     `record_insert_ts` DateTime,
     `record_insert_seq` UInt64,
-    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
-SETTINGS index_granularity = 8198""",
+ENGINE = KeeperMap('/asc_offsets201',10)
+PRIMARY KEY offset_key""",
     "offset.storage.jdbc.offset.table.delete": "delete from %s where 1=1",
     "schema.history.internal": "io.debezium.storage.jdbc.history.JdbcSchemaHistory",
     "schema.history.internal.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
