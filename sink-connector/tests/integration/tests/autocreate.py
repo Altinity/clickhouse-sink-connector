@@ -55,7 +55,7 @@ def create_all_data_types(
         )
 
 
-@TestFeature
+@TestScenario
 def create_all_data_types_null_table(
     self,
     mysql_columns=all_mysql_datatypes,
@@ -74,7 +74,7 @@ def create_all_data_types_null_table(
             )
 
 
-@TestFeature
+@TestScenario
 def create_all_data_types_null_table_replicated(
     self,
     mysql_columns=all_mysql_datatypes,
@@ -94,7 +94,7 @@ def create_all_data_types_null_table_replicated(
             )
 
 
-@TestFeature
+@TestScenario
 def create_all_data_types_not_null_table_manual(
     self,
     mysql_columns=all_nullable_mysql_datatypes,
@@ -112,7 +112,7 @@ def create_all_data_types_not_null_table_manual(
             )
 
 
-@TestFeature
+@TestScenario
 def create_all_data_types_not_null_table_manual_replicated(
     self,
     mysql_columns=all_nullable_mysql_datatypes,
@@ -131,22 +131,18 @@ def create_all_data_types_not_null_table_manual_replicated(
             )
 
 
-@TestModule
+@TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_TableSchemaCreation_AutoCreate(
         "1.0"
     )
 )
 @Name("autocreate")
-def module(self):
+def feature(self):
     """Verify correct replication of all supported MySQL data types."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

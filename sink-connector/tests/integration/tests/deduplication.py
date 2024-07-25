@@ -48,7 +48,7 @@ def deduplication(
         )
 
 
-@TestFeature
+@TestScenario
 def deduplication_on_big_insert(self):
     """Check MySQL to Clickhouse connection for non-duplication data on 10 000 inserts."""
     for clickhouse_table in available_clickhouse_tables:
@@ -58,7 +58,7 @@ def deduplication_on_big_insert(self):
             )
 
 
-@TestFeature
+@TestScenario
 def deduplication_on_many_inserts(self):
     """Check MySQL to Clickhouse connection for non-duplication data on big inserts."""
     for clickhouse_table in available_clickhouse_tables:
@@ -68,21 +68,17 @@ def deduplication_on_many_inserts(self):
             )
 
 
-@TestModule
+@TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Deduplication("1.0")
 )
 @Name("deduplication")
-def module(self):
+def feature(self):
     """MySql to ClickHouse replication tests to check
     for non-duplication data on big inserts."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

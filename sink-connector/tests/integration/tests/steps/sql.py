@@ -69,7 +69,7 @@ def create_clickhouse_table(
             )
 
 
-@TestStep
+@TestStep(Given)
 def create_mysql_to_clickhouse_replicated_table(
     self,
     name,

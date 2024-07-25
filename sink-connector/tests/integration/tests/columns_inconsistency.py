@@ -38,7 +38,7 @@ def mysql_to_clickhouse_insert(
         )
 
 
-@TestFeature
+@TestScenario
 def more_columns(
     self,
     input="(2,7,777)",
@@ -59,7 +59,7 @@ def more_columns(
                 )
 
 
-@TestFeature
+@TestScenario
 def less_columns(
     self,
     input="(2,7,777)",
@@ -80,7 +80,7 @@ def less_columns(
                 )
 
 
-@TestFeature
+@TestScenario
 def equal_columns_different_names(
     self,
     input="(2,7,777)",
@@ -101,7 +101,7 @@ def equal_columns_different_names(
                 )
 
 
-@TestFeature
+@TestScenario
 def equal_columns_some_different_names(
     self,
     input="(2,7,777)",
@@ -122,20 +122,16 @@ def equal_columns_some_different_names(
                 )
 
 
-@TestModule
+@TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_ColumnsInconsistency("1.0")
 )
 @Name("columns inconsistency")
-def module(self):
+def feature(self):
     """Check for different columns inconsistency."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

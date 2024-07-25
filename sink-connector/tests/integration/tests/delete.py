@@ -43,7 +43,7 @@ def delete(
         )
 
 
-@TestFeature
+@TestScenario
 def no_primary_key(self):
     """Check for `DELETE` with no primary key without InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -57,7 +57,7 @@ def no_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def no_primary_key_innodb(self):
     """Check for `DELETE` with no primary key with InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -85,7 +85,7 @@ def simple_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def simple_primary_key_innodb(self):
     """Check for `DELETE` with simple primary key with InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -99,7 +99,7 @@ def simple_primary_key_innodb(self):
             )
 
 
-@TestFeature
+@TestScenario
 def complex_primary_key(self):
     """Check for `DELETE` with complex primary key without engine InnoDB."""
     for clickhouse_table in available_clickhouse_tables:
@@ -113,7 +113,7 @@ def complex_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def complex_primary_key_innodb(self):
     """Check for `DELETE` with complex primary key with engine InnoDB."""
     for clickhouse_table in available_clickhouse_tables:
@@ -127,18 +127,14 @@ def complex_primary_key_innodb(self):
             )
 
 
-@TestModule
+@TestFeature
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Deletes("1.0"))
 @Name("delete")
-def module(self):
+def feature(self):
     """MySql to ClickHouse replication delete tests to test `DELETE` queries."""
 
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()
