@@ -1,3 +1,4 @@
+from integration.requirements.requirements import *
 from integration.tests.steps.sql import *
 from integration.tests.steps.service_configurations import *
 from integration.tests.steps.statements import *

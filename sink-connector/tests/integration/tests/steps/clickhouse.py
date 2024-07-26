@@ -158,11 +158,11 @@ def check_if_table_was_created(
     if replicated:
         for node in self.context.cluster.nodes["clickhouse"]:
             retry(self.context.cluster.node(node).query, timeout=timeout, delay=3)(
-                f"EXISTS {database_name}.{table_name}", message=f"{message}"
+                rf"EXISTS {database_name}.\`{table_name}\`", message=f"{message}"
             )
     else:
         retry(node.query, timeout=timeout, delay=3)(
-            f"EXISTS {database_name}.{table_name}", message=f"{message}"
+            f"EXISTS {database_name}.\`{table_name}\`", message=f"{message}"
         )
 
 

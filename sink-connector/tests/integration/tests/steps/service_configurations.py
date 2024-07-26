@@ -22,7 +22,7 @@ def init_sink_connector(
 
     if auto_create_tables == "auto":
         auto_create_tables = True
-    else:
+    elif auto_create_tables == "manual":
         auto_create_tables = False
 
     default_config = {

@@ -104,7 +104,7 @@ def regression(
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
 
-    self.context.node = cluster.node("clickhouse")
+    self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
         create_clickhouse_database(name="test")

@@ -119,7 +119,7 @@ def create_mysql_table(
             key = f"{primary_key} INT NOT NULL,"
 
         with Given(f"I create MySQL table", description=name):
-            query = f"CREATE TABLE IF NOT EXISTS {database_name}.{table_name} ({key}{columns}"
+            query = rf"CREATE TABLE IF NOT EXISTS {database_name}.\`{table_name}\` ({key}{columns}"
 
             if primary_key is not None:
                 query += f", PRIMARY KEY ({primary_key}))"
@@ -142,9 +142,9 @@ def create_mysql_table(
             "I clean up by deleting MySQL to ClickHouse replicated table",
             description={name},
         ):
-            mysql_node.query(f"DROP TABLE IF EXISTS {database_name}.{table_name};")
+            mysql_node.query(rf"DROP TABLE IF EXISTS {database_name}.\`{table_name}\`;")
             clickhouse_node.query(
-                f"DROP TABLE IF EXISTS {database_name}.{table_name} ON CLUSTER replicated_cluster;"
+                rf"DROP TABLE IF EXISTS {database_name}.\`{table_name}\` ON CLUSTER replicated_cluster;"
             )
 
 
@@ -317,7 +317,7 @@ def insert(self, table_name, values, node=None, database_name=None):
         node = self.context.cluster.node("mysql-master")
 
     with When("I insert data into MySQL table"):
-        node.query(f"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
+        node.query(rf"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
 
 
 @TestStep(Given)
