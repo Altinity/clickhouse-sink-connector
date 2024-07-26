@@ -187,6 +187,7 @@ all_ch_datatypes_dict = {
     "x_varbinary": "String",
 }
 
+# FIXME
 datatypes_to_add = (
     "TINYBLOB, TINYTEXT, SET, BIT, BOOL, BOOLEAN,INTEGER, FLOAT(size, d), FLOAT(p), DOUBLE PRECISION("
     "size, d), DEC, TIMESTAMP, YEAR, ENUM(val1, val2, val3, ...)"

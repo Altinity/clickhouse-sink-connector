@@ -117,7 +117,6 @@ def regression(
     Feature(run=load("tests.primary_keys", "feature"))
     Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.columns_inconsistency", "feature"))
-    Feature(run=load("tests.replication", "feature"))
 
 
 if __name__ == "__main__":

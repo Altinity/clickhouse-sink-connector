@@ -1,16 +1,13 @@
-from testflows.core import *
-from integration.tests.steps.mysql.mysql import *
 from integration.tests.steps.clickhouse import *
+from integration.tests.steps.mysql.mysql import *
 from integration.tests.steps.service_configurations import (
     init_sink_connector,
     init_debezium_connector,
 )
 from integration.tests.steps.sql import generate_interesting_table_names
 from integration.tests.steps.statements import (
-    all_ch_datatypes_dict,
     all_mysql_datatypes_dict,
 )
-from integration.requirements.requirements import *
 
 
 @TestOutline

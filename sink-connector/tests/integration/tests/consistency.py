@@ -1,9 +1,10 @@
-import time
 from itertools import combinations
+
 from testflows.connect import Shell
-from integration.tests.steps.sql import *
-from integration.tests.steps.service_configurations import *
+
 from integration.requirements.requirements import *
+from integration.tests.steps.service_configurations import *
+from integration.tests.steps.sql import *
 
 
 @TestOutline
