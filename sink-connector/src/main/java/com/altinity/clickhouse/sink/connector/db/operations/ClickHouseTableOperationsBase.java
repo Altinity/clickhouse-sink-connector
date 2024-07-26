@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.data.VariableScaleDecimal;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
@@ -55,11 +56,19 @@ public class ClickHouseTableOperationsBase {
             if(dataType != null) {
                 if(dataType == ClickHouseDataType.Decimal) {
                     //Get Scale, precision from parameters.
+
                     Map<String, String> params = f.schema().parameters();
+
+                    //postgres numeric data type has no scale/precision.
+                    if(schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)){
+                        columnToDataTypesMap.put(colName, "Decimal(64,18)");
+                        continue;
+                    }
 
                     if(params != null && params.containsKey(SCALE) && params.containsKey(PRECISION)) {
                         columnToDataTypesMap.put(colName, "Decimal(" + params.get(PRECISION) + "," + params.get(SCALE) + ")");
-                    } else {
+                    }
+                    else {
                         columnToDataTypesMap.put(colName, "Decimal(10,2)");
                     }
                 } else if(dataType == ClickHouseDataType.DateTime64){
