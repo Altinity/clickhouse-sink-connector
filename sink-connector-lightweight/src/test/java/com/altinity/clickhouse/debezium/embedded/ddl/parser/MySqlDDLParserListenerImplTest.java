@@ -324,7 +324,7 @@ public class MySqlDDLParserListenerImplTest {
     // Before, After
     @Test
     public void testAlterDatabaseAddMultipleColumns1() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN ship_spec Nullable(String)  first, ADD COLUMN somecol Nullable(Int32)  after start_build,";
+        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN ship_spec Nullable(String)  first, ADD COLUMN somecol Nullable(Int32)  after start_build";
         StringBuffer clickHouseQuery = new StringBuffer();
         String query = "alter table employees.employees add column ship_spec varchar(150) first, add somecol int after start_build, algorithm=instant;";
         mySQLDDLParserService.parseSql(query, "employees", clickHouseQuery);
