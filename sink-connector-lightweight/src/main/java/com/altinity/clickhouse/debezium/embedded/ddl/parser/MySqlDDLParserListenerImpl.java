@@ -565,7 +565,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
                 parseAddIndex(tree);
-            } else if (tree instanceof TerminalNodeImpl) {
+            } else if(tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
+                log.info("INSTANT ALGORITHM not supported in ClickHouse");
+                // Remove any terminating commas and break out of the parser loop.
+                // If the last character was comma.
+                if(this.query.charAt(this.query.length() - 1) == ',')
+                    this.query.deleteCharAt(this.query.length() - 1);
+
+                break;
+            }
+            else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
                 }
