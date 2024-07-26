@@ -46,6 +46,11 @@ public class DataTypeConverter {
         return ClickHouseDataTypeMapper.getClickHouseDataType(schemaBuilder.schema().type(), schemaBuilder.schema().name());
     }
 
+    public static DataType getDataType(MySqlParser.DataTypeContext columnDefChild) {
+        String convertedDataType = null;
+        return initializeDataTypeResolver().resolveDataType(columnDefChild);
+    }
+
     public static String convertToString(String columnName, int scale, int precision, MySqlParser.DataTypeContext columnDefChild, ZoneId userProvidedTimeZone) {
         MySqlValueConverters mysqlConverter = new MySqlValueConverters(
                 JdbcValueConverters.DecimalMode.PRECISE,
