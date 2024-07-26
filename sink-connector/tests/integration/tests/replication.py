@@ -13,7 +13,13 @@ from integration.tests.steps.statements import (
 
 @TestOutline
 def auto_create_table(
-    self, columns, database_name="test", node=None, table_name=None, replicate=False
+    self,
+    column_datatype,
+    column_name,
+    database_name="test",
+    node=None,
+    table_name=None,
+    replicate=False,
 ):
     """Check that tables created on the source database are replicated on the destination."""
 
@@ -35,11 +41,14 @@ def auto_create_table(
             table_name=table_name,
             database_name=database_name,
             mysql_node=node,
-            columns=columns,
+            columns=f"{column_name} {column_datatype}",
         )
 
     with When("I insert values into the table"):
-        insert(table_name=table_name, values=generate_sample_mysql_value(columns))
+        insert(
+            table_name=table_name,
+            values=f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}",
+        )
 
     with Then("I check that the table is replicated on the destination database"):
         check_if_table_was_created(table_name=table_name)
@@ -48,13 +57,11 @@ def auto_create_table(
 @TestScenario
 def check_auto_creation_all_datatypes(self):
     """Check that tables created on the source database are replicated on the destination."""
-    datatypes = [
-        all_mysql_datatypes_dict[datatype] for datatype in all_mysql_datatypes_dict
-    ]
 
-    for datatype in datatypes:
+    for name, datatype in all_mysql_datatypes_dict.items():
         auto_create_table(
-            columns=datatype,
+            column_name=name,
+            column_datatype=datatype,
         )
 
 

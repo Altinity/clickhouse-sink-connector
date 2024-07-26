@@ -104,57 +104,20 @@ def regression(
     if check_clickhouse_version("<21.4")(self):
         skip(reason="only supported on ClickHouse version >= 21.4")
 
-    self.context.node = cluster.node("clickhouse1")
+    self.context.node = cluster.node("clickhouse")
 
     with And("I create test database in ClickHouse"):
         create_clickhouse_database(name="test")
 
-    with Pool(1) as executor:
-        Feature(
-            run=load("tests.autocreate", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.insert", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.delete", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.truncate", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.deduplication", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.primary_keys", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.virtual_columns", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.columns_inconsistency", "feature"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.check_replication", "feature"),
-            parallel=True,
-            executor=executor,
-        )
+    Feature(run=load("tests.autocreate", "feature"))
+    Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.delete", "feature"))
+    Feature(run=load("tests.truncate", "feature"))
+    Feature(run=load("tests.deduplication", "feature"))
+    Feature(run=load("tests.primary_keys", "feature"))
+    Feature(run=load("tests.virtual_columns", "feature"))
+    Feature(run=load("tests.columns_inconsistency", "feature"))
+    Feature(run=load("tests.replication", "feature"))
 
 
 if __name__ == "__main__":
