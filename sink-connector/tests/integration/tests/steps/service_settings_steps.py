@@ -8,6 +8,7 @@ def init_sink_connector(
     self,
     node=None,
     auto_create_tables="auto",
+    auto_create_replicated_tables=False,
     topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users",
 ):
     """
@@ -16,60 +17,16 @@ def init_sink_connector(
     if node is None:
         node = self.context.cluster.node("bash-tools")
 
+    if auto_create_replicated_tables:
+        auto_create_replicated_tables = "true"
+    else:
+        auto_create_replicated_tables = "false"
+
     if auto_create_tables == "auto":
         auto_create_tables_local = "true"
     else:
         auto_create_tables_local = "false"
 
-    sink_settings_transfer_command_apicurio = (
-        """cat <<EOF | curl --request POST --url "http://sink:8083/connectors" --header 'Content-Type: application/json' --data @-
-    {
-      "name": "sink-connector",
-      "config": {
-        "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-        "tasks.max": "10",
-        "topics.regex": "SERVER5432.test.users, SERVER5432.sbtest.sbtest1",
-        "clickhouse.topic2table.map": "SERVER5432.test.users:users",
-        "clickhouse.server.url": "clickhouse",
-        "clickhouse.server.user": "root",
-        "clickhouse.server.password": "root",
-        "clickhouse.server.database": "test",
-        "clickhouse.server.port": 8123,
-        "clickhouse.table.name": "users",
-        "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-        "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-
-        "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-        "key.converter.apicurio.registry.auto-register": "true",
-        "key.converter.apicurio.registry.find-latest": "true",
-
-        "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-        "value.converter.apicurio.registry.auto-register": "true",
-        "value.converter.apicurio.registry.find-latest": "true",
-        "store.kafka.metadata": true,
-        "topic.creation.default.partitions": 6,
-
-        "store.raw.data": false,
-        "store.raw.data.column": "raw_data",
-
-        "metrics.enable": true,
-        "metrics.port": 8084,
-        "buffer.flush.time": 3500,
-        "thread.pool.size": 1,
-        "fetch.min.bytes": 52428800,
-
-        "enable.kafka.offset": false,
-
-        "replacingmergetree.delete.column": "_sign","""
-        + f'"auto.create.tables": {auto_create_tables_local},'
-        """
-          "schema.evolution": false,
-
-          "deduplication.policy": "off"
-        }
-      }
-EOF"""
-    )
     # "topics": "SERVER5432.test.users",
     sink_settings_transfer_command_confluent = (
         """cat <<EOF | curl --request POST --url "http://sink:8083/connectors" --header 'Content-Type: application/json' --data @-
@@ -107,7 +64,7 @@ EOF"""
     "enable.kafka.offset": false,
 
     "replacingmergetree.delete.column": "_sign","""
-        + f'"auto.create.tables": {auto_create_tables_local},'
+        + f'"auto.create.tables": {auto_create_tables_local},"auto.create.tables.replicated": {auto_create_replicated_tables},'
         """
           "schema.evolution": false,
 

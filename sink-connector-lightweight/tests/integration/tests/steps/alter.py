@@ -20,7 +20,7 @@ def add_column(
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type};"
+        rf"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type};"
     )
 
 
@@ -41,7 +41,7 @@ def rename_column(
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` RENAME COLUMN {column_name} to {new_column_name};"
+        rf"ALTER TABLE {database}.\`{table_name}\` RENAME COLUMN {column_name} to {new_column_name};"
     )
 
 
@@ -63,7 +63,7 @@ def change_column(
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` CHANGE COLUMN {column_name} {new_column_name} {new_column_type};"
+        rf"ALTER TABLE {database}.\`{table_name}\` CHANGE COLUMN {column_name} {new_column_name} {new_column_type};"
     )
 
 
@@ -84,7 +84,7 @@ def modify_column(
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` MODIFY COLUMN {column_name} {new_column_type};"
+        rf"ALTER TABLE {database}.\`{table_name}\` MODIFY COLUMN {column_name} {new_column_type};"
     )
 
 
@@ -97,7 +97,7 @@ def drop_column(self, table_name, column_name="new_col", node=None, database=Non
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    node.query(f"ALTER TABLE {database}.\`{table_name}\` DROP COLUMN {column_name};")
+    node.query(rf"ALTER TABLE {database}.\`{table_name}\` DROP COLUMN {column_name};")
 
 
 @TestStep(When)
@@ -149,7 +149,7 @@ def add_column_null_not_null(
 
     null_not_null = "NOT NULL" if not is_null else "NULL"
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type} {null_not_null};"
+        rf"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type} {null_not_null};"
     )
 
 
@@ -171,7 +171,7 @@ def add_column_default(
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type} DEFAULT {default_value};"
+        rf"ALTER TABLE {database}.\`{table_name}\` ADD COLUMN {column_name} {column_type} DEFAULT {default_value};"
     )
 
 
@@ -185,5 +185,17 @@ def add_primary_key(self, table_name, column_name, node=None, database=None):
         node = self.context.cluster.node("mysql-master")
 
     node.query(
-        f"ALTER TABLE {database}.\`{table_name}\` ADD PRIMARY KEY ({column_name});"
+        rf"ALTER TABLE {database}.\`{table_name}\` ADD PRIMARY KEY ({column_name});"
     )
+
+
+@TestStep(When)
+def drop_primary_key(self, table_name, node=None, database=None):
+    """DROP PRIMARY KEY"""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(rf"ALTER TABLE {database}.\`{table_name}\` DROP PRIMARY KEY;")

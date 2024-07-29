@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
+import com.altinity.clickhouse.sink.connector.validators.DatabaseOverrideValidator;
 import com.altinity.clickhouse.sink.connector.validators.KafkaProviderValidator;
 import com.altinity.clickhouse.sink.connector.validators.TopicToTableValidator;
 import org.apache.kafka.common.config.AbstractConfig;
@@ -103,6 +104,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         0,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString())
+                // Define overrides map for ClickHouse Database
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
+                        Type.STRING,
+                        "",
+                        new DatabaseOverrideValidator(),
+                        Importance.LOW,
+                        "Map of source to destination database(override) (optional). Format : comma-separated tuples, e.g."
+                                + " <src_database-1>:<destination_database-1>,<src_database-2>:<destination_database-2>,... ",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
                         Type.LONG,
@@ -181,17 +195,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         2,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString())
-                .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString(),
-                        Type.STRING,
-                        null,
-                        new ConfigDef.NonEmptyString(),
-                        Importance.HIGH,
-                        "ClickHouse database name",
-                        CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO,
-                        3,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString(),
                         Type.INT,
@@ -447,6 +450,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
+                        Type.STRING,
+                        "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - " +
+                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, " +
+                                "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
+                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time," +
+                                "* FROM %s FINAL",
+                        Importance.HIGH,
+                        "SQL query to get replica status, lag etc.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString())
 
                 ;
     }

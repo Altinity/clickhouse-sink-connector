@@ -9,11 +9,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
     DEDUPLICATION_POLICY("deduplication.policy"),
 
     CLICKHOUSE_TOPICS_TABLES_MAP("clickhouse.topic2table.map"),
+    CLICKHOUSE_DATABASE_OVERRIDE_MAP("clickhouse.database.override.map"),
 
     CLICKHOUSE_URL("clickhouse.server.url"),
     CLICKHOUSE_USER("clickhouse.server.user"),
     CLICKHOUSE_PASS("clickhouse.server.password"),
-    CLICKHOUSE_DATABASE("clickhouse.server.database"),
     CLICKHOUSE_PORT("clickhouse.server.port"),
 
     PROVIDER_CONFIG( "provider"),
@@ -72,6 +72,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
 
+    REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size");
 
     private String label;

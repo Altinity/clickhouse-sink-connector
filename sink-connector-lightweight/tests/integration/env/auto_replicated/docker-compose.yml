@@ -3,7 +3,7 @@ version: "2.3"
 
 services:
   mysql-master:
-    image: docker.io/bitnami/mysql:8.0
+    image: docker.io/bitnami/mysql:8.0.36
     restart: "no"
     expose:
       - "3306"

@@ -18,22 +18,16 @@ def generate_sample_mysql_value(data_type):
         return str(number)
     elif data_type.startswith("DOUBLE"):
         # Adjusting the range to avoid overflow, staying within a reasonable limit
-        return str(random.uniform(-1.7e308, 1.7e308))
+        return f"'{str(random.uniform(-1.7e307, 1.7e307))}'"
     elif data_type == "DATE NOT NULL":
-        return (datetime.today() - timedelta(days=random.randint(1, 365))).strftime(
-            "%Y-%m-%d"
-        )
+        return f'\'{(datetime.today() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d")}\''
     elif data_type.startswith("DATETIME"):
-        return (datetime.now() - timedelta(days=random.randint(1, 365))).strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        )[:19]
+        return f'\'{(datetime.now() - timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d %H:%M:%S.%f")[:19]}\''
     elif data_type.startswith("TIME"):
         if "6" in data_type:
-            return (datetime.now()).strftime("%H:%M:%S.%f")[
-                : 8 + 3
-            ]  # Including microseconds
+            return f'\'{(datetime.now()).strftime("%H:%M:%S.%f")[: 8 + 3]}\''
         else:
-            return (datetime.now()).strftime("%H:%M:%S")
+            return f'\'{(datetime.now()).strftime("%H:%M:%S")}\''
     elif "INT" in data_type:
         if "TINYINT" in data_type:
             return str(
@@ -60,21 +54,19 @@ def generate_sample_mysql_value(data_type):
                 else random.randint(-(2**63), 2**63 - 1)
             )
         else:  # INT
-            return str(
-                random.randint(0, 4294967295)
-                if "UNSIGNED" in data_type
-                else random.randint(-2147483648, 2147483647)
-            )
+            return f'\'{str(random.randint(0, 4294967295) if "UNSIGNED" in data_type else random.randint(-2147483648, 2147483647))}\''
     elif (
         data_type.startswith("CHAR")
         or data_type.startswith("VARCHAR")
-        or data_type == "TEXT NOT NULL"
+        or data_type.startswith("TEXT")
     ):
         return "'SampleText'"
+    elif data_type.startswith("BLOB"):
+        return "'SampleBinaryData'"
     elif data_type.endswith("BLOB NOT NULL"):
         return "'SampleBinaryData'"
     elif data_type.startswith("BINARY") or data_type.startswith("VARBINARY"):
-        return "'BinaryData'"
+        return "'a'"
     else:
         return "UnknownType"
 
@@ -90,12 +82,13 @@ def create_mysql_database(self, node=None, database_name=None):
 
     try:
         with Given(f"I create MySQL database {database_name}"):
-            node.query(f"DROP DATABASE IF EXISTS {database_name};")
-            node.query(f"CREATE DATABASE IF NOT EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
+            node.query(rf"CREATE DATABASE IF NOT EXISTS {database_name};")
         yield
     finally:
         with Finally(f"I delete MySQL database {database_name}"):
-            node.query(f"DROP DATABASE IF EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
+
 
 @TestStep(Given)
 def create_mysql_table(

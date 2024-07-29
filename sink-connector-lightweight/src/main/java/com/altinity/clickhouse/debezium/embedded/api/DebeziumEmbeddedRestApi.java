@@ -42,8 +42,21 @@ public class DebeziumEmbeddedRestApi {
         Properties finalProps1 = props;
         app.get("/status", ctx -> {
             ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+            String response = "";
 
-            ctx.result(debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1));
+            try {
+                response = debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1);
+            } catch (Exception e) {
+                log.error("Client - Error getting status", e);
+                // Create JSON response
+                JSONObject jsonObject = new JSONObject();
+                jsonObject.put("error", e.toString());
+                response = jsonObject.toJSONString();
+                ctx.result(response);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
 
         });
 
@@ -83,7 +96,6 @@ public class DebeziumEmbeddedRestApi {
 
             if(userProperties.size() > 0) {
                 log.info("User Overridden properties: " + userProperties);
-
             }
 
             debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
@@ -109,6 +121,15 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication...., this might take 60 seconds....");
         });
 
+        app.get("/restart", ctx -> {
+            log.info("Restarting sink connector");
+            ClickHouseDebeziumEmbeddedApplication.stop();
+
+            finalProps.putAll(userProperties);
+            CompletableFuture<String> cf = ClickHouseDebeziumEmbeddedApplication.startDebeziumEventLoop(injector, finalProps);
+            ctx.result("Started Replication....");
+
+        });
     }
     // Stop the javalin server
     public static void stop() {

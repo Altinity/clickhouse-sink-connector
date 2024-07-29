@@ -47,6 +47,7 @@ def check_different_primary_keys(
             clickhouse_table=clickhouse_table,
             statement="id, Name",
             with_final=True,
+            order_by="id",
         )
 
 

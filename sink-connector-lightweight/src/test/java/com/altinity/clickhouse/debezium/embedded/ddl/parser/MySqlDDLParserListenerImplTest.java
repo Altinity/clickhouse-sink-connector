@@ -606,7 +606,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "create database test_ddl";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists test_ddl"));
     }
 
     @Test
@@ -708,7 +708,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;";
         mySQLDDLParserService.parseSql(sql, "temporal_types_DATETIME4", clickHouseQuery, isDropOrTruncate);
 
-        String expectedResult = "CREATE TABLE datatypes.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8)Engine=ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/temporal_types_TIMESTAMP1', '{replica}', _version, is_deleted) ORDER BY tuple()";
+        String expectedResult = "CREATE TABLE datatypes.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8)Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY tuple()";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
 
 
@@ -777,6 +777,33 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
     }
 
+    @Test
+    public void testRenameIsDeletedColumn() {
+        String sql = "CREATE TABLE `city` (\n" +
+                "  `ID` int NOT NULL AUTO_INCREMENT,\n" +
+                "  `Name` char(35) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `CountryCode` char(3) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `District` char(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `Population` int NOT NULL DEFAULT '0',\n" +
+                "  `is_deleted` tinyint(1) DEFAULT '0',\n" +
+                "  PRIMARY KEY (`ID`)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
+                "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`)"));
+
+
+        String sqlWithoutBackticks = "create table city(id int not null auto_increment, Name char(35) , is_deleted tinyint(1) DEFAULT 0, primary key(id))";
+
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(sqlWithoutBackticks, "employees", clickHouseQuery2);
+
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
+                "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
