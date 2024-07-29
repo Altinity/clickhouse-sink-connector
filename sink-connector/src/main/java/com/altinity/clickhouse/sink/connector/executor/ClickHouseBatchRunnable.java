@@ -304,7 +304,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error(String.format("*** TABLE METADATA not retrieved for Database(%), table(%s) retrying",
+            log.error(String.format("*** TABLE METADATA not retrieved for Database(%s), table(%s) retrying",
                     writer.getDatabaseName(), writer.getTableName()));
             if(writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);

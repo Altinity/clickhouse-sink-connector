@@ -73,7 +73,6 @@ services:
       - JMXHOST=localhost
       - JMXPORT=1976
       - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
-      #- LOG_LEVEL=DEBUG
     depends_on:
       - kafka
 
@@ -115,7 +114,8 @@ services:
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
       - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
-      #- LOG_LEVEL=DEBUG
+      - log4j2.configurationFile=log4j2.xml
+      #- log4j2Debug=true 
     depends_on:
       - kafka
 
