@@ -147,6 +147,8 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
     # partitioning
     partitioning_options = find_partitioning_options(source)
     src = source
+    # create table if not exists
+    src = re.sub(r'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS ', src)
     # get rid of SQL comments
     src = re.sub(r'\/\*(.*?)\*\/;', '', src)
     src = re.sub(r'\/\*(.*?)\*\/', '', src)
