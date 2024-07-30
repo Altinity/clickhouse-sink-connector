@@ -6,7 +6,7 @@
 
     <groupId>com.altinity</groupId>
     <artifactId>clickhouse-kafka-sink-connector</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
     <packaging>jar</packaging>
     <name>ClickHouse Kafka Sink Connector</name>
     <description>Sinks data from Kafka into ClickHouse</description>
@@ -308,7 +308,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
-            <version>2.5.0.Beta1</version>
+            <version>2.7.0.Beta2</version>
         </dependency>
 
         <dependency>

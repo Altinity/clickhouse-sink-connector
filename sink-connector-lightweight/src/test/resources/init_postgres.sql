@@ -120,6 +120,33 @@ INSERT INTO protocol_test VALUES ('1778430', '12041969', 'Henry VII stocks Skin 
 INSERT INTO protocol_test VALUES ('1778431', '1228695', 'Mary I silver Visiting  6041 Caesar Street cameras judge', '1970-11-07T02:49:21.977Z');
 INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Peterson Pte. Ltd 2577 Limebank Circle span religious', '1975-02-02T01:13:06.152Z');
 
+ CREATE TABLE "redata" (
+        "id"               BIGSERIAL PRIMARY KEY       NOT NULL,
+        "uid"          BIGINT                      NOT NULL,
+        "e_type"       VARCHAR(255)                NOT NULL,
+        "e_data"       JSONB                       NOT NULL,
+        "r_data"    JSONB                       NULL,
+        "amount" numeric NOT NULL,
+        "total_amount" numeric(21,5) NOT NULL,
+        "e_time"       TIMESTAMP WITH TIME ZONE    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "u_time"      TIMESTAMP WITH TIME ZONE    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "c_time"      TIMESTAMP WITH TIME ZONE    NOT NULL DEFAULT CURRENT_TIMESTAMP
+     );
+
+  INSERT INTO "redata" ("uid", "e_type", "e_data", "r_data", "amount", "total_amount", "e_time", "u_time", "c_time")
+  VALUES (
+      123456,  -- example value for uid
+      'example_type',  -- example value for e_type
+      '{"key": "value"}'::jsonb,  -- example value for e_data
+      '{"key": "optional_value"}'::jsonb, -- example value for r_data (can be NULL)
+      12.2222,
+      122.22222,
+      '2024-07-24 12:34:56+00',  -- example value for e_time
+      '2024-07-24 12:34:56+00',  -- example value for u_time
+      '2024-07-24 12:34:56+00'
+  );
+
+
 --
 --CREATE TABLE test
 --(

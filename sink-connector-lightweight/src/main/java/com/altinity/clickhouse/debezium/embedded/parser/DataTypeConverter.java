@@ -4,7 +4,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMappe
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.antlr.DataTypeResolver;
 import io.debezium.config.CommonConnectorConfig;
-import io.debezium.connector.mysql.MySqlValueConverters;
+import io.debezium.connector.mysql.jdbc.MySqlValueConverters;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.jdbc.JdbcValueConverters;
 import io.debezium.jdbc.TemporalPrecisionMode;
@@ -34,7 +34,8 @@ public class DataTypeConverter {
                 JdbcValueConverters.DecimalMode.PRECISE,
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
-                CommonConnectorConfig.BinaryHandlingMode.BYTES);
+                CommonConnectorConfig.BinaryHandlingMode.BYTES,
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN);
 
 
         DataType dataType = initializeDataTypeResolver().resolveDataType(columnDefChild);
@@ -45,13 +46,18 @@ public class DataTypeConverter {
         return ClickHouseDataTypeMapper.getClickHouseDataType(schemaBuilder.schema().type(), schemaBuilder.schema().name());
     }
 
+    public static DataType getDataType(MySqlParser.DataTypeContext columnDefChild) {
+        String convertedDataType = null;
+        return initializeDataTypeResolver().resolveDataType(columnDefChild);
+    }
+
     public static String convertToString(String columnName, int scale, int precision, MySqlParser.DataTypeContext columnDefChild, ZoneId userProvidedTimeZone) {
         MySqlValueConverters mysqlConverter = new MySqlValueConverters(
                 JdbcValueConverters.DecimalMode.PRECISE,
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
-                CommonConnectorConfig.BinaryHandlingMode.BYTES
-        );
+                CommonConnectorConfig.BinaryHandlingMode.BYTES,
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN);
 
 
         String convertedDataType = null;

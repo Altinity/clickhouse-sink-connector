@@ -1,13 +1,13 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -60,7 +60,7 @@ public class PostgresInitialDockerIT {
         properties.put("slot.max.retries", "6");
         properties.put("slot.retry.delay.ms", "5000");
         properties.put("database.allowPublicKeyRetrieval", "true");
-        properties.put("table.include.list", "public.tm,public.tm2");
+        properties.put("table.include.list", "public.tm,public.tm2,public.redata");
 
         return properties;
     }
@@ -113,7 +113,21 @@ public class PostgresInitialDockerIT {
             tmCount =  chRs.getInt(1);
         }
 
+        // Get the columns in re_data.
+        Map<String, String> reDataColumns = writer.getColumnsDataTypesForTable("redata");
+
+        Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
+        Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue(tmCount == 2);
+
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer);
+
+        // Parse offsetvalue json and check the keys
+        Assert.assertTrue(offsetValue.contains("last_snapshot_record"));
+        Assert.assertTrue(offsetValue.contains("lsn"));
+        Assert.assertTrue(offsetValue.contains("txId"));
+        Assert.assertTrue(offsetValue.contains("ts_usec"));
+        Assert.assertTrue(offsetValue.contains("snapshot"));
 
         if(engine.get() != null) {
             engine.get().stop();

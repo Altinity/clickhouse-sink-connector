@@ -596,15 +596,14 @@ class Cluster(object):
                     "IMAGE_DEPENDENCY_PROXY", ""
                 )
                 self.environ["COMPOSE_HTTP_TIMEOUT"] = "300"
-                self.environ["CLICKHOUSE_TESTS_SERVER_BIN_PATH"] = (
-                    self.clickhouse_binary_path
-                )
-                self.environ["CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH"] = (
-                    self.clickhouse_odbc_bridge_binary_path
-                    or os.path.join(
-                        os.path.dirname(self.clickhouse_binary_path),
-                        "clickhouse-odbc-bridge",
-                    )
+                self.environ[
+                    "CLICKHOUSE_TESTS_SERVER_BIN_PATH"
+                ] = self.clickhouse_binary_path
+                self.environ[
+                    "CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH"
+                ] = self.clickhouse_odbc_bridge_binary_path or os.path.join(
+                    os.path.dirname(self.clickhouse_binary_path),
+                    "clickhouse-odbc-bridge",
                 )
                 self.environ["CLICKHOUSE_TESTS_DIR"] = self.configs_dir
 
@@ -890,6 +889,10 @@ class DatabaseNode(Node):
                     if raise_on_exception:
                         raise QueryRuntimeException(r.output)
                     assert False, error(r.output)
+                elif "ERROR" in r.output:
+                    if raise_on_exception:
+                        raise QueryRuntimeException(r.output)
+                    assert False, error(r.output)
 
         return r
 
@@ -970,7 +973,7 @@ class SinkConnector(DatabaseNode):
         else:
             raise ValueError(f"Failed to parse value from string: {input_string}")
 
-    def start_sink_connector(self, timeout=300, config_file=None):
+    def start_sink_connector(self, timeout=300, config_file=None, log_file=None):
         """Start ClickHouse Sink Connector."""
         if config_file is None:
             config_file = "config.yml"
@@ -978,8 +981,15 @@ class SinkConnector(DatabaseNode):
         config_file = config_file.rsplit("/", 1)[-1]
 
         with Given("I start ClickHouse Sink Connector"):
+            command = f"java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Xms4g -Xmx4g "
+
+            if log_file is None:
+                log_file = "log4j2.xml"
+
+            command += f"-Dlog4j2.configurationFile={log_file} -jar /app.jar /configs/{config_file} com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication >> /logs/sink-connector-lt.log 2>&1 &"
+
             start_command = self.command(
-                command=f"java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar /app.jar /configs/{config_file} com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > /logs/sink-connector-lt.log 2>&1 &",
+                command=command,
                 exitcode=0,
                 timeout=timeout,
             )

@@ -450,6 +450,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
+                        Type.STRING,
+                        "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - " +
+                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, " +
+                                "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
+                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time," +
+                                "* FROM %s FINAL",
+                        Importance.HIGH,
+                        "SQL query to get replica status, lag etc.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString())
 
                 ;
     }

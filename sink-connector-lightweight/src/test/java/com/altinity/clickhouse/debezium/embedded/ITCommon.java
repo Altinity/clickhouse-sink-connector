@@ -90,7 +90,7 @@ public class ITCommon {
         props.replace("snapshot.mode", "schema_only");
         props.replace("disable.drop.truncate", "true");
         props.setProperty("disable.ddl", "true");
-
+        props.setProperty("replica.status.view", "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,  toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time FROM %s settings final=1");
         return props;
     }
 }

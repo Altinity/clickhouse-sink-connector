@@ -11,6 +11,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
+import io.debezium.relational.ddl.DataType;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNodeImpl;
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -329,8 +330,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         String chDataType = null;
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
+        DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
+        if(dt.name().equalsIgnoreCase("ENUM"))
+        {
+            // Dont try to get precision/scale for enums
+        }
+        else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
             try {
                 precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
                 scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
@@ -559,7 +565,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
                 parseAddIndex(tree);
-            } else if (tree instanceof TerminalNodeImpl) {
+            } else if(tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
+                log.info("INSTANT ALGORITHM not supported in ClickHouse");
+                // Remove any terminating commas and break out of the parser loop.
+                // If the last character was comma.
+                if(this.query.charAt(this.query.length() - 1) == ',')
+                    this.query.deleteCharAt(this.query.length() - 1);
+
+                break;
+            }
+            else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
                 }

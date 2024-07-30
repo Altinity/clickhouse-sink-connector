@@ -149,10 +149,16 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 if(currentBatch == null) {
                     currentBatch = records.poll();
+                    if(currentBatch == null) {
+                        // No records in the queue.
+                        continue;
+                    }
                 } else {
                     log.debug("***** RETRYING the same batch again");
-
                 }
+
+
+
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
                 DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
@@ -298,7 +304,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
 
         if(writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error(String.format("*** TABLE METADATA not retrieved for Database(%), table(%s) retrying",
+            log.error(String.format("*** TABLE METADATA not retrieved for Database(%s), table(%s) retrying",
                     writer.getDatabaseName(), writer.getTableName()));
             if(writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);

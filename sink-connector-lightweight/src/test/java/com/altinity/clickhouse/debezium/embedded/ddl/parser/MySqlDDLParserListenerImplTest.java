@@ -294,11 +294,12 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    public void testAlterDatabaseAddEntity() {
+    public void testAlterAddColumnWithColumnKeyword() {
 
-        String clickhouseExpectedQuery = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
+        String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
+        String clickhouseExpectedQuery = "ALTER TABLE db1.table1 ADD COLUMN entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
-        String alterDBAddColumn = "alter table db1.table1 add column entity Nullable(String)";
+
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
 
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
@@ -323,7 +324,7 @@ public class MySqlDDLParserListenerImplTest {
     // Before, After
     @Test
     public void testAlterDatabaseAddMultipleColumns1() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN ship_spec Nullable(String)  first, ADD COLUMN somecol Nullable(Int32)  after start_build,";
+        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN ship_spec Nullable(String)  first, ADD COLUMN somecol Nullable(Int32)  after start_build";
         StringBuffer clickHouseQuery = new StringBuffer();
         String query = "alter table employees.employees add column ship_spec varchar(150) first, add somecol int after start_build, algorithm=instant;";
         mySQLDDLParserService.parseSql(query, "employees", clickHouseQuery);
