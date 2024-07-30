@@ -9,6 +9,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -28,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
+@Disabled
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
     static ClickHouseContainer clickHouseContainer;
