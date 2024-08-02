@@ -42,3 +42,23 @@ in terms of number of elements the queue can hold and the maximum size of the qu
     Flush time of the buffer in milliseconds. The buffer that is stored in memory before being flushed to ClickHouse.
     buffer.flush.time.ms: "1000"
 ```
+
+## Snapshots (Out of Memory)
+
+The following parameters might be useful to reduce the memory usage of the connector during the snapshotting phase.
+
+
+**Reduce the number of tables**: Use the `snapshot.include.collection.list` to filter include only the necessary tables
+as part of the snapshot which will reduce the data retrieved from source.
+
+**snapshot.fetch.size**: This defines the maximum number of rows that are fetched as part of the batch from the database.
+Use a lower number to reduce memory usage.
+**Incremental**
+```
+incremental.snapshot.chunk.size
+Default value: 1024
+The maximum number of rows that the connector fetches and reads into memory when it retrieves an incremental snapshot chunk. Increasing the chunk size provides greater efficiency, because the snapshot runs fewer snapshot queries of a greater size. However, larger chunk sizes also require more memory to buffer the snapshot data. Adjust the chunk size to a value that provides the best performance in your environment.
+```
+
+**snapshot.max.threads**: Increase this number from 1 to a higher value to enable parallel snapshotting.
+
