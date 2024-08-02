@@ -18,6 +18,8 @@ def generate_interesting_table_names(num_names, max_length=64):
 
     special_chars = "_$"
     utf8_chars = "áéíóúñüç"
+    chinese_characters = "中文女"
+
     punctuation = r"""!"#$%&'()*+,-./:;<=>?@[\]^_{|}~"""
 
     def generate_table_name(length):
@@ -27,6 +29,7 @@ def generate_interesting_table_names(num_names, max_length=64):
             + string.digits
             + special_chars
             + utf8_chars
+            + chinese_characters
             + punctuation
         )
         return "".join(random.choice(allowed_chars) for _ in range(length))

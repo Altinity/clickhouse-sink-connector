@@ -93,6 +93,54 @@ def init_sink_connector(
 
 
 @TestStep(Given)
+def init_sink_connector_auto_created(self, topics, node=None, update=None):
+    """Initialize sink connector with auto created tables."""
+    init_sink_connector(
+        auto_create_tables=True,
+        topics=topics,
+        auto_create_replicated_tables=False,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_manual_created(self, topics, node=None, update=None):
+    """Initialize sink connector with manual created tables."""
+    init_sink_connector(
+        auto_create_tables=False,
+        topics=topics,
+        auto_create_replicated_tables=False,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_auto_created_replicated(self, topics, node=None, update=None):
+    """Initialize sink connector with auto created replicated tables."""
+    init_sink_connector(
+        auto_create_tables=True,
+        topics=topics,
+        auto_create_replicated_tables=True,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_manual_created_replicated(self, topics, node=None, update=None):
+    """Initialize sink connector with manual created replicated tables."""
+    init_sink_connector(
+        auto_create_tables=False,
+        topics=topics,
+        auto_create_replicated_tables=True,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
 def init_debezium_connector(self, node=None):
     """
     Initialize debezium connectors.
