@@ -6,6 +6,7 @@ from integration.tests.steps.clickhouse import (
     validate_data_in_clickhouse_table,
     check_column,
     select,
+    get_random_value_from_column,
 )
 from integration.tests.steps.mysql.alters import (
     add_column,
@@ -273,16 +274,30 @@ def delete_specific_records(self):
 def update_record_on_source(self):
     """Check that the record is updated on the destination table when we update a record on the source."""
     table_name = f"table_{getuid()}"
-    column = "col1"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name)
+        auto_create_with_multiple_inserts(table_name=table_name)
 
-    with When("I update a record on the source"):
-        update(table_name=table_name, column_name=column)
+    for database in self.context.databases:
+        with When("I update a record on the source"):
+            random_value = get_random_value_from_column(
+                database=database, table_name=table_name, column_name="id"
+            )
 
-    with Then("I check that the record was updated on the destination"):
-        select(table_name=table_name, manual_output="")
+            update(
+                table_name=table_name,
+                database=database,
+                set="id 5",
+                condition=f"id = {random_value}",
+            )
+
+        with Then("I check that the primary key was added to the table"):
+            select(
+                table_name=table_name,
+                database=database,
+                where=f"id = {random_value}",
+                manual_output=random_value,
+            )
 
 
 @TestSuite
@@ -313,6 +328,11 @@ def deletes(self):
     for database in databases:
         Scenario(run=delete_all_records_from_source, database=database)
         Scenario(run=delete_specific_records, database=database)
+
+@TestSuite
+def updates(self):
+    """Check that updates are replicated to the destination."""
+    Scenario(run=update_record_on_source)
 
 
 @TestFeature
