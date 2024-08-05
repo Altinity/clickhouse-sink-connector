@@ -1,4 +1,12 @@
 from integration.tests.steps.clickhouse import *
+from integration.tests.steps.mysql.alters import (
+    add_column,
+    change_column,
+    modify_column,
+    drop_column,
+    drop_primary_key,
+    add_primary_key,
+)
 from integration.tests.steps.mysql.mysql import *
 from integration.tests.steps.service_configurations import (
     init_sink_connector,
@@ -18,9 +26,13 @@ def auto_create_table(
     node=None,
     table_name=None,
     replicate=False,
+    validate_values=True,
 ):
     """Check that tables created on the source database are replicated on the destination."""
     databases = self.context.databases
+
+    if type(databases) is not list:
+        databases = [databases]
 
     if table_name is None:
         table_name = "table_" + getuid()
@@ -44,15 +56,23 @@ def auto_create_table(
             )
 
         with When("I insert values into the table"):
-            insert(
-                table_name=table_name,
-                values=f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}",
-            )
+            table_values = f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}"
+            insert(table_name=table_name, values=table_values)
+
+        if not validate_values:
+            table_values = ""
 
         with Then("I check that the table is replicated on the destination database"):
             with Check(f"table with {column_datatype} was replicated"):
                 check_if_table_was_created(
                     database_name=database, table_name=table_name
+                )
+            if validate_values:
+                validate_data_in_clickhouse_table(
+                    table_name=table_name,
+                    expected_output=table_values.replace("'", ""),
+                    database_name=database,
+                    statement=f"id, {column_name}",
                 )
 
 
@@ -87,15 +107,103 @@ def auto_creation_different_table_names(self):
 
 
 @TestScenario
-def alters(self):
-    """Check that alter statements performed on the source are replicated to the destination."""
-    pass
+def add_column_on_source(self, database):
+    """Check that the column is added on the table when we add a column on a database."""
+    table_name = f"table_{getuid()}"
+    column = "new_col"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name, databases=database)
+
+    with When("I add a column on the table"):
+        add_column(table_name=table_name, column_name=column, database=database)
+
+    with Then("I check that the column was added on the table"):
+        check_column(table_name=table_name, column_name=column, database=database)
 
 
 @TestScenario
-def inserts(self):
-    """Check that inserts are replicated to the destination."""
-    pass
+def change_column_on_source(self, database):
+    """Check that the column is changed on the table when we change a column on a database."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+    new_column = "new_col"
+    new_column_type = "varchar(255)"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name, databases=database)
+
+    with When("I change a column on the table"):
+        change_column(
+            table_name=table_name,
+            database=database,
+            column_name=column,
+            new_column_name=new_column,
+            new_column_type=new_column_type,
+        )
+
+    with Then("I check that the column was changed on the table"):
+        check_column(table_name=table_name, column_name=new_column, database=database)
+
+
+@TestScenario
+def modify_column_on_source(self, database):
+    """Check that the column is modified on the table when we modify a column on a database."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+    new_column_type = "varchar(255)"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name, databases=database)
+
+    with When("I modify a column on the table"):
+        modify_column(
+            table_name=table_name,
+            database=database,
+            column_name=column,
+            new_column_type=new_column_type,
+        )
+
+    with Then("I check that the column was modified on the table"):
+        check_column(
+            table_name=table_name,
+            database=database,
+            column_name=column,
+            column_type=new_column_type,
+        )
+
+
+@TestScenario
+def drop_column_on_source(self, database):
+    """Check that the column is dropped from the table when we drop a column on a database."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name, databases=database)
+
+    with When("I drop a column on the table"):
+        drop_column(table_name=table_name, database=database, column_name=column)
+
+    with Then("I check that the column was dropped from the table"):
+        check_column(table_name=table_name, database=database, column_name="")
+
+
+@TestScenario
+def add_primary_key_on_a_database(self, database):
+    """Check that the primary key is added to the table when we add a primary key on a database."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name, databases=database)
+
+    with When("I add a primary key on the table"):
+        drop_primary_key(table_name=table_name, database=database)
+        add_primary_key(table_name=table_name, database=database, column_name=column)
+
+    with Then("I check that the primary key was added to the table"):
+        check_column(table_name=table_name, database=database, column_name=column)
 
 
 @TestScenario
@@ -108,6 +216,26 @@ def deletes(self):
 def updates(self):
     """Check that updates are replicated to the destination."""
     pass
+
+
+@TestSuite
+def table_creation(self):
+    """Check that tables created on the source database are correctly replicated on the destination."""
+    Scenario(run=check_auto_creation_all_datatypes)
+    Scenario(run=auto_creation_different_table_names)
+
+
+@TestSuite
+def alters(self):
+    """Check that alter statements performed on the source are replicated to the destination."""
+    databases = self.context.databases
+
+    for database in databases:
+        Scenario(run=add_column_on_source, database=database)
+        Scenario(run=change_column_on_source, database=database)
+        Scenario(run=modify_column_on_source, database=database)
+        Scenario(run=drop_column_on_source, database=database)
+        Scenario(run=add_primary_key_on_a_database, database=database)
 
 
 @TestFeature
@@ -125,5 +253,5 @@ def feature(self, number_of_tables=20, databases: list = None):
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    for scenario in loads(current_module(), Scenario):
-        scenario()
+    for suite in loads(current_module(), Suite):
+        suite()

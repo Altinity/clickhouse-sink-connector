@@ -1,4 +1,5 @@
 from integration.helpers.common import *
+from integration.tests.steps.statements import mysql_to_clickhouse_datatypes_mapping
 
 
 @TestStep(Then)
@@ -15,6 +16,25 @@ def drop_database(self, database_name=None, node=None, cluster=None):
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
         node.query(rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER {cluster};")
+
+
+@TestStep
+def select_column_type(self, node, database, table_name, column_name):
+    """Check column type in ClickHouse table."""
+    with By(f"checking column type for {column_name}"):
+        node.query(
+            f"SELECT type FROM system.columns WHERE table = '{table_name}' AND name = '{column_name}' AND database = '{database}' FORMAT TabSeparated"
+        ).output.strip()
+
+
+@TestStep
+def validate_column_type(self, mysq_column_type):
+    """Validate column type in ClickHouse table."""
+    with By(f"validating column type"):
+        assert (
+            mysql_to_clickhouse_datatypes_mapping[mysq_column_type]["mysql"]
+            == mysql_to_clickhouse_datatypes_mapping[mysq_column_type]["clickhouse"]
+        ), f"expected {mysql_to_clickhouse_datatypes_mapping[mysq_column_type]['mysql']} but got {mysql_to_clickhouse_datatypes_mapping[mysq_column_type]['clickhouse']}"
 
 
 @TestStep(Then)

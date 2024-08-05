@@ -111,6 +111,34 @@ all_ch_datatypes = (
     f" x_varbinary String"
 )
 
+mysql_to_clickhouse_datatypes_mapping = {
+    "DECIMAL(2,1)": {"clickhouse": "Decimal(2,1)", "mysql": "DECIMAL(2,1)"},
+    "DECIMAL(30, 10)": {"clickhouse": "Decimal(30,10)", "mysql": "DECIMAL(30, 10)"},
+    "DOUBLE": {"clickhouse": "Float64", "mysql": "DOUBLE"},
+    "DATE": {"clickhouse": "Date", "mysql": "DATE"},
+    "DATETIME(6)": {"clickhouse": "String", "mysql": "DATETIME(6)"},
+    "TIME": {"clickhouse": "String", "mysql": "TIME"},
+    "TIME(6)": {"clickhouse": "String", "mysql": "TIME(6)"},
+    "INT": {"clickhouse": "Int32", "mysql": "INT"},
+    "INT UNSIGNED": {"clickhouse": "UInt32", "mysql": "INT UNSIGNED"},
+    "BIGINT": {"clickhouse": "UInt64", "mysql": "BIGINT"},
+    "BIGINT UNSIGNED": {"clickhouse": "UInt64", "mysql": "BIGINT UNSIGNED"},
+    "TINYINT": {"clickhouse": "Int8", "mysql": "TINYINT"},
+    "TINYINT UNSIGNED": {"clickhouse": "UInt8", "mysql": "TINYINT UNSIGNED"},
+    "SMALLINT": {"clickhouse": "Int16", "mysql": "SMALLINT"},
+    "SMALLINT UNSIGNED": {"clickhouse": "UInt16", "mysql": "SMALLINT UNSIGNED"},
+    "MEDIUMINT": {"clickhouse": "Int32", "mysql": "MEDIUMINT"},
+    "MEDIUMINT UNSIGNED": {"clickhouse": "UInt32", "mysql": "MEDIUMINT UNSIGNED"},
+    "CHAR": {"clickhouse": "LowCardinality(String)", "mysql": "CHAR"},
+    "TEXT": {"clickhouse": "String", "mysql": "TEXT"},
+    "VARCHAR(4)": {"clickhouse": "String", "mysql": "VARCHAR(4)"},
+    "BLOB": {"clickhouse": "String", "mysql": "BLOB"},
+    "MEDIUMBLOB": {"clickhouse": "String", "mysql": "MEDIUMBLOB"},
+    "LONGBLOB": {"clickhouse": "String", "mysql": "LONGBLOB"},
+    "BINARY": {"clickhouse": "String", "mysql": "BINARY"},
+    "VARBINARY(4)": {"clickhouse": "String", "mysql": "VARBINARY(4)"},
+}
+
 all_mysql_datatypes_dict = {
     "D4": "DECIMAL(2,1) NOT NULL",
     "D5": "DECIMAL(30, 10) NOT NULL",
