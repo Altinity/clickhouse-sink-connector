@@ -110,6 +110,7 @@ def select(
     with_optimize=False,
     sign_column="_sign",
     timeout=300,
+    where=None,
 ):
     """SELECT statement in ClickHouse with an option to use FINAL or loop SELECT + OPTIMIZE TABLE default simple 'SELECT'"""
     if node is None:
@@ -148,12 +149,19 @@ def select(
                     message=f"{manual_output}",
                 )
     else:
+        r = "SELECT {statement} FROM {database}.{table_name}"
+
+        if where:
+            r += f" WHERE {where}"
+
+        r += " FORMAT CSV"
+
         retry(
             node.query,
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM {database}.{table_name} FORMAT CSV",
+            r,
             message=f"{manual_output}",
         )
 
@@ -316,3 +324,22 @@ def verify_table_creation_in_clickhouse(
                     with_optimize=with_optimize,
                     timeout=timeout,
                 )
+
+
+@TestStep(When)
+def get_random_value_from_column(
+    self, table_name, column_name, database=None, node=None
+):
+    """Get random value from ClickHouse table column."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("clickhouse")
+
+    with By(f"getting random value from {column_name}"):
+        random_value = node.query(
+            rf"SELECT {column_name} FROM {database}.\`{table_name}\` ORDER BY rand() LIMIT 1"
+        )
+
+    return random_value
