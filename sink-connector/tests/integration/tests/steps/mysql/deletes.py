@@ -7,7 +7,7 @@ def delete(self, table, condition=None, database=None, node=None):
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
-    query = rf"DELETE FROM {database}.{table} WHERE {condition};"
+    query = rf"DELETE FROM {database}.{table}{condition};"
 
     if condition is not None:
         query += f" WHERE {condition}"
@@ -24,4 +24,3 @@ def delete_all_records(self, table_name, database=None, node=None):
 
     with By("executing DELETE query"):
         delete(node=node, table=table_name, database=database, condition=None)
-        node.query(rf"DELETE FROM {database}.{table_name};")

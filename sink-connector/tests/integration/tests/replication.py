@@ -7,6 +7,7 @@ from integration.tests.steps.mysql.alters import (
     drop_primary_key,
     add_primary_key,
 )
+from integration.tests.steps.mysql.deletes import delete_all_records, delete
 from integration.tests.steps.mysql.mysql import *
 from integration.tests.steps.service_configurations import (
     init_sink_connector,
@@ -18,7 +19,7 @@ from integration.tests.steps.statements import (
 )
 
 
-@TestCheck
+@TestOutline
 def auto_create_table(
     self,
     column_datatype="VARCHAR(255)",
@@ -27,6 +28,7 @@ def auto_create_table(
     table_name=None,
     replicate=False,
     validate_values=True,
+    multiple_inserts=False,
 ):
     """Check that tables created on the source database are replicated on the destination."""
     databases = self.context.databases
@@ -56,9 +58,15 @@ def auto_create_table(
             )
 
         with When("I insert values into the table"):
-            table_values = f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}"
-            insert(table_name=table_name, values=table_values)
-
+            if not multiple_inserts:
+                table_values = f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}"
+                insert(table_name=table_name, values=table_values)
+            else:
+                for _ in range(10):
+                    insert(
+                        table_name=table_name,
+                        values=f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}",
+                    )
         if not validate_values:
             table_values = ""
 
@@ -74,6 +82,16 @@ def auto_create_table(
                     database_name=database,
                     statement=f"id, {column_name}",
                 )
+
+
+@TestStep(Given)
+def auto_create_with_multiple_inserts(self, table_name=None):
+    """Create a table with multiple inserts."""
+    auto_create_table(
+        table_name=table_name,
+        multiple_inserts=True,
+        validate_values=False,
+    )
 
 
 @TestScenario
@@ -207,9 +225,35 @@ def add_primary_key_on_a_database(self, database):
 
 
 @TestScenario
-def deletes(self):
-    """Check that deletes are replicated to the destination."""
-    pass
+def delete_all_records_from_source(self):
+    """Check that records are deleted from the destination table when we delete all columns on the source."""
+    table_name = f"table_{getuid()}"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_with_multiple_inserts(table_name=table_name)
+
+    for database in self.context.databases:
+        with When("I delete columns on the source"):
+            delete_all_records(table_name=table_name, database=database)
+
+        with Then("I check that the primary key was added to the table"):
+            select(table_name=table_name, database=database, manual_output="")
+
+
+@TestScenario
+def delete_specific_records(self):
+    """Check that records are deleted from the destination table when we execute DELETE WHERE on source table."""
+    table_name = f"table_{getuid()}"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_with_multiple_inserts(table_name=table_name)
+
+    for database in self.context.databases:
+        with When("I delete columns on the source"):
+            delete(table_name=table_name, database=database, condition="WHERE id > 0")
+
+        with Then("I check that the primary key was added to the table"):
+            select(table_name=table_name, database=database, manual_output="")
 
 
 @TestScenario
@@ -236,6 +280,16 @@ def alters(self):
         Scenario(run=modify_column_on_source, database=database)
         Scenario(run=drop_column_on_source, database=database)
         Scenario(run=add_primary_key_on_a_database, database=database)
+
+
+@TestSuite
+def deletes(self):
+    """Check that deletes are replicated to the destination."""
+    databases = self.context.databases
+
+    for database in databases:
+        Scenario(run=delete_all_records_from_source, database=database)
+        Scenario(run=delete_specific_records, database=database)
 
 
 @TestFeature
