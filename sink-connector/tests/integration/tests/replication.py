@@ -1,4 +1,12 @@
-from integration.tests.steps.clickhouse import *
+from testflows.core import *
+
+from integration.helpers.common import getuid
+from integration.tests.steps.clickhouse import (
+    check_if_table_was_created,
+    validate_data_in_clickhouse_table,
+    check_column,
+    select,
+)
 from integration.tests.steps.mysql.alters import (
     add_column,
     change_column,
@@ -8,7 +16,12 @@ from integration.tests.steps.mysql.alters import (
     add_primary_key,
 )
 from integration.tests.steps.mysql.deletes import delete_all_records, delete
-from integration.tests.steps.mysql.mysql import *
+from integration.tests.steps.mysql.mysql import (
+    create_mysql_table,
+    insert,
+    generate_sample_mysql_value,
+)
+from integration.tests.steps.mysql.updates import update
 from integration.tests.steps.service_configurations import (
     init_sink_connector,
     init_debezium_connector,
@@ -257,9 +270,19 @@ def delete_specific_records(self):
 
 
 @TestScenario
-def updates(self):
-    """Check that updates are replicated to the destination."""
-    pass
+def update_record_on_source(self):
+    """Check that the record is updated on the destination table when we update a record on the source."""
+    table_name = f"table_{getuid()}"
+    column = "col1"
+
+    with Given("I create a table on multiple databases"):
+        auto_create_table(table_name=table_name)
+
+    with When("I update a record on the source"):
+        update(table_name=table_name, column_name=column)
+
+    with Then("I check that the record was updated on the destination"):
+        select(table_name=table_name, manual_output="")
 
 
 @TestSuite
