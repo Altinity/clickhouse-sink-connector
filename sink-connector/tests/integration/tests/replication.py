@@ -23,12 +23,12 @@ from integration.tests.steps.mysql.mysql import (
     generate_sample_mysql_value,
 )
 from integration.tests.steps.mysql.updates import update
-from integration.tests.steps.service_configurations import (
+from integration.tests.steps.configurations import (
     init_sink_connector,
     init_debezium_connector,
 )
 from integration.tests.steps.sql import generate_interesting_table_names
-from integration.tests.steps.statements import (
+from integration.tests.steps.datatypes import (
     all_mysql_datatypes_dict,
 )
 
@@ -337,7 +337,7 @@ def updates(self):
 
 @TestFeature
 @Name("replication")
-def feature(self, number_of_tables=20, databases: list = None):
+def replication(self, number_of_tables=20, databases: list = None):
     """Check that actions performed on the source database are replicated on the destination database."""
 
     self.context.number_of_tables = number_of_tables
