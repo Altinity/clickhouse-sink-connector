@@ -13,8 +13,8 @@ from integration.tests.steps.statements import (
 @TestCheck
 def auto_create_table(
     self,
-    column_datatype,
-    column_name,
+    column_datatype="VARCHAR(255)",
+    column_name="name",
     node=None,
     table_name=None,
     replicate=False,
@@ -48,8 +48,6 @@ def auto_create_table(
                 table_name=table_name,
                 values=f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}",
             )
-
-        # pause()
 
         with Then("I check that the table is replicated on the destination database"):
             with Check(f"table with {column_datatype} was replicated"):
@@ -85,8 +83,6 @@ def auto_creation_different_table_names(self):
             name=f"auto table creation with {table_name} table name",
         )(
             table_name=table_name,
-            column_name="name",
-            column_datatype="VARCHAR(255)",
         )
 
 
