@@ -1,5 +1,5 @@
 from integration.helpers.common import *
-from integration.tests.steps.statements import mysql_to_clickhouse_datatypes_mapping
+from integration.tests.steps.datatypes import mysql_to_clickhouse_datatypes_mapping
 
 
 @TestStep(Then)
