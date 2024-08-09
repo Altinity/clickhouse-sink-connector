@@ -46,6 +46,7 @@ def auto_create_table(
 ):
     """Check that tables created on the source database are replicated on the destination."""
     databases = self.context.databases
+    update_sink_config = self.context.update_sink_config
 
     if type(databases) is not list:
         databases = [databases]
@@ -61,6 +62,7 @@ def auto_create_table(
                 auto_create_tables=True,
                 topics=f"SERVER5432.{database}.{table_name}",
                 auto_create_replicated_tables=replicate,
+                update=update_sink_config,
             )
 
         with And("I create a table on the source database"):
@@ -329,6 +331,7 @@ def deletes(self):
         Scenario(run=delete_all_records_from_source, database=database)
         Scenario(run=delete_specific_records, database=database)
 
+
 @TestSuite
 def updates(self):
     """Check that updates are replicated to the destination."""
@@ -337,10 +340,11 @@ def updates(self):
 
 @TestFeature
 @Name("replication")
-def replication(self, number_of_tables=20, databases: list = None):
+def replication(self, number_of_tables=20, databases: list = None, update: dict = None):
     """Check that actions performed on the source database are replicated on the destination database."""
 
     self.context.number_of_tables = number_of_tables
+    self.context.update_sink_config = update
 
     if databases is None:
         self.context.databases = ["test"]
