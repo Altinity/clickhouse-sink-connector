@@ -1,8 +1,57 @@
 import random
+import string
 
 from integration.helpers.common import *
 from datetime import datetime, timedelta
 from testflows.core import *
+
+
+def generate_special_case_names(num_names, max_length=64):
+    """Generate a list of interesting MySQL table and database names for testing."""
+    reserved_keywords = [
+        "Select",
+        "Insert",
+        "Update",
+        "Delete",
+        "Group",
+        "Where",
+        "Transaction",
+    ]
+
+    special_chars = "_$"
+    utf8_chars = "áéíóúñüç"
+    chinese_characters = "中文女"
+
+    punctuation = r"""!"#$%&'()*+,-./:;<=>?@[\]^_{|}~"""
+
+    def generate_table_name(length):
+        """Generate a random table name of a given length."""
+        allowed_chars = (
+            string.ascii_letters
+            + string.digits
+            + special_chars
+            + utf8_chars
+            + chinese_characters
+            + punctuation
+        )
+        return "".join(random.choice(allowed_chars) for _ in range(length))
+
+    table_names = set()
+
+    # Add reserved keywords
+    table_names.update(reserved_keywords)
+
+    while len(table_names) < num_names:
+        length = random.randint(1, max_length)
+        name = generate_table_name(length)
+
+        # Ensure the name does not start with a digit
+        if name[0] in string.digits:
+            name = "_" + name
+
+        table_names.add(f"{name}")
+
+    return list(table_names)
 
 
 def generate_sample_mysql_value(data_type):

@@ -8,6 +8,13 @@ from integration.tests.steps.clickhouse import (
     select,
     get_random_value_from_column,
 )
+from integration.tests.steps.configurations import (
+    init_sink_connector,
+    init_debezium_connector,
+)
+from integration.tests.steps.datatypes import (
+    all_mysql_datatypes_dict,
+)
 from integration.tests.steps.mysql.alters import (
     add_column,
     change_column,
@@ -21,16 +28,9 @@ from integration.tests.steps.mysql.mysql import (
     create_mysql_table,
     insert,
     generate_sample_mysql_value,
+    generate_special_case_names,
 )
 from integration.tests.steps.mysql.updates import update
-from integration.tests.steps.configurations import (
-    init_sink_connector,
-    init_debezium_connector,
-)
-from integration.tests.steps.sql import generate_interesting_table_names
-from integration.tests.steps.datatypes import (
-    all_mysql_datatypes_dict,
-)
 
 
 @TestOutline
@@ -73,7 +73,7 @@ def auto_create_table(
 
         with When("I insert values into the table"):
             if not multiple_inserts:
-                table_values = f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}"
+                table_values = f"{generate_sample_mysql_value('INT')},{generate_sample_mysql_value(column_datatype)}"
                 insert(table_name=table_name, values=table_values)
             else:
                 for _ in range(10):
@@ -127,7 +127,7 @@ def check_auto_creation_all_datatypes(self, table_name=None):
 @TestScenario
 def auto_creation_different_table_names(self):
     """Check that tables with all datatypes are replicated on the destination table when tables have names with special cases."""
-    table_names = generate_interesting_table_names(self.context.number_of_tables)
+    table_names = generate_special_case_names(self.context.number_of_tables)
 
     for table_name in table_names:
         Check(
@@ -145,13 +145,14 @@ def add_column_on_source(self, database):
     column = "new_col"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name, databases=database)
+        auto_create_table(table_name=table_name)
 
-    with When("I add a column on the table"):
-        add_column(table_name=table_name, column_name=column, database=database)
+    for database in self.context.databases:
+        with When("I add a column on the table"):
+            add_column(table_name=table_name, column_name=column, database=database)
 
-    with Then("I check that the column was added on the table"):
-        check_column(table_name=table_name, column_name=column, database=database)
+        with Then("I check that the column was added on the table"):
+            check_column(table_name=table_name, column_name=column, database=database)
 
 
 @TestScenario
@@ -163,19 +164,22 @@ def change_column_on_source(self, database):
     new_column_type = "varchar(255)"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name, databases=database)
+        auto_create_table(table_name=table_name)
 
-    with When("I change a column on the table"):
-        change_column(
-            table_name=table_name,
-            database=database,
-            column_name=column,
-            new_column_name=new_column,
-            new_column_type=new_column_type,
-        )
+    for database in self.context.databases:
+        with When("I change a column on the table"):
+            change_column(
+                table_name=table_name,
+                database=database,
+                column_name=column,
+                new_column_name=new_column,
+                new_column_type=new_column_type,
+            )
 
-    with Then("I check that the column was changed on the table"):
-        check_column(table_name=table_name, column_name=new_column, database=database)
+        with Then("I check that the column was changed on the table"):
+            check_column(
+                table_name=table_name, column_name=new_column, database=database
+            )
 
 
 @TestScenario
@@ -186,23 +190,24 @@ def modify_column_on_source(self, database):
     new_column_type = "varchar(255)"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name, databases=database)
+        auto_create_table(table_name=table_name)
 
-    with When("I modify a column on the table"):
-        modify_column(
-            table_name=table_name,
-            database=database,
-            column_name=column,
-            new_column_type=new_column_type,
-        )
+    for database in self.context.databases:
+        with When("I modify a column on the table"):
+            modify_column(
+                table_name=table_name,
+                database=database,
+                column_name=column,
+                new_column_type=new_column_type,
+            )
 
-    with Then("I check that the column was modified on the table"):
-        check_column(
-            table_name=table_name,
-            database=database,
-            column_name=column,
-            column_type=new_column_type,
-        )
+        with Then("I check that the column was modified on the table"):
+            check_column(
+                table_name=table_name,
+                database=database,
+                column_name=column,
+                column_type=new_column_type,
+            )
 
 
 @TestScenario
@@ -212,13 +217,14 @@ def drop_column_on_source(self, database):
     column = "col1"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name, databases=database)
+        auto_create_table(table_name=table_name)
 
-    with When("I drop a column on the table"):
-        drop_column(table_name=table_name, database=database, column_name=column)
+    for database in self.context.databases:
+        with When("I drop a column on the table"):
+            drop_column(table_name=table_name, database=database, column_name=column)
 
-    with Then("I check that the column was dropped from the table"):
-        check_column(table_name=table_name, database=database, column_name="")
+        with Then("I check that the column was dropped from the table"):
+            check_column(table_name=table_name, database=database, column_name="")
 
 
 @TestScenario
@@ -228,14 +234,17 @@ def add_primary_key_on_a_database(self, database):
     column = "col1"
 
     with Given("I create a table on multiple databases"):
-        auto_create_table(table_name=table_name, databases=database)
+        auto_create_table(table_name=table_name)
 
-    with When("I add a primary key on the table"):
-        drop_primary_key(table_name=table_name, database=database)
-        add_primary_key(table_name=table_name, database=database, column_name=column)
+    for database in self.context.databases:
+        with When("I add a primary key on the table"):
+            drop_primary_key(table_name=table_name, database=database)
+            add_primary_key(
+                table_name=table_name, database=database, column_name=column
+            )
 
-    with Then("I check that the primary key was added to the table"):
-        check_column(table_name=table_name, database=database, column_name=column)
+        with Then("I check that the primary key was added to the table"):
+            check_column(table_name=table_name, database=database, column_name=column)
 
 
 @TestScenario
@@ -313,11 +322,11 @@ def alters(self):
     databases = self.context.databases
 
     for database in databases:
-        Scenario(run=add_column_on_source, database=database)
-        Scenario(run=change_column_on_source, database=database)
-        Scenario(run=modify_column_on_source, database=database)
-        Scenario(run=drop_column_on_source, database=database)
-        Scenario(run=add_primary_key_on_a_database, database=database)
+        Scenario(test=add_column_on_source)(database=database)
+        Scenario(test=change_column_on_source)(database=database)
+        Scenario(test=modify_column_on_source)(database=database)
+        Scenario(test=drop_column_on_source)(database=database)
+        Scenario(test=add_primary_key_on_a_database)(database=database)
 
 
 @TestSuite
@@ -326,8 +335,9 @@ def deletes(self):
     databases = self.context.databases
 
     for database in databases:
-        Scenario(run=delete_all_records_from_source, database=database)
-        Scenario(run=delete_specific_records, database=database)
+        Scenario(test=delete_all_records_from_source)(database=database)
+        Scenario(test=delete_specific_records)(database=database)
+
 
 @TestSuite
 def updates(self):
