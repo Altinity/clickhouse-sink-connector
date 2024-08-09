@@ -40,6 +40,11 @@ xfails = {
     "types/date time/*": [(Fail, "difference between timezones, tests need rework")],
     "types/integer types/*": [(Fail, "requires investigation")],
 }
+
+ffails = {
+    "/regression/multiple databases": (Skip, "Work in progress")
+}
+
 xflags = {}
 
 
@@ -47,6 +52,7 @@ xflags = {}
 @ArgumentParser(argparser)
 @XFails(xfails)
 @XFlags(xflags)
+@FFails(ffails)
 @Name("regression")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
@@ -117,6 +123,7 @@ def regression(
     Feature(run=load("tests.primary_keys", "feature"))
     Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.columns_inconsistency", "feature"))
+    Feature(run=load("tests.multiple_databases", "feature"))
 
 
 if __name__ == "__main__":
