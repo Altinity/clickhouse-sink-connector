@@ -134,4 +134,6 @@ services:
         condition: service_healthy
       zookeeper:
         condition: service_healthy
+      mysql-master:
+        condition: service_healthy
 
