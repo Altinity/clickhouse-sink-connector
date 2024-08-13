@@ -115,6 +115,9 @@ database.dbname: "public"
 # ignore_delete: If set to true, the connector will ignore delete events. The default is false.
 #ignore_delete: "true"
 
+#Metrics (Prometheus target), required for Grafana Dashboard
+metrics.enable: "true"
+
 #disable.ddl: If set to true, the connector will ignore DDL events. The default is false.
 #disable.ddl: "false"
 
