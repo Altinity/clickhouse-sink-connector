@@ -15,7 +15,9 @@ def drop_database(self, database_name=None, node=None, cluster=None):
     if node is None:
         node = self.context.cluster.node("clickhouse")
     with By("executing drop database query"):
-        node.query(rf"DROP DATABASE IF EXISTS {database_name} ON CLUSTER {cluster};")
+        node.query(
+            rf"DROP DATABASE IF EXISTS \`{database_name}\` ON CLUSTER {cluster};"
+        )
 
 
 @TestStep
@@ -90,7 +92,7 @@ def create_clickhouse_database(self, name=None, node=None):
             drop_database(database_name=name)
 
             node.query(
-                rf"CREATE DATABASE IF NOT EXISTS {name} ON CLUSTER replicated_cluster"
+                rf"CREATE DATABASE IF NOT EXISTS \`{name}\` ON CLUSTER replicated_cluster"
             )
         yield
     finally:
@@ -186,11 +188,11 @@ def check_if_table_was_created(
     if replicated:
         for node in self.context.cluster.nodes["clickhouse"]:
             retry(self.context.cluster.node(node).query, timeout=timeout, delay=3)(
-                rf"EXISTS {database_name}.\`{table_name}\`", message=f"{message}"
+                rf"EXISTS \`{database_name}\`.\`{table_name}\`", message=f"{message}"
             )
     else:
         retry(node.query, timeout=timeout, delay=3)(
-            f"EXISTS {database_name}.\`{table_name}\`", message=f"{message}"
+            f"EXISTS \`{database_name}\`.\`{table_name}\`", message=f"{message}"
         )
 
 

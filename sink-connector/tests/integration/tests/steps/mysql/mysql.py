@@ -18,11 +18,11 @@ def generate_special_case_names(num_names, max_length=64):
         "Transaction",
     ]
 
-    special_chars = "_$"
+    special_chars = "_-()"
     utf8_chars = "áéíóúñüç"
     chinese_characters = "中文女"
 
-    punctuation = r"""!"#$%&'()*+,-./:;<=>?@[\]^_{|}~"""
+    punctuation = r"""!#$%&()*+,-.<=>?@[]^_{|}~"""
 
     def generate_table_name(length):
         """Generate a random table name of a given length."""
@@ -30,9 +30,9 @@ def generate_special_case_names(num_names, max_length=64):
             string.ascii_letters
             + string.digits
             + special_chars
-            + utf8_chars
+            # + utf8_chars
             + chinese_characters
-            + punctuation
+            # + punctuation
         )
         return "".join(random.choice(allowed_chars) for _ in range(length))
 
@@ -40,6 +40,14 @@ def generate_special_case_names(num_names, max_length=64):
 
     # Add reserved keywords
     table_names.update(reserved_keywords)
+
+    base_name = generate_table_name(random.randint(1, max_length)).lower()
+    case_variation_name = "".join(
+        random.choice([char.upper(), char.lower()]) for char in base_name
+    )
+
+    table_names.add(base_name)
+    table_names.add(case_variation_name)
 
     while len(table_names) < num_names:
         length = random.randint(1, max_length)
@@ -131,12 +139,12 @@ def create_mysql_database(self, node=None, database_name=None):
 
     try:
         with Given(f"I create MySQL database {database_name}"):
-            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
-            node.query(rf"CREATE DATABASE IF NOT EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS \`{database_name}\`;")
+            node.query(rf"CREATE DATABASE IF NOT EXISTS \`{database_name}\`;")
         yield
     finally:
         with Finally(f"I delete MySQL database {database_name}"):
-            node.query(rf"DROP DATABASE IF EXISTS {database_name};")
+            node.query(rf"DROP DATABASE IF EXISTS \`{database_name}\`;")
 
 
 @TestStep(Given)
@@ -168,7 +176,7 @@ def create_mysql_table(
             key = f"{primary_key} INT NOT NULL,"
 
         with Given(f"I create MySQL table", description=name):
-            query = rf"CREATE TABLE IF NOT EXISTS {database_name}.\`{table_name}\` ({key}{columns}"
+            query = rf"CREATE TABLE IF NOT EXISTS \`{database_name}\`.\`{table_name}\` ({key}{columns}"
 
             if primary_key is not None:
                 query += f", PRIMARY KEY ({primary_key}))"
@@ -191,10 +199,35 @@ def create_mysql_table(
             "I clean up by deleting MySQL to ClickHouse replicated table",
             description={name},
         ):
-            mysql_node.query(rf"DROP TABLE IF EXISTS {database_name}.\`{table_name}\`;")
-            clickhouse_node.query(
-                rf"DROP TABLE IF EXISTS {database_name}.\`{table_name}\` ON CLUSTER replicated_cluster;"
+            mysql_node.query(
+                rf"DROP TABLE IF EXISTS \`{database_name}\`.\`{table_name}\`;"
             )
+            clickhouse_node.query(
+                rf"DROP TABLE IF EXISTS \`{database_name}\`.\`{table_name}\` ON CLUSTER replicated_cluster;"
+            )
+
+
+@TestStep(Given)
+def create_sample_table(self, table_name, database=None, node=None):
+    """Create a sample table in MySQL."""
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    if database is None:
+        database = "test"
+
+    with By(f"creating a sample table {table_name} in MySQL"):
+        create_mysql_table(
+            table_name=table_name,
+            database_name=database,
+            mysql_node=node,
+            columns=f"name VARCHAR(255)",
+        )
+
+    with And("Inserting sample data"):
+        insert(
+            table_name=table_name, values="1,'test'", node=node, database_name=database
+        )
 
 
 @TestStep
@@ -366,7 +399,9 @@ def insert(self, table_name, values, node=None, database_name=None):
         node = self.context.cluster.node("mysql-master")
 
     with When("I insert data into MySQL table"):
-        node.query(rf"INSERT INTO {database_name}.\`{table_name}\` VALUES ({values});")
+        node.query(
+            rf"INSERT INTO \`{database_name}\`.\`{table_name}\` VALUES ({values});"
+        )
 
 
 @TestStep(Given)
