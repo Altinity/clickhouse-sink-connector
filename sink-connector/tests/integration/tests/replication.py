@@ -76,12 +76,15 @@ def auto_create_table(
         with When("I insert values into the table"):
             if not multiple_inserts:
                 table_values = f"{generate_sample_mysql_value('INT')},{generate_sample_mysql_value(column_datatype)}"
-                insert(table_name=table_name, values=table_values)
+                insert(
+                    table_name=table_name, values=table_values, database_name=database
+                )
             else:
                 for _ in range(10):
                     insert(
                         table_name=table_name,
                         values=f"{generate_sample_mysql_value('INT')}, {generate_sample_mysql_value(column_datatype)}",
+                        database_name=database,
                     )
         if not validate_values:
             table_values = ""
@@ -230,7 +233,7 @@ def drop_column_on_source(self, database):
 
 
 @TestScenario
-def add_primary_key_on_a_database(self, database):
+def add_primary_key_on_a_database(self):
     """Check that the primary key is added to the table when we add a primary key on a database."""
     table_name = f"table_{getuid()}"
     column = "col1"
@@ -339,7 +342,6 @@ def deletes(self):
     for database in databases:
         Scenario(test=delete_all_records_from_source)(database=database)
         Scenario(test=delete_specific_records)(database=database)
-
 
 
 @TestSuite
