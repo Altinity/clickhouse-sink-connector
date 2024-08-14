@@ -118,13 +118,25 @@ public class DebeziumOffsetStorage {
      * @throws ParseException
      */
     public String updateLsnInformation(String record, String lsn) throws ParseException {
+
+        Long lsnLong;
+        // If lsn is a string 1/AF00, extract the hex number after slash.
+        if(lsn.contains("/")) {
+            lsn = lsn.split("/")[1];
+            // convert lsn from hex to long.
+            lsnLong = Long.parseLong(lsn, 16);
+        } else {
+            // convert to long.
+            lsnLong = Long.parseLong(lsn);
+        }
         JSONObject jsonObject = new JSONObject();
         if(record != null || !record.isEmpty()) {
             jsonObject = (JSONObject) new JSONParser().parse(record);
         }
 
-        jsonObject.put(LSN_PROCESSED, lsn);
-        jsonObject.put(LSN, lsn);
+
+        jsonObject.put(LSN_PROCESSED, lsnLong);
+        jsonObject.put(LSN, lsnLong);
 
         return jsonObject.toJSONString();
     }

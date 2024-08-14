@@ -28,13 +28,17 @@ public class DebeziumChangeEventCaptureTest {
     }
 
     @Test
-    @DisplayName("Unit test to check if the LSN record is updated properly")
+    @DisplayName("Unit test to check if the LSN record is updated properly when provided in string format and long format")
     public void testUpdateLsn() throws ParseException {
         String record = "{\"transaction_id\":null,\"lsn_proc\":27485360,\"messageType\":\"UPDATE\",\"lsn\":27485360,\"txId\":743,\"ts_usec\":1687876724804733}";
 
         String updatedRecord = new DebeziumOffsetStorage().updateLsnInformation(record, "0/1A38FA0");
 
-        assertTrue(updatedRecord.equalsIgnoreCase("{\"transaction_id\":null,\"lsn_proc\":\"0\\/1A38FA0\",\"messageType\":\"UPDATE\",\"lsn\":\"0\\/1A38FA0\",\"txId\":743,\"ts_usec\":1687876724804733}"));
+        assertTrue(updatedRecord.equalsIgnoreCase("{\"transaction_id\":null,\"lsn_proc\":27496352,\"messageType\":\"UPDATE\",\"lsn\":27496352,\"txId\":743,\"ts_usec\":1687876724804733}"));
+
+        String updatedRecordLong = new DebeziumOffsetStorage().updateLsnInformation(record, "27496352");
+        assertTrue(updatedRecordLong.equalsIgnoreCase("{\"transaction_id\":null,\"lsn_proc\":27496352,\"messageType\":\"UPDATE\",\"lsn\":27496352,\"txId\":743,\"ts_usec\":1687876724804733}"));
+
     }
 
 
