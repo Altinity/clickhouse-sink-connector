@@ -782,7 +782,8 @@ public class DebeziumChangeEventCapture {
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             log.info("********* Running in Single Threaded mode *********");
             singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap());
-        } else {
+        }
+
             ThreadFactory namedThreadFactory =
                     new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
             this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
@@ -790,7 +791,7 @@ public class DebeziumChangeEventCapture {
                 this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
             }
-        }
+
         //this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
