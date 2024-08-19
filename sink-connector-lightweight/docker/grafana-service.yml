@@ -2,7 +2,9 @@ version: "3.4"
 
 services:
   grafana:
-    dockerfile: Dockerfile_grafanr
+    build:
+      context: .
+      dockerfile: Dockerfile_grafanr
     #imagyour-ca-certe: grafana/grafana:latest
     restart: "no"
     ports:
