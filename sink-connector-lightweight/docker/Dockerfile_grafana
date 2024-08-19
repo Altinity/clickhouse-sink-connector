@@ -1,0 +1,14 @@
+# Start from the official Grafana image
+FROM grafana/grafana:latest
+
+# Add your CA certificate to the system's trusted certificates
+# If you have multiple certificates, you can copy them all
+COPY ca-certificates.crt /usr/local/share/ca-certificates/ca-certificates.crt
+RUN update-ca-certificates
+
+# Install the Grafana plugin
+# Replace 'your-plugin-id' with the actual plugin ID
+#RUN grafana-cli --pluginUrl https://your-plugin-repository.com/plugins/your-plugin-id install your-plugin-id
+
+# Restart Grafana to pick up the changes
+CMD ["/run.sh"]
