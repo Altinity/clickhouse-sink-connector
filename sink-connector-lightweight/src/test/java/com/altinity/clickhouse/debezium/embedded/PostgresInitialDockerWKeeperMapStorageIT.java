@@ -74,7 +74,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
     public Properties getProperties() throws Exception {
 
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
-        properties.put("plugin.name", "decoderbufs");
+        properties.put("plugin.name", "pgoutput");
         properties.put("plugin.path", "/");
         properties.put("table.include.list", "public.tm");
         properties.put("slot.max.retries", "6");
