@@ -173,3 +173,8 @@ metrics.enable: "true"
 # to reduce slow startup when replicating dbs with large number of tables
 #schema.history.internal.store.only.captured.tables.ddl: "true"
 #schema.history.internal.store.only.captured.databases.ddl: "true"
+
+# The maximum size of the packet that can be sent to or received from the MySQL server.
+#https://dev.mysql.com/doc/refman/8.4/en/packet-too-large.html
+#max_allowed_packet: 167772
+#driver.max_packet_size: 16777216
