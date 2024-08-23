@@ -1,9 +1,12 @@
 ## Production setup
-![](img/production_setup.jpg)
 
+
+[Throughput & Memory Usage](#improving-throughput-and/or-memory-usage.) \
+[Initial Load](#initial-load) \
+[PostgreSQL Setup](#postgresql-production-setup)
 
 ### Improving throughput and/or Memory usage.
-
+![](img/production_setup.jpg)
 As detailed in the diagram above, there are components that store the messages and
 can be configured to improve throughput and/or memory usage.
 
@@ -43,7 +46,7 @@ in terms of number of elements the queue can hold and the maximum size of the qu
     buffer.flush.time.ms: "1000"
 ```
 
-## Snapshots (Out of Memory)
+## Initial Load
 
 The following parameters might be useful to reduce the memory usage of the connector during the snapshotting phase.
 
@@ -62,3 +65,6 @@ The maximum number of rows that the connector fetches and reads into memory when
 
 **snapshot.max.threads**: Increase this number from 1 to a higher value to enable parallel snapshotting.
 
+## PostgreSQL Production Setup
+
+One of the common problems with PostgreSQL is the WAL size increasing.
