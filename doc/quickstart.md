@@ -31,7 +31,7 @@ sudo apt install clickhouse-client
 Use Docker Compose to start containers. 
 ```
 cd sink-connector-lightweight/docker
-export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.1.0-lt
+export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.2.1-lt
 docker compose -f docker-compose-mysql.yml up --renew-anon-volumes
 ```
 
@@ -81,6 +81,9 @@ docker compose -f docker-compose-mysql.yml down
 ```
 
 ### Connecting to External MySQL/ClickHouse
+##### Pre-requisites
+Make sure MySQL is setup with binlogs enabled and the MySQL replication user has the required grants.
+https://debezium.io/documentation/reference/stable/connectors/mysql.html#setting-up-mysql
 
 **Step 1:** Update **MySQL** information in config.yaml(https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/config.yml
 ):

@@ -6,7 +6,7 @@ name: "debezium-embedded-postgres"
 auto.create.tables.replicated: "true"
 
 # database.hostname: IP address or hostname of the PostgreSQL database server.
-database.hostname: "postgres"
+database.hostname: "localhost"
 
 # database.port: Integer port number of the PostgreSQL database server listening for client connections.
 database.port: "5432"
@@ -32,7 +32,7 @@ plugin.name: "pgoutput"
 #table.include.list: "public.tm,public.tm2"
 
 # clickhouse.server.url: Specify only the hostname of the Clickhouse Server.
-clickhouse.server.url: "clickhouse"
+clickhouse.server.url: "localhost"
 
 # clickhouse.server.user: Clickhouse Server User
 clickhouse.server.user: "root"
@@ -62,7 +62,7 @@ offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
 
 # offset.storage.jdbc.url: The JDBC URL for the database where connector offsets are to be stored.
-offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
 
 # offset.storage.jdbc.user: The name of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.user: "root"
@@ -84,15 +84,6 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
 offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
-schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
-schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
-schema.history.internal.jdbc.user: "root"
-schema.history.internal.jdbc.password: "root"
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
-(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
-
-# schema.history.internal.schema.history.table.name: The name of the database table where connector schema history is to be stored.
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
 
 # enable.snapshot.ddl: If set to true, the connector wil parse the DDL statements as part of initial load.
 enable.snapshot.ddl: "true"
@@ -114,9 +105,6 @@ database.dbname: "public"
 
 # ignore_delete: If set to true, the connector will ignore delete events. The default is false.
 #ignore_delete: "true"
-
-#Metrics (Prometheus target), required for Grafana Dashboard
-metrics.enable: "true"
 
 #disable.ddl: If set to true, the connector will ignore DDL events. The default is false.
 #disable.ddl: "false"
