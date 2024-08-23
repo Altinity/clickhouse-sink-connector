@@ -6,3 +6,7 @@ scrape_configs:
     static_configs:
       - targets:
           - clickhouse-sink-connector-lt:8083
+  - job_name: 'jmx'
+    static_configs:
+      - targets:
+          - jmx_exporter:9072
