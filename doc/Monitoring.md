@@ -77,7 +77,14 @@ record_insert_seq:
 ```select event_time, database, table, rows, duration_ms,size_in_bytes from system.part_log where table='table' and event_type='NewPart' and event_time > now () - interval 30 minute and database='db' ;```
 
 ## Grafana Dashboard
-JMX metrics of sink connector are exposed through the port
+JMX metrics of sink connector are exposed through the port.(Default: 8084)
+If you need to override the port, add `metrics.port` in config.yml
+
+```
+metrics.enable: "true"
+metrics.port: 8085
+```
+
 
 The JMX_exporter docker image scrapes the JMX metrics from the sink connector
 The metrics can be read through the following URL
