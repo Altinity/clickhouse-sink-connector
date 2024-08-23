@@ -81,6 +81,9 @@ docker compose -f docker-compose-mysql.yml down
 ```
 
 ### Connecting to External MySQL/ClickHouse
+##### Pre-requisites
+Make sure MySQL is setup with binlogs enabled and the MySQL replication user has the required grants.
+https://debezium.io/documentation/reference/stable/connectors/mysql.html#setting-up-mysql
 
 **Step 1:** Update **MySQL** information in config.yaml(https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/config.yml
 ):
