@@ -547,7 +547,7 @@ public class DebeziumChangeEventCapture {
 
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
         String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
-                Long.parseLong(lsn));
+                lsn);
 
         new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
         new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
