@@ -84,15 +84,10 @@ public class DbWriter extends BaseDbWriter {
                 // Order of the column names and the data type has to match.
                 this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
             }
-
             DBMetadata metadata = new DBMetadata();
-            try {
-                if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                    new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
-                }
-            } catch(Exception e) {
-                log.error("Error creating Database: " + database);
-            }
+
+            createOffsetSchemaHistoryDatabase();
+
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
@@ -155,6 +150,40 @@ public class DbWriter extends BaseDbWriter {
             }
         } catch(Exception e) {
             log.error("***** DBWriter error initializing ****", e);
+        }
+    }
+
+    // Create offset/schema history storage database.
+    public void createOffsetSchemaHistoryDatabase() {
+        DBMetadata metadata = new DBMetadata();
+        try {
+            if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
+                new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+            }
+        } catch(Exception e) {
+
+            int maxRetries = 0;
+            final int MAX_RETRIES = 5;
+            log.error("Error creating Database: " + database);
+
+            // Keep retrying to createNewDatabase until Max number of retries is reached.
+            boolean createDatabaseFailed = false;
+            while(maxRetries++ > MAX_RETRIES) {
+                try {
+                    Thread.sleep(maxRetries * 5000);
+                    if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
+                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+                        createDatabaseFailed = true;
+                        break;
+                    }
+                } catch (Exception ex) {
+                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + database);
+                }
+            }
+            // if maxRetries exceeded, throw runtime exception.
+            if(createDatabaseFailed == false) {
+                throw new RuntimeException("Error creating Database: " + database);
+            }
         }
     }
 

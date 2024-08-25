@@ -30,18 +30,14 @@ public class ITCommon {
     }
 
     // Function to connect to Postgres.
-    static public Connection connectToPostgreSQL(PostgreSQLContainer postgreSQLContainer) {
+    static public Connection connectToPostgreSQL(PostgreSQLContainer postgreSQLContainer) throws SQLException {
         Connection conn = null;
-        try {
 
             String connectionUrl = String.format("jdbc:postgresql://%s:%s/%s?user=%s&password=%s", postgreSQLContainer.getHost(),
                     postgreSQLContainer.getFirstMappedPort(),
                     postgreSQLContainer.getDatabaseName(), postgreSQLContainer.getUsername(), postgreSQLContainer.getPassword());
             conn = DriverManager.getConnection(connectionUrl);
 
-        } catch (SQLException ex) {
-
-        }
         return conn;
     }
 
