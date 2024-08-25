@@ -68,3 +68,4 @@ The maximum number of rows that the connector fetches and reads into memory when
 ## PostgreSQL Production Setup
 
 One of the common problems with PostgreSQL is the WAL size increasing.
+[Handling PostgreSQL WAL Growth with Debezium Connectors](doc/postgres_wal_growth.md)
