@@ -451,6 +451,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "Single threaded mode",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
                         "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - " +
