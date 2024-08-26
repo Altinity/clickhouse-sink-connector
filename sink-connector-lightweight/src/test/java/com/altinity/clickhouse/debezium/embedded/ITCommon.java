@@ -29,20 +29,71 @@ public class ITCommon {
         return conn;
     }
 
-    // Function to connect to Postgres.
-    static public Connection connectToPostgreSQL(PostgreSQLContainer postgreSQLContainer) {
+    static public Connection connectToMySQL(String host, String port, String databaseName, String userName, String password) {
         Connection conn = null;
         try {
+
+            String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?user=%s&password=%s", host, port,
+                    databaseName, userName, password);
+            conn = DriverManager.getConnection(connectionUrl);
+
+
+        } catch (SQLException ex) {
+            // handle any errors
+
+        }
+
+        return conn;
+    }
+
+    // Function to connect to Postgres.
+    static public Connection connectToPostgreSQL(PostgreSQLContainer postgreSQLContainer) throws SQLException {
+        Connection conn = null;
 
             String connectionUrl = String.format("jdbc:postgresql://%s:%s/%s?user=%s&password=%s", postgreSQLContainer.getHost(),
                     postgreSQLContainer.getFirstMappedPort(),
                     postgreSQLContainer.getDatabaseName(), postgreSQLContainer.getUsername(), postgreSQLContainer.getPassword());
             conn = DriverManager.getConnection(connectionUrl);
 
-        } catch (SQLException ex) {
-
-        }
         return conn;
+    }
+
+    static public Properties getDebeziumProperties(String mySQLHost, String mySQLPort, ClickHouseContainer clickHouseContainer) throws Exception {
+
+        // Start the debezium embedded application.
+
+        Properties defaultProps = new Properties();
+        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+
+        defaultProps.putAll(defaultProperties);
+        Properties fileProps = new ConfigLoader().load("config.yml");
+        defaultProps.putAll(fileProps);
+
+        defaultProps.setProperty("database.hostname", mySQLHost);
+        defaultProps.setProperty("database.port", String.valueOf(mySQLPort));
+        defaultProps.setProperty("database.user", "root");
+        defaultProps.setProperty("database.password", "adminpass");
+
+        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
+        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+
+        return defaultProps;
+
     }
 
     static public Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {

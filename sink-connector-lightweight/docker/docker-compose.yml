@@ -53,4 +53,15 @@ services:
       - ./config/grafana/config/altinity_sink_connector.json:/var/lib/grafana/dashboards/altinity_sink_connector.json
     depends_on:
       - prometheus
+
+  jmx_exporter:
+    container_name: jmx_exporter
+    image: sscaling/jmx-prometheus-exporter
+    restart: "no"
+    ports:
+      - "9072:9072"
+    environment:
+      SERVICE_PORT: 9072
+    volumes:
+      - ./config/jmx-config.yml:/opt/jmx_exporter/config.yml
     ## END OF MONITORING ###
