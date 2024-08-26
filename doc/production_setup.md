@@ -3,6 +3,7 @@
 
 [Throughput & Memory Usage](#improving-throughput-and/or-memory-usage.) \
 [Initial Load](#initial-load) \
+[MySQL Setup](#mysql-production-setup) \
 [PostgreSQL Setup](#postgresql-production-setup)
 
 ### Improving throughput and/or Memory usage.
@@ -64,6 +65,36 @@ The maximum number of rows that the connector fetches and reads into memory when
 ```
 
 **snapshot.max.threads**: Increase this number from 1 to a higher value to enable parallel snapshotting.
+
+## MySQL Production Setup
+# How to Reproduce
+
+1. Replicate a table only in `config.yml`:
+
+    ```yaml
+    table.include.list: "mydb.mytable"
+    ```
+
+2. Do not write to the table on the source database side.
+3. Monitor the lag:
+
+    ```sql
+    select * from altinity_sink_connector.show_replica_status\G
+    ```
+
+4. The lag increases if this table does not get written and the binary log position does not move. It should be synced periodically to show the binary log progress.
+
+# Workaround
+
+Include a heartbeat table (see [Percona Toolkit - pt-heartbeat](https://docs.percona.com/percona-toolkit/pt-heartbeat.html)):
+
+### Example
+
+```sql
+CREATE TABLE pt_heartbeat_db.heartbeat (
+  id int NOT NULL PRIMARY KEY,
+  ts datetime NOT NULL
+);
 
 ## PostgreSQL Production Setup
 
