@@ -66,6 +66,7 @@ The maximum number of rows that the connector fetches and reads into memory when
 
 **snapshot.max.threads**: Increase this number from 1 to a higher value to enable parallel snapshotting.
 
+
 ## MySQL Production Setup
 # How to Reproduce
 
@@ -95,6 +96,11 @@ CREATE TABLE pt_heartbeat_db.heartbeat (
   id int NOT NULL PRIMARY KEY,
   ts datetime NOT NULL
 );
+=======
+**Single Threaded (Low Memory/Slow replication)**:
+By setting the `single.threaded: true` configuration variable in `config.yml`, the replication will skip the sink connector queue and threadpool
+and will insert batches directly from the debezium queue.
+This mode will work on lower memory setup but will increase the replication speed.
 
 ## PostgreSQL Production Setup
 
