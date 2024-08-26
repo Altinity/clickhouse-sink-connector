@@ -4,6 +4,10 @@ Use [Docker Compose](https://docs.docker.com/compose/) to bring
 up a complete configuration that illustrates operation of 
 Altinity Sink Connector.
 
+If you are not able to use Docker, you 
+can use the JAR file from releases.
+Documentation to use the JAR file is [here](getting_started_jar.md).
+
 # QuickStart Installation for Lightweight Sink Connector
 
 This is the recommended path for initial use. It uses PostgreSQL as the

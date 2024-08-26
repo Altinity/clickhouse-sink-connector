@@ -55,3 +55,6 @@ https://stackoverflow.com/questions/63523998/multiple-debezium-connector-for-one
 
 ###  PostgreSQL - ERROR - Error starting connectorio.debezium.DebeziumException: Creation of replication slot failed; when setting up multiple connectors for the same database host, please make sure to use a distinct replication slot name for each.  
 Make sure to add `slot.name` to the configuration(config.yml) and change it to a unique name.
+
+### PostgreSQL (WAL size growing)
+[Handling PostgreSQL WAL Growth with Debezium Connectors](doc/postgres_wal_growth.md)
