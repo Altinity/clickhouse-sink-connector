@@ -819,6 +819,23 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
     }
+
+    @Test
+    public void testGhostSQL() {
+        String sql = " alter /* gh-ost */ table `p_prod`.`_j_failed_s_g` REMOVE PARTITIONING;\n";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `p_prod`.`_j_failed_s_g` REMOVE PARTITIONING"));
+
+        String createTableQuery = "create /* gh-ost */ table `p_prod`.`_j_failed_s_g` (\\n\\t\\t\\tid int auto_increment primary key\\n\\t\\t) engine=InnoDB comment='ghost-cut-over'";
+
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(createTableQuery, "employees", clickHouseQuery2);
+
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`p_prod`.`_j_failed_s_g`(`id` Int32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`id`)"));
+
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
