@@ -121,8 +121,8 @@ def regression(
     Feature(run=load("tests.truncate", "feature"))
     Feature(run=load("tests.deduplication", "feature"))
     Feature(run=load("tests.primary_keys", "feature"))
-    Feature(run=load("tests.virtual_columns", "feature"))
     Feature(run=load("tests.columns_inconsistency", "feature"))
+    Feature(run=load("tests.types", "feature"))
     Feature(run=load("tests.multiple_databases", "feature"))
 
 
