@@ -7,7 +7,7 @@ Currently the only supported state storage is by persisting the information in C
 
 To use ClickHouse as a state storage, you need to specify the following configuration properties:
 
-state storage link to img/state_storage.png
+![State Storage](img/state_storage.jpg)
 
 
 
