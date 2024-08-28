@@ -1,4 +1,7 @@
-## Adding new tables to configuration.
+[Adding new tables to configuration.(With Initial Load)](#adding-new-tables-to-configurationwith-initial-load) \
+[Adding new tables to configuration.(Without Initial Load/Schema only)](#adding-new-tables-to-configurationwith-initial-loadschema-only)
+
+## Adding new tables to configuration.(With Initial Load)
 The following steps will guide you through the process of adding newer tables to be replicated 
 from Source after the initial replication was setup.
 This is achieved using the incremental snapshots feature of debezium
@@ -37,3 +40,18 @@ https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-p
 ```
 incremental.snapshot.allow.schema.changes: true
 ````
+
+
+## Adding new tables to configuration.(With Initial Load(Schema only))
+
+
+**Step 1**: Update the `snapshot.mode` in `config.yml` to `schema_only_recovery`
+```
+snapshot.mode: "schema_only_recovery"
+```
+purge the schema history
+truncate altinity_sink_connector.replicate_schema_history
+restart the sink-connector (docker-compose up)
+once replication works fine, you can come back to
+
+snapshot.mode: "schema_only_recovery"
