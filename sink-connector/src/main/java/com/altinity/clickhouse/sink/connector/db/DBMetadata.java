@@ -333,16 +333,18 @@ public class DBMetadata {
                                                            ClickHouseConnection conn) throws SQLException {
 
         List<String> aliasColumns = new ArrayList<>();
-        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') where default_kind='ALIAS'";
+        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and default_kind='ALIAS'";
         String formattedQuery = String.format(query, tableName, databaseName);
 
         // Execute query
         ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
 
         // Get the list of columns from rs.
-        if(rs != null && rs.next()) {
-            String response = rs.getString(1);
-            aliasColumns.add(response);
+        if(rs != null) {
+            while (rs.next()) {
+                String response = rs.getString(1);
+                aliasColumns.add(response);
+            }
         }
         return aliasColumns;
     }
