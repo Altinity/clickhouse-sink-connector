@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 
 @Testcontainers
 
@@ -162,13 +163,13 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        List<String> aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("people", "employees2", conn);
+        Set<String> aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("people", "employees2", conn);
 
         Assert.assertTrue(aliasColumns.size() == 2);
 
 
         // Check for a table with no alias columns.
-        List<String> tmAliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("tm", "public", conn);
+        Set<String> tmAliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("tm", "public", conn);
         Assert.assertTrue(tmAliasColumns.size() == 0);
     }
 }

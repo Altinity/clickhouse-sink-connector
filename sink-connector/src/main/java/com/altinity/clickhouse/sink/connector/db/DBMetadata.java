@@ -277,6 +277,12 @@ public class DBMetadata {
                                                            ClickHouseConnection conn,
                                                            String database) {
 
+        Set<String> aliasColumns = new HashSet<>();
+        try {
+            aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase(tableName, database, conn);
+        } catch(Exception e) {
+            log.error("Error getting alias columns", e);
+        }
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
             if (conn == null) {
@@ -301,6 +307,10 @@ public class DBMetadata {
 
                 // Skip generated columns.
                 if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                    continue;
+                }
+                if(aliasColumns.contains(columnName)) {
+                    log.debug("Skipping alias column: " + columnName);
                     continue;
                 }
                 result.put(columnName, typeName);
@@ -329,10 +339,10 @@ public class DBMetadata {
      * Function to get the column names which are
      * @return
      */
-    public List<String> getAliasColumnsForTableAndDatabase(String tableName, String databaseName,
+    public Set<String> getAliasColumnsForTableAndDatabase(String tableName, String databaseName,
                                                            ClickHouseConnection conn) throws SQLException {
 
-        List<String> aliasColumns = new ArrayList<>();
+        Set<String> aliasColumns = new HashSet<>();
         String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and default_kind='ALIAS'";
         String formattedQuery = String.format(query, tableName, databaseName);
 
