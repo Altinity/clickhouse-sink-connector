@@ -65,7 +65,7 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2" );
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
         return properties;
     }
 
@@ -134,6 +134,15 @@ public class PostgresPgoutputMultipleSchemaIT {
             tm2Count =  chRs2.getInt(1);
         }
         Assert.assertTrue(tm2Count == 1);
+
+        // Create a connection to postgresql and create a new table.
+        Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
+        postgresConn2.createStatement().execute("CREATE TABLE public.people( height_cm numeric PRIMARY KEY, height_in numeric GENERATED ALWAYS AS (height_cm / 2.54) STORED)");
+
+        Thread.sleep(10000);
+        // insert new records into the new table.
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (180)");
+        Thread.sleep(10000);
 
         if(engine.get() != null) {
             engine.get().stop();
