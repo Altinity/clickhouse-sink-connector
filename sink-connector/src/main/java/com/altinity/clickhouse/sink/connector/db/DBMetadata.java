@@ -12,9 +12,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.ZoneId;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.TimeZone;
+import java.util.*;
 
 public class DBMetadata {
 
@@ -271,9 +269,6 @@ public class DBMetadata {
         return result;
     }
 
-
-
-
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
@@ -328,5 +323,27 @@ public class DBMetadata {
         }
 
         return result;
+    }
+
+    /**
+     * Function to get the column names which are
+     * @return
+     */
+    public List<String> getAliasColumnsForTableAndDatabase(String tableName, String databaseName,
+                                                           ClickHouseConnection conn) throws SQLException {
+
+        List<String> aliasColumns = new ArrayList<>();
+        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') where default_kind='ALIAS'";
+        String formattedQuery = String.format(query, tableName, databaseName);
+
+        // Execute query
+        ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
+
+        // Get the list of columns from rs.
+        if(rs != null && rs.next()) {
+            String response = rs.getString(1);
+            aliasColumns.add(response);
+        }
+        return aliasColumns;
     }
 }

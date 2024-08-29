@@ -158,3 +158,17 @@ create table employees2.ma_users
     engine = MergeTree()
     ORDER BY date
     SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE employees2.people
+(
+    `height_cm` Decimal(64, 18),
+    `_version` UInt64,
+    `_sign` UInt8,
+    `full_name` String ALIAS concat('John', ' ', 'Doe'),
+    `full_name2` String ALIAS concat('Alice', ' ', 'W'),
+)
+ENGINE = ReplacingMergeTree(_version, _sign)
+PRIMARY KEY height_cm
+ORDER BY height_cm
+SETTINGS index_granularity = 8192;

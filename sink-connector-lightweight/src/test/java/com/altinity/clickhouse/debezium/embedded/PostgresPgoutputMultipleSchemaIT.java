@@ -144,6 +144,12 @@ public class PostgresPgoutputMultipleSchemaIT {
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (180)");
         Thread.sleep(10000);
 
+        // ClickHouse, add ALIAS column to public.people
+        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
+        Thread.sleep(10000);
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
+        Thread.sleep(10000);
+
         if(engine.get() != null) {
             engine.get().stop();
         }

@@ -16,6 +16,7 @@ import org.testcontainers.utility.MountableFile;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.List;
 
 @Testcontainers
 
@@ -148,5 +149,21 @@ public class DBMetadataTest {
 
         Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
 
+    }
+
+    @Test
+    public void getAliasColumnsList() throws SQLException {
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
+        String tableName = "employees";
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        List<String> aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("employees2", "people", conn);
+
+        Assert.assertFalse(aliasColumns.isEmpty());
     }
 }
