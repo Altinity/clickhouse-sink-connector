@@ -70,7 +70,7 @@ public class PostgresPgoutputMultipleSchemaIT {
     }
 
     @Test
-    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas")
+    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas and ignoring ALIAS columns in ClickHouse")
     public void testMultipleSchemaReplication() throws Exception {
         Network network = Network.newNetwork();
 
@@ -149,6 +149,14 @@ public class PostgresPgoutputMultipleSchemaIT {
         Thread.sleep(10000);
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
         Thread.sleep(10000);
+
+        // Check if public.people has 2 records.
+        int peopleCount = 0;
+        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people final").executeQuery();
+        while(chRs3.next()) {
+            peopleCount =  chRs3.getInt(1);
+        }
+        Assert.assertTrue(peopleCount == 2);
 
         if(engine.get() != null) {
             engine.get().stop();
