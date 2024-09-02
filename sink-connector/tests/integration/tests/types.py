@@ -1,6 +1,7 @@
+from integration.requirements.requirements import *
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -47,7 +48,7 @@ def check_datatype_replication(
                 )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -82,7 +83,7 @@ def decimal(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values  nullable",
     [
@@ -111,7 +112,7 @@ def date_time(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 # @Repeat(3)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
@@ -178,7 +179,7 @@ def integer_types(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -207,7 +208,7 @@ def string(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -243,7 +244,7 @@ def blob(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -271,7 +272,7 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestOutline(Feature)
+@TestOutline(Scenario)
 @Examples(
     "mysql_type ch_type values ch_values nullable",
     [
@@ -296,12 +297,12 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
             )
 
 
-@TestModule
+@TestFeature
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable("1.0")
 )
 @Name("types")
-def module(self):
+def feature(self):
     """Verify correct replication of all supported MySQL data types."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
@@ -309,7 +310,7 @@ def module(self):
 
     with Pool(1) as executor:
         try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
+            for scenario in loads(current_module(), Scenario):
+                Feature(test=scenario, parallel=True, executor=executor)()
         finally:
             join()

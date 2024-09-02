@@ -1,6 +1,7 @@
+from integration.requirements.requirements import *
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -54,7 +55,7 @@ def virtual_column_names(
         )
 
 
-@TestFeature
+@TestScenario
 def virtual_column_names_default(self):
     """Check correctness of default virtual column names."""
     for clickhouse_table in available_clickhouse_tables:
@@ -63,7 +64,7 @@ def virtual_column_names_default(self):
                 virtual_column_names(clickhouse_table=clickhouse_table)
 
 
-@TestFeature
+@TestScenario
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_MySQLStorageEngines_ReplicatedReplacingMergeTree_DifferentVersionColumnNames(
         "1.0"
@@ -81,17 +82,13 @@ def virtual_column_names_replicated_random(self):
                 )
 
 
-@TestModule
+@TestFeature
 @Name("virtual columns")
-def module(self):
+def feature(self):
     """Section to check behavior of virtual columns."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()
