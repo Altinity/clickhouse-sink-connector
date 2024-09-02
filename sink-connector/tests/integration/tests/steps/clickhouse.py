@@ -192,7 +192,7 @@ def check_if_table_was_created(
             )
     else:
         retry(node.query, timeout=timeout, delay=3)(
-            f"EXISTS \`{database_name}\`.\`{table_name}\`", message=f"{message}"
+            rf"EXISTS \`{database_name}\`.\`{table_name}\`", message=f"{message}"
         )
 
 
