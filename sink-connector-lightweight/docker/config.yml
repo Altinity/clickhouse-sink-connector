@@ -166,6 +166,9 @@ restart.event.loop.timeout.period.secs: "3000"
 # Sink Connector maximum queue size
 #sink.connector.max.queue.size: "100000"
 
+#Metrics (Prometheus target), required for Grafana Dashboard
+metrics.enable: "true"
+
 # Skip schema history capturing, use the following configuration
 # to reduce slow startup when replicating dbs with large number of tables
 #schema.history.internal.store.only.captured.tables.ddl: "true"

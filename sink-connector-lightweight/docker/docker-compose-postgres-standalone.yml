@@ -1,8 +1,22 @@
 services:
-  clickhouse-sink-connector-lt:
+  postgres:
     extends:
-      file: clickhouse-sink-connector-lt-service.yml
-      service: clickhouse-sink-connector-lt
+      file: postgres-service.yml
+      service: postgres
+
+
+  clickhouse:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
 
   ### MONITORING ####
   prometheus:

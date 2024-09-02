@@ -55,9 +55,12 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [ClickHouse Table Engine Types](doc/clickhouse_engines.md)
 * [Troubleshooting](doc/Troubleshooting.md)
 * [TimeZone and DATETIME/TIMESTAMP](doc/timezone.md)
+* [Replication Start Position](doc/replication_start_position.md)
 * [Logging](doc/logging.md)
 * [Production Setup](doc/production_setup.md)
 * [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
+* [Configuration](doc/configuration.md)
+* [State Storage](doc/state_storage.md)
 
 ### Operations
 

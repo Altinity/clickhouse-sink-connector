@@ -13,6 +13,7 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -29,6 +30,7 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.checkerframework.checker.units.qual.C;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.ParseException;
@@ -37,6 +39,7 @@ import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -80,6 +83,8 @@ public class DebeziumChangeEventCapture {
 
     // Keep one clickhouse connection.
     private ClickHouseConnection conn;
+
+    ClickHouseBatchWriter singleThreadedWriter;
 
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
@@ -438,7 +443,11 @@ public class DebeziumChangeEventCapture {
                 JSONObject row = new JSONObject();
                 colNames.forEach(cn -> {
                     try {
-                        row.put(cn, resultSet.getObject(cn));
+                        Object v = resultSet.getObject(cn);
+                        if (v != null && v instanceof LocalDateTime) {
+                            v = ((LocalDateTime) v).toString();
+                        }
+                        row.put(cn, v);
                     } catch (SQLException e) {
                         e.printStackTrace();
                     }
@@ -542,7 +551,7 @@ public class DebeziumChangeEventCapture {
 
         String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
         String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
-                Long.parseLong(lsn));
+                lsn);
 
         new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
         new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
@@ -573,6 +582,7 @@ public class DebeziumChangeEventCapture {
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
@@ -596,7 +606,7 @@ public class DebeziumChangeEventCapture {
 
 
                     if(batch.size() > 0) {
-                        appendToRecords(batch);
+                        appendToRecords(batch, config);
                     }
                 }
             });
@@ -775,23 +785,33 @@ public class DebeziumChangeEventCapture {
      */
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config) {
 
-        // Setup separate thread to read messages from shared buffer.
-        // this.records = new ConcurrentLinkedQueue<>();
-        //this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
-        ThreadFactory namedThreadFactory =
-                new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-        for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
-            this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
-                    config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            log.info("********* Running in Single Threaded mode *********");
+            singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap());
         }
+
+            ThreadFactory namedThreadFactory =
+                    new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+            this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
+            for (int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
+                this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+            }
+
         //this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
-    private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
 
-        synchronized (this.records) {
-            this.records.add(convertedRecords);
+        // If config is set to single threaded.
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            singleThreadedWriter.persistRecords(convertedRecords);
+
+        } else {
+
+            synchronized (this.records) {
+                this.records.add(convertedRecords);
+            }
         }
 
 

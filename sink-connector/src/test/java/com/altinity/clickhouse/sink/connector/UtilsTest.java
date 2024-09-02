@@ -53,5 +53,18 @@ public class UtilsTest {
         Assert.assertTrue(resultWithSpecialCharacters);
 
     }
+
+    @Test
+    public void testParseSourceToDestinationDatabaseMap() throws Exception {
+        String sourceToDestination = "src_db1:dst_db1, src_db2:dst_db2,src-db2:src_db2";
+        Map<String, String> result = Utils.parseSourceToDestinationDatabaseMap(sourceToDestination);
+
+        Map<String, String> expectedHashMap = new HashMap<String, String>();
+        expectedHashMap.put("src_db1", "dst_db1");
+        expectedHashMap.put("src_db2", "dst_db2");
+        expectedHashMap.put("src-db2", "src_db2");
+
+        Assert.assertEquals(result, expectedHashMap);
+    }
 }
 
