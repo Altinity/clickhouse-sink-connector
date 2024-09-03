@@ -28,7 +28,8 @@ sudo apt install clickhouse-client
 
 ## Start the stack 
 
-Use Docker Compose to start containers. 
+Use Docker Compose to start containers.
+Set the `CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE` to the latest release from the Releases page.
 ```
 cd sink-connector-lightweight/docker
 export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.2.1-lt
@@ -137,6 +138,14 @@ Set the sever url to `https` and add `?ssl=true` to the end of the url.
 clickhouse.server.url: "https://cloud_url"
 offset.storage.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
 schema.history.internal.jdbc.url: "jdbc:clickhouse://cloud_url:8443/altinity_sink_connector?ssl=true"
+```
+
+**Step 7:** Start sink connector.
+After https://github.com/Altinity/clickhouse-sink-connector/blob/develop/sink-connector-lightweight/docker/config.yml is updated with both MySQL and ClickHouse information, start the sink connector service
+
+```
+docker-compose -f docker-compose-mysql-standalone.yml up
+
 ```
 
 ## References:
