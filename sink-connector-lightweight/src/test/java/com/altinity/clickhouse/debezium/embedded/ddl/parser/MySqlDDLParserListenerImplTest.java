@@ -819,6 +819,35 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
     }
+
+    @Test
+    public void testPartitionedByRangeTable() {
+        String sql = "CREATE TABLE `city` (\n" +
+                "  `ID` int NOT NULL AUTO_INCREMENT,\n" +
+                "  `Name` char(35) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `CountryCode` char(3) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `District` char(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `Population` int NOT NULL DEFAULT '0',\n" +
+                "  `is_deleted` tinyint(1) DEFAULT '0',\n" +
+                "  PRIMARY KEY (`ID`)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci PARTITION BY RANGE(`ID`)\n" +
+                "(PARTITION p0 VALUES LESS THAN (1000),\n" +
+                " PARTITION p1 VALUES LESS THAN (2000),\n" +
+                " PARTITION p2 VALUES LESS THAN (3000),\n" +
+                " PARTITION p3 VALUES LESS THAN (4000),\n" +
+                " PARTITION p4 VALUES LESS THAN (5000),\n" +
+                " PARTITION p5 VALUES LESS THAN (6000),\n" +
+                " PARTITION p6 VALUES LESS THAN (7000),\n" +
+                " PARTITION p7 VALUES LESS THAN (8000),\n" +
+                " PARTITION p8 VALUES LESS THAN (9000),\n" +
+                " PARTITION p9 VALUES LESS THAN (10000));";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
+                "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
