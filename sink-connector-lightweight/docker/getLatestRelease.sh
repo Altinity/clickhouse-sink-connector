@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 # Replace with your GitHub repository (e.g., user/repo)
 REPO="altinity/clickhouse-sink-connector"
 
@@ -23,18 +22,10 @@ echo "Setting CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE to the latest version"
 # Display a message to the usage of the latest_version in color green
 echo -e "\e[32mCLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:$latest_version-lt'\e[0m"
 
+#export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE='altinity/clickhouse-sink-connector:'$latest_version-lt
+export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE='altinity/clickhouse-sink-connector:'$latest_version-lt
+
+#echo run docker-compose up to start sink connector in green
+echo "\e[32mRun docker-compose up to start sink connector\e[0m"
 #Add stars
 echo "****************************************************************************************************"
-sleep 5
-if [ -z $1 ]
-then
-  #echo 'Using the latest tag for Sink connector'
-  export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE='altinity/clickhouse-sink-connector:'$latest_version-lt
-else
-  export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=$1
-fi
-
-#./stop-docker-compose.sh
-# Altinity sink images are tagged daily with this tag yyyy-mm-dd(2022-07-19)
-
-docker-compose up --renew-anon-volumes
