@@ -20,7 +20,7 @@
             <AppenderRef ref="console"/>
         </Logger>
 
-    <Root level="warn" additivity="false">
+    <Root level="info" additivity="false">
             <AppenderRef ref="console" />
         </Root>
     </Loggers>
