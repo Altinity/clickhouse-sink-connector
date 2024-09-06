@@ -15,8 +15,11 @@
                 additivity="false">
             <AppenderRef ref="console"/>
         </Logger>
-
-    <Root level="info" additivity="false">
+        <Logger name="io.debezium" level="ERROR"
+                additivity="false">
+            <AppenderRef ref="console"/>
+        </Logger>
+    <Root level="warn" additivity="false">
             <AppenderRef ref="console" />
         </Root>
     </Loggers>
