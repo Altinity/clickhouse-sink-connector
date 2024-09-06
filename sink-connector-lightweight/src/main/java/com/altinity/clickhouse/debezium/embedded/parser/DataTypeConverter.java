@@ -10,6 +10,8 @@ import io.debezium.jdbc.JdbcValueConverters;
 import io.debezium.jdbc.TemporalPrecisionMode;
 import io.debezium.relational.Column;
 import io.debezium.relational.ddl.DataType;
+import io.debezium.service.DefaultServiceRegistry;
+import io.debezium.service.spi.ServiceRegistry;
 import org.apache.kafka.connect.data.SchemaBuilder;
 
 import java.sql.Types;
@@ -35,7 +37,7 @@ public class DataTypeConverter {
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN);
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, null);
 
 
         DataType dataType = initializeDataTypeResolver().resolveDataType(columnDefChild);
@@ -57,7 +59,7 @@ public class DataTypeConverter {
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN);
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, null);
 
 
         String convertedDataType = null;
