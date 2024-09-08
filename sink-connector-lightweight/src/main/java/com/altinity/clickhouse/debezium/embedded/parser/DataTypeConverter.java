@@ -1,14 +1,22 @@
 package com.altinity.clickhouse.debezium.embedded.parser;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.antlr.DataTypeResolver;
+import io.debezium.bean.DefaultBeanRegistry;
 import io.debezium.config.CommonConnectorConfig;
+import io.debezium.config.Configuration;
+import io.debezium.connector.binlog.BinlogConnectorConfig;
+import io.debezium.connector.binlog.charset.BinlogCharsetRegistry;
+import io.debezium.connector.mysql.MySqlConnectorConfig;
+import io.debezium.connector.mysql.charset.MySqlCharsetRegistryServiceProvider;
 import io.debezium.connector.mysql.jdbc.MySqlValueConverters;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.jdbc.JdbcValueConverters;
 import io.debezium.jdbc.TemporalPrecisionMode;
 import io.debezium.relational.Column;
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.ddl.DataType;
 import io.debezium.service.DefaultServiceRegistry;
 import io.debezium.service.spi.ServiceRegistry;
@@ -17,49 +25,40 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import java.sql.Types;
 import java.time.ZoneId;
 import java.util.Arrays;
+import java.util.Map;
 
 /**
  *
  */
 public class DataTypeConverter {
 
-    /**
-     * Function that takes the Antlr parsed column type
-     * and converts it into ClickHouse type.
-     *
-     * @param columnName
-     * @param columnDefChild
-     * @return
-     */
-    public static ClickHouseDataType convert(String columnName, MySqlParser.DataTypeContext columnDefChild) {
-        MySqlValueConverters mysqlConverter = new MySqlValueConverters(
-                JdbcValueConverters.DecimalMode.PRECISE,
-                TemporalPrecisionMode.ADAPTIVE,
-                JdbcValueConverters.BigIntUnsignedMode.LONG,
-                CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, null);
-
-
-        DataType dataType = initializeDataTypeResolver().resolveDataType(columnDefChild);
-        //DataType dataType = MySqlParser.dataTypeResolver.resolveDataType(dataTypeContext);
-        Column column = Column.editor().name(columnName).type(dataType.name()).jdbcType(dataType.jdbcType()).length((int) dataType.length()).scale(dataType.scale()).create();
-        SchemaBuilder schemaBuilder = mysqlConverter.schemaBuilder(column);
-
-        return ClickHouseDataTypeMapper.getClickHouseDataType(schemaBuilder.schema().type(), schemaBuilder.schema().name());
-    }
 
     public static DataType getDataType(MySqlParser.DataTypeContext columnDefChild) {
         String convertedDataType = null;
         return initializeDataTypeResolver().resolveDataType(columnDefChild);
     }
 
-    public static String convertToString(String columnName, int scale, int precision, MySqlParser.DataTypeContext columnDefChild, ZoneId userProvidedTimeZone) {
+    public static String convertToString(ClickHouseSinkConnectorConfig config, String columnName, int scale, int precision, MySqlParser.DataTypeContext columnDefChild, ZoneId userProvidedTimeZone) {
+        new DefaultBeanRegistry();
+
+        // Convert ClickHouseConnectorConfig to configuration.
+        Configuration configuration = Configuration.create().
+        final MySqlConnectorConfig connectorConfig = new MySqlConnectorConfig(configuration);
+
+        // Convert Properties to Configuration.
+        Configuration configuration = Configuration.create().build();
+        // Iterate through properties and fill configuration.
+        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+            configuration = configuration.edit().with(entry.getKey().toString(), entry.getValue().toString()).build();
+        }
+        ServiceRegistry serviceRegistry = new DefaultServiceRegistry( Configuration.create().build(), new DefaultBeanRegistry());
+        BinlogCharsetRegistry charsetRegistry = new MySqlCharsetRegistryServiceProvider().createService(Configuration.create().build(), serviceRegistry);
         MySqlValueConverters mysqlConverter = new MySqlValueConverters(
                 JdbcValueConverters.DecimalMode.PRECISE,
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, null);
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, charsetRegistry.getCharacterConverter());
 
 
         String convertedDataType = null;
