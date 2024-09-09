@@ -161,6 +161,14 @@ public class ClickHouseBatchWriter {
                         //throw new RuntimeException(e);
                         log.error("Error marking records as processed"+ e);
                     }
+
+                    if(record.isLastRecordInBatch()) {
+                        try {
+                            record.getCommitter().markBatchFinished();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
                 });
             }
         } catch(Exception e) {
