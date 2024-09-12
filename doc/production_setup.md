@@ -91,6 +91,8 @@ grant SELECT, INSERT, CREATE TABLE, CREATE DATABASE on altinity.*              t
 grant CLUSTER ON *.* to sink;
 grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_db.* to sink;
 ```
+**User Profile**
+`max_partitions_per_insert_block` - The default value is 100, its recommended to set this value **1000**
 
 ## PostgreSQL Production Setup
 
