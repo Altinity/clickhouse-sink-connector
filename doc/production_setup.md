@@ -97,4 +97,4 @@ grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_d
 ## PostgreSQL Production Setup
 
 One of the common problems with PostgreSQL is the WAL size increasing.
-[Handling PostgreSQL WAL Growth with Debezium Connectors](doc/postgres_wal_growth.md)
+[Handling PostgreSQL WAL Growth with Debezium Connectors](postgres_wal_growth.md)
