@@ -108,7 +108,7 @@ public class PreparedStatementExecutor {
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
                                           ClickHouseConnection conn, String tableName, Map<String, String> columnToDataTypeMap,
                                           DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
-
+        long batchStartTime = System.currentTimeMillis();
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
         List<ClickHouseStruct> failedRecords = new ArrayList<>();
@@ -158,13 +158,13 @@ public class PreparedStatementExecutor {
 
                 // ToDo: should we check for EXECUTE_FAILED
                 int[] batchResult = ps.executeBatch();
-
+                long batchExecutionTime = System.currentTimeMillis() - batchStartTime;
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
                         "task(" + taskId + ")" + " Thread ID: " +
                         Thread.currentThread().getName() + " Result: " +
                         batchResult.toString() + " Database: "
-                        + databaseName + " Table: " + tableName);
+                        + databaseName + " Table: " + tableName + " Time: " + batchExecutionTime + " ms");
                 result.set(true);
 
 
