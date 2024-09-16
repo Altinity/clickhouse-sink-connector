@@ -150,7 +150,6 @@ public class DatabaseOverrideInitialIT {
 
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
-        conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
     }
