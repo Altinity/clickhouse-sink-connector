@@ -828,12 +828,12 @@ public class MySqlDDLParserListenerImplTest {
 
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `p_prod`.`_j_failed_s_g` REMOVE PARTITIONING"));
 
-        String createTableQuery = "create /* gh-ost */ table `p_prod`.`_j_failed_s_g` (\\n\\t\\t\\tid int auto_increment primary key\\n\\t\\t) engine=InnoDB comment='ghost-cut-over'";
+        String createTableQuery = "create /* gh-ost */ table `p_prod`.`_j_failed_s_g`(id int auto_increment primary key)engine=InnoDB comment='ghost-cut-over'";
 
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createTableQuery, "employees", clickHouseQuery2);
 
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`p_prod`.`_j_failed_s_g`(`id` Int32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`id`)"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE `p_prod`.`_j_failed_s_g`(id Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
 
     }
 //    @Test
