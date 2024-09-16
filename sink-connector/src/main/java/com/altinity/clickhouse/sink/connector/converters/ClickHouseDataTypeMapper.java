@@ -4,11 +4,13 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
+import com.clickhouse.data.value.ClickHouseGeoPointValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
 import io.debezium.data.Enum;
 import io.debezium.data.EnumSet;
 import io.debezium.data.geometry.Geometry;
+import io.debezium.data.geometry.Point;
 import io.debezium.time.*;
 import io.debezium.time.Date;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -88,6 +90,9 @@ public class ClickHouseDataTypeMapper {
 
         // Geometry -> Geometry
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.String);
+
+        // Point -> Point
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Point.LOGICAL_NAME), ClickHouseDataType.Point);
 
         // PostgreSQL UUID -> UUID
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Uuid.LOGICAL_NAME), ClickHouseDataType.UUID);
@@ -236,6 +241,20 @@ public class ClickHouseDataTypeMapper {
                 }
             } else {
                 ps.setString(index, "");
+            }
+        } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
+            // Handle Point type (ClickHouse expects (longitude, latitude))
+            if (value instanceof Struct) {
+                Struct pointValue = (Struct) value;
+                Object xValue = pointValue.get("x");
+                Object yValue = pointValue.get("y");
+                
+                double[] point = {(Double) xValue, (Double) yValue};
+
+                ps.setObject(index, ClickHouseGeoPointValue.of(point));
+            } else {
+                // If the value is not a valid Struct for a Point, set an empty point
+                ps.setObject(index, ClickHouseGeoPointValue.ofOrigin());
             }
         } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)) {
             if (value instanceof Struct) {
