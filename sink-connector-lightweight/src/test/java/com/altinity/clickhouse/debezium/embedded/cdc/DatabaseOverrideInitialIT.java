@@ -54,6 +54,7 @@ public class DatabaseOverrideInitialIT {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
+                .withInitScript("mysql_database_override_initial.sql")
 //                .withInitScript("15k_tables_mysql.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
@@ -96,22 +97,6 @@ public class DatabaseOverrideInitialIT {
         });
 
         Thread.sleep(25000);
-
-        // Employees table
-//        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-//        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-//
-//        // Insert a new row in the table
-//        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
-//
-//
-//        conn.prepareStatement("create database products").execute();
-//        conn.prepareStatement("create table products.prodtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-//        conn.prepareStatement("insert into products.prodtable values('a', 1, 1)").execute();
-//
-//        conn.prepareStatement("create database customers").execute();
-//        conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-//        conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
 
         Thread.sleep(10000);
 
