@@ -16,7 +16,7 @@ for analysis.
 
 ## Features
 
-* Initial data dump and load 
+* [Initial data dump and load(MySQL)](sink-connector/python/README.md) 
 * Change data capture of new transactions using [Debezium](https://debezium.io/)
 * Automatic loading into ClickHouse
 * Sources: Support for MySQL, PostgreSQL (other databases experimental)
