@@ -11,6 +11,10 @@
                 additivity="false">
         <AppenderRef ref="console"/>
         </Logger>-->
+        <Logger name="io.debezium" level="ERROR"
+                additivity="false">
+            <AppenderRef ref="console"/>
+        </Logger>
             <Logger name="com.clickhouse" level="ERROR"
                 additivity="false">
             <AppenderRef ref="console"/>
