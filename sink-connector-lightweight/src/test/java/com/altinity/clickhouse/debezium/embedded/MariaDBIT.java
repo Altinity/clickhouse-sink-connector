@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Integration test to validate support for replication of multiple databases.
  */
 @Testcontainers
-@DisplayName("Integration Test that validates basic replication of MariaDB databases")
+@DisplayName("Integration Test that validates basic replication of MariaDB databases in single threaded mode")
 public class MariaDBIT
 {
 
@@ -66,7 +66,7 @@ public class MariaDBIT
         clickHouseContainer.start();
     }
 
-    @DisplayName("Integration Test that validates handle of JSON data type from MySQL")
+    @DisplayName("Integration Test that validates replication of MariaDB databases in single.threaded mode")
     @Test
     public void testMultipleDatabases() throws Exception {
 
@@ -77,6 +77,7 @@ public class MariaDBIT
         // Set the list of databases captured.
         props.put("database.whitelist", "employees,test_db,test_db2");
         props.put("database.include.list", "employees,test_db,test_db2");
+        props.put("single.threaded", true);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
