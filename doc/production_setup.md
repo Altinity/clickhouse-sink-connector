@@ -2,6 +2,7 @@
 
 
 [Throughput & Memory Usage](#improving-throughput-and/or-memory-usage.) \
+[Low Memory environments(5GB)](#low-memory-environments5gb) \
 [Initial Load](#initial-load) \
 [PostgreSQL Setup](#postgresql-production-setup) \
 [ClickHouse Setup](#clickhouse-setup)
@@ -46,6 +47,16 @@ in terms of number of elements the queue can hold and the maximum size of the qu
     Flush time of the buffer in milliseconds. The buffer that is stored in memory before being flushed to ClickHouse.
     buffer.flush.time.ms: "1000"
 ```
+
+## Low Memory environments(5GB)
+The suggested configuration for a low memory environment is as follows to use a single threaded configuration.
+Single threaded configuration can be enabled in `config.yml`
+```
+single.threaded: "true"
+```
+As shown in the diagram below, the Single threaded configuration will skip the sink connector queue and threadpool
+and will insert batches directly from the debezium queue.
+![](img/single_threaded.jpg)
 
 ## Initial Load
 
