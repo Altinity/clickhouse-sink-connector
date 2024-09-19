@@ -86,9 +86,14 @@ public class DebeziumChangeEventCapture {
 
     ClickHouseBatchWriter singleThreadedWriter;
 
+
+    DebeziumOffsetStorage debeziumOffsetStorage;
+
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+        this.debeziumOffsetStorage = new DebeziumOffsetStorage();
     }
+
 
 
     /**
@@ -382,6 +387,14 @@ public class DebeziumChangeEventCapture {
         return Pair.of(tableName, databaseName);
     }
 
+    public void deleteOffsets(Properties props) {
+        DBCredentials dbCredentials = parseDBConfiguration(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), this.conn);
+        this.debeziumOffsetStorage.deleteOffsets(writer, props);
+    }
+
     /**
      * Function to get the status of Debezium storage.
      * @param props
@@ -476,7 +489,7 @@ public class DebeziumChangeEventCapture {
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
 
-        String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
+        String latestRecordTs = this.debeziumOffsetStorage.getDebeziumLatestRecordTimestamp(props, writer);
 
         // Convert date string from  2024-01-26 21:57:47 format to milliseconds.
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -515,14 +528,14 @@ public class DebeziumChangeEventCapture {
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+        String offsetValue = this.debeziumOffsetStorage.getDebeziumStorageStatusQuery(props, writer);
 
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+        String updateOffsetValue = this.debeziumOffsetStorage.updateBinLogInformation(offsetValue,
                 binlogFile, binLogPosition, gtid);
 
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
+        this.debeziumOffsetStorage.updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
                 System.currentTimeMillis());
 
     }
@@ -547,14 +560,14 @@ public class DebeziumChangeEventCapture {
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+        String offsetValue = this.debeziumOffsetStorage.getDebeziumStorageStatusQuery(props, writer);
 
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+        String updateOffsetValue = this.debeziumOffsetStorage.updateLsnInformation(offsetValue,
                 lsn);
 
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
+        this.debeziumOffsetStorage.updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
                 System.currentTimeMillis());
 
     }

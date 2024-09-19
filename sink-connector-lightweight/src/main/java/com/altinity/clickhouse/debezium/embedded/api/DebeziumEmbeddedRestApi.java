@@ -60,6 +60,27 @@ public class DebeziumEmbeddedRestApi {
 
         });
 
+        //Delete offsets
+        app.delete("/offsets", ctx -> {
+            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+            String response = "";
+
+            try {
+                response = debeziumChangeEventCapture.deleteDebeziumStorageStatus(config, finalProps1);
+            } catch (Exception e) {
+                log.error("Client - Error getting status", e);
+                // Create JSON response
+                JSONObject jsonObject = new JSONObject();
+                jsonObject.put("error", e.toString());
+                response = jsonObject.toJSONString();
+                ctx.result(response);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
+
+        });
+
         app.post("/binlog", ctx -> {
             if(debeziumChangeEventCapture.isReplicationRunning()) {
                 ctx.status(HttpStatus.BAD_REQUEST);
