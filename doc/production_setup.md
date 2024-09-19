@@ -3,7 +3,8 @@
 
 [Throughput & Memory Usage](#improving-throughput-and/or-memory-usage.) \
 [Initial Load](#initial-load) \
-[PostgreSQL Setup](#postgresql-production-setup)
+[PostgreSQL Setup](#postgresql-production-setup) \
+[ClickHouse Setup](#clickhouse-setup)
 
 ### Improving throughput and/or Memory usage.
 ![](img/production_setup.jpg)
@@ -70,7 +71,30 @@ By setting the `single.threaded: true` configuration variable in `config.yml`, t
 and will insert batches directly from the debezium queue.
 This mode will work on lower memory setup but will increase the replication speed.
 
+## ClickHouse Setup
+The clickhouse user needs to have the following GRANTS to the 
+offset storage/schema history  database(database provided in `offset.storage.jdbc.` configuration variable.
+and the database that is replicated(database provided in `database.include.list` and `table.include.list`)
+
+The following example creates user `sink` with necessary GRANTS
+to the offset storage/schema history database and replicated databases.
+```
+ALTER SETTINGS PROFILE 'ingest' SETTINGS
+    deduplicate_blocks_in_dependent_materialized_views=1,
+    min_insert_block_size_rows_for_materialized_views=10000,
+    throw_on_max_partitions_per_insert_block=0,
+    max_partitions_per_insert_block=1000,
+    date_time_input_format='best_effort';
+
+CREATE USER OR REPLACE 'sink' IDENTIFIED WITH sha256_hash BY '' HOST IP '::/8' SETTINGS PROFILE 'ingest';
+grant SELECT, INSERT, CREATE TABLE, CREATE DATABASE on altinity.*              to sink;
+grant CLUSTER ON *.* to sink;
+grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_db.* to sink;
+```
+**User Profile**
+`max_partitions_per_insert_block` - The default value is 100, its recommended to set this value **1000**
+
 ## PostgreSQL Production Setup
 
 One of the common problems with PostgreSQL is the WAL size increasing.
-[Handling PostgreSQL WAL Growth with Debezium Connectors](doc/postgres_wal_growth.md)
+[Handling PostgreSQL WAL Growth with Debezium Connectors](postgres_wal_growth.md)
