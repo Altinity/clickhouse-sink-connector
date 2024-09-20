@@ -66,14 +66,10 @@ public class DebeziumEmbeddedRestApi {
             String response = "";
 
             try {
-                response = debeziumChangeEventCapture.deleteDebeziumStorageStatus(config, finalProps1);
+                debeziumChangeEventCapture.deleteOffsets(finalProps1);
             } catch (Exception e) {
-                log.error("Client - Error getting status", e);
-                // Create JSON response
-                JSONObject jsonObject = new JSONObject();
-                jsonObject.put("error", e.toString());
-                response = jsonObject.toJSONString();
-                ctx.result(response);
+                log.error("Client - Error deleting offsets", e);
+                ctx.result(e.toString());
                 ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
                 return;
             }

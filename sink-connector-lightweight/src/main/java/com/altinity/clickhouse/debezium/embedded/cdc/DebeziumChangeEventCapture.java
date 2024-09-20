@@ -387,12 +387,18 @@ public class DebeziumChangeEventCapture {
         return Pair.of(tableName, databaseName);
     }
 
-    public void deleteOffsets(Properties props) {
+    /**
+     * Function to delete offsets from Debezium storage.
+     * @param props
+     */
+    public void deleteOffsets(Properties props) throws SQLException {
         DBCredentials dbCredentials = parseDBConfiguration(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 dbCredentials.getDatabase(), dbCredentials.getUserName(),
                 dbCredentials.getPassword(), new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), this.conn);
-        this.debeziumOffsetStorage.deleteOffsets(writer, props);
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
     }
 
     /**
