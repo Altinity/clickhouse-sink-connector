@@ -42,6 +42,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
+        <clickhouse.jdbc.version>0.6.5</clickhouse.jdbc.version>
     </properties>
 
 
@@ -334,7 +335,7 @@
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <!-- below is only needed when all you want is a shaded jar -->
             <classifier>http</classifier>
             <exclusions>
@@ -448,7 +449,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>
