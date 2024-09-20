@@ -24,6 +24,7 @@
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
         <sink-connector-library-version>0.0.9</sink-connector-library-version>
+        <javalin-version>6.3.0</javalin-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -58,7 +59,7 @@
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin</artifactId>
-            <version>5.5.0</version>
+            <version>${javalin-version}</version>
             <exclusions>
             <exclusion>
                 <groupId>org.slf4j</groupId>
