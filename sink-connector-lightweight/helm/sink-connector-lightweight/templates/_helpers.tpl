@@ -24,6 +24,17 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 
 {{/*
+Gives the configmap a default name
+*/}}
+{{- define "sink-connector-lightweight.configmapName" -}}
+{{- if not .Values.configmapName -}}
+sink-connector-lightweight-config
+{{- else -}}
+{{ .Values.configmapName }}
+{{- end }}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "sink-connector-lightweight.chart" -}}
