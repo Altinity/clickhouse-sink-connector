@@ -115,8 +115,32 @@ public class DebeziumChangeEventCapture {
         }
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-        executeDDL(clickHouseQuery.toString(), writer);
+        // Add max retries of 10
+        // Add sleep time of 10 seconds
+        int MAX_DDL_RETRIES = 10;
+        int SLEEP_TIME = 10000;
+        int numRetries = 0;
 
+        // Check if configuration is set to retry DDL
+        boolean retryDDL = config.getBoolean(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+
+        while(numRetries < MAX_DDL_RETRIES) {
+            try {
+                executeDDL(clickHouseQuery.toString(), writer);
+                break;
+            } catch (SQLException e) {
+                log.error("Error executing DDL", e);
+                if(retryDDL == false) {
+                    break;
+                }
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException ex) {
+                    log.error("Error sleeping", ex);
+                }
+                numRetries++;
+            }
+        }
         updateMetrics(DDL, writer);
     }
 
