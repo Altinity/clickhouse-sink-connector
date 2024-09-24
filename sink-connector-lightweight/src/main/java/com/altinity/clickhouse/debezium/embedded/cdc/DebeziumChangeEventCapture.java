@@ -140,6 +140,9 @@ public class DebeziumChangeEventCapture {
                 }
                 numRetries++;
             }
+            if(numRetries >= MAX_DDL_RETRIES) {
+                throw new RuntimeException("Max retries exceeded for DDL");
+            }
         }
         updateMetrics(DDL, writer);
     }
