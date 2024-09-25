@@ -42,15 +42,22 @@ public class DataTypeConverter {
         new DefaultBeanRegistry();
 
         // Convert ClickHouseConnectorConfig to configuration.
-        Configuration configuration = Configuration.create().
+        Configuration configuration = Configuration.create()
+                .with(BinlogConnectorConfig.DECIMAL_HANDLING_MODE, "decimalHandlingMode")
+                .with(BinlogConnectorConfig.TIME_PRECISION_MODE, "temporalPrecisionMode")
+                .with(BinlogConnectorConfig.BIGINT_UNSIGNED_HANDLING_MODE, "bigIntUnsignedHandlingMode")
+                .with(BinlogConnectorConfig.BINARY_HANDLING_MODE, "binaryHandlingMode")
+                .with(BinlogConnectorConfig.EVENT_CONVERTING_FAILURE_HANDLING_MODE, "eventConvertingFailureHandlingMode")
+                .build();
+
         final MySqlConnectorConfig connectorConfig = new MySqlConnectorConfig(configuration);
 
         // Convert Properties to Configuration.
-        Configuration configuration = Configuration.create().build();
-        // Iterate through properties and fill configuration.
-        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
-            configuration = configuration.edit().with(entry.getKey().toString(), entry.getValue().toString()).build();
-        }
+//        Configuration configuration = Configuration.create().build();
+//        // Iterate through properties and fill configuration.
+//        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+//            configuration = configuration.edit().with(entry.getKey().toString(), entry.getValue().toString()).build();
+//        }
         ServiceRegistry serviceRegistry = new DefaultServiceRegistry( Configuration.create().build(), new DefaultBeanRegistry());
         BinlogCharsetRegistry charsetRegistry = new MySqlCharsetRegistryServiceProvider().createService(Configuration.create().build(), serviceRegistry);
         MySqlValueConverters mysqlConverter = new MySqlValueConverters(
@@ -58,7 +65,7 @@ public class DataTypeConverter {
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, charsetRegistry.getCharacterConverter());
+                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, connectorConfig.getServiceRegistry());
 
 
         String convertedDataType = null;
