@@ -165,3 +165,21 @@ INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Pe
 create schema public2;
 set schema 'public2';
 CREATE TABLE "tm2" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);
+
+CREATE TYPE public."storage_status_type" AS ENUM (
+	'VISIBLE',
+	'INVISIBLE',
+	'DELETED',
+	'NOT_INITIALIZED');
+
+CREATE TABLE public.storages (
+	id uuid NOT NULL,
+	company uuid NULL,
+	status public.storage_status_type NOT NULL,
+	region uuid NULL,
+	delivery_region _uuid NOT NULL,
+	created_at timestamp NOT NULL DEFAULT now(),
+	updated_at timestamp NULL
+);
+
+insert into storages (id, company, status, region, delivery_region, created_at, updated_at) values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'VISIBLE', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', now(), now());
