@@ -42,7 +42,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
             .withExposedPorts(8123);
 
     @Container
-    public static PostgreSQLContainer postgreSQLContainer = new PostgreSQLContainer<>("postgres:latest")
+    public static PostgreSQLContainer postgreSQLContainer = new PostgreSQLContainer<>("postgres:14.7")
             .withInitScript("init_postgres.sql")
             .withDatabaseName("public")
             .withUsername("root")
@@ -58,12 +58,11 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
         properties.put("plugin.name", "pgoutput" );
         properties.put("plugin.path", "/" );
-        properties.put("table.include.list", "public.tm, public.storages" );
         properties.put("topic.prefix", "test-server" );
         properties.put("slot.max.retries", "6" );
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
-        properties.put("table.include.list", "public.tm,public.tm2" );
+        properties.put("table.include.list", "public.tm,public.tm2,public.storages" );
         return properties;
     }
 
