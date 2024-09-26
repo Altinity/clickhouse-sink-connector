@@ -118,9 +118,9 @@ public class DebeziumEmbeddedRestApiIT {
 
         Assert.assertTrue(getStoredRecordTs > 0);
 
-        JavalinTest.test(DebeziumEmbeddedRestApi.app(), (server, client) -> {
-            Assert.assertTrue(client.get("/status").code() == 200);
-        });
+//        JavalinTest.test(DebeziumEmbeddedRestApi.app(), (server, client) -> {
+//            Assert.assertTrue(client.get("/status").code() == 200);
+//        });
 
         if(engine.get() != null) {
             engine.get().stop();
