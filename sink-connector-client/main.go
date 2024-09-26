@@ -33,6 +33,7 @@ const (
 	STATUS_COMMAND            = "show_replica_status"
 	UPDATE_BINLOG_COMMAND     = "change_replication_source"
 	UPDATE_LSN_COMMAND        = "lsn"
+	DELETE_OFFSETS_COMMAND    = "delete_offsets"
 )
 const (
 	START_REPLICATION   = "start"
@@ -41,6 +42,7 @@ const (
 	STATUS              = "status"
 	UPDATE_BINLOG       = "binlog"
 	UPDATE_LSN          = "lsn"
+	DELETE_OFFSETS      = "offsets"
 )
 
 // Fetches the repos for the given Github users
@@ -53,6 +55,14 @@ func getHTTPCall(url string) *grequests.Response {
 	return resp
 }
 
+func getHTTPDeleteCall(url string) *grequests.Response {
+    resp, err := grequests.Delete(url, requestOptions)
+    // you can modify the request by passing an optional RequestOptions struct
+    if err != nil {
+        log.Fatalln("Unable to make request: ", err)
+    }
+    return resp
+}
 /**
 Function to get server url based on the parameters passed
 */
@@ -215,12 +225,35 @@ func main() {
 				return nil
 			},
 		},
+        {
+    			Name:  DELETE_OFFSETS_COMMAND,
+    			Usage: "Delete offsets from the sink connector",
+    			Action: func(c *cli.Context) error {
+    				handleUpdateLsn(c)
+    				return nil
+    			},
+    		}
 	}
 
 	app.Version = "1.0"
 	app.Run(os.Args)
 }
 
+func handleDeleteOffsets(c *cli.Context) bool {
+    log.Println("***** Delete offsets from the sink connector *****")
+    log.Println("Are you sure you want to continue? (y/n): ")
+    // Call a REST DELETE API to delete offsets from the sink connector
+    var deleteOffsetsUrl = getServerUrl(DELETE_OFFSETS, c)
+    resp := getHTTPDeleteCall(deleteOffsetsUrl)
+    time.Sleep(5 * time.Second)
+    if resp.StatusCode == 200 {
+        log.Println("Offsets deleted successfully")
+        return true
+    } else {
+        log.Println("Error deleting offsets")
+        return false
+    }
+}
 func handleUpdateLsn(c *cli.Context) bool {
 	var lsnPosition = c.String("lsn")
 	log.Println("***** lsn position:", lsnPosition+"   *****")
