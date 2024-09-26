@@ -1,11 +1,13 @@
 package com.altinity.clickhouse.debezium.embedded.api;
 
+import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.google.inject.Guice;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
@@ -26,7 +28,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import io.javalin.testtools.JavalinTest;
 
-import static org.junit.Assert.assertThat;
 
 public class DebeziumEmbeddedRestApiIT {
 
@@ -87,6 +88,7 @@ public class DebeziumEmbeddedRestApiIT {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         Properties props = ITCommon.getDebeziumPropertiesForSchemaOnly(mySqlContainer, clickHouseContainer);
+
         executorService.execute(() -> {
             try {
 
@@ -97,6 +99,13 @@ public class DebeziumEmbeddedRestApiIT {
                 throw new RuntimeException(e);
             }
         });
+
+
+        try {
+            DebeziumEmbeddedRestApi.startRestApi(props,   Guice.createInjector(new AppInjector()), engine.get(), props);
+        } catch(Exception e) {
+            System.out.println("Error starting REST API" + e.toString());
+        }
 
         Thread.sleep(10000);
         conn.prepareStatement("insert into `newtable` values('test', 1, 2)").execute();
@@ -109,9 +118,8 @@ public class DebeziumEmbeddedRestApiIT {
 
         Assert.assertTrue(getStoredRecordTs > 0);
 
-        JavalinTest.test(app, (server, client) -> {
-            assertThat(client.get("/users").code()).isEqualTo(200);
-            //assertThat(client.get("/users").body().string()).isEqualTo(usersJson);
+        JavalinTest.test(DebeziumEmbeddedRestApi.app(), (server, client) -> {
+            Assert.assertTrue(client.get("/status").code() == 200);
         });
 
         if(engine.get() != null) {

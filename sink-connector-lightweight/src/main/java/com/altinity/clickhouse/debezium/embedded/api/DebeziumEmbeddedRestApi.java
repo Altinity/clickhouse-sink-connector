@@ -153,4 +153,9 @@ public class DebeziumEmbeddedRestApi {
         if(app != null)
             app.stop();
     }
+
+    // Return the app instance.
+    public static Javalin app() {
+        return app;
+    }
 }
