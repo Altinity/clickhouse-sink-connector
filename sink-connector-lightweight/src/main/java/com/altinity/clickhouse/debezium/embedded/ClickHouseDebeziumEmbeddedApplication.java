@@ -104,8 +104,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
             if(dockerTag != null) {
                 //Extract the string after :
                 // altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
-                String version = dockerTag.substring(dockerTag.indexOf(":") + 1);
-                log.info("***** Sink Connector Release version: *********** " + version);
+                //String version = dockerTag.substring(dockerTag.indexOf(":") + 1);
+                log.info("***** Sink Connector Release version: *********** " + dockerTag);
             }
         } catch(Exception e) {
             log.error("Error printing docker info", e);
