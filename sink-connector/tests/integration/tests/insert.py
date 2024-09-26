@@ -1,6 +1,7 @@
+from integration.requirements.requirements import *
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -37,7 +38,7 @@ def mysql_to_clickhouse_inserts(
         )
 
 
-@TestFeature
+@TestScenario
 def null_default_insert(
     self,
     input="(DEFAULT,5,DEFAULT)",
@@ -57,7 +58,7 @@ def null_default_insert(
             )
 
 
-@TestFeature
+@TestScenario
 def null_default_insert_2(
     self,
     input="(DEFAULT,5,333)",
@@ -77,7 +78,7 @@ def null_default_insert_2(
             )
 
 
-@TestFeature
+@TestScenario
 def select_insert(
     self,
     input="((select 2),7,DEFAULT)",
@@ -97,7 +98,7 @@ def select_insert(
             )
 
 
-@TestFeature
+@TestScenario
 def select_insert_2(
     self,
     input="((select 2),7,DEFAULT)",
@@ -117,19 +118,15 @@ def select_insert_2(
             )
 
 
-@TestModule
+@TestFeature
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts("1.0"))
 @Name("insert")
-def module(self):
+def feature(self):
     """Different `INSERT` tests section."""
     # xfail("")
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

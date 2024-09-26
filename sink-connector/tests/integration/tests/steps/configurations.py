@@ -1,4 +1,4 @@
-from integration.requirements.requirements import *
+import json
 
 from integration.helpers.common import *
 
@@ -7,73 +7,68 @@ from integration.helpers.common import *
 def init_sink_connector(
     self,
     node=None,
-    auto_create_tables="auto",
+    url="clickhouse-sink-connector-kafka",
+    auto_create_tables=True,
     auto_create_replicated_tables=False,
-    topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, SERVER5432.test.users",
+    topics="SERVER5432.sbtest.sbtest1,SERVER5432.test.users1,SERVER5432.test.users2,SERVER5432.test.users3, "
+    "SERVER5432.test.users",
+    update=None,
 ):
     """
-    Initialize sink connector.
+    Initialize sink connector with custom configuration.
     """
     if node is None:
         node = self.context.cluster.node("bash-tools")
 
-    if auto_create_replicated_tables:
-        auto_create_replicated_tables = "true"
-    else:
-        auto_create_replicated_tables = "false"
-
     if auto_create_tables == "auto":
-        auto_create_tables_local = "true"
-    else:
-        auto_create_tables_local = "false"
+        auto_create_tables = True
+    elif auto_create_tables == "manual":
+        auto_create_tables = False
 
-    # "topics": "SERVER5432.test.users",
-    sink_settings_transfer_command_confluent = (
-        """cat <<EOF | curl --request POST --url "http://sink:8083/connectors" --header 'Content-Type: application/json' --data @-
-      {
+    default_config = {
         "name": "sink-connector",
         "config": {
-          "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
-          "tasks.max": "100","""
-        + f'"topics": "{topics}",'
-        + """
-      "clickhouse.topic2table.map": "",
-      "clickhouse.server.url": "clickhouse",
-      "clickhouse.server.user": "root",
-      "clickhouse.server.password": "root",
-      "clickhouse.server.database": "test",
-      "clickhouse.server.port": 8123,
-      "clickhouse.table.name": "users",
-      "key.converter": "io.confluent.connect.avro.AvroConverter",
-      "value.converter": "io.confluent.connect.avro.AvroConverter",
-      "key.converter.schema.registry.url": "http://schemaregistry:8081",
-      "value.converter.schema.registry.url":"http://schemaregistry:8081",
+            "connector.class": "com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector",
+            "tasks.max": "100",
+            "topics": topics,
+            "clickhouse.topic2table.map": "",
+            "clickhouse.server.url": "clickhouse",
+            "clickhouse.server.user": "root",
+            "clickhouse.server.password": "root",
+            "clickhouse.server.database": "test",
+            "clickhouse.server.port": 8123,
+            "clickhouse.table.name": "users",
+            "key.converter": "io.confluent.connect.avro.AvroConverter",
+            "value.converter": "io.confluent.connect.avro.AvroConverter",
+            "key.converter.schema.registry.url": "http://schemaregistry:8081",
+            "value.converter.schema.registry.url": "http://schemaregistry:8081",
+            "store.kafka.metadata": True,
+            "topic.creation.default.partitions": 6,
+            "store.raw.data": False,
+            "store.raw.data.column": "raw_data",
+            "metrics.enable": True,
+            "metrics.port": 8084,
+            "buffer.flush.time.ms": 500,
+            "thread.pool.size": 1,
+            "fetch.min.bytes": 52428800,
+            "enable.kafka.offset": False,
+            "replacingmergetree.delete.column": "_sign",
+            "auto.create.tables": auto_create_tables,
+            "auto.create.tables.replicated": auto_create_replicated_tables,
+            "schema.evolution": False,
+            "deduplication.policy": "off",
+            "metadata.max.age.ms": 10000,
+        },
+    }
 
-      "store.kafka.metadata": true,
-      "topic.creation.default.partitions": 6,
+    if update is not None:
+        default_config["config"].update(update)
 
-      "store.raw.data": false,
-      "store.raw.data.column": "raw_data",
-
-      "metrics.enable": true,
-      "metrics.port": 8084,
-      "buffer.flush.time.ms": 500,
-      "thread.pool.size": 1,
-      "fetch.min.bytes": 52428800,
-
-    "enable.kafka.offset": false,
-
-    "replacingmergetree.delete.column": "_sign","""
-        + f'"auto.create.tables": {auto_create_tables_local},"auto.create.tables.replicated": {auto_create_replicated_tables},'
-        """
-          "schema.evolution": false,
-
-          "deduplication.policy": "off",
-
-          "metadata.max.age.ms" : 10000
-        }
-      }
-EOF"""
+    sink_connector_configuration = (
+        f"""cat <<EOF | curl --request POST --url "http://{url}:8083/connectors" --header 'Content-Type: application/json' --data @-
+          """
+        + json.dumps(default_config, indent=2)
+        + "\nEOF"
     )
 
     try:
@@ -81,20 +76,68 @@ EOF"""
             "I start sink connector",
             description="""Sending sink settings push command on bash_tools""",
         ):
-            command = node.cmd(f"{sink_settings_transfer_command_confluent}")
+            command = node.cmd(f"{sink_connector_configuration}")
             assert command.output.strip().startswith(
                 '{"name":"sink-connector"'
             ) or command.output.strip().startswith(
                 '{"error_code":409,"message":"Connector sink-connector already exists"}'
-            ), error()
+            ), f'was expecting {{"error_code":409,"message":"Connector sink-connector already exists}}" but got {command.output.strip()}'
         yield
     finally:
         with Finally("I delete sink and debezium connections"):
             with By("deleteing sink connector", flags=TE):
                 node.cmd(
-                    'curl -X DELETE -H "Accept:application/json" "http://sink:8083/connectors/sink-connector" '
+                    f'curl -X DELETE -H "Accept:application/json" "http://{url}:8083/connectors/sink-connector" '
                     "2>/dev/null | jq ."
                 )
+
+
+@TestStep(Given)
+def init_sink_connector_auto_created(self, topics, node=None, update=None):
+    """Initialize sink connector with auto created tables."""
+    init_sink_connector(
+        auto_create_tables=True,
+        topics=topics,
+        auto_create_replicated_tables=False,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_manual_created(self, topics, node=None, update=None):
+    """Initialize sink connector with manual created tables."""
+    init_sink_connector(
+        auto_create_tables=False,
+        topics=topics,
+        auto_create_replicated_tables=False,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_auto_created_replicated(self, topics, node=None, update=None):
+    """Initialize sink connector with auto created replicated tables."""
+    init_sink_connector(
+        auto_create_tables=True,
+        topics=topics,
+        auto_create_replicated_tables=True,
+        node=node,
+        update=update,
+    )
+
+
+@TestStep(Given)
+def init_sink_connector_manual_created_replicated(self, topics, node=None, update=None):
+    """Initialize sink connector with manual created replicated tables."""
+    init_sink_connector(
+        auto_create_tables=False,
+        topics=topics,
+        auto_create_replicated_tables=True,
+        node=node,
+        update=update,
+    )
 
 
 @TestStep(Given)
@@ -104,50 +147,6 @@ def init_debezium_connector(self, node=None):
     """
     if node is None:
         node = self.context.cluster.node("bash-tools")
-
-    debezium_settings_transfer_command_apicurio = """cat <<EOF | curl --request POST --url "http://debezium:8083/connectors" --header 'Content-Type: application/json' --data @-
-{
-  "name": "test-connector",
-  "config": {
-    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
-    "tasks.max": "1",
-    "snapshot.mode": "initial",
-    "snapshot.locking.mode": "minimal",
-    "snapshot.delay.ms": 10000,
-    "include.schema.changes":"true",
-    "include.schema.comments": "true",
-    "database.hostname": "mysql-master",
-    "database.port": "3306",
-    "database.user": "root",
-    "database.password": "root",
-    "database.server.id": "5432",
-    "database.server.name": "SERVER5432",
-    "database.whitelist": "test",
-    "database.allowPublicKeyRetrieval":"true",
-    "database.history.kafka.bootstrap.servers": "kafka:9092",
-    "database.history.kafka.topic": "schema-changes.test_db",
-
-
-
-    "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
-
-    "key.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "key.converter.apicurio.registry.auto-register": "true",
-    "key.converter.apicurio.registry.find-latest": "true",
-
-    "value.converter.apicurio.registry.url": "http://schemaregistry:8080/apis/registry/v2",
-    "value.converter.apicurio.registry.auto-register": "true",
-    "value.converter.apicurio.registry.find-latest": "true",
-
-    "topic.creation.$alias.partitions": 3,
-    "topic.creation.default.replication.factor": 1,
-    "topic.creation.default.partitions": 6,
-
-    "provide.transaction.metadata": "true",
-  }
-}
-EOF"""
 
     debezium_settings_transfer_command_confluent = """cat <<EOF | curl --request POST --url "http://debezium:8083/connectors" --header 'Content-Type: application/json' --data @-
       {

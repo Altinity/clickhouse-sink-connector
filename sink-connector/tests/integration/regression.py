@@ -6,14 +6,13 @@ import sys
 
 from testflows.core import *
 
-
 append_path(sys.path, "..")
 
+from integration.tests.steps.clickhouse import create_clickhouse_database
 from integration.helpers.argparser import argparser
 from integration.helpers.common import check_clickhouse_version
 from integration.helpers.common import create_cluster
 from integration.requirements.requirements import *
-from integration.tests.steps.steps_global import *
 
 xfails = {
     "schema changes/table recreation with different datatypes": [
@@ -41,6 +40,11 @@ xfails = {
     "types/date time/*": [(Fail, "difference between timezones, tests need rework")],
     "types/integer types/*": [(Fail, "requires investigation")],
 }
+
+ffails = {
+    "/regression/multiple databases": (Skip, "Work in progress")
+}
+
 xflags = {}
 
 
@@ -48,7 +52,8 @@ xflags = {}
 @ArgumentParser(argparser)
 @XFails(xfails)
 @XFlags(xflags)
-@Name("mysql to clickhouse replication")
+@FFails(ffails)
+@Name("regression")
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Consistency_Select("1.0"),
@@ -74,7 +79,7 @@ def regression(
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "bash-tools": ("bash-tools",),
         "schemaregistry": ("schemaregistry",),
-        "sink": ("sink",),
+        "clickhouse-sink-connector-kafka": ("clickhouse-sink-connector-kafka",),
         "zookeeper": ("zookeeper",),
     }
 
@@ -108,21 +113,17 @@ def regression(
     self.context.node = cluster.node("clickhouse1")
 
     with And("I create test database in ClickHouse"):
-        create_database(name="test")
+        create_clickhouse_database(name="test")
 
-    modules = [
-        "autocreate",
-        "insert",
-        "delete",
-        "truncate",
-        "deduplication",
-        "primary_keys",
-        "virtual_columns",
-        "columns_inconsistency",
-    ]
-    for module in modules:
-        Feature(run=load(f"tests.{module}", "module"))
-
+    Feature(run=load("tests.autocreate", "feature"))
+    Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.delete", "feature"))
+    Feature(run=load("tests.truncate", "feature"))
+    Feature(run=load("tests.deduplication", "feature"))
+    Feature(run=load("tests.primary_keys", "feature"))
+    Feature(run=load("tests.columns_inconsistency", "feature"))
+    Feature(run=load("tests.types", "feature"))
+    Feature(run=load("tests.multiple_databases", "feature"))
 
 
 if __name__ == "__main__":

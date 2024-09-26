@@ -590,7 +590,7 @@ def set_envs_on_node(self, envs, node=None):
                 node.command(f"unset {key}", exitcode=0)
 
 
-from helpers.cluster import Cluster
+from integration.helpers.cluster import Cluster
 
 
 @TestStep(Given)

@@ -1,0 +1,23 @@
+version: "2.3"
+
+services:
+  debezium:
+    container_name: debezium
+    hostname: debezium
+    build:
+      context: ../../../docker/debezium_jmx
+      args:
+        DEBEZIUM_VERSION: 2.1.0.Alpha1
+    restart: "no"
+    expose:
+      - "8083"
+      - "1976"
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-debezium
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-debezium
+      - STATUS_STORAGE_TOPIC=status-storage-topic-debezium
+      - LOG_LEVEL=INFO
+      - KEY_CONVERTER=io.confluent.connect.avro.AvroConverter
+      - VALUE_CONVERTER=io.confluent.connect.avro.AvroConverter

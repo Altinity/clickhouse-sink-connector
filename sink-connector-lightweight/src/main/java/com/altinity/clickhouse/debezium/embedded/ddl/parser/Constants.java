@@ -49,7 +49,7 @@ public class Constants {
 
     public static final String DROP_COLUMN = "DROP COLUMN %s";
 
-
+    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT %s";
     public static final String NEW_REPLACING_MERGE_TREE_VERSION = "23.2";
 
 
