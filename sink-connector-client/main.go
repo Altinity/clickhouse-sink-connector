@@ -35,6 +35,7 @@ const (
 	UPDATE_LSN_COMMAND        = "lsn"
 	DELETE_OFFSETS_COMMAND    = "delete_offsets"
 )
+
 const (
 	START_REPLICATION   = "start"
 	STOP_REPLICATION    = "stop"
@@ -226,15 +227,14 @@ func main() {
 			},
 		},
         {
-    			Name:  DELETE_OFFSETS_COMMAND,
-    			Usage: "Delete offsets from the sink connector",
-    			Action: func(c *cli.Context) error {
-    				handleUpdateLsn(c)
-    				return nil
-    			},
-    		}
-	}
-
+            Name:  DELETE_OFFSETS_COMMAND,
+        	Usage: "Delete offsets from the sink connector",
+        	Action: func(c *cli.Context) error {
+        		handleDeleteOffsets(c)
+        		return nil
+        	},
+        },
+    }
 	app.Version = "1.0"
 	app.Run(os.Args)
 }
@@ -242,14 +242,24 @@ func main() {
 func handleDeleteOffsets(c *cli.Context) bool {
     log.Println("***** Delete offsets from the sink connector *****")
     log.Println("Are you sure you want to continue? (y/n): ")
+    	var userInput string
+    	fmt.Scanln(&userInput)
+    	if userInput != "y" {
+    		log.Println("Exiting...")
+    		return false
+    	} else {
+    		log.Println("Continuing...")
+    	}
     // Call a REST DELETE API to delete offsets from the sink connector
     var deleteOffsetsUrl = getServerUrl(DELETE_OFFSETS, c)
+    log.Println("Sending request to URL: " + deleteOffsetsUrl)
     resp := getHTTPDeleteCall(deleteOffsetsUrl)
     time.Sleep(5 * time.Second)
     if resp.StatusCode == 200 {
         log.Println("Offsets deleted successfully")
         return true
     } else {
+        log.Println("Response Status Code:", resp.StatusCode)
         log.Println("Error deleting offsets")
         return false
     }
