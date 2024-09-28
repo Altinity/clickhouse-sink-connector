@@ -7,7 +7,12 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.clickhouse.client.internal.apache.hc.client5.http.classic.methods.HttpGet;
+import com.clickhouse.client.internal.apache.hc.client5.http.classic.methods.HttpUriRequest;
+import com.clickhouse.client.internal.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import com.clickhouse.client.internal.apache.hc.core5.http.HttpResponse;
 import com.google.inject.Guice;
+import io.javalin.http.HttpStatus;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
@@ -26,7 +31,7 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
-//import io.javalin.testtools.JavalinTest;
+import io.javalin.testtools.JavalinTest;
 
 
 public class DebeziumEmbeddedRestApiIT {
@@ -118,9 +123,14 @@ public class DebeziumEmbeddedRestApiIT {
 
         Assert.assertTrue(getStoredRecordTs > 0);
 
-//        JavalinTest.test(DebeziumEmbeddedRestApi.app(), (server, client) -> {
-//            Assert.assertTrue(client.get("/status").code() == 200);
-//        });
+        // Given
+        HttpUriRequest request = new HttpGet( "http://localhost:7000/status" );
+
+        // When
+        HttpResponse httpResponse = HttpClientBuilder.create().build().execute( request );
+
+        // Then
+        Assert.assertTrue(httpResponse.getCode() == HttpStatus.OK.getCode());
 
         if(engine.get() != null) {
             engine.get().stop();
