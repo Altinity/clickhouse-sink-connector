@@ -26,7 +26,7 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
-import io.javalin.testtools.JavalinTest;
+//import io.javalin.testtools.JavalinTest;
 
 
 public class DebeziumEmbeddedRestApiIT {
