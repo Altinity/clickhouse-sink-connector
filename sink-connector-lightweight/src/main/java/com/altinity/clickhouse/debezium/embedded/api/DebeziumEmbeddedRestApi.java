@@ -125,7 +125,7 @@ public class DebeziumEmbeddedRestApi {
             String response = "";
 
             try {
-                debeziumChangeEventCapture.truncateSchemaHistoryTable(config, finalProps1);
+                debeziumChangeEventCapture.deleteSchemaHistory(config, finalProps1);
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
                 ctx.result(e.toString());
