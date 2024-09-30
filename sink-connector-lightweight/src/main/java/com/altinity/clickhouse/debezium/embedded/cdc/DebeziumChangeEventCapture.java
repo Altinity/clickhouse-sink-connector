@@ -528,6 +528,27 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     *
+     * @param tableName
+     * @param schemaName
+     * @param props
+     * @param writer
+     * @throws SQLException
+     */
+    public void deleteSchemaHistory(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
+
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                databaseName, dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config, this.conn);
+
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(tableNameDatabaseName, props, writer);
+
+    }
+    /**
      * Function to update the status of Debezium storage (LSN).
      * @param config
      * @param props

@@ -58,14 +58,12 @@ public class DebeziumOffsetStorage {
      * @param writer
      * @throws SQLException
      */
-    public void truncateSchemaHistoryTable(String offsetKey,
+    public void deleteSchemaHistoryTable(String offsetKey,
                                          Properties props,
                                          BaseDbWriter writer) throws SQLException {
 
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
-        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" , tableName, offsetKey);
+        String debeziumStorageStatusQuery = String.format("select * from replicate_schema_history where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='\"%s\"" , tableName, offsetKey);
         writer.executeQuery(debeziumStorageStatusQuery);
     }
     /**
