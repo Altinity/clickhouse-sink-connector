@@ -1,6 +1,7 @@
+from integration.requirements.requirements import *
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -51,7 +52,7 @@ def check_different_primary_keys(
         )
 
 
-@TestFeature
+@TestScenario
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple("1.0")
 )
@@ -70,7 +71,7 @@ def simple_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Composite("1.0")
 )
@@ -89,7 +90,7 @@ def composite_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 @Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_No("1.0"))
 def no_primary_key(self):
     """Check replicating MySQl table without any primary key."""
@@ -107,17 +108,13 @@ def no_primary_key(self):
             )
 
 
-@TestModule
+@TestFeature
 @Name("primary keys")
-def module(self):
+def feature(self):
     """MySql to ClickHouse replication simple and composite primary keys tests."""
 
     with Given("I enable debezium and sink connectors after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

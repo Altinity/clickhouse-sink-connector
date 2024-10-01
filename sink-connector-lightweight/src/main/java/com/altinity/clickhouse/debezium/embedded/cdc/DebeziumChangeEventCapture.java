@@ -39,6 +39,7 @@ import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -192,7 +193,7 @@ public class DebeziumChangeEventCapture {
             Struct struct = (Struct) sr.value();
 
             if (struct == null) {
-                log.warn(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                log.debug(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
                 return null;
             }
             if (struct.schema() == null) {
@@ -442,7 +443,11 @@ public class DebeziumChangeEventCapture {
                 JSONObject row = new JSONObject();
                 colNames.forEach(cn -> {
                     try {
-                        row.put(cn, resultSet.getObject(cn));
+                        Object v = resultSet.getObject(cn);
+                        if (v != null && v instanceof LocalDateTime) {
+                            v = ((LocalDateTime) v).toString();
+                        }
+                        row.put(cn, v);
                     } catch (SQLException e) {
                         e.printStackTrace();
                     }
@@ -577,6 +582,7 @@ public class DebeziumChangeEventCapture {
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
