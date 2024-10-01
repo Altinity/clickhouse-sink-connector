@@ -64,7 +64,7 @@ public class GroupInsertQueryWithBatchRecords {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
                 }
-
+                columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName);
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap, tableName, config, columnNameToDataTypeMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 if(record.getBeforeModifiedFields() != null) {

@@ -148,11 +148,11 @@ public class PostgresPgoutputMultipleSchemaIT {
         conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
         Thread.sleep(10000);
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
-        Thread.sleep(10000);
+        Thread.sleep(20000);
 
         // Check if public.people has 2 records.
         int peopleCount = 0;
-        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people final").executeQuery();
+        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people").executeQuery();
         while(chRs3.next()) {
             peopleCount =  chRs3.getInt(1);
         }
