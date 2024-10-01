@@ -122,7 +122,11 @@ public class DebeziumChangeEventCapture {
         int numRetries = 0;
 
         // Check if configuration is set to retry DDL
-        boolean retryDDL = config.getBoolean(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        boolean retryDDLProperty = false;
+        if(retryDDL != null && retryDDL.equalsIgnoreCase("true" )) {
+            retryDDLProperty = true;
+        }
 
         while(numRetries < MAX_DDL_RETRIES) {
             try {
@@ -130,7 +134,7 @@ public class DebeziumChangeEventCapture {
                 break;
             } catch (SQLException e) {
                 log.error("Error executing DDL", e);
-                if(retryDDL == false) {
+                if(retryDDLProperty == false) {
                     break;
                 }
                 try {
