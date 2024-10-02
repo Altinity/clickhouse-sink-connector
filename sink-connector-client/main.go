@@ -240,7 +240,7 @@ func main() {
             Name:  DELETE_SCHEMA_HISTORY_COMMAND,
             Usage: "Delete schema history from the sink connector",
             Action: func(c *cli.Context) error {
-            	handleDeleteOffsets(c)
+            	handleDeleteSchemaHistory(c)
             	return nil
             },
         },
