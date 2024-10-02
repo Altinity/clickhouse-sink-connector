@@ -84,7 +84,7 @@ public class DBMetadataTest {
         Assert.assertFalse(result2);
 
         Map<String, Boolean> isNullableList = new DBMetadata().getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
-       isNullableList.get("offset").equals(true);
+       isNullableList.get("_offset").equals(true);
        isNullableList.get("hire_date").equals(false);
 
     }
