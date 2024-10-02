@@ -282,11 +282,7 @@ public class DBMetadata {
         Map<String, Boolean> columnsIsNullable = new HashMap<>();
 
         // Execute the following query to get the column name and isNullable as key/value pair.
-        String query = String.format("SELECT\n" +
-                "    name AS column_name,\n" +
-                "    type LIKE 'Nullable(%' AS is_nullable\n" +
-                "FROM system.columns\n" +
-                "WHERE (table = '%s') AND (database = '%s')\n", tableName, database);
+        String query = String.format("SELECT name AS column_name, type LIKE 'Nullable(%%' AS is_nullable FROM system.columns WHERE (table = '%s') AND (database = '%s')", tableName, database);
 
         try (Statement stmt = conn.createStatement()) {
             ResultSet rs = stmt.executeQuery(query);
@@ -296,6 +292,8 @@ public class DBMetadata {
                 columnsIsNullable.put(columnName, isNullable);
             }
         }
+
+        return columnsIsNullable;
     }
 
     /**

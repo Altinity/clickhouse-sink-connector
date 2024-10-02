@@ -16,6 +16,7 @@ import org.testcontainers.utility.MountableFile;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.Map;
 
 @Testcontainers
 
@@ -81,6 +82,10 @@ public class DBMetadataTest {
 
         boolean result2 = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "newdb");
         Assert.assertFalse(result2);
+
+        Map<String, Boolean> isNullableList = new DBMetadata().getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
+       isNullableList.get("offset").equals(true);
+       isNullableList.get("hire_date").equals(false);
 
     }
 
