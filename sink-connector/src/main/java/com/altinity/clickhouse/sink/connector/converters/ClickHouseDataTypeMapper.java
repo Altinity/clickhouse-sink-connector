@@ -5,11 +5,13 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.clickhouse.data.value.ClickHouseGeoPolygonValue;
+import com.clickhouse.data.value.ClickHouseGeoPointValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
 import io.debezium.data.Enum;
 import io.debezium.data.EnumSet;
 import io.debezium.data.geometry.Geometry;
+import io.debezium.data.geometry.Point;
 import io.debezium.time.*;
 import io.debezium.time.Date;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -95,6 +97,9 @@ public class ClickHouseDataTypeMapper {
 
         // Geometry -> Geometry
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Geometry.LOGICAL_NAME), ClickHouseDataType.Polygon);
+
+        // Point -> Point
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRUCT, Point.LOGICAL_NAME), ClickHouseDataType.Point);
 
         // PostgreSQL UUID -> UUID
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Uuid.LOGICAL_NAME), ClickHouseDataType.UUID);
@@ -232,79 +237,93 @@ public class ClickHouseDataTypeMapper {
             }
 
         }  else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
-        // Handle Geometry type (e.g., Polygon)
-        if (value instanceof Struct) {
-            Struct geometryValue = (Struct) value;
-            Object wkbValue = geometryValue.get("wkb");
+            // Handle Geometry type (e.g., Polygon)
+            if (value instanceof Struct) {
+                Struct geometryValue = (Struct) value;
+                Object wkbValue = geometryValue.get("wkb");
 
-            byte[] wkbBytes;
-            if (wkbValue instanceof byte[]) {
-                wkbBytes = (byte[]) wkbValue;
-            } else if (wkbValue instanceof ByteBuffer) {
-                ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
-                wkbBytes = new byte[byteBuffer.remaining()];
-                byteBuffer.get(wkbBytes);
-            } else {
-                // Set an empty polygon if WKB value is not available
-                ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
-                return true;
-            }
-
-            // Parse the WKB bytes using JTS WKBReader
-            WKBReader wkbReader = new WKBReader();
-            org.locationtech.jts.geom.Geometry geometry;
-            try {
-                geometry = wkbReader.read(wkbBytes);
-            } catch (ParseException e) {
-                // If parsing fails, insert an empty polygon
-                ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
-                return true;
-            }
-
-            // Check if geometry is a Polygon
-            if (geometry instanceof Polygon) {
-                Polygon polygon = (Polygon) geometry;
-
-                // Convert the polygon into double[][][] format
-                List<double[][]> rings = new ArrayList<>();
-
-                // Exterior ring
-                Coordinate[] exteriorCoords = polygon.getExteriorRing().getCoordinates();
-                double[][] exteriorPoints = new double[exteriorCoords.length][2];
-                for (int i = 0; i < exteriorCoords.length; i++) {
-                    exteriorPoints[i][0] = exteriorCoords[i].getX();
-                    exteriorPoints[i][1] = exteriorCoords[i].getY();
+                byte[] wkbBytes;
+                if (wkbValue instanceof byte[]) {
+                    wkbBytes = (byte[]) wkbValue;
+                } else if (wkbValue instanceof ByteBuffer) {
+                    ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                    wkbBytes = new byte[byteBuffer.remaining()];
+                    byteBuffer.get(wkbBytes);
+                } else {
+                    // Set an empty polygon if WKB value is not available
+                    ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
+                    return true;
                 }
-                rings.add(exteriorPoints);
 
-                // Interior rings (holes), if any
-                int numInteriorRings = polygon.getNumInteriorRing();
-                for (int i = 0; i < numInteriorRings; i++) {
-                    Coordinate[] interiorCoords = polygon.getInteriorRingN(i).getCoordinates();
-                    double[][] interiorPoints = new double[interiorCoords.length][2];
-                    for (int j = 0; j < interiorCoords.length; j++) {
-                        interiorPoints[j][0] = interiorCoords[j].getX();
-                        interiorPoints[j][1] = interiorCoords[j].getY();
+                // Parse the WKB bytes using JTS WKBReader
+                WKBReader wkbReader = new WKBReader();
+                org.locationtech.jts.geom.Geometry geometry;
+                try {
+                    geometry = wkbReader.read(wkbBytes);
+                } catch (ParseException e) {
+                    // If parsing fails, insert an empty polygon
+                    ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
+                    return true;
+                }
+
+                // Check if geometry is a Polygon
+                if (geometry instanceof Polygon) {
+                    Polygon polygon = (Polygon) geometry;
+
+                    // Convert the polygon into double[][][] format
+                    List<double[][]> rings = new ArrayList<>();
+
+                    // Exterior ring
+                    Coordinate[] exteriorCoords = polygon.getExteriorRing().getCoordinates();
+                    double[][] exteriorPoints = new double[exteriorCoords.length][2];
+                    for (int i = 0; i < exteriorCoords.length; i++) {
+                        exteriorPoints[i][0] = exteriorCoords[i].getX();
+                        exteriorPoints[i][1] = exteriorCoords[i].getY();
                     }
-                    rings.add(interiorPoints);
+                    rings.add(exteriorPoints);
+
+                    // Interior rings (holes), if any
+                    int numInteriorRings = polygon.getNumInteriorRing();
+                    for (int i = 0; i < numInteriorRings; i++) {
+                        Coordinate[] interiorCoords = polygon.getInteriorRingN(i).getCoordinates();
+                        double[][] interiorPoints = new double[interiorCoords.length][2];
+                        for (int j = 0; j < interiorCoords.length; j++) {
+                            interiorPoints[j][0] = interiorCoords[j].getX();
+                            interiorPoints[j][1] = interiorCoords[j].getY();
+                        }
+                        rings.add(interiorPoints);
+                    }
+
+                    // Convert the list of rings to double[][][]
+                    double[][][] polygonCoordinates = rings.toArray(new double[rings.size()][][]);
+
+                    // Create ClickHouseGeoPolygonValue
+                    ClickHouseGeoPolygonValue geoPolygonValue = ClickHouseGeoPolygonValue.of(polygonCoordinates);
+
+                    // Set the string into PreparedStatement
+                    ps.setObject(index, geoPolygonValue);
+                } else {
+                    // If geometry is not a Polygon, insert an empty polygon
+                    ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
                 }
-
-                // Convert the list of rings to double[][][]
-                double[][][] polygonCoordinates = rings.toArray(new double[rings.size()][][]);
-
-                // Create ClickHouseGeoPolygonValue
-                ClickHouseGeoPolygonValue geoPolygonValue = ClickHouseGeoPolygonValue.of(polygonCoordinates);
-
-                // Set the string into PreparedStatement
-                ps.setObject(index, geoPolygonValue);
             } else {
-                // If geometry is not a Polygon, insert an empty polygon
-                ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
+                // If value is not a Struct, insert an empty polygon
+                ps.setString(index, ClickHouseGeoPolygonValue.ofEmpty().asString());
             }
-        } else {
-            // If value is not a Struct, insert an empty polygon
-            ps.setString(index, ClickHouseGeoPolygonValue.ofEmpty().asString());
-        }
+        } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
+            // Handle Point type (ClickHouse expects (longitude, latitude))
+            if (value instanceof Struct) {
+                Struct pointValue = (Struct) value;
+                Object xValue = pointValue.get("x");
+                Object yValue = pointValue.get("y");
+
+                double[] point = {(Double) xValue, (Double) yValue};
+
+                ps.setObject(index, ClickHouseGeoPointValue.of(point));
+            } else {
+                // If the value is not a valid Struct for a Point, set an empty point
+                ps.setObject(index, ClickHouseGeoPointValue.ofOrigin());
+            }
         } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)) {
             if (value instanceof Struct) {
                 Struct decimalValue = (Struct) value;

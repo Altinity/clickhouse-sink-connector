@@ -542,7 +542,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (tree instanceof AlterByAddColumnContext) {
                 parseAlterTable(tree);
 
-            } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
+            }
+            else if (tree instanceof MySqlParser.AlterByDropConstraintCheckContext) {
+                // Drop Constraint.
+                this.query.append(" ");
+                for (ParseTree dropConstraintTree : ((MySqlParser.AlterByDropConstraintCheckContext) (tree)).children) {
+                    if (dropConstraintTree instanceof MySqlParser.UidContext) {
+                        System.out.println("Drop Constraint");
+                        this.query.append(String.format(Constants.DROP_CONSTRAINT, dropConstraintTree.getText()));
+                    }
+                }
+            }
+            else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByDropColumnContext) {
                 // Drop Column.

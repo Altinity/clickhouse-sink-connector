@@ -91,8 +91,10 @@ grant SELECT, INSERT, CREATE TABLE, CREATE DATABASE on altinity.*              t
 grant CLUSTER ON *.* to sink;
 grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_db.* to sink;
 ```
+**User Profile**
+`max_partitions_per_insert_block` - The default value is 100, its recommended to set this value **1000**
 
 ## PostgreSQL Production Setup
 
 One of the common problems with PostgreSQL is the WAL size increasing.
-[Handling PostgreSQL WAL Growth with Debezium Connectors](doc/postgres_wal_growth.md)
+[Handling PostgreSQL WAL Growth with Debezium Connectors](postgres_wal_growth.md)

@@ -48,6 +48,7 @@ public class DebeziumChangeEventCaptureIT{
     public void testDeleteOffsetStorageRow2()  {
         //System.out.println("Delete offset");
         DebeziumChangeEventCapture dec = new DebeziumChangeEventCapture();
+
         try {
             Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
             props.setProperty("name", "altinity_sink_connector");
