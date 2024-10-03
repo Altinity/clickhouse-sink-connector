@@ -60,7 +60,7 @@ public class Constants {
     // There are certain Data types where Nullable is not supported.
     // For example, Point, Geometry, Enum, Array, Map, Decimal, UUID, DateTime64, Date, Time, DateTime, Nullable(DateTime), Nullable(Date), Nullable(Time), Nullable(DateTime64), Nullable(UUID)
     // Create a set of these data types.
-    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES = new HashSet<>(Arrays.asList("point"));
+    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES = new HashSet<>(Arrays.asList("point", "polygon"));
 
 
 }
