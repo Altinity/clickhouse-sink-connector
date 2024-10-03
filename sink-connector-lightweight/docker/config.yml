@@ -145,11 +145,13 @@ database.connectionTimeZone: "UTC"
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
 
-#restart.event.loop: This will restart the CDC event loop if there are no messages received after timeout specified in restart.event.loop.timeout.period.secs
-restart.event.loop: "true"
+#restart.event.loop: This will restart the CDC event loop if there are no messages received after 
+#timeout specified in restart.event.loop.timeout.period.secs.
+#Workaround to restart debezium loop(in case of freeze)
+#restart.event.loop: "true"
 
 #restart.event.loop.timeout.period.secs: Defines the restart timeout period.
-restart.event.loop.timeout.period.secs: "3000"
+#restart.event.loop.timeout.period.secs: "3000"
 
 # Flush time of the buffer in milliseconds. The buffer that is stored in memory before being flushed to ClickHouse.
 #buffer.flush.time.ms: "1000"
