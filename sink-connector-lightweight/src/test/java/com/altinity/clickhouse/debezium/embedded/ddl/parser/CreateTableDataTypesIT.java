@@ -287,8 +287,19 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
         }
         Assert.assertTrue(pointResultValidated);
+        String createTableWithGeometry = "CREATE TABLE employee.locations ( id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), location GEOMETRY)";
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute(createTableWithGeometry);
 
+        // Sleep for 10 seconds to allow the table to be replicated
+        Thread.sleep(10000);
 
+        // Insert a new row into the table
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO locations (name, location)\n" +
+                "VALUES ('Route', ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));\n");
+
+        Thread.sleep(10000);
+
+        // Validate GEOMETRY data type
 
         Thread.sleep(5000);
 
