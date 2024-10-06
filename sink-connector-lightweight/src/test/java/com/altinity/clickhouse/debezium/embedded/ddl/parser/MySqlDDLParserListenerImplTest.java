@@ -394,6 +394,14 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
     }
 
+    @Test
+    public void testAlterTableModifyColumn() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterTableModifyColumn = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT;";
+        mySQLDDLParserService.parseSql(alterTableModifyColumn, "add_test", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+    }
 
 
     @Test

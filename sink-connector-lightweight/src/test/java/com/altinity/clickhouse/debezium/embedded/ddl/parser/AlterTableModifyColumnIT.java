@@ -85,6 +85,10 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
 
+        // Validate logic of adding Nullable based on the existing schema.
+        conn.prepareStatement("alter table office modify column office_code int").execute();
+        Thread.sleep(10000);
+
         if(engine.get() != null) {
             engine.get().stop();
         }
