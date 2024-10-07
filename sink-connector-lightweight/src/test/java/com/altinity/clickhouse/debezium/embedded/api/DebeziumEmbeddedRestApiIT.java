@@ -79,8 +79,8 @@ public class DebeziumEmbeddedRestApiIT {
     @CsvSource({
             "clickhouse/clickhouse-server:latest"
     })
-    @DisplayName("Test that validates that the offset table is created and records are inserted into it.")
-    public void testAutoCreateTable(String clickHouseServerVersion) throws Exception {
+    @DisplayName("Test that validates that the REST API is working.")
+    public void testRESTAPI(String clickHouseServerVersion) throws Exception {
 
         Thread.sleep(5000);
 

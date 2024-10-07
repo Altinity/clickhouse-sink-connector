@@ -307,7 +307,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
-                if(isNullColumn) {
+                // Nullable should not be added for POINT data type
+                String lowerCaseDataType = colDataType.toLowerCase();
+                if(!Constants.NULLABLE_NOT_SUPPORTED_DATA_TYPES.contains(lowerCaseDataType) && isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                             .append(")").append(",");
                 }
