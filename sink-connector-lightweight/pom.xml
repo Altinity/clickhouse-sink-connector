@@ -414,7 +414,7 @@
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
             <classifier>shaded</classifier>
-            <version>0.6.0</version>
+            <version>0.6.5</version>
             <exclusions>
                 <exclusion>
                     <groupId>*</groupId>
