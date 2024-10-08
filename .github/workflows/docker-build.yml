@@ -101,6 +101,13 @@ jobs:
         run: |
           docker build . --file sink-connector-lightweight/Dockerfile --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
+          # use sed to replace the image tag in docker/start-docker-compose.sh.template and copy it over to start-docker-compose.sh
+          sed -i "s/IMAGE_TAG/${{ env.IMAGE_TAG }}-lt/g" sink-connector-lightweight/docker/start-docker-compose.sh.template
+          cp sink-connector-lightweight/docker/start-docker-compose.sh.template sink-connector-lightweight/docker/start-docker-compose.sh
+          # commit the file to git 
+          git add sink-connector-lightweight/docker/start-docker-compose.sh
+          git commit -m "Update image tag in start-docker-compose.sh"
+          git push
 
       - name: Upload Docker tar (Lightweight)
         uses: actions/upload-artifact@v3
