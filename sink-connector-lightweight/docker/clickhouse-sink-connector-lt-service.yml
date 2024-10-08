@@ -15,3 +15,7 @@ services:
     volumes:
       - ./log4j2.xml:/log4j2.xml
       - ./config.yml:/config.yml
+    logging:
+      options:
+        max-size: "100m"
+        max-file: "5"
