@@ -99,7 +99,7 @@ jobs:
 
       - name: Build Docker image (Lightweight)
         run: |
-          docker build . --file sink-connector-lightweight/Dockerfile --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
+          docker build . --file sink-connector-lightweight/Dockerfile --build-arg DOCKER_TAG=${{ env.IMAGE_TAG }} --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
       - name: Upload Docker tar (Lightweight)
