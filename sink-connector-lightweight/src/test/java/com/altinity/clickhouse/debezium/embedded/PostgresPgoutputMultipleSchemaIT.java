@@ -66,6 +66,7 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
         properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
+        properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
 
@@ -147,6 +148,9 @@ public class PostgresPgoutputMultipleSchemaIT {
         // ClickHouse, add ALIAS column to public.people
         conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
         Thread.sleep(10000);
+
+        // Add MATERIALIZED column to public.people
+        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
         Thread.sleep(20000);
 

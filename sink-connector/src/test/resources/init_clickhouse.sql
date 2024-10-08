@@ -172,3 +172,17 @@ ENGINE = ReplacingMergeTree(_version, _sign)
 PRIMARY KEY height_cm
 ORDER BY height_cm
 SETTINGS index_granularity = 8192;
+
+-- CREATE TABLE with ClickHouse Materialized columns.
+CREATE TABLE employees2.employee_materialized (
+    `id` UInt64,
+    `name` String,
+    `age` Nullable(UInt8),
+    `salary` Nullable(UInt32),
+    `_sign` UInt8,
+    `full_name` String MATERIALIZED concat('John', ' ', 'Doe')
+    )
+ENGINE = MergeTree()
+PRIMARY KEY (id)
+ORDER BY (id)
+SETTINGS index_granularity = 8192;

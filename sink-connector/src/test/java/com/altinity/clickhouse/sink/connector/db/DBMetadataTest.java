@@ -16,7 +16,6 @@ import org.testcontainers.utility.MountableFile;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Set;
 
 @Testcontainers
@@ -153,7 +152,7 @@ public class DBMetadataTest {
     }
 
     @Test
-    public void getAliasColumnsList() throws SQLException {
+    public void getAliasAndMaterializedColumnsList() throws SQLException {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
         String database = "default";
@@ -163,13 +162,16 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        Set<String> aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("people", "employees2", conn);
+        Set<String> aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
 
         Assert.assertTrue(aliasColumns.size() == 2);
 
 
         // Check for a table with no alias columns.
-        Set<String> tmAliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase("tm", "public", conn);
+        Set<String> tmAliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
         Assert.assertTrue(tmAliasColumns.size() == 0);
+        // Check for a table with no alias columns.
+        Set<String> employeeMaterializedColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
+        Assert.assertTrue(employeeMaterializedColumns.size() == 1);
     }
 }
