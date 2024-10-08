@@ -58,13 +58,13 @@ public class GroupInsertQueryWithBatchRecords {
                 if(enableSchemaEvolution) {
                     try {
                         new ClickHouseAlterTable().alterTable(record.getAfterStruct().schema().fields(), tableName, connection, columnNameToDataTypeMap);
-                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName);
+                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config);
 
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
                 }
-                columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName);
+                columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config );
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap, tableName, config, columnNameToDataTypeMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 if(record.getBeforeModifiedFields() != null) {

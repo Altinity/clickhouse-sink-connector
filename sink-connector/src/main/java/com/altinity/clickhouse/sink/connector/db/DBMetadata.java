@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
+
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -275,11 +277,12 @@ public class DBMetadata {
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName,
                                                            ClickHouseConnection conn,
-                                                           String database) {
+                                                           String database,
+                                                           ClickHouseSinkConnectorConfig config) {
 
         Set<String> aliasColumns = new HashSet<>();
         try {
-            aliasColumns = new DBMetadata().getAliasColumnsForTableAndDatabase(tableName, database, conn);
+            aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
         } catch(Exception e) {
             log.error("Error getting alias columns", e);
         }
@@ -339,11 +342,12 @@ public class DBMetadata {
      * Function to get the column names which are
      * @return
      */
-    public Set<String> getAliasColumnsForTableAndDatabase(String tableName, String databaseName,
-                                                           ClickHouseConnection conn) throws SQLException {
+    public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
+                                                                         ClickHouseConnection conn) throws SQLException {
 
         Set<String> aliasColumns = new HashSet<>();
-        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and default_kind='ALIAS'";
+        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
+                "(default_kind='ALIAS' or default_kind='MATERIALIZED')";
         String formattedQuery = String.format(query, tableName, databaseName);
 
         // Execute query

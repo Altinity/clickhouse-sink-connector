@@ -82,7 +82,8 @@ public class DbWriter extends BaseDbWriter {
         try {
             if (this.conn != null) {
                 // Order of the column names and the data type has to match.
-                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
+                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn,
+                        database, config);
             }
             DBMetadata metadata = new DBMetadata();
 
@@ -125,7 +126,7 @@ public class DbWriter extends BaseDbWriter {
                     log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
                 }
 
-                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
+                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database, config);
                 response = metadata.getTableEngine(this.conn, database, tableName);
                 this.engine = response.getLeft();
             }
@@ -188,7 +189,7 @@ public class DbWriter extends BaseDbWriter {
     }
 
     public void updateColumnNameToDataTypeMap() throws SQLException {
-        this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database);
+        this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database, config);
         MutablePair<DBMetadata.TABLE_ENGINE, String> response = new DBMetadata().getTableEngine(this.conn, database, tableName);
         this.engine = response.getLeft();
     }
