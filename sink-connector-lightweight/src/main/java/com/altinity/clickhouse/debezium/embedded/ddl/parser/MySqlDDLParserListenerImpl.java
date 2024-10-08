@@ -355,7 +355,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        chDataType = DataTypeConverter.convertToString(columnName,
+        chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
 
         return chDataType;
