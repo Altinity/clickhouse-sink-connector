@@ -148,7 +148,15 @@ public class DatabaseOverrideIT {
         assertTrue(customersCol2 == 1);
 
 
-
+        Thread.sleep(10000);
+        // Execute the query in MySQL to rename table.
+        conn.prepareStatement("rename table products.prodtable to products.prodtable2").execute();
+        Thread.sleep(10000);
+        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
+        while(customersVersionResult2.next()) {
+            customersCol2 = customersVersionResult2.getLong("col2");
+        }
+        assertTrue(customersCol2 == 2);
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
