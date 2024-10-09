@@ -84,8 +84,8 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 
         Thread.sleep(10000);
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Decimal(10, 10)"));
+        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Nullable(Int32"));
+        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Nullable(Decimal(10, 10)"));
         Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
 
         // Files.deleteIfExists(tmpFilePath);
