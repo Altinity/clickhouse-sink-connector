@@ -84,14 +84,14 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 
         Thread.sleep(10000);
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Nullable(Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Nullable(Decimal(10, 10)"));
+        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
         Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
 
         // Files.deleteIfExists(tmpFilePath);
-        Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Nullable(Int32)"));
 
 
         if(engine.get() != null) {
