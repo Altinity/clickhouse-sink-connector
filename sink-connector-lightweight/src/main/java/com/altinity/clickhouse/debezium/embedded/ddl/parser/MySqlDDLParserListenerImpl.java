@@ -488,7 +488,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
                         }
-                    } else {
+                    } else if(columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
+                        // Ignore comment for now.
+                        //commentModifier = columnDefChild.getChild(1).getText();
+                    }
+                    else   {
                         columnType = (columnDefChild.getText());
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
                         if (chDataType != null) {
