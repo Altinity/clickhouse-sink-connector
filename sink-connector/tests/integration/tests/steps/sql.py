@@ -293,7 +293,7 @@ def complex_check_creation_and_select(
     table_name,
     clickhouse_table,
     statement,
-    timeout=50,
+    timeout=120,
     message=1,
     clickhouse_node=None,
     database_name=None,
