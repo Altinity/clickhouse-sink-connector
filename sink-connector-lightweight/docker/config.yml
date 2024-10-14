@@ -4,6 +4,11 @@
 # Unique name for the connector. Attempting to register again with the same name will fail.
 name: "company-1"
 
+# Primary key used for state storage. Refer to State Storage documentation.
+# If multiple connectors are writing to the same ClickHouse instance, this 
+# value needs to be unique for a connector.
+topic.prefix: "sink-connector-1"
+
 # IP address or hostname of the MySQL database server.
 database.hostname: "mysql-master"
 

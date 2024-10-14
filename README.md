@@ -1,7 +1,7 @@
 [![License](http://img.shields.io/:license-apache%202.0-brightgreen.svg)](http://www.apache.org/licenses/LICENSE-2.0.html)
 [![Sink Connector(Kafka version) tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-kafka-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-kafka-tests.yml)
 [![Sink Connector(Light-weight) Tests](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-tests.yml/badge.svg)](https://github.com/Altinity/clickhouse-sink-connector/actions/workflows/sink-connector-lightweight-tests.yml)
-<a href="https://join.slack.com/t/altinitydbworkspace/shared_invite/zt-w6mpotc1-fTz9oYp0VM719DNye9UvrQ">
+<a href="https://altinity.com/slack">
   <img src="https://img.shields.io/static/v1?logo=slack&logoColor=959DA5&label=Slack&labelColor=333a41&message=join%20conversation&color=3AC358" alt="AltinityDB Slack" />
 </a>
 <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/altinityinfra/clickhouse-sink-connector">
@@ -16,7 +16,7 @@ for analysis.
 
 ## Features
 
-* Initial data dump and load 
+* [Initial data dump and load(MySQL)](sink-connector/python/README.md) 
 * Change data capture of new transactions using [Debezium](https://debezium.io/)
 * Automatic loading into ClickHouse
 * Sources: Support for MySQL, PostgreSQL (other databases experimental)
@@ -103,6 +103,6 @@ to ClickHouse and analytic applications built on ClickHouse.
 - [Official website](https://altinity.com/) - Get a high level overview of Altinity and our offerings.
 - [Altinity.Cloud](https://altinity.com/cloud-database/) - Run ClickHouse in our cloud or yours.
 - [Altinity Support](https://altinity.com/support/) - Get Enterprise-class support for ClickHouse and Sink Connector.
-- [Slack](https://altinitydbworkspace.slack.com/join/shared_invite/zt-1togw9b4g-N0ZOXQyEyPCBh_7IEHUjdw#/shared-invite/email) - Talk directly with ClickHouse users and Altinity devs.
+- [Slack](https://altinity.com/slack) - Talk directly with ClickHouse users and Altinity devs.
 - [Contact us](https://hubs.la/Q020sH3Z0) - Contact Altinity with your questions or issues.
 - [Free consultation](https://hubs.la/Q020sHkv0) - Get a free consultation with a ClickHouse expert today.
