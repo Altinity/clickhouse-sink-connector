@@ -507,11 +507,20 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table t2 add constraint t2_pk_constraint primary key (1c), alter column `_` set default 1;\n";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
-
         StringBuffer clickHouseQuery2 = new StringBuffer();
 
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK (revenue >= 0);";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery2);
+    }
+
+    @Test
+    public void testDropContraints() {
+        StringBuffer clickhouseQuery = new StringBuffer();
+
+        String dropConstraintsSql = "alter table employees drop CONSTRAINT employees_ibfk_2";
+        mySQLDDLParserService.parseSql(dropConstraintsSql, "employees", clickhouseQuery);
+
+        Assert.assertTrue(clickhouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT employees_ibfk_2"));
     }
 
     @Test
@@ -530,7 +539,7 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "alter table table1 add primary key (id)";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
+    //    Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.table1 add primary key (id)"));
     }
 
     @Test

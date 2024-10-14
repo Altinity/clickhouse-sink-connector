@@ -31,16 +31,36 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     String tableName;
     ClickHouseSinkConnectorConfig config;
     ZoneId userProvidedTimeZone;
+    Map<String, String> sourceToDestinationMap = new HashMap<>();
 
     String databaseName;
 
     public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
                                       String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
-        this.databaseName = databaseName;
+        this.config = config;
+        try {
+        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
+            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+
+        } catch(Exception e) {
+            log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
+        }
+        // databaseName might contain backticks. Remove them.
+        if(databaseName.contains("`")) {
+            databaseName = databaseName.replace("`", "");
+        }
+
+        if(sourceToDestinationMap.containsKey(databaseName)) {
+            this.databaseName = sourceToDestinationMap.get(databaseName);
+        } else {
+            this.databaseName = databaseName;
+        }
+
         this.query = transformedQuery;
         this.tableName = tableName;
-        this.config = config;
+
 
         this.userProvidedTimeZone = parseTimeZone();
     }
@@ -83,7 +103,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     } catch(Exception e) {
                         log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
                     }
-
+                    // databaseName might contain backticks. Remove them.
+                    if(databaseName.contains("`")) {
+                        databaseName = databaseName.replace("`", "");
+                    }
                     if(sourceToDestinationMap.containsKey(databaseName)) {
                         this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
                     } else {
@@ -307,7 +330,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
-                if(isNullColumn) {
+                // Nullable should not be added for POINT data type
+                String lowerCaseDataType = colDataType.toLowerCase();
+                if(!Constants.NULLABLE_NOT_SUPPORTED_DATA_TYPES.contains(lowerCaseDataType) && isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                             .append(")").append(",");
                 }
@@ -353,7 +378,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        chDataType = DataTypeConverter.convertToString(columnName,
+        chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
 
         return chDataType;
@@ -542,7 +567,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (tree instanceof AlterByAddColumnContext) {
                 parseAlterTable(tree);
 
-            } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
+            }
+            else if (tree instanceof MySqlParser.AlterByDropConstraintCheckContext) {
+                // Drop Constraint.
+                this.query.append(" ");
+                for (ParseTree dropConstraintTree : ((MySqlParser.AlterByDropConstraintCheckContext) (tree)).children) {
+                    if (dropConstraintTree instanceof MySqlParser.UidContext) {
+                        System.out.println("Drop Constraint");
+                        this.query.append(String.format(Constants.DROP_CONSTRAINT, dropConstraintTree.getText()));
+                    }
+                }
+            }
+            else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByDropColumnContext) {
                 // Drop Column.

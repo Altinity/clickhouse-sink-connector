@@ -152,6 +152,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     if(currentBatch == null) {
                         // No records in the queue.
                         continue;
+                        //Thread.sleep(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()));
                     }
                 } else {
                     log.debug("***** RETRYING the same batch again");
@@ -198,6 +199,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                         currentBatch = null;
                     }
                 }
+                Thread.sleep(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()));
                     //acknowledgeRecords(batch);
                 ///// ***** END PROCESSING BATCH **************************
 
