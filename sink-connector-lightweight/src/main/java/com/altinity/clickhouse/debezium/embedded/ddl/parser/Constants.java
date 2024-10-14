@@ -1,5 +1,9 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
 public class Constants {
 
     public static final String ALIAS = "MATERIALIZED";
@@ -49,9 +53,14 @@ public class Constants {
 
     public static final String DROP_COLUMN = "DROP COLUMN %s";
 
-
+    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT %s";
     public static final String NEW_REPLACING_MERGE_TREE_VERSION = "23.2";
 
+
+    // There are certain Data types where Nullable is not supported.
+    // For example, Point, Geometry, Enum, Array, Map, Decimal, UUID, DateTime64, Date, Time, DateTime, Nullable(DateTime), Nullable(Date), Nullable(Time), Nullable(DateTime64), Nullable(UUID)
+    // Create a set of these data types.
+    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES = new HashSet<>(Arrays.asList("point"));
 
 
 }
