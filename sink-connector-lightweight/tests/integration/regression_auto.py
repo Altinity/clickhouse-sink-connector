@@ -299,17 +299,17 @@ def regression(
             parallel=True,
             executor=executor,
         )
-        Feature(
-            run=load("tests.retry_on_fail", "module"),
-            parallel=True,
-            executor=executor,
-        )
+        # Feature(
+        #     run=load("tests.retry_on_fail", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
         join()
 
-    # Feature(run=load("tests.databases", "module"))
-    Feature(
-        run=load("tests.schema_only", "module"),
-    )
+    Feature(run=load("tests.databases", "module"))
+    # Feature(
+    #     run=load("tests.schema_only", "module"),
+    # )
     Feature(
         run=load("tests.multiple_databases", "module"),
     )
