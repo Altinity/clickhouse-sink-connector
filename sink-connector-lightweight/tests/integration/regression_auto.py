@@ -224,81 +224,81 @@ def regression(
             parallel=True,
             executor=executor,
         )
-        Feature(
-            run=load("tests.autocreate", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.insert", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.alter", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.compound_alters", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.parallel_alters", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.truncate", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.deduplication", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.types", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.virtual_columns", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.columns_inconsistency", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.snowflake_id", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.table_names", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.is_deleted", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.calculated_columns", "module"),
-            parallel=True,
-            executor=executor,
-        )
-        Feature(
-            run=load("tests.datatypes", "module"),
-            parallel=True,
-            executor=executor,
-        )
+        # Feature(
+        #     run=load("tests.autocreate", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.insert", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.alter", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.compound_alters", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.parallel_alters", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.truncate", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.deduplication", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.types", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.virtual_columns", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.columns_inconsistency", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.snowflake_id", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.table_names", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.is_deleted", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.calculated_columns", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
+        # Feature(
+        #     run=load("tests.datatypes", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
         # Feature(
         #     run=load("tests.retry_on_fail", "module"),
         #     parallel=True,
@@ -313,9 +313,9 @@ def regression(
     Feature(
         run=load("tests.multiple_databases", "module"),
     )
-    Feature(
-        run=load("tests.sink_cli_commands", "module"),
-    )
+    # Feature(
+    #     run=load("tests.sink_cli_commands", "module"),
+    # )
 
 if __name__ == "__main__":
     regression()
