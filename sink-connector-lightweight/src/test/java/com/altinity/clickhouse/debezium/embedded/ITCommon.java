@@ -3,6 +3,8 @@ package com.altinity.clickhouse.debezium.embedded;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import org.testcontainers.clickhouse.ClickHouseContainer;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 
@@ -96,6 +98,54 @@ public class ITCommon {
 
     }
 
+    static public Properties getDebeziumProperties(MongoDBContainer mongoContainer, ClickHouseContainer clickHouseContainer) throws Exception {
+
+        Properties defaultProps = new Properties();
+        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+
+        defaultProps.putAll(defaultProperties);
+        Properties fileProps = new ConfigLoader().load("config.yml");
+        defaultProps.putAll(fileProps);
+
+
+        defaultProps.setProperty("connector.class", "io.debezium.connector.mongodb.MongoDbConnector");
+
+        // Construct mongodb connection string
+        String mongoConnectionString = String.format("mongodb://%s:%s", mongoContainer.getHost(), mongoContainer.getFirstMappedPort());
+
+        defaultProps.setProperty("mongodb.connection.string", mongoContainer.getConnectionString() +"/?replicaSet=docker-rs");
+        //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString + "/?replicaSet=docker-rs");
+
+        defaultProps.setProperty("mongodb.members.auto.discover", "true");
+        defaultProps.setProperty("topic.prefix", "mongo-ch");
+        defaultProps.setProperty("collection.include.list", "project.items");
+        defaultProps.setProperty("snapshot.include.collection.list", "project.items");
+        defaultProps.setProperty("database.include.list", "project");
+        defaultProps.setProperty("key.converter", "org.apache.kafka.connect.json.JsonConverter");
+
+        defaultProps.setProperty("value.converter", "org.apache.kafka.connect.storage.StringConverter");
+        defaultProps.setProperty("value.converter.schemas.enable", "true");
+
+        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
+        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+
+        return defaultProps;
+    }
     static public Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
 
         // Start the debezium embedded application.
