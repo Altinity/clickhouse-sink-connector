@@ -71,3 +71,36 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Storage account class name
+*/}}
+{{- define "sink-connector-lightweight.storageAccountClass" -}}
+{{- if .Values.storageAccountClass -}}
+{{ default "manual" .Values.storageAccountClass }}
+{{- else -}}
+manual
+{{- end }}
+{{- end }}
+
+{{/*
+Adds a label of type: local for persistent volume types of manual
+*/}}
+{{- define "sink-connector-lightweight.storageAccountLabel" -}}
+{{- if eq (include "sink-connector-lightweight.storageAccountClass" .) "manual" }}
+    type: local
+{{- else -}}
+{}
+{{- end }}
+{{- end }}
+
+{{/*
+Host pathing
+*/}}
+{{- define "sink-connector-lightweight.hostpathing" -}}
+{{- if eq (include "sink-connector-lightweight.storageAccountClass" .) "manual" }}
+hostPath:
+  path: {{ .Values.persistentvolume.hostPath }}
+{{- end }}
+{{- end }}
+
