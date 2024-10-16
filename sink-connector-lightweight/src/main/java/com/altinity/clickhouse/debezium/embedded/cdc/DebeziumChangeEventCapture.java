@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
+import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -102,7 +103,11 @@ public class DebeziumChangeEventCapture {
      * @param sr
      * @param config
      */
-    private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
+    private void performDDLOperation(String DDL, Properties props, SourceRecord sr,
+                                     ClickHouseSinkConnectorConfig config,
+                                     DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                                             recordCommitter, ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
+                                     boolean lastRecordInBatch) {
         String databaseName = getDatabaseName(sr);
 
         if (writer == null) {
@@ -136,8 +141,10 @@ public class DebeziumChangeEventCapture {
         while(numRetries < MAX_DDL_RETRIES) {
             try {
                 executeDDL(clickHouseQuery.toString(), writer);
+                DebeziumOffsetManagement.acknowledgeRecords(recordCommitter,
+                        cdcRecord, lastRecordInBatch);
                 break;
-            } catch (SQLException e) {
+            } catch (Exception e) {
                 log.error("Error executing DDL", e);
                 if(retryDDLProperty == false) {
                     break;
@@ -245,7 +252,7 @@ public class DebeziumChangeEventCapture {
                     this.executor.shutdown();
                     this.executor.awaitTermination(60, TimeUnit.SECONDS);
 
-                    performDDLOperation(DDL, props, sr, config);
+                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch);
                     setupProcessingThread(config);
                 }
 
