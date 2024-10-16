@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
+
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -12,9 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.ZoneId;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.TimeZone;
+import java.util.*;
 
 public class DBMetadata {
 
@@ -271,17 +271,21 @@ public class DBMetadata {
         return result;
     }
 
-
-
-
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName,
                                                            ClickHouseConnection conn,
-                                                           String database) {
+                                                           String database,
+                                                           ClickHouseSinkConnectorConfig config) {
 
+        Set<String> aliasColumns = new HashSet<>();
+        try {
+            aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
+        } catch(Exception e) {
+            log.error("Error getting alias columns", e);
+        }
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         try {
             if (conn == null) {
@@ -308,6 +312,10 @@ public class DBMetadata {
                 if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
                     continue;
                 }
+                if(aliasColumns.contains(columnName)) {
+                    log.debug("Skipping alias column: " + columnName);
+                    continue;
+                }
                 result.put(columnName, typeName);
             }
         } catch (SQLException sq) {
@@ -328,5 +336,30 @@ public class DBMetadata {
         }
 
         return result;
+    }
+
+    /**
+     * Function to get the column names which are
+     * @return
+     */
+    public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
+                                                                         ClickHouseConnection conn) throws SQLException {
+
+        Set<String> aliasColumns = new HashSet<>();
+        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
+                "(default_kind='ALIAS' or default_kind='MATERIALIZED')";
+        String formattedQuery = String.format(query, tableName, databaseName);
+
+        // Execute query
+        ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
+
+        // Get the list of columns from rs.
+        if(rs != null) {
+            while (rs.next()) {
+                String response = rs.getString(1);
+                aliasColumns.add(response);
+            }
+        }
+        return aliasColumns;
     }
 }

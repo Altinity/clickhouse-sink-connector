@@ -117,6 +117,18 @@
   </profiles>
   <dependencies>
     <dependency>
+      <groupId>io.javalin</groupId>
+      <artifactId>javalin-testtools</artifactId>
+      <version>5.5.0</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>okhttp</artifactId>
+          <groupId>com.squareup.okhttp3</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-connector-mongodb</artifactId>
       <version>2.7.0.Beta2</version>
@@ -308,6 +320,7 @@
     <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <sink-connector-library-version>0.0.9</sink-connector-library-version>
+    <javalin-version>5.5.0</javalin-version>
     <version.junit>5.9.1</version.junit>
     <maven.compiler.source>17</maven.compiler.source>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
