@@ -1,3 +1,10 @@
+# initiate replica set
+rs.initiate({
+    _id: "docker-rs",
+    members: [
+        { _id: 0, host: "mongo:27017" }
+    ]
+});
 db.createUser({
   user: 'project',
   pwd: 'project',

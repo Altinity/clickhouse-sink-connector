@@ -13,8 +13,11 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.result.InsertOneResult;
 import org.bson.Document;
 import org.bson.types.ObjectId;
+import org.junit.ClassRule;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
+import org.testcontainers.containers.DockerComposeContainer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -22,6 +25,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -39,23 +43,35 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
             .withExposedPorts(8123);
 
     //https://github.com/testcontainers/testcontainers-java/issues/3066
-    @Container
-    public static MongoDBContainer mongoContainer = new MongoDBContainer("mongo:latest")
-            .withEnv("MONGO_INITDB_DATABASE", "project")
-            .withCopyFileToContainer(MountableFile.forClasspathResource("mongo-init.js"),
-                    "/docker-entrypoint-initdb.d/mongo-init.js")
-                    .withExposedPorts(27017)
-                    .withNetworkAliases("mongo")
-            .withCommand("--replSet docker-rs").withCommand("--bind_ip_all").withCommand("--port 27017")
-            .waitingFor(Wait.forLogMessage("(?i).*Waiting for connections*.*", 1));
+//    @Container
+//    public static GenericContainer mongoContainer = new GenericContainer("mongo:latest")
+//            .withEnv("MONGO_INITDB_DATABASE", "project")
+//            .withEnv("MONGO_REPLICA_SET_NAME", "docker-rs")
+//            .withCopyFileToContainer(MountableFile.forClasspathResource("mongo-init.js"),
+//                    "/docker-entrypoint-initdb.d/mongo-init.js")
+//                    .withExposedPorts(27017)
+//            .withCommand("--replSet docker-rs")
+//        .withNetworkAliases("mongo")
+//            .withCommand("--replSet docker-rs").withCommand("--bind_ip_all").withCommand("--port 27017")
+//            .waitingFor(Wait.forLogMessage("(?i).*Waiting for connections*.*", 1));
 
 
+    @ClassRule
+    public static DockerComposeContainer environment =
+            new DockerComposeContainer(new File("src/test/resources/docker-compose-mongodb.yml"))
+                    .withExposedService("mongo", 27017);
+
+    @BeforeEach
+
+    public void startContainers() throws InterruptedException {
+        environment.start();
+    }
     @Test
     //@Disabled
     public void testDataTypesDB() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
-        Properties defaultProps = ITCommon.getDebeziumProperties(mongoContainer, clickHouseContainer);
+        Properties defaultProps = ITCommon.getDebeziumProperties(clickHouseContainer);
         
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
@@ -103,7 +119,9 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
     }
 
     private void insertNewDocument() {
-        try (MongoClient mongoClient = MongoClients.create(mongoContainer.getConnectionString())) {
+        String mongoConnectionString = String.format("mongodb://%s:%s", "mongo", "27017");
+
+        try (MongoClient mongoClient = MongoClients.create(mongoConnectionString)) {
             MongoDatabase database = mongoClient.getDatabase("project");
             MongoCollection<Document> collection = database.getCollection("items");
             try {

@@ -3,10 +3,7 @@ package com.altinity.clickhouse.debezium.embedded;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.MongoDBContainer;
-import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.*;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -98,7 +95,7 @@ public class ITCommon {
 
     }
 
-    static public Properties getDebeziumProperties(MongoDBContainer mongoContainer, ClickHouseContainer clickHouseContainer) throws Exception {
+    static public Properties getDebeziumProperties( ClickHouseContainer clickHouseContainer) throws Exception {
 
         Properties defaultProps = new Properties();
         Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
@@ -111,11 +108,15 @@ public class ITCommon {
         defaultProps.setProperty("connector.class", "io.debezium.connector.mongodb.MongoDbConnector");
 
         // Construct mongodb connection string
-        String mongoConnectionString = String.format("mongodb://%s:%s", mongoContainer.getHost(), mongoContainer.getFirstMappedPort());
+        String mongoConnectionString = String.format("mongodb://%s:%s", "mongo",
+                "27017");
 
-        defaultProps.setProperty("mongodb.connection.string", mongoContainer.getConnectionString() +"/?replicaSet=docker-rs");
+        defaultProps.setProperty("mongodb.connection.string", mongoConnectionString +"/?replicaSet=rs0");
+        //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString );
+
         //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString + "/?replicaSet=docker-rs");
 
+        defaultProps.setProperty("capture.scope", "database");
         defaultProps.setProperty("mongodb.members.auto.discover", "true");
         defaultProps.setProperty("topic.prefix", "mongo-ch");
         defaultProps.setProperty("collection.include.list", "project.items");
