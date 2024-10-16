@@ -308,14 +308,15 @@ def regression(
 
     Feature(run=load("tests.databases", "module"))
     Feature(
-         run=load("tests.schema_only", "module"),
-     )
+        run=load("tests.schema_only", "module"),
+    )
     Feature(
         run=load("tests.multiple_databases", "module"),
     )
     Feature(
         run=load("tests.sink_cli_commands", "module"),
     )
+
 
 if __name__ == "__main__":
     regression()
