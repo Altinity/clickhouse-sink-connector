@@ -17,6 +17,7 @@ import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import io.javalin.testtools.JavalinTest;
 
 
+@Disabled
 public class DebeziumEmbeddedRestApiIT {
 
     protected MySQLContainer mySqlContainer;

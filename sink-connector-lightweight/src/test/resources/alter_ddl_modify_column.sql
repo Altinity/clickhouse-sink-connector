@@ -1,6 +1,9 @@
 create table ship_class(id int, class_name varchar(100), tonange decimal(10,2), max_length decimal(10,2), start_build year, end_build year(4), max_guns_size int);
 create table add_test(col1 varchar(255), col2 int, col3 int);
 
+create table office(office_id INT PRIMARY KEY, office_name VARCHAR(50) NOT NULL, office_address VARCHAR(255) NOT NULL, office_code int DEFAULT NULL);
+
+
 --insert into ship_class values(1, "test_class", 20.2, 20.2, 1997, 1997, 1998);
 --insert into ship_class values(2, "test_class", 20.2, 20.2, 1997, 1997, 1998);
 --  | MODIFY [COLUMN] col_name column_definition

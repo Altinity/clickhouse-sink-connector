@@ -1,7 +1,10 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import io.debezium.engine.ChangeEvent;
+import io.debezium.engine.DebeziumEngine;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -153,5 +156,19 @@ public class DebeziumOffsetManagement {
         // Remove the batch from the inFlightBatches
         Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
         inFlightBatches.remove(pair);
+    }
+
+    public static synchronized void acknowledgeRecords(DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                                                               recordCommitter, ChangeEvent<SourceRecord, SourceRecord> sourceRecord,
+                                                       boolean lastRecordInBatch)
+            throws InterruptedException {
+
+        if (sourceRecord != null) {
+            recordCommitter.markProcessed(sourceRecord);
+
+            if(lastRecordInBatch == true) {
+                recordCommitter.markBatchFinished();
+            }
+        }
     }
 }

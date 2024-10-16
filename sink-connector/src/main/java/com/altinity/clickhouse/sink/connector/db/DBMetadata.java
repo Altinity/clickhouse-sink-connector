@@ -16,6 +16,7 @@ import java.sql.Statement;
 import java.time.ZoneId;
 import java.util.*;
 
+
 public class DBMetadata {
 
     private static final Logger log = LogManager.getLogger(DBMetadata.class);
@@ -271,6 +272,30 @@ public class DBMetadata {
         return result;
     }
 
+
+    /**
+     * Function to get the column name and isNullable as key/value pair.
+     */
+    public Map<String, Boolean> getColumnsIsNullableForTable(String tableName,
+                                                             ClickHouseConnection conn,
+                                                             String database) throws SQLException {
+        Map<String, Boolean> columnsIsNullable = new HashMap<>();
+
+        // Execute the following query to get the column name and isNullable as key/value pair.
+        String query = String.format("SELECT name AS column_name, type LIKE 'Nullable(%%' AS is_nullable FROM system.columns WHERE (table = '%s') AND (database = '%s')", tableName, database);
+
+        try (Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+                String columnName = rs.getString("column_name");
+                boolean isNullable = rs.getBoolean("is_nullable");
+                columnsIsNullable.put(columnName, isNullable);
+            }
+        }
+
+        return columnsIsNullable;
+    }
+  
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
