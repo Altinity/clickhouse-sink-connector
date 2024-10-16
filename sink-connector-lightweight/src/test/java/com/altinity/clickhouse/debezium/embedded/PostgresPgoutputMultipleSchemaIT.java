@@ -65,12 +65,13 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2" );
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
+        properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
 
     @Test
-    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas")
+    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas and ignoring ALIAS columns in ClickHouse")
     public void testMultipleSchemaReplication() throws Exception {
         Network network = Network.newNetwork();
 
@@ -134,6 +135,32 @@ public class PostgresPgoutputMultipleSchemaIT {
             tm2Count =  chRs2.getInt(1);
         }
         Assert.assertTrue(tm2Count == 1);
+
+        // Create a connection to postgresql and create a new table.
+        Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
+        postgresConn2.createStatement().execute("CREATE TABLE public.people( height_cm numeric PRIMARY KEY, height_in numeric GENERATED ALWAYS AS (height_cm / 2.54) STORED)");
+
+        Thread.sleep(10000);
+        // insert new records into the new table.
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (180)");
+        Thread.sleep(10000);
+
+        // ClickHouse, add ALIAS column to public.people
+        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
+        Thread.sleep(10000);
+
+        // Add MATERIALIZED column to public.people
+        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
+        Thread.sleep(20000);
+
+        // Check if public.people has 2 records.
+        int peopleCount = 0;
+        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people").executeQuery();
+        while(chRs3.next()) {
+            peopleCount =  chRs3.getInt(1);
+        }
+        Assert.assertTrue(peopleCount == 2);
 
         if(engine.get() != null) {
             engine.get().stop();
