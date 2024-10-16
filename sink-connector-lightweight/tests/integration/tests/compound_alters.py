@@ -125,7 +125,7 @@ def change_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2","String"',
+                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
                         )
 
 
@@ -169,7 +169,7 @@ def add_modify_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","String"',
+                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
                         )
 
 
@@ -214,7 +214,7 @@ def modify_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","String"',
+                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
                         )
 
 
