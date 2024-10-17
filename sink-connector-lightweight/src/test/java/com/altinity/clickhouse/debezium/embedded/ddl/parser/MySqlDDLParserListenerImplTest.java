@@ -7,6 +7,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -394,6 +395,14 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
     }
 
+    @Test
+    public void testAlterTableModifyColumn() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String alterTableModifyColumn = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT;";
+        mySQLDDLParserService.parseSql(alterTableModifyColumn, "add_test", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+    }
 
 
     @Test
@@ -507,11 +516,20 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table t2 add constraint t2_pk_constraint primary key (1c), alter column `_` set default 1;\n";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
-
         StringBuffer clickHouseQuery2 = new StringBuffer();
 
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK (revenue >= 0);";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery2);
+    }
+
+    @Test
+    public void testDropContraints() {
+        StringBuffer clickhouseQuery = new StringBuffer();
+
+        String dropConstraintsSql = "alter table employees drop CONSTRAINT employees_ibfk_2";
+        mySQLDDLParserService.parseSql(dropConstraintsSql, "employees", clickhouseQuery);
+
+        Assert.assertTrue(clickhouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT employees_ibfk_2"));
     }
 
     @Test
@@ -530,7 +548,7 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "alter table table1 add primary key (id)";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
+    //    Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.table1 add primary key (id)"));
     }
 
     @Test
@@ -818,6 +836,36 @@ public class MySqlDDLParserListenerImplTest {
 
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
+    }
+
+    @Test
+    @Disabled
+    public void testPartitionedByRangeTable() {
+        String sql = "CREATE TABLE `city` (\n" +
+                "  `ID` int NOT NULL AUTO_INCREMENT,\n" +
+                "  `Name` char(35) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `CountryCode` char(3) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `District` char(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',\n" +
+                "  `Population` int NOT NULL DEFAULT '0',\n" +
+                "  `is_deleted` tinyint(1) DEFAULT '0',\n" +
+                "  PRIMARY KEY (`ID`)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci PARTITION BY RANGE(`ID`)\n" +
+                "(PARTITION p0 VALUES LESS THAN (1000),\n" +
+                " PARTITION p1 VALUES LESS THAN (2000),\n" +
+                " PARTITION p2 VALUES LESS THAN (3000),\n" +
+                " PARTITION p3 VALUES LESS THAN (4000),\n" +
+                " PARTITION p4 VALUES LESS THAN (5000),\n" +
+                " PARTITION p5 VALUES LESS THAN (6000),\n" +
+                " PARTITION p6 VALUES LESS THAN (7000),\n" +
+                " PARTITION p7 VALUES LESS THAN (8000),\n" +
+                " PARTITION p8 VALUES LESS THAN (9000),\n" +
+                " PARTITION p9 VALUES LESS THAN (10000));";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
+                "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
     }
 //    @Test
 //    public void deleteData() {

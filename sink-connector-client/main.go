@@ -33,7 +33,10 @@ const (
 	STATUS_COMMAND            = "show_replica_status"
 	UPDATE_BINLOG_COMMAND     = "change_replication_source"
 	UPDATE_LSN_COMMAND        = "lsn"
+	DELETE_OFFSETS_COMMAND    = "delete_offsets"
+	DELETE_SCHEMA_HISTORY_COMMAND = "delete_schema_history"
 )
+
 const (
 	START_REPLICATION   = "start"
 	STOP_REPLICATION    = "stop"
@@ -41,6 +44,8 @@ const (
 	STATUS              = "status"
 	UPDATE_BINLOG       = "binlog"
 	UPDATE_LSN          = "lsn"
+	DELETE_OFFSETS      = "offsets"
+	DELETE_SCHEMA_HISTORY = "schema-history"
 )
 
 // Fetches the repos for the given Github users
@@ -53,6 +58,14 @@ func getHTTPCall(url string) *grequests.Response {
 	return resp
 }
 
+func getHTTPDeleteCall(url string) *grequests.Response {
+    resp, err := grequests.Delete(url, requestOptions)
+    // you can modify the request by passing an optional RequestOptions struct
+    if err != nil {
+        log.Fatalln("Unable to make request: ", err)
+    }
+    return resp
+}
 /**
 Function to get server url based on the parameters passed
 */
@@ -215,10 +228,77 @@ func main() {
 				return nil
 			},
 		},
-	}
-
+        {
+            Name:  DELETE_OFFSETS_COMMAND,
+        	Usage: "Delete offsets from the sink connector",
+        	Action: func(c *cli.Context) error {
+        		handleDeleteOffsets(c)
+        		return nil
+        	},
+        },
+        {
+            Name:  DELETE_SCHEMA_HISTORY_COMMAND,
+            Usage: "Delete schema history from the sink connector",
+            Action: func(c *cli.Context) error {
+            	handleDeleteSchemaHistory(c)
+            	return nil
+            },
+        },
+    }
 	app.Version = "1.0"
 	app.Run(os.Args)
+}
+
+func handleDeleteOffsets(c *cli.Context) bool {
+    log.Println("***** Delete offsets from the sink connector *****")
+    log.Println("Are you sure you want to continue? (y/n): ")
+    	var userInput string
+    	fmt.Scanln(&userInput)
+    	if userInput != "y" {
+    		log.Println("Exiting...")
+    		return false
+    	} else {
+    		log.Println("Continuing...")
+    	}
+    // Call a REST DELETE API to delete offsets from the sink connector
+    var deleteOffsetsUrl = getServerUrl(DELETE_OFFSETS, c)
+    log.Println("Sending request to URL: " + deleteOffsetsUrl)
+    resp := getHTTPDeleteCall(deleteOffsetsUrl)
+    time.Sleep(5 * time.Second)
+    if resp.StatusCode == 200 {
+        log.Println("Offsets deleted successfully")
+        return true
+    } else {
+        log.Println("Response Status Code:", resp.StatusCode)
+        log.Println("Error deleting offsets")
+        return false
+    }
+}
+
+func handleDeleteSchemaHistory(c *cli.Context) bool {
+    log.Println("***** Delete schema history from the sink connector *****")
+    log.Println("Are you sure you want to continue? (y/n): ")
+    var userInput string
+    fmt.Scanln(&userInput)
+    if userInput != "y" {
+        log.Println("Exiting...")
+        return false
+    } else {
+        log.Println("Continuing...")
+    }
+    // Call a REST DELETE API to delete offsets from the sink connector
+    var deleteOffsetsUrl = getServerUrl(DELETE_SCHEMA_HISTORY, c)
+    log.Println("Sending request to URL: " + deleteOffsetsUrl)
+    resp := getHTTPDeleteCall(deleteOffsetsUrl)
+    time.Sleep(5 * time.Second)
+    if resp.StatusCode == 200 {
+        log.Println("Schema history deleted successfully")
+        return true
+    } else {
+        log.Println("Response Status Code:", resp.StatusCode)
+        log.Println("Error deleting schema history")
+        return false
+    }
 }
 
 func handleUpdateLsn(c *cli.Context) bool {

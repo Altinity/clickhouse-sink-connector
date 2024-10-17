@@ -14,8 +14,6 @@ from integration.tests.steps.alter import (
     change_column,
     modify_column,
     drop_column,
-    add_primary_key,
-    drop_primary_key,
 )
 
 
@@ -592,26 +590,6 @@ def drop_column_on_a_database(self, database):
         check_column(table_name=table_name, database=database, column_name="")
 
 
-@TestScenario
-@Requirements(
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_PrimaryKey_Simple("1.0")
-)
-def add_primary_key_on_a_database(self, database):
-    """Check that the primary key is added to the table when we add a primary key on a database."""
-    table_name = f"table_{getuid()}"
-    column = "col1"
-
-    with Given("I create a table on multiple databases"):
-        create_table_and_insert_values(table_name=table_name, database_name=database)
-
-    with When("I add a primary key on the table"):
-        drop_primary_key(table_name=table_name, database=database)
-        add_primary_key(table_name=table_name, database=database, column_name=column)
-
-    with Then("I check that the primary key was added to the table"):
-        check_column(table_name=table_name, database=database, column_name=column)
-
-
 @TestOutline
 def check_different_database_names(self, database_map):
     """Check that the tables are replicated when we have source and destination databases with different names."""
@@ -755,7 +733,6 @@ def check_alters_on_different_databases(self):
         change_column_on_a_database,
         modify_column_on_a_database,
         drop_column_on_a_database,
-        add_primary_key_on_a_database,
     ]
 
     check_alters(

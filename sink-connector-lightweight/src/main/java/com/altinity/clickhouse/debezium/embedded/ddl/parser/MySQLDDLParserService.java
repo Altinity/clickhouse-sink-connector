@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import io.debezium.antlr.CaseChangingCharStream;
@@ -28,11 +30,18 @@ public class MySQLDDLParserService implements DDLParserService {
 
     private ClickHouseSinkConnectorConfig config;
 
+    private BaseDbWriter writer;
     @Inject
     public MySQLDDLParserService() {
 
     }
     public MySQLDDLParserService(ClickHouseSinkConnectorConfig config, String databaseName) {
+        this.config = config;
+        this.databaseName = databaseName;
+    }
+
+    public MySQLDDLParserService(BaseDbWriter writer, ClickHouseSinkConnectorConfig config, String databaseName) {
+        this.writer = writer;
         this.config = config;
         this.databaseName = databaseName;
     }
@@ -51,7 +60,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, databaseName, config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -71,7 +80,7 @@ public class MySQLDDLParserService implements DDLParserService {
         parser.addErrorListener(errorListener);
         lexer.addErrorListener(errorListener);
 
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(parsedQuery, tableName, databaseName, this.config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
