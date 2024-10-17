@@ -3,7 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: task-pv-claim-sink-connector-lightweight
 spec:
-  storageClassName: manual
+  storageClassName: {{ include "sink-connector-lightweight.storageAccountClass" . }}
   accessModes:
     - ReadWriteOnce
   resources:
