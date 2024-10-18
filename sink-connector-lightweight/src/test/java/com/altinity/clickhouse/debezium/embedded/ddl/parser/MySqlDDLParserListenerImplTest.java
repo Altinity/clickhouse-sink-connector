@@ -811,6 +811,26 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testAlterTableTruncatePartition() {
+        String alterTableTruncatePartition = "alter table table_name truncate partition p99991231;";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.employees_truncate_partition PARTITION (emp_no = 10) TRUNCATE PARTITION";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(alterTableTruncatePartition, "employees", clickHouseQuery);
+
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+
+    }
+
+    @Test
+    public void testAlterTableReorganizePartition() {
+            String alterTableReorganizePartition = "alter table table_name reorganize partition p99991231;";
+            String clickhouseExpectedQuery = "ALTER TABLE employees.employees_reorganize_partition PARTITION (emp_no = 10) REORGANIZE PARTITION";
+            StringBuffer clickHouseQuery = new StringBuffer();
+            mySQLDDLParserService.parseSql(alterTableReorganizePartition, "employees", clickHouseQuery);
+
+            // Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+    @Test
     public void testRenameIsDeletedColumn() {
         String sql = "CREATE TABLE `city` (\n" +
                 "  `ID` int NOT NULL AUTO_INCREMENT,\n" +
