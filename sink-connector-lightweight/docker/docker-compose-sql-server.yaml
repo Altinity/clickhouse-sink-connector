@@ -1,0 +1,68 @@
+version: "3.4"
+
+# Ubuntu , set this for redpanda to start
+# https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm
+
+# Clickhouse Table Schema
+# create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+
+services:
+
+  sql-server-db:
+    container_name: sql-server-db
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    #command: sh -c ' chmod +x /tmp/entrypoint.sh; /tmp/./entrypoint.sh & /opt/mssql/bin/sqlservr;'
+    ports:
+      - "1433:1433"
+    environment:
+      MSSQL_SA_PASSWORD: "Root1234$$"
+      ACCEPT_EULA: "Y"
+    volumes:
+      - ./data_sqlserver:/tmp
+
+  clickhouse:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  zookeeper:
+    extends:
+      file: zookeeper-service.yml
+      service: zookeeper
+
+  clickhouse-sink-connector-lt:
+    extends:
+      file: clickhouse-sink-connector-lt-service.yml
+      service: clickhouse-sink-connector-lt
+    depends_on:
+      - clickhouse
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      JAVA_OPTS: >
+        -Xmx5G
+        -Xms128m
+    volumes:
+      - ./config_sql_server.yml:/config.yml
+
+  ### MONITORING ####
+  prometheus:
+    extends:
+      file: prometheus-service.yml
+      service: prometheus
+
+
+  grafana:
+    extends:
+      file: grafana-service.yml
+      service: grafana
+    volumes:
+      - ./config/grafana/config/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+      - ./config/grafana/config/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./config/grafana/config/altinity_sink_connector.json:/var/lib/grafana/dashboards/altinity_sink_connector.json
+    depends_on:
+      - prometheus
+    ## END OF MONITORING ###
