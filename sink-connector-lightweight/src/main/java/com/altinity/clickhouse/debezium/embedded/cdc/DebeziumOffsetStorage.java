@@ -52,6 +52,20 @@ public class DebeziumOffsetStorage {
     }
 
     /**
+     * Function to truncate the schema history table
+     * @param offsetKey
+     * @param writer
+     * @throws SQLException
+     */
+    public void deleteSchemaHistoryTable(String offsetKey,
+                                         String tableName,
+                                         BaseDbWriter writer) throws SQLException {
+
+
+        String debeziumStorageStatusQuery = String.format("delete from %s where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='\"%s\"" , tableName, offsetKey);
+        writer.executeQuery(debeziumStorageStatusQuery);
+    }
+    /**
      * Function to get the latest timestamp of the record in the table
      * @param props
      * @param writer

@@ -8,6 +8,8 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -18,6 +20,7 @@ import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -31,17 +34,43 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     String tableName;
     ClickHouseSinkConnectorConfig config;
     ZoneId userProvidedTimeZone;
+    Map<String, String> sourceToDestinationMap = new HashMap<>();
 
     String databaseName;
 
-    public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
+    BaseDbWriter writer;
+
+    DBMetadata dbMetadata;
+
+    public MySqlDDLParserListenerImpl(BaseDbWriter writer, StringBuffer transformedQuery, String tableName,
                                       String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
-        this.databaseName = databaseName;
+        this.config = config;
+        try {
+        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
+            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+
+        } catch(Exception e) {
+            log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
+        }
+        // databaseName might contain backticks. Remove them.
+        if(databaseName.contains("`")) {
+            databaseName = databaseName.replace("`", "");
+        }
+
+        if(sourceToDestinationMap.containsKey(databaseName)) {
+            this.databaseName = sourceToDestinationMap.get(databaseName);
+        } else {
+            this.databaseName = databaseName;
+        }
+
         this.query = transformedQuery;
         this.tableName = tableName;
-        this.config = config;
 
+        this.config = config;
+        this.dbMetadata = new DBMetadata();
+        this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
     }
 
@@ -83,7 +112,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     } catch(Exception e) {
                         log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
                     }
-
+                    // databaseName might contain backticks. Remove them.
+                    if(databaseName.contains("`")) {
+                        databaseName = databaseName.replace("`", "");
+                    }
                     if(sourceToDestinationMap.containsKey(databaseName)) {
                         this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
                     } else {
@@ -307,7 +339,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
-                if(isNullColumn) {
+                // Nullable should not be added for POINT data type
+                String lowerCaseDataType = colDataType.toLowerCase();
+                if(!Constants.NULLABLE_NOT_SUPPORTED_DATA_TYPES.contains(lowerCaseDataType) && isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                             .append(")").append(",");
                 }
@@ -353,7 +387,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        chDataType = DataTypeConverter.convertToString(columnName,
+        chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
 
         return chDataType;
@@ -415,6 +449,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         boolean isNullColumn = false;
         boolean isAlterChangeColumn = false;
+        boolean nullExplicitlySet = false;
+
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
             modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
@@ -453,6 +489,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 for (ParseTree columnDefChild : ((MySqlParser.ColumnDefinitionContext) columnChild).children) {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
+                        nullExplicitlySet = true;
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
@@ -484,7 +521,27 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             }
         }
-
+        // if null is not explicitly set.
+        if (!nullExplicitlySet) {
+            try {
+                if(writer == null) {
+                    log.error("Error with DB connection");
+                    throw new SQLException("Error with DB connection");
+                }
+                else {
+                    Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
+                    if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
+                        isNullColumn = true;
+                    } else {
+                        isNullColumn = false;
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error retrieving NULL column schema from ClickHouse", e);
+            }
+            // Check if the column scehma is nullable from ClickHouse.
+                // Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
+        }
         if (columnName != null && columnType != null)
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
@@ -542,7 +599,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (tree instanceof AlterByAddColumnContext) {
                 parseAlterTable(tree);
 
-            } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
+            }
+            else if (tree instanceof MySqlParser.AlterByDropConstraintCheckContext) {
+                // Drop Constraint.
+                this.query.append(" ");
+                for (ParseTree dropConstraintTree : ((MySqlParser.AlterByDropConstraintCheckContext) (tree)).children) {
+                    if (dropConstraintTree instanceof MySqlParser.UidContext) {
+                        System.out.println("Drop Constraint");
+                        this.query.append(String.format(Constants.DROP_CONSTRAINT, dropConstraintTree.getText()));
+                    }
+                }
+            }
+            else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByDropColumnContext) {
                 // Drop Column.

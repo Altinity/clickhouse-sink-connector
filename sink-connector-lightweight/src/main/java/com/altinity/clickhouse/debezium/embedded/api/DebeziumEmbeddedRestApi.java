@@ -60,6 +60,23 @@ public class DebeziumEmbeddedRestApi {
 
         });
 
+        //Delete offsets
+        app.delete("/offsets", ctx -> {
+            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+            String response = "";
+
+            try {
+                debeziumChangeEventCapture.deleteOffsets(finalProps1);
+            } catch (Exception e) {
+                log.error("Client - Error deleting offsets", e);
+                ctx.result(e.toString());
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
+
+        });
+
         app.post("/binlog", ctx -> {
             if(debeziumChangeEventCapture.isReplicationRunning()) {
                 ctx.status(HttpStatus.BAD_REQUEST);
@@ -102,6 +119,22 @@ public class DebeziumEmbeddedRestApi {
                     gtid);
             log.info("Received update-binlog request: " + body);
         });
+        //Delete offsets
+        app.delete("/schema-history", ctx -> {
+            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
+            String response = "";
+
+            try {
+                debeziumChangeEventCapture.deleteSchemaHistory(config, finalProps1);
+            } catch (Exception e) {
+                log.error("Client - Error deleting offsets", e);
+                ctx.result(e.toString());
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
+
+        });
 
         app.post("/lsn", ctx -> {
             String body = ctx.body();
@@ -135,5 +168,10 @@ public class DebeziumEmbeddedRestApi {
     public static void stop() {
         if(app != null)
             app.stop();
+    }
+
+    // Return the app instance.
+    public static Javalin app() {
+        return app;
     }
 }

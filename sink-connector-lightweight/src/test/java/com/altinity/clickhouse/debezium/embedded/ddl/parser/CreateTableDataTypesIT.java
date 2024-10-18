@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -25,7 +26,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
-@DisplayName("Integration test that tests replication of data types and validates datetime, date limits with no timezone values set on CH and MySQL")
+@DisplayName("Integration test that tests replication of data types and validates datetime," +
+        " date limits with no timezone values and MySQL Point Data typek     set on CH and MySQL")
 public class CreateTableDataTypesIT extends DDLBaseIT {
 
     @BeforeEach
@@ -261,6 +263,51 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
             break;
         }
+
+        // validate POINT data type
+        // Create a new table with POINT data type
+        // Crate a new table on MySQL with POINT data type
+        String createTableWithPoint = "CREATE TABLE employees.point_table (id int not null PRIMARY KEY, c1 int, c2 int, c3a POINT, c3b POINT, f1 float(10), f2 decimal(8,4))";
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute(createTableWithPoint);
+
+        // Sleep for 10 seconds to allow the table to be replicated
+        Thread.sleep(10000);
+
+        // Insert a new row into the table
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO employees.point_table (id, c1, c2, c3a, c3b, f1, f2) values (1, 123, 456, POINT(1.0,2.0), POINT(3.0,4.0), 100.20, 100.20)");
+
+        Thread.sleep(10000);
+        ResultSet rs = writer.executeQueryWithResultSet("select * from employees.point_table");
+        boolean pointResultValidated = false;
+        while(rs.next()) {
+            pointResultValidated = true;
+            String c3a = rs.getString("c3a");
+            String c3b = rs.getString("c3b");
+            Assert.assertTrue(c3a.equalsIgnoreCase("(1.0,2.0)"));
+            Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
+        }
+        Assert.assertTrue(pointResultValidated);
+        String createTableWithGeometry = "CREATE TABLE employees.locations ( id INT not null AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), location GEOMETRY)";
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute(createTableWithGeometry);
+        Thread.sleep(10000);
+
+        // Insert a new row into the table
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO locations (name, location)\n" +
+                "VALUES ('Route', ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));\n");
+        // Validate the row inserted to locations table.
+        Thread.sleep(10000);
+
+
+        ResultSet rs2 = ITCommon.connectToMySQL(mySqlContainer).createStatement().executeQuery("SELECT ST_AsText(location) as location FROM employees.locations");
+        boolean geometryResultValidated = false;
+
+        while(rs2.next()) {
+            geometryResultValidated = true;
+            String c3a = rs2.getString("location");
+            Assert.assertTrue(c3a.equalsIgnoreCase("LINESTRING(0 0,1 1,2 2)"));
+        }
+        Assert.assertTrue(geometryResultValidated);
+
 
         if(engine.get() != null) {
             engine.get().stop();
