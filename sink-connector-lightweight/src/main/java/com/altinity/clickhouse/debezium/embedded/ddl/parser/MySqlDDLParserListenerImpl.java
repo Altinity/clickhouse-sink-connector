@@ -54,16 +54,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } catch(Exception e) {
             log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
         }
-        // databaseName might contain backticks. Remove them.
-        if(databaseName.contains("`")) {
-            databaseName = databaseName.replace("`", "");
-        }
 
-        if(sourceToDestinationMap.containsKey(databaseName)) {
-            this.databaseName = sourceToDestinationMap.get(databaseName);
-        } else {
-            this.databaseName = databaseName;
-        }
+        this.databaseName = overrideDatabaseName(databaseName);
 
         this.query = transformedQuery;
         this.tableName = tableName;
@@ -74,6 +66,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.userProvidedTimeZone = parseTimeZone();
     }
 
+    /**
+     * Function to override the database name.
+     * @param databaseName
+     * @return
+     */
+    private String overrideDatabaseName(String databaseName) {
+
+        // databaseName might contain backticks. Remove them.
+        if(databaseName.contains("`")) {
+            databaseName = databaseName.replace("`", "");
+        }
+
+        if(sourceToDestinationMap.containsKey(databaseName)) {
+            return sourceToDestinationMap.get(databaseName);
+        }
+        return databaseName;
+    }
 
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
@@ -102,25 +111,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 String databaseName = tree.getText();
                 if(!databaseName.isEmpty()) {
-                    // Check if the database is overridden
-                    Map<String, String> sourceToDestinationMap = new HashMap<>();
 
-                    try {
-                        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
-                            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
-                                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
-                    } catch(Exception e) {
-                        log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
-                    }
-                    // databaseName might contain backticks. Remove them.
-                    if(databaseName.contains("`")) {
-                        databaseName = databaseName.replace("`", "");
-                    }
-                    if(sourceToDestinationMap.containsKey(databaseName)) {
-                        this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
-                    } else {
-                        this.query.append(String.format(Constants.CREATE_DATABASE, databaseName));
-                    }
+                    String overrideDatabaseName = overrideDatabaseName(tree.getText());
+                    this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
                 }
             }
         }

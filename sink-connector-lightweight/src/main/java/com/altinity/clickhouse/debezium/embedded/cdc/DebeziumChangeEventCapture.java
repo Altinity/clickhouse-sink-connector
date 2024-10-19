@@ -164,10 +164,20 @@ public class DebeziumChangeEventCapture {
         updateMetrics(DDL, writer);
     }
 
+    /**
+     * Function to get the database name from the SourceRecord.
+     * If the database name is not present in the SourceRecord, then
+     * the database name is set to "system".
+     * Also if a database is overridden in the configuration, then
+     * the database name is set to the overridden database name.
+     * @param sr
+     * @return
+     */
     private String getDatabaseName(SourceRecord sr) {
         if (sr != null && sr.key() instanceof Struct) {
             String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
             if (recordDbName != null && !recordDbName.isEmpty()) {
+
                 return recordDbName;
             }
         }

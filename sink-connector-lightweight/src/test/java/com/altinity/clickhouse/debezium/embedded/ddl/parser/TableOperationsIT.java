@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -22,6 +23,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -60,15 +62,19 @@ public class TableOperationsIT {
             clickHouseContainer.start();
         }
         @ParameterizedTest
-        @CsvSource({
-            "clickhouse/clickhouse-server:latest",
-            "clickhouse/clickhouse-server:22.3"
-        })
+        @ValueSource(booleans = {
+            false,
+            true}
+        )
         @DisplayName("Test that validates DDL(Create, ALTER, RENAME)")
-        public void testTableOperations(String clickHouseServerVersion) throws Exception {
+        public void testTableOperations(boolean databaseOverride) throws Exception {
 
             AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            if(databaseOverride) {
+                props.setProperty("database.override.map", "employees:ch_employees, datatypes:ch_datatypes, public:ch_public, project:ch_project");
+            }
             ExecutorService executorService = Executors.newFixedThreadPool(1);
             executorService.execute(() -> {
                 try {
@@ -131,9 +137,7 @@ public class TableOperationsIT {
 
             // Validate table created with partitions.
             String membersResult = writer.executeQuery("show create table members");
-
-            if(clickHouseServerVersion.contains("latest")) {
-                Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
+            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
                         "    `lastname` String,\n" +
@@ -147,27 +151,10 @@ public class TableOperationsIT {
                         "PARTITION BY joined\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
-            } else {
-                Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                        "(\n" +
-                        "    `firstname` String,\n" +
-                        "    `lastname` String,\n" +
-                        "    `username` String,\n" +
-                        "    `email` Nullable(String),\n" +
-                        "    `joined` Date32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
-            }
 
             String rcxResult = writer.executeQuery("show create table rcx");
 
-            if(clickHouseServerVersion.contains("latest")) {
-                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
+            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
                         "(\n" +
                         "    `a` Int32,\n" +
                         "    `b` Nullable(Int32),\n" +
@@ -180,8 +167,6 @@ public class TableOperationsIT {
                         "PARTITION BY (a, d, c)\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
-            }
-
 
             if(engine.get() != null) {
                 engine.get().stop();
