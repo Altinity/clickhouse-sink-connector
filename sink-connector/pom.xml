@@ -42,7 +42,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
-        <clickhouse.jdbc.version>0.6.5</clickhouse.jdbc.version>
+        <clickhouse.jdbc.version>0.6.0</clickhouse.jdbc.version>
     </properties>
 
 

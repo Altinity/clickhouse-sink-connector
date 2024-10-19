@@ -287,10 +287,27 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
         }
         Assert.assertTrue(pointResultValidated);
+        String createTableWithGeometry = "CREATE TABLE employees.locations ( id INT not null AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), location GEOMETRY)";
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute(createTableWithGeometry);
+        Thread.sleep(10000);
+
+        // Insert a new row into the table
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO locations (name, location)\n" +
+                "VALUES ('Route', ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));\n");
+        // Validate the row inserted to locations table.
+        Thread.sleep(10000);
 
 
+        ResultSet rs2 = ITCommon.connectToMySQL(mySqlContainer).createStatement().executeQuery("SELECT ST_AsText(location) as location FROM employees.locations");
+        boolean geometryResultValidated = false;
 
-        Thread.sleep(5000);
+        while(rs2.next()) {
+            geometryResultValidated = true;
+            String c3a = rs2.getString("location");
+            Assert.assertTrue(c3a.equalsIgnoreCase("LINESTRING(0 0,1 1,2 2)"));
+        }
+        Assert.assertTrue(geometryResultValidated);
+
 
         if(engine.get() != null) {
             engine.get().stop();
