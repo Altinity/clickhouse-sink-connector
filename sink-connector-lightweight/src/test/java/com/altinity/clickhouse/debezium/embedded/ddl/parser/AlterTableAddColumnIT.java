@@ -58,9 +58,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
                 //properties.put(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(properties, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(properties, new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

@@ -25,6 +25,8 @@ import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import io.debezium.engine.spi.OffsetCommitPolicy;
+import io.debezium.relational.history.SchemaHistory;
+import io.debezium.storage.jdbc.history.JdbcSchemaHistoryConfig;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
@@ -421,8 +423,8 @@ public class DebeziumChangeEventCapture {
      * @return
      */
     private Pair<String, String> getDebeziumSchemaHistoryDatabaseName(Properties props) {
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
+                JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
         return splitTableName(tableName);
     }
 
@@ -615,10 +617,11 @@ public class DebeziumChangeEventCapture {
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
 
-        // Get topic.prefix from config
-        String topicPrefix = config.getString(CommonConnectorConfig.TOPIC_PREFIX.name());
-        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableNameDatabaseName.getRight() + "."
-                + tableNameDatabaseName.getLeft(),writer);
+        // Get topic.prefix from properies
+        String topicPrefix = props.getProperty(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // String topicPrefix = config.getString(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // Jdbc adds the database name to the table name, so we need to remove it
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, writer);
 
     }
     /**
@@ -780,7 +783,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
+                      boolean forceStart) throws IOException, ClassNotFoundException {
 
         // Check if max queue size was defined by the user.
         if(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {

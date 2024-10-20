@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -73,15 +74,16 @@ public class TableOperationsIT {
 
             Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
             if(databaseOverride) {
-                props.setProperty("database.override.map", "employees:ch_employees, datatypes:ch_datatypes, public:ch_public, project:ch_project");
+                props.setProperty("clickhouse.database.override.map", "employees:ch_employees, datatypes:ch_datatypes, public:ch_public, project:ch_project");
             }
+            DebeziumChangeEventCapture debeziumChangeEventCapture = new DebeziumChangeEventCapture();
             ExecutorService executorService = Executors.newFixedThreadPool(1);
             executorService.execute(() -> {
                 try {
 
-                    engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"),false);
+                    engine.set(debeziumChangeEventCapture);
+                    ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+                    engine.get().setup(props, new SourceRecordParserService(),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -106,11 +108,15 @@ public class TableOperationsIT {
                             "PARTITIONS 6;").execute();
             conn.prepareStatement("create table copied_table like new_table").execute();
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
+
+            // insert a new row to new_table
+            conn.prepareStatement("insert into new_table values('a', 1, 1)").execute();
+
             Thread.sleep(10000);
 
 
             conn.prepareStatement("\n" +
-                    "CREATE TABLE contacts (id INT AUTO_INCREMENT PRIMARY KEY,\n" +
+                    "CREATE TABLE contacts (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n" +
                     "first_name VARCHAR(50) NOT NULL,\n" +
                     "last_name VARCHAR(50) NOT NULL,\n" +
                     "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
@@ -167,6 +173,10 @@ public class TableOperationsIT {
                         "PARTITION BY (a, d, c)\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
+
+            Thread.sleep(10000);
+            // Delete offset table.
+            debeziumChangeEventCapture.deleteOffsets(props);
 
             if(engine.get() != null) {
                 engine.get().stop();
