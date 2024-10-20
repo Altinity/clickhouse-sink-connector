@@ -84,7 +84,7 @@ public class SourceDBColumnMissingIT {
         executorService.execute(() -> {
             try {
                 clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                        props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {

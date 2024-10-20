@@ -86,8 +86,7 @@ public class DatabaseOverrideIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -113,6 +112,7 @@ public class DatabaseOverrideIT {
         conn.prepareStatement("create database customers").execute();
         conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
+
 
         Thread.sleep(10000);
 
@@ -148,6 +148,26 @@ public class DatabaseOverrideIT {
         assertTrue(customersCol2 == 1);
 
 
+        Thread.sleep(10000);
+        // Execute the query in MySQL to rename table.
+        conn.prepareStatement("rename table products.prodtable to products.prodtable2").execute();
+        Thread.sleep(10000);
+        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
+        while(customersVersionResult2.next()) {
+            customersCol2 = customersVersionResult2.getLong("col2");
+        }
+        assertTrue(customersCol2 == 2);
+
+        // validate that the table prodtaable2 is present in clickhouse
+        ResultSet chRs = writer.executeQueryWithResultSet("select * from products.prodtable2");
+        boolean recordFound = false;
+        while(chRs.next()) {
+            recordFound = true;
+            assert chRs.getInt("id") == 1;
+            //assert rs.getString("name").equalsIgnoreCase("test");
+        }
+
+        assertTrue(recordFound);
 
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
