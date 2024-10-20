@@ -15,7 +15,7 @@ on:
       output_format:
         description: "Testflows output style."
         type: string
-        default: nice-new-fails
+        default: new-fails
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -46,11 +46,11 @@ on:
         description: "Testflows output style."
         type: choice
         options:
+          - new-fails
           - nice-new-fails
           - brisk-new-fails
           - plain-new-fails
           - pnice-new-fails
-          - new-fails
           - classic
           - nice
           - fails

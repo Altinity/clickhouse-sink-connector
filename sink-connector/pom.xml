@@ -42,6 +42,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
+        <clickhouse.jdbc.version>0.6.0</clickhouse.jdbc.version>
     </properties>
 
 
@@ -149,7 +150,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.22.2</version>
                 <configuration>
-                    <forkCount>0</forkCount> 
+                    <forkCount>0</forkCount>
                     <useSystemClassLoader>false</useSystemClassLoader>
                     <excludes>
                         <exclude>**/*IT.java</exclude>
@@ -308,7 +309,7 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
-            <version>2.7.0.Beta2</version>
+            <version>2.7.2.Final</version>
         </dependency>
 
         <dependency>
@@ -334,7 +335,7 @@
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <!-- below is only needed when all you want is a shaded jar -->
             <classifier>http</classifier>
             <exclusions>
@@ -422,6 +423,12 @@
         </dependency>
 
         <dependency>
+            <groupId>org.locationtech.jts</groupId>
+            <artifactId>jts-core</artifactId>
+            <version>1.18.2</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
             <version>${version.testcontainers}</version>
@@ -448,7 +455,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>
