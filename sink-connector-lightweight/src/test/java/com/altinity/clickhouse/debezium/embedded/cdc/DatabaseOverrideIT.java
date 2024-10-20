@@ -167,6 +167,8 @@ public class DatabaseOverrideIT {
             //assert rs.getString("name").equalsIgnoreCase("test");
         }
 
+        assertTrue(recordFound);
+
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
