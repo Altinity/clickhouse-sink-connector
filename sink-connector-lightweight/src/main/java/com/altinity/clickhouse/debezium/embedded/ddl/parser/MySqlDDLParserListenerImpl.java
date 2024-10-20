@@ -729,8 +729,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
                     // If the table name already includes the database name dont include it in the query.
-                    if(originalTableName.contains(".")) {
-                        this.query.append(originalTableName).append(" to ").append(newTableName);
+                    if(originalTableName.contains(".") && newTableName.contains(".")) {
+                        // Split database and table name.
+                        String[] databaseAndTableNameArray = originalTableName.split("\\.");
+                        String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
+                        this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").
+                                append(this.databaseName).append(".").append(newDatabaseAndTableNameArray[1]);
                     } else
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
                                 append(databaseName).append(".").append(newTableName);

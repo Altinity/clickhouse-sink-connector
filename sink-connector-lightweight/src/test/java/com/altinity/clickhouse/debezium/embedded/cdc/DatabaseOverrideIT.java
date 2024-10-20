@@ -113,6 +113,7 @@ public class DatabaseOverrideIT {
         conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
 
+
         Thread.sleep(10000);
 
         // Validate in Clickhouse the last record written is 29999
@@ -156,6 +157,16 @@ public class DatabaseOverrideIT {
             customersCol2 = customersVersionResult2.getLong("col2");
         }
         assertTrue(customersCol2 == 2);
+
+        // validate that the table prodtaable2 is present in clickhouse
+        ResultSet chRs = writer.executeQueryWithResultSet("select * from products.prodtable2");
+        boolean recordFound = false;
+        while(chRs.next()) {
+            recordFound = true;
+            assert chRs.getInt("id") == 1;
+            //assert rs.getString("name").equalsIgnoreCase("test");
+        }
+
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();

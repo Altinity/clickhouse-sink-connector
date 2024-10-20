@@ -602,6 +602,20 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testRenameTableWithDatabaseOverride() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "employees2");
+
+        String sql = "rename table employees.add_test to employees.add_test_old";
+
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees2.add_test to employees2.add_test_old"));
+    }
+    @Test
     public void testAddIndex() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
