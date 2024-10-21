@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
+import com.clickhouse.logging.Logger;
+import com.clickhouse.logging.LoggerFactory;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -32,6 +34,7 @@ public class DebeziumOffsetStorage {
     public static final String SOURCE_PASSWORD = "source_password";
 
 
+    private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetStorage.class);
 
     public String getOffsetKey(Properties props) {
         String connectorName = props.getProperty("name");
@@ -62,7 +65,8 @@ public class DebeziumOffsetStorage {
                                          BaseDbWriter writer) throws SQLException {
 
 
-        String debeziumStorageStatusQuery = String.format("delete from %s where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='\"%s\"" , tableName, offsetKey);
+        String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
+        log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
         writer.executeQuery(debeziumStorageStatusQuery);
     }
     /**
