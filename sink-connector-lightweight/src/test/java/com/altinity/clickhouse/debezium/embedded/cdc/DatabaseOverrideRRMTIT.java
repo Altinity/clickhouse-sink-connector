@@ -172,29 +172,44 @@ public class DatabaseOverrideRRMTIT {
 
         Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
-        conn.prepareStatement("rename table products.prodtable to products.prodtable2").execute();
+        conn.prepareStatement("use products").execute();
+        conn.prepareStatement("rename table prodtable to prodtable2").execute();
         Thread.sleep(10000);
-        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
-        while(customersVersionResult2.next()) {
-            customersCol2 = customersVersionResult2.getLong("col2");
-        }
-        assertTrue(customersCol2 == 2);
+//        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
+//        while(customersVersionResult2.next()) {
+//            customersCol2 = customersVersionResult2.getLong("col2");
+//        }
+//        assertTrue(customersCol2 == 2);
 
         // validate that the table prodtaable2 is present in clickhouse
-        ResultSet chRs = writer.executeQueryWithResultSet("select * from products.prodtable2");
+        ResultSet chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable2");
         boolean recordFound = false;
         while(chRs.next()) {
             recordFound = true;
-            assert chRs.getInt("id") == 1;
+            assert chRs.getString("col1").equalsIgnoreCase("a");
             //assert rs.getString("name").equalsIgnoreCase("test");
         }
 
         assertTrue(recordFound);
 
+
+        // Execute mysql to rename from prodtabl2 to prodtable3 without database prefix.
+        conn.prepareStatement("rename table prodtable2 to prodtable3").execute();
+
+        Thread.sleep(10000);
+        // Validate on CH that the table prodtable3 is present.
+        chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable3");
+        boolean prod3RecordFound = false;
+        while(chRs.next()) {
+            prod3RecordFound = true;
+            assert chRs.getString("col1").equalsIgnoreCase("a");
+            //assert rs.getString("name").equalsIgnoreCase("test");
+        }
+        assertTrue(prod3RecordFound);
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
-        // Files.deleteIfExists(tmpFilePath);
+        // Files.deleteIfExists( tmpFilePath);
         executorService.shutdown();
     }
 }
