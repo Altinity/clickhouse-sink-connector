@@ -212,7 +212,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // If tableName already includes the database name don't include database name in this.query
                 if(tableName.contains(".")) {
-                    this.query.append(tableName);
+                    // split tableName into databaseName and tableName
+                    String[] tableNameSplit = tableName.split("\\.");
+                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    //this.query.append(tableName);
                 } else
                     this.query.append(databaseName).append(".").append(tree.getText());
 

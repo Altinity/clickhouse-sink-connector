@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
+import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.Network;
@@ -41,16 +42,10 @@ public class DatabaseOverrideRRMTIT {
 
 
     protected MySQLContainer mySqlContainer;
+    static ClickHouseContainer clickHouseContainer;
+
     static GenericContainer zookeeperContainer = new GenericContainer(DockerImageName.parse("zookeeper:3.6.2"))
             .withExposedPorts(2181).withAccessToHost(true);
-    @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
-            .asCompatibleSubstituteFor("clickhouse"))
-            .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
-            //   .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
-            .withUsername("ch_user")
-            .withPassword("password")
-            .withExposedPorts(8123);
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
@@ -65,7 +60,18 @@ public class DatabaseOverrideRRMTIT {
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+                .asCompatibleSubstituteFor("clickhouse"))
+                .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
+                //   .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
+                .withUsername("ch_user")
+                .withPassword("password")
+                .withClasspathResourceMapping("config_replicated.xml", "/etc/clickhouse-server/config.d/config.xml", BindMode.READ_ONLY)
+                .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
+                .withExposedPorts(8123)
+                .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
+        clickHouseContainer.start();
 
         BasicConfigurator.configure();
         mySqlContainer.start();
@@ -78,6 +84,17 @@ public class DatabaseOverrideRRMTIT {
     @Test
     public void testDatabaseOverride() throws Exception {
 
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "system");
+        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+
+        writer.executeQuery("CREATE DATABASE employees2");
+        writer.executeQuery("CREATE DATABASE productsnew");
+
+        Thread.sleep(10000);
         Injector injector = Guice.createInjector(new AppInjector());
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
@@ -127,12 +144,7 @@ public class DatabaseOverrideRRMTIT {
         Thread.sleep(10000);
 
         // Validate in Clickhouse the last record written is 29999
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+
 
         long col2 = 0L;
         ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'");
