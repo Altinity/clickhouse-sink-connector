@@ -57,9 +57,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
                 props.setProperty("database.include.list", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService() , false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

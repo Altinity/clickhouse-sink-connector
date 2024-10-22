@@ -14,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -215,6 +216,25 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testCreateTableWithReplicatedReplacingMergeTree() {
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE IF NOT EXISTS mysql1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` (id INT NOT NULL,col1 varchar(255), col2 int, PRIMARY KEY (id)) ENGINE = InnoDB))";
+
+        // Set ClickHouse sink connector config to set replicated tables.
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+
+        ClickHouseSinkConnectorConfig clickHouseSinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(clickHouseSinkConnectorConfig, "ch1");
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists ch1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` ON CLUSTER `{cluster}`(id Int32 NOT NULL ,col1 Nullable(String),col2 Nullable(Int32),`_version` UInt64,`is_deleted` UInt8)Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (id)"));
+
+    }
+    @Test
     public void testCreateTableAutoIncrement() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
@@ -241,6 +261,7 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
 
     }
+
     @Test
     public void testCreateTableWithNulLFields() {
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -602,6 +623,20 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testRenameTableWithDatabaseOverride() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "employees2");
+
+        String sql = "rename table employees.add_test to employees.add_test_old";
+
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees2.add_test to employees2.add_test_old"));
+    }
+    @Test
     public void testAddIndex() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
@@ -677,7 +712,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename /* gh-ost */ table `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`, `trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`\n";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`,`trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.`enriched_trade` to employees.`_enriched_trade_del`,employees.`_enriched_trade_gho` to employees.`enriched_trade`"));
     }
     @Test
     public void alterTableRenameTable() {

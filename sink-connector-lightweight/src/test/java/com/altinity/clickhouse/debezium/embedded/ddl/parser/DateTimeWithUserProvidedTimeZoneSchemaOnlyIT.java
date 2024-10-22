@@ -74,8 +74,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
                 props.setProperty("database.include.list", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
