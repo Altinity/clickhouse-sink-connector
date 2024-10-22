@@ -1,4 +1,7 @@
 FROM openjdk:17
+# Install procps to get the 'ps' command
+RUN apt-get update && apt-get install -y procps && rm -rf /var/lib/apt/lists/*
+
 ARG DOCKER_TAG
 ENV DOCKER_TAG=${DOCKER_TAG}
 COPY sink-connector-client/sink-connector-client /sink-connector-client
