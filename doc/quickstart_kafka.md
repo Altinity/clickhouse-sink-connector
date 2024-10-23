@@ -17,6 +17,9 @@ Use the following script to build the image
 [docker/package-build-sink-on-debezium-base.sh](../docker/package-build-sink-on-debezium-base.sh)
 Future: Github releases will push docker images to Docker hub.
 
+## JAR file Setup
+Jar file setup instructions are available in the [Getting Started](getting_started_jar_kafka.md) guide.
+
 ## docker-compose
 Full pipeline can be launched via docker-compose with the help of [docker-compose.yaml][docker-compose.yaml]
 It will start:
