@@ -127,7 +127,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 debeziumChangeEventCapture.deleteSchemaHistory(config, finalProps1);
             } catch (Exception e) {
-                log.error("Client - Error deleting offsets", e);
+                log.error("Client - Error deleting schema history", e);
                 ctx.result(e.toString());
                 ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
                 return;

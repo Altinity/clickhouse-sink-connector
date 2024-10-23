@@ -54,16 +54,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } catch(Exception e) {
             log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
         }
-        // databaseName might contain backticks. Remove them.
-        if(databaseName.contains("`")) {
-            databaseName = databaseName.replace("`", "");
-        }
 
-        if(sourceToDestinationMap.containsKey(databaseName)) {
-            this.databaseName = sourceToDestinationMap.get(databaseName);
-        } else {
-            this.databaseName = databaseName;
-        }
+        this.databaseName = overrideDatabaseName(databaseName);
 
         this.query = transformedQuery;
         this.tableName = tableName;
@@ -74,6 +66,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.userProvidedTimeZone = parseTimeZone();
     }
 
+    /**
+     * Function to override the database name.
+     * @param databaseName
+     * @return
+     */
+    private String overrideDatabaseName(String databaseName) {
+
+        // databaseName might contain backticks. Remove them.
+        if(databaseName.contains("`")) {
+            databaseName = databaseName.replace("`", "");
+        }
+
+        if(sourceToDestinationMap.containsKey(databaseName)) {
+            return sourceToDestinationMap.get(databaseName);
+        }
+        return databaseName;
+    }
 
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
@@ -128,6 +137,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         this.query.append(" ON CLUSTER `{cluster}`");
                     }
 
+
+                    String overrideDatabaseName = overrideDatabaseName(tree.getText());
+                    this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
                 }
             }
         }
@@ -226,7 +238,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // If tableName already includes the database name don't include database name in this.query
                 if(tableName.contains(".")) {
-                    this.query.append(tableName);
+                    // split tableName into databaseName and tableName
+                    String[] tableNameSplit = tableName.split("\\.");
+                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    //this.query.append(tableName);
                 } else
                     this.query.append(databaseName).append(".").append(tree.getText());
 
@@ -743,8 +758,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
                     // If the table name already includes the database name dont include it in the query.
-                    if(originalTableName.contains(".")) {
-                        this.query.append(originalTableName).append(" to ").append(newTableName);
+                    if(originalTableName.contains(".") && newTableName.contains(".")) {
+                        // Split database and table name.
+                        String[] databaseAndTableNameArray = originalTableName.split("\\.");
+                        String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
+                        this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").
+                                append(this.databaseName).append(".").append(newDatabaseAndTableNameArray[1]);
                     } else
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
                                 append(databaseName).append(".").append(newTableName);
