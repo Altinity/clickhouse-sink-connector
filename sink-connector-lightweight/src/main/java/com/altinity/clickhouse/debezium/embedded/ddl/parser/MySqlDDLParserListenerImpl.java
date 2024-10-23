@@ -121,6 +121,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     } else {
                         this.query.append(String.format(Constants.CREATE_DATABASE, databaseName));
                     }
+
+                    boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                            .AUTO_CREATE_TABLES_REPLICATED.toString());
+                    if(isReplicatedReplacingMergeTree) {
+                        this.query.append(" ON CLUSTER `{cluster}`");
+                    }
+
                 }
             }
         }
