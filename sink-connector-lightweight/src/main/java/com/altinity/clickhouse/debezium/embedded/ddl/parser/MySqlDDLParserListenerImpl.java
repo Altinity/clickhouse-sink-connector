@@ -111,6 +111,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 String databaseName = tree.getText();
                 if(!databaseName.isEmpty()) {
+                    // Check if the database is overridden
+                    Map<String, String> sourceToDestinationMap = new HashMap<>();
+
+                    try {
+                        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
+                            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+                    } catch(Exception e) {
+                        log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
+                    }
+                    // databaseName might contain backticks. Remove them.
+                    if(databaseName.contains("`")) {
+                        databaseName = databaseName.replace("`", "");
+                    }
+                    if(sourceToDestinationMap.containsKey(databaseName)) {
+                        this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
+                    } else {
+                        this.query.append(String.format(Constants.CREATE_DATABASE, databaseName));
+                    }
+
+                    boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                            .AUTO_CREATE_TABLES_REPLICATED.toString());
+                    if(isReplicatedReplacingMergeTree) {
+                        this.query.append(" ON CLUSTER `{cluster}`");
+                    }
+
 
                     String overrideDatabaseName = overrideDatabaseName(tree.getText());
                     this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));

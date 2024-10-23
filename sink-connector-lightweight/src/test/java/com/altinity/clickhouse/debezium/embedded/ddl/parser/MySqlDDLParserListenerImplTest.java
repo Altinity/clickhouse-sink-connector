@@ -678,6 +678,21 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testCreateDatabaseReplicated() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> map = new HashMap<>();
+        map.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(map);
+
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "test");
+        String sql = "create database if not exists repl_test_ddl";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists repl_test_ddl on cluster `{cluster}`"));
+    }
+
+    @Test
     public void testDropColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
