@@ -86,8 +86,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
         setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
-        embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                injector.getInstance(DDLParserService.class), props, false);
+        embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
 
         try {
             DebeziumEmbeddedRestApi.startRestApi(props, injector, debeziumChangeEventCapture, userProperties);
@@ -141,8 +140,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             Thread.sleep(500);
             // embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-            embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                    injector.getInstance(DDLParserService.class), props, true);
+            embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, true);
             return null;
         });
 
@@ -151,7 +149,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
     public static void start(DebeziumRecordParserService recordParserService,
-                             DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
+                             Properties props, boolean forceStart) throws Exception {
 
         if(forceStart == true) {
             // Reload the configuration file.
@@ -159,7 +157,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             loadPropertiesFile(configurationFile);
         }
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
-        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
+        debeziumChangeEventCapture.setup(props, recordParserService, forceStart);
     }
 
     public static void stop() throws IOException {
@@ -210,8 +208,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         log.info("******* Restarting Event Loop ********");
                         debeziumChangeEventCapture.stop();
                         Thread.sleep(3000);
-                        start(injector.getInstance(DebeziumRecordParserService.class),
-                                injector.getInstance(DDLParserService.class), props, true);
+                        start(injector.getInstance(DebeziumRecordParserService.class), props, true);
                     } catch (IOException e) {
                         log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);
