@@ -28,6 +28,17 @@ public class MySqlDDLParserListenerImplTest {
                 "employees");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
+
+    @Test
+    public void testCreateTableWithSetDataType() {
+
+        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
+        ;
+    }
     @Test
     public void testCreateTableWithEnum() {
         String createQuery = "CREATE TABLE employees_predated (\n" +
