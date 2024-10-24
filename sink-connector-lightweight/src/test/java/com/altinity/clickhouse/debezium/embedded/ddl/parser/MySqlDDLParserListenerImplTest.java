@@ -643,7 +643,6 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table add_test add index if not exists ix_add_test_col1 using btree (col1) comment 'test index';\n";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-
     }
 
 
@@ -722,6 +721,26 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.test_table to employees.test_table_new"));
+    }
+
+    @Test
+    public void testAlterTableColumnWithComment() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE test_table ADD COLUMN col1 varchar(255) COMMENT 'test column';";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN col1 Nullable(String)"));
+    }
+
+    @Test
+    public void testAlterTableColumnWithCommentAndDecimalScale() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE test_table ADD COLUMN col1 decimal(10,2) COMMENT 'test column';";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN col1 Nullable(Decimal(10,2))"));
     }
 
     @Test
