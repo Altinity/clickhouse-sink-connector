@@ -1,9 +1,15 @@
 ## Production setup
-![](img/production_setup.jpg)
 
+
+[Throughput & Memory Usage](#improving-throughput-and/or-memory-usage.) \
+[Low Memory environments(5GB)](#low-memory-environments5gb) \
+[Initial Load](#initial-load) \
+[MySQL Setup](#mysql-production-setup) \
+[PostgreSQL Setup](#postgresql-production-setup) \
+[ClickHouse Setup](#clickhouse-setup)
 
 ### Improving throughput and/or Memory usage.
-
+![](img/production_setup.jpg)
 As detailed in the diagram above, there are components that store the messages and
 can be configured to improve throughput and/or memory usage.
 
@@ -43,7 +49,17 @@ in terms of number of elements the queue can hold and the maximum size of the qu
     buffer.flush.time.ms: "1000"
 ```
 
-## Snapshots (Out of Memory)
+## Low Memory environments(5GB)
+The suggested configuration for a low memory environment is as follows to use a single threaded configuration.
+Single threaded configuration can be enabled in `config.yml`
+```
+single.threaded: "true"
+```
+As shown in the diagram below, the Single threaded configuration will skip the sink connector queue and threadpool
+and will insert batches directly from the debezium queue.
+![](img/single_threaded.jpg)
+
+## Initial Load
 
 The following parameters might be useful to reduce the memory usage of the connector during the snapshotting phase.
 
@@ -62,3 +78,66 @@ The maximum number of rows that the connector fetches and reads into memory when
 
 **snapshot.max.threads**: Increase this number from 1 to a higher value to enable parallel snapshotting.
 
+
+## MySQL Production Setup
+# How to Reproduce
+
+1. Replicate a table only in `config.yml`:
+
+    ```yaml
+    table.include.list: "mydb.mytable"
+    ```
+
+2. Do not write to the table on the source database side.
+3. Monitor the lag:
+
+    ```sql
+    select * from altinity_sink_connector.show_replica_status\G
+    ```
+
+4. The lag increases if this table does not get written and the binary log position does not move. It should be synced periodically to show the binary log progress.
+
+# Workaround
+
+Include a heartbeat table (see [Percona Toolkit - pt-heartbeat](https://docs.percona.com/percona-toolkit/pt-heartbeat.html)):
+
+### Example
+
+```sql
+CREATE TABLE pt_heartbeat_db.heartbeat (
+  id int NOT NULL PRIMARY KEY,
+  ts datetime NOT NULL
+);
+=======
+**Single Threaded (Low Memory/Slow replication)**:
+By setting the `single.threaded: true` configuration variable in `config.yml`, the replication will skip the sink connector queue and threadpool
+and will insert batches directly from the debezium queue.
+This mode will work on lower memory setup but will increase the replication speed.
+
+## ClickHouse Setup
+The clickhouse user needs to have the following GRANTS to the 
+offset storage/schema history  database(database provided in `offset.storage.jdbc.` configuration variable.
+and the database that is replicated(database provided in `database.include.list` and `table.include.list`)
+
+The following example creates user `sink` with necessary GRANTS
+to the offset storage/schema history database and replicated databases.
+```
+ALTER SETTINGS PROFILE 'ingest' SETTINGS
+    deduplicate_blocks_in_dependent_materialized_views=1,
+    min_insert_block_size_rows_for_materialized_views=10000,
+    throw_on_max_partitions_per_insert_block=0,
+    max_partitions_per_insert_block=1000,
+    date_time_input_format='best_effort';
+
+CREATE USER OR REPLACE 'sink' IDENTIFIED WITH sha256_hash BY '' HOST IP '::/8' SETTINGS PROFILE 'ingest';
+grant SELECT, INSERT, CREATE TABLE, CREATE DATABASE on altinity.*              to sink;
+grant CLUSTER ON *.* to sink;
+grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_db.* to sink;
+```
+**User Profile**
+`max_partitions_per_insert_block` - The default value is 100, its recommended to set this value **1000**
+
+## PostgreSQL Production Setup
+
+One of the common problems with PostgreSQL is the WAL size increasing.
+[Handling PostgreSQL WAL Growth with Debezium Connectors](postgres_wal_growth.md)

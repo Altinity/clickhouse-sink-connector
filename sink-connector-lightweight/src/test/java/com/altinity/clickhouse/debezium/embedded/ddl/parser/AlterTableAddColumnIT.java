@@ -1,8 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
@@ -18,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,10 +53,12 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         executorService.execute(() -> {
             try {
 
+                Properties properties = getDebeziumProperties();
+                // Add ddl.retry to true
+                //properties.put(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
+
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(properties, new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -92,18 +97,18 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
 
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("String"));
+        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Int32"));
         Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
         Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
         // Validate all add_test columns.
-        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("String"));
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("String"));
+        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("String"));
 
         if(engine.get() != null) {
             engine.get().stop();

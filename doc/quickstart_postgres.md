@@ -4,6 +4,10 @@ Use [Docker Compose](https://docs.docker.com/compose/) to bring
 up a complete configuration that illustrates operation of 
 Altinity Sink Connector.
 
+If you are not able to use Docker, you 
+can use the JAR file from releases.
+Documentation to use the JAR file is [here](getting_started_jar.md).
+
 # QuickStart Installation for Lightweight Sink Connector
 
 This is the recommended path for initial use. It uses PostgreSQL as the
@@ -22,7 +26,18 @@ Install Docker and Docker Compose.
 
 ## Start the stack 
 
-Use Docker Compose to start containers. Pick the latest released tag.
+Use Docker Compose to start containers. Set the CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE to the latest release from the Releases page. or run ./getLatestTag.sh which will set the environment variable
+
+```
+export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.3.0-lt
+```
+
+or
+```
+cd sink-connector-lightweight/docker
+./getLatestTag.sh
+```
+
 ```
 cd sink-connector-lightweight/docker
 export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.0.0-lt

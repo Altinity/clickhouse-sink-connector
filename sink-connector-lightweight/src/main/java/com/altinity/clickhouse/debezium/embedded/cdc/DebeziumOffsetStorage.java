@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
+import com.clickhouse.logging.Logger;
+import com.clickhouse.logging.LoggerFactory;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -32,6 +34,7 @@ public class DebeziumOffsetStorage {
     public static final String SOURCE_PASSWORD = "source_password";
 
 
+    private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetStorage.class);
 
     public String getOffsetKey(Properties props) {
         String connectorName = props.getProperty("name");
@@ -51,6 +54,21 @@ public class DebeziumOffsetStorage {
         writer.executeQuery(debeziumStorageStatusQuery);
     }
 
+    /**
+     * Function to truncate the schema history table
+     * @param offsetKey
+     * @param writer
+     * @throws SQLException
+     */
+    public void deleteSchemaHistoryTable(String offsetKey,
+                                         String tableName,
+                                         BaseDbWriter writer) throws SQLException {
+
+
+        String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
+        log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
+        writer.executeQuery(debeziumStorageStatusQuery);
+    }
     /**
      * Function to get the latest timestamp of the record in the table
      * @param props
@@ -117,14 +135,26 @@ public class DebeziumOffsetStorage {
      * @return
      * @throws ParseException
      */
-    public String updateLsnInformation(String record, long lsn) throws ParseException {
+    public String updateLsnInformation(String record, String lsn) throws ParseException {
+
+        Long lsnLong;
+        // If lsn is a string 1/AF00, extract the hex number after slash.
+        if(lsn.contains("/")) {
+            lsn = lsn.split("/")[1];
+            // convert lsn from hex to long.
+            lsnLong = Long.parseLong(lsn, 16);
+        } else {
+            // convert to long.
+            lsnLong = Long.parseLong(lsn);
+        }
         JSONObject jsonObject = new JSONObject();
         if(record != null || !record.isEmpty()) {
             jsonObject = (JSONObject) new JSONParser().parse(record);
         }
 
-        jsonObject.put(LSN_PROCESSED, lsn);
-        jsonObject.put(LSN, lsn);
+
+        jsonObject.put(LSN_PROCESSED, lsnLong);
+        jsonObject.put(LSN, lsnLong);
 
         return jsonObject.toJSONString();
     }

@@ -48,6 +48,7 @@ public class DebeziumChangeEventCaptureIT{
     public void testDeleteOffsetStorageRow2()  {
         //System.out.println("Delete offset");
         DebeziumChangeEventCapture dec = new DebeziumChangeEventCapture();
+
         try {
             Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
             props.setProperty("name", "altinity_sink_connector");
@@ -122,8 +123,7 @@ public class DebeziumChangeEventCaptureIT{
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class) , props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {

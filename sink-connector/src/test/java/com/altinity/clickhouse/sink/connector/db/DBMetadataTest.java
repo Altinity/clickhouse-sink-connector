@@ -16,6 +16,8 @@ import org.testcontainers.utility.MountableFile;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 @Testcontainers
 
@@ -81,6 +83,10 @@ public class DBMetadataTest {
 
         boolean result2 = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "newdb");
         Assert.assertFalse(result2);
+
+        Map<String, Boolean> isNullableList = new DBMetadata().getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
+       isNullableList.get("_offset").equals(true);
+       isNullableList.get("hire_date").equals(false);
 
     }
 
@@ -148,5 +154,29 @@ public class DBMetadataTest {
 
         Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
 
+    }
+
+    @Test
+    public void getAliasAndMaterializedColumnsList() throws SQLException {
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
+        String tableName = "employees";
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Set<String> aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
+
+        Assert.assertTrue(aliasColumns.size() == 2);
+
+
+        // Check for a table with no alias columns.
+        Set<String> tmAliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
+        Assert.assertTrue(tmAliasColumns.size() == 0);
+        // Check for a table with no alias columns.
+        Set<String> employeeMaterializedColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
+        Assert.assertTrue(employeeMaterializedColumns.size() == 1);
     }
 }

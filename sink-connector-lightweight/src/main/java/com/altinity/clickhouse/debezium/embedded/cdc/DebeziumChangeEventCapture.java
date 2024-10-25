@@ -13,15 +13,20 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
+import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import io.debezium.config.CommonConnectorConfig;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import io.debezium.engine.spi.OffsetCommitPolicy;
+import io.debezium.relational.history.SchemaHistory;
+import io.debezium.storage.jdbc.history.JdbcSchemaHistoryConfig;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
@@ -37,6 +42,7 @@ import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,9 +87,16 @@ public class DebeziumChangeEventCapture {
     // Keep one clickhouse connection.
     private ClickHouseConnection conn;
 
+    ClickHouseBatchWriter singleThreadedWriter;
+
+
+    DebeziumOffsetStorage debeziumOffsetStorage;
+
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+        this.debeziumOffsetStorage = new DebeziumOffsetStorage();
     }
+
 
 
     /**
@@ -93,76 +106,114 @@ public class DebeziumChangeEventCapture {
      * @param sr
      * @param config
      */
-    private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
+    private void performDDLOperation(String DDL, Properties props, SourceRecord sr,
+                                     ClickHouseSinkConnectorConfig config,
+                                     DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                                             recordCommitter, ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
+                                     boolean lastRecordInBatch) {
+        String databaseName = getDatabaseName(sr);
 
-        String databaseName = "system";
-        if(sr != null && sr.key() != null) {
-            if(sr.key() instanceof Struct) {
-                Struct keyStruct = (Struct) sr.key();
-                String recordDbName = (String) keyStruct.get("databaseName");
-                if(recordDbName != null && recordDbName.isEmpty() == false) {
-                    databaseName = recordDbName;
-                }
-            }
-        }
-
-        if(writer == null) {
-
-            DBCredentials dbCredentials = parseDBConfiguration(config);
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName);
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName, dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config, conn);
+        if (writer == null) {
+            writer = createWriter(config, databaseName);
         }
 
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, databaseName);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
-        ClickHouseAlterTable cat = new ClickHouseAlterTable();
 
         if (checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
-        } else {
-            log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         }
 
+        log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
+        // Add max retries of 10
+        // Add sleep time of 10 seconds
+        int MAX_DDL_RETRIES = 10;
+        int SLEEP_TIME = 10000;
+        int numRetries = 0;
+
+        // Check if configuration is set to retry DDL
+        String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        boolean retryDDLProperty = false;
+        if(retryDDL != null && retryDDL.equalsIgnoreCase("true" )) {
+            retryDDLProperty = true;
+        }
+
+        while(numRetries < MAX_DDL_RETRIES) {
+            try {
+                executeDDL(clickHouseQuery.toString(), writer);
+                DebeziumOffsetManagement.acknowledgeRecords(recordCommitter,
+                        cdcRecord, lastRecordInBatch);
+                break;
+            } catch (Exception e) {
+                log.error("Error executing DDL", e);
+                if(retryDDLProperty == false) {
+                    break;
+                }
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException ex) {
+                    log.error("Error sleeping", ex);
+                }
+                numRetries++;
+            }
+            if(numRetries >= MAX_DDL_RETRIES) {
+                throw new RuntimeException("Max retries exceeded for DDL");
+            }
+        }
+        updateMetrics(DDL, writer);
+    }
+
+    /**
+     * Function to get the database name from the SourceRecord.
+     * If the database name is not present in the SourceRecord, then
+     * the database name is set to "system".
+     * Also if a database is overridden in the configuration, then
+     * the database name is set to the overridden database name.
+     * @param sr
+     * @return
+     */
+    private String getDatabaseName(SourceRecord sr) {
+        if (sr != null && sr.key() instanceof Struct) {
+            String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
+            if (recordDbName != null && !recordDbName.isEmpty()) {
+
+                return recordDbName;
+            }
+        }
+        return "system";
+    }
+
+    private BaseDbWriter createWriter(ClickHouseSinkConnectorConfig config, String databaseName) {
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName);
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        return new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName, dbCredentials.getUserName(), dbCredentials.getPassword(), config, conn);
+    }
+
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer) throws SQLException {
+        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+        String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
+        for (String query : queries) {
+            if (!query.isEmpty()) {
+                log.info("ClickHouse DDL: " + query);
+                cat.runQuery(query, writer.getConnection());
+            }
+        }
+    }
+
+    private void updateMetrics(String DDL, BaseDbWriter writer) {
         long currentTime = System.currentTimeMillis();
         boolean ddlProcessingResult = true;
         Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
-        try {
-            String formattedQuery = clickHouseQuery.toString().replaceAll(",$", "");
-            if (formattedQuery != null && formattedQuery.isEmpty() == false) {
-                if (formattedQuery.contains("\n")) {
-                    String[] queries = formattedQuery.split("\n");
-                    for (String query : queries) {
-                        if (query != null && query.isEmpty() == false) {
-                            log.info("ClickHouse DDL: " + query);
-                            cat.runQuery(query, writer.getConnection());
-                        }
-                    }
-                } else {
-                    log.info("ClickHouse DDL: " + formattedQuery);
-                    cat.runQuery(formattedQuery, writer.getConnection());
-                }
-            } else {
-                log.error("DDL translation failed: " + DDL);
-            }
-        } catch (Exception e) {
-            log.error("Error running DDL Query: " + e);
-            ddlProcessingResult = false;
-        }
 
         try {
             String clickHouseVersion = writer.getClickHouseVersion();
-            isNewReplacingMergeTreeEngine = new DBMetadata()
-                    .checkIfNewReplacingMergeTree(clickHouseVersion);
+            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
         } catch (Exception e) {
-            log.error("Error retrieving version");
+            log.error("Error retrieving version", e);
         }
 
         long elapsedTime = System.currentTimeMillis() - currentTime;
@@ -188,7 +239,7 @@ public class DebeziumChangeEventCapture {
             Struct struct = (Struct) sr.value();
 
             if (struct == null) {
-                log.warn(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                log.debug(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
                 return null;
             }
             if (struct.schema() == null) {
@@ -214,7 +265,7 @@ public class DebeziumChangeEventCapture {
                     this.executor.shutdown();
                     this.executor.awaitTermination(60, TimeUnit.SECONDS);
 
-                    performDDLOperation(DDL, props, sr, config);
+                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch);
                     setupProcessingThread(config);
                 }
 
@@ -307,7 +358,7 @@ public class DebeziumChangeEventCapture {
                         "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
 
-            Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+            Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
             String databaseName = tableNameDatabaseName.getRight();
 
             String createDbQuery = String.format("create database if not exists %s", databaseName);
@@ -338,7 +389,7 @@ public class DebeziumChangeEventCapture {
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system", dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, conn);
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
 
         String tableName = tableNameDatabaseName.getLeft();
         String dbName = tableNameDatabaseName.getRight();
@@ -354,15 +405,30 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     *
+     * Function to get the database name and table name for the offset storage table.
      * @param props
      * @return
      */
-    private Pair<String, String> getDebeziumStorageDatabaseName(Properties props) {
+    private Pair<String, String> getDebeziumOffsetStorageDatabaseName(Properties props) {
 
 
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        return splitTableName(tableName);
+    }
+
+    /**
+     *
+     * @param props
+     * @return
+     */
+    private Pair<String, String> getDebeziumSchemaHistoryDatabaseName(Properties props) {
+        String tableName = props.getProperty(SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
+                JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+        return splitTableName(tableName);
+    }
+
+    private Pair<String, String> splitTableName(String tableName) {
         // if tablename is dbname.tablename and contains a dot.
         String databaseName = "system";
         // split tablename with dot.
@@ -376,6 +442,19 @@ public class DebeziumChangeEventCapture {
 
         return Pair.of(tableName, databaseName);
     }
+    /**
+     * Function to delete offsets from Debezium storage.
+     * @param props
+     */
+    public void deleteOffsets(Properties props) throws SQLException {
+        DBCredentials dbCredentials = parseDBConfiguration(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                dbCredentials.getDatabase(), dbCredentials.getUserName(),
+                dbCredentials.getPassword(), new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), this.conn);
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
+    }
 
     /**
      * Function to get the status of Debezium storage.
@@ -385,7 +464,7 @@ public class DebeziumChangeEventCapture {
     public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws Exception {
         String response = "";
 
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
 
@@ -438,7 +517,11 @@ public class DebeziumChangeEventCapture {
                 JSONObject row = new JSONObject();
                 colNames.forEach(cn -> {
                     try {
-                        row.put(cn, resultSet.getObject(cn));
+                        Object v = resultSet.getObject(cn);
+                        if (v != null && v instanceof LocalDateTime) {
+                            v = ((LocalDateTime) v).toString();
+                        }
+                        row.put(cn, v);
                     } catch (SQLException e) {
                         e.printStackTrace();
                     }
@@ -459,7 +542,7 @@ public class DebeziumChangeEventCapture {
         long result = -1;
         DBCredentials dbCredentials = parseDBConfiguration(config);
 
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
 
@@ -467,7 +550,7 @@ public class DebeziumChangeEventCapture {
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
 
-        String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
+        String latestRecordTs = this.debeziumOffsetStorage.getDebeziumLatestRecordTimestamp(props, writer);
 
         // Convert date string from  2024-01-26 21:57:47 format to milliseconds.
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -497,7 +580,7 @@ public class DebeziumChangeEventCapture {
                                             String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
 
 
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
 
@@ -506,18 +589,41 @@ public class DebeziumChangeEventCapture {
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+        String offsetValue = this.debeziumOffsetStorage.getDebeziumStorageStatusQuery(props, writer);
 
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+        String updateOffsetValue = this.debeziumOffsetStorage.updateBinLogInformation(offsetValue,
                 binlogFile, binLogPosition, gtid);
 
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
+        this.debeziumOffsetStorage.updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
                 System.currentTimeMillis());
 
     }
 
+    /**
+     *
+     * @param config
+     * @param props
+     * @throws SQLException
+     */
+    public void deleteSchemaHistory(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        Pair<String, String> tableNameDatabaseName = getDebeziumSchemaHistoryDatabaseName(props);
+        String tableName = tableNameDatabaseName.getLeft();
+        String databaseName = tableNameDatabaseName.getRight();
+
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                databaseName, dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config, this.conn);
+
+        // Get topic.prefix from properies
+        String topicPrefix = props.getProperty(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // String topicPrefix = config.getString(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // Jdbc adds the database name to the table name, so we need to remove it
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, writer);
+
+    }
     /**
      * Function to update the status of Debezium storage (LSN).
      * @param config
@@ -530,7 +636,7 @@ public class DebeziumChangeEventCapture {
                                             String lsn) throws SQLException, ParseException {
 
 
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
+        Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
         DBCredentials dbCredentials = parseDBConfiguration(config);
@@ -538,14 +644,14 @@ public class DebeziumChangeEventCapture {
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
+        String offsetValue = this.debeziumOffsetStorage.getDebeziumStorageStatusQuery(props, writer);
 
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
-                Long.parseLong(lsn));
+        String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
+        String updateOffsetValue = this.debeziumOffsetStorage.updateLsnInformation(offsetValue,
+                lsn);
 
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
+        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, writer);
+        this.debeziumOffsetStorage.updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
                 System.currentTimeMillis());
 
     }
@@ -573,6 +679,7 @@ public class DebeziumChangeEventCapture {
         // Create the engine with this configuration ...
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
@@ -596,7 +703,7 @@ public class DebeziumChangeEventCapture {
 
 
                     if(batch.size() > 0) {
-                        appendToRecords(batch);
+                        appendToRecords(batch, config);
                     }
                 }
             });
@@ -676,7 +783,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
+                      boolean forceStart) throws IOException, ClassNotFoundException {
 
         // Check if max queue size was defined by the user.
         if(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
@@ -775,23 +882,33 @@ public class DebeziumChangeEventCapture {
      */
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config) {
 
-        // Setup separate thread to read messages from shared buffer.
-        // this.records = new ConcurrentLinkedQueue<>();
-        //this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
-        ThreadFactory namedThreadFactory =
-                new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-        for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
-            this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
-                    config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            log.info("********* Running in Single Threaded mode *********");
+            singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap());
         }
+
+            ThreadFactory namedThreadFactory =
+                    new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+            this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
+            for (int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
+                this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+            }
+
         //this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
     }
 
-    private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
 
-        synchronized (this.records) {
-            this.records.add(convertedRecords);
+        // If config is set to single threaded.
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            singleThreadedWriter.persistRecords(convertedRecords);
+
+        } else {
+
+            synchronized (this.records) {
+                this.records.add(convertedRecords);
+            }
         }
 
 

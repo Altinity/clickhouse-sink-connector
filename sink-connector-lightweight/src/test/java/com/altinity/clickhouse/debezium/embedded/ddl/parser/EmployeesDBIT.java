@@ -62,9 +62,7 @@ public class EmployeesDBIT extends DDLBaseIT {
             executorService.execute(() -> {
                 try {
                     engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                    "employees"), false);
+                    engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }

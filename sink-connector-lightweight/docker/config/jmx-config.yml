@@ -1,0 +1,7 @@
+startDelaySeconds: 0
+lowercaseOutputName: false
+lowercaseOutputLabelNames: false
+ssl: false
+hostPort: clickhouse-sink-connector-lt:39999
+rules:
+  - pattern: ".*"

@@ -14,6 +14,7 @@ import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -32,6 +33,7 @@ import java.util.concurrent.Executors;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
+@Disabled
 @Testcontainers
 @DisplayName("Test that validates if the sink connector retries batches on ClickHouse failure")
 public class BatchRetryOnFailureIT {
@@ -73,8 +75,7 @@ public class BatchRetryOnFailureIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class) , props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {

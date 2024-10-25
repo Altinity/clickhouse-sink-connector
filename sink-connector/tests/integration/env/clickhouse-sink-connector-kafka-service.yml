@@ -1,0 +1,22 @@
+version: "2.3"
+
+services:
+  clickhouse-sink-connector-kafka:
+    hostname: clickhouse-sink-connector-kafka
+    image: ${SINK_CONNECTOR_IMAGE}
+    restart: "no"
+    expose:
+      - "8083"
+      - "5005"
+      - "39999"
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=2
+      - CONFIG_STORAGE_TOPIC=config-storage-topic-sink
+      - OFFSET_STORAGE_TOPIC=offset-storage-topic-sink
+      - STATUS_STORAGE_TOPIC=status-storage-topic-sink
+      - LOG_LEVEL=INFO
+      - JAVA_DEBUG_PORT=*:5005
+      - DEFAULT_JAVA_DEBUG_PORT=*:5005
+      - KAFKA_DEBUG=true
+      - JMX_PORT=39999

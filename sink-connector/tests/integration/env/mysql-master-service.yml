@@ -1,0 +1,24 @@
+version: "2.3"
+
+services:
+  mysql-master:
+    container_name: mysql-master
+    image: docker.io/bitnami/mysql:8.0.36
+    restart: "no"
+    expose:
+      - "3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=test
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+      - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
+    healthcheck:
+      test: [ 'CMD', '/opt/bitnami/scripts/mysql/healthcheck.sh' ]
+      interval: 15s
+      timeout: 5s
+      retries: 6

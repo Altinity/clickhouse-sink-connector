@@ -47,7 +47,9 @@ public class GroupInsertQueryWithBatchRecords {
         Iterator iterator = records.iterator();
         while (iterator.hasNext()) {
             ClickHouseStruct record = (ClickHouseStruct) iterator.next();
-            updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
+            if(record != null && record.getKafkaPartition() != null && record.getTopic() != null ) {
+                updatePartitionOffsetMap(partitionToOffsetMap, record.getKafkaPartition(), record.getTopic(), record.getKafkaOffset());
+            }
             boolean enableSchemaEvolution = config.getBoolean(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString());
 
             if(CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
@@ -56,13 +58,13 @@ public class GroupInsertQueryWithBatchRecords {
                 if(enableSchemaEvolution) {
                     try {
                         new ClickHouseAlterTable().alterTable(record.getAfterStruct().schema().fields(), tableName, connection, columnNameToDataTypeMap);
-                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName);
+                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config);
 
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
                 }
-
+                columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config );
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap, tableName, config, columnNameToDataTypeMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 if(record.getBeforeModifiedFields() != null) {

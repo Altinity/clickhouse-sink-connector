@@ -58,15 +58,16 @@ public class Utils {
             String srcDatabase = tt[0].trim();
             String dstDatabase = tt[1].trim();
 
-            if (!isValidDatabaseName(srcDatabase)) {
-                LOGGER.error(
-                        Logging.logMessage(
-                                "database name{} should have at least 2 "
-                                        + "characters, start with _a-zA-Z, and only contains "
-                                        + "_$a-zA-z0-9",
-                                srcDatabase));
-                isInvalid = true;
-            }
+            // Disable validation of source database.
+//            if (!isValidDatabaseName(srcDatabase)) {
+//                LOGGER.error(
+//                        Logging.logMessage(
+//                                "database name{} should have at least 2 "
+//                                        + "characters, start with _a-zA-Z, and only contains "
+//                                        + "_$a-zA-z0-9",
+//                                srcDatabase));
+//                isInvalid = true;
+//            }
 
             if (!isValidDatabaseName(dstDatabase)) {
                 LOGGER.error(
@@ -185,7 +186,11 @@ public class Utils {
         // Check the remaining characters
         for (int i = 1; i < dbName.length(); i++) {
             char ch = dbName.charAt(i);
-            if (!(Character.isLetterOrDigit(ch) || ch == '_' || ch == '.')) {
+            // If character is a underscore, continue
+            if(ch == '_') {
+                continue;
+            }
+            if (!(Character.isLetterOrDigit(ch) || ch == '.')) {
                 return false;
             }
         }

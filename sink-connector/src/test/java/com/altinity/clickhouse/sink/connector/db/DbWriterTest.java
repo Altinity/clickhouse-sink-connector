@@ -222,22 +222,23 @@ public class DbWriterTest {
 
     @Test
     public void testGroupRecords() {
-        String hostName = "remoteClickHouse";
-        Integer port = 8123;
-        String database = "test";
-        String userName = "root";
-        String password = "root";
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "default";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
-        String connectionUrl = writer.getConnectionString(hostName, port, database);
+
+        String connectionUrl = writer.getConnectionString(dbHostName, port, database);
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
+        //String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
+        ClickHouseConnection conn = DbWriter.createConnection(connectionUrl, "client_1", userName, password, config);
+        DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, config, null, conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 

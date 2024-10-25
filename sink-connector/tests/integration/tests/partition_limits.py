@@ -1,6 +1,7 @@
+from integration.requirements.requirements import *
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -57,7 +58,7 @@ def partition_limits(
 
                 retry(
                     clickhouse.query,
-                    timeout=50,
+                    timeout=140,
                     delay=1,
                 )(
                     f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",

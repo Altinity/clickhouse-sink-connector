@@ -1,0 +1,18 @@
+version: "2.3"
+
+services:
+  kafka:
+    container_name: kafka
+    hostname: kafka
+    image: vectorized/redpanda
+    restart: "no"
+    expose:
+      - "19092"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --kafka-addr
+      - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092

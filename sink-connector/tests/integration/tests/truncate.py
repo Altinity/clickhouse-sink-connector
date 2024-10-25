@@ -1,6 +1,6 @@
+from integration.tests.steps.configurations import *
 from integration.tests.steps.sql import *
-from integration.tests.steps.statements import *
-from integration.tests.steps.service_settings_steps import *
+from integration.tests.steps.datatypes import *
 
 
 @TestOutline
@@ -50,7 +50,7 @@ def truncate(
         )
 
 
-@TestFeature
+@TestScenario
 def no_primary_key(self):
     """Check for `DELETE` with no primary key without InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -64,7 +64,7 @@ def no_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def no_primary_key_innodb(self):
     """Check for `DELETE` with no primary key with InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -78,7 +78,7 @@ def no_primary_key_innodb(self):
             )
 
 
-@TestFeature
+@TestScenario
 def simple_primary_key(self):
     """Check for `DELETE` with simple primary key without InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -92,7 +92,7 @@ def simple_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def simple_primary_key_innodb(self):
     """Check for `DELETE` with simple primary key with InnoDB engine."""
     for clickhouse_table in available_clickhouse_tables:
@@ -106,7 +106,7 @@ def simple_primary_key_innodb(self):
             )
 
 
-@TestFeature
+@TestScenario
 def complex_primary_key(self):
     """Check for `DELETE` with complex primary key without engine InnoDB."""
     for clickhouse_table in available_clickhouse_tables:
@@ -120,7 +120,7 @@ def complex_primary_key(self):
             )
 
 
-@TestFeature
+@TestScenario
 def complex_primary_key_innodb(self):
     """Check for `DELETE` with complex primary key with engine InnoDB."""
     for clickhouse_table in available_clickhouse_tables:
@@ -134,16 +134,12 @@ def complex_primary_key_innodb(self):
             )
 
 
-@TestModule
+@TestFeature
 @Name("truncate")
-def module(self):
+def feature(self):
     """'ALTER TRUNCATE' query tests."""
     with Given("I enable debezium connector after kafka starts up"):
         init_debezium_connector()
 
-    with Pool(1) as executor:
-        try:
-            for feature in loads(current_module(), Feature):
-                Feature(test=feature, parallel=True, executor=executor)()
-        finally:
-            join()
+    for scenario in loads(current_module(), Scenario):
+        scenario()

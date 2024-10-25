@@ -86,8 +86,7 @@ public class DatabaseOverrideIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -113,6 +112,7 @@ public class DatabaseOverrideIT {
         conn.prepareStatement("create database customers").execute();
         conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
+
 
         Thread.sleep(10000);
 
@@ -147,6 +147,9 @@ public class DatabaseOverrideIT {
         }
         assertTrue(customersCol2 == 1);
 
+
+        Thread.sleep(10000);
+        // Execute the query in MySQL to rename table.
 
 
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();

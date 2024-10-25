@@ -48,9 +48,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -78,12 +76,16 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
 
-        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Decimal(10, 10)"));
+        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
 
-        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
+
+        // Validate logic of adding Nullable based on the existing schema.
+        conn.prepareStatement("alter table office modify column office_code int").execute();
+        Thread.sleep(10000);
 
         if(engine.get() != null) {
             engine.get().stop();
