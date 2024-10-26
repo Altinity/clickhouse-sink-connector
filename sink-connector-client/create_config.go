@@ -36,10 +36,10 @@ func validateMySQL(sourceUsername string, sourcePassword string, sourceHost stri
 	// if log_bin is not enabled, then return false
 	// check if rows has response 'OFF'
 	// if it is 'OFF' then return false
-	if rows == 'OFF' {
-		log.fatal("Binlogs are not enabled")
-		return false
-	}
+	// if rows == 'OFF' {
+	// 	log.fatal("Binlogs are not enabled")
+	// 	return false
+	// }
 
 	if err != nil {
 		log.Fatal(err)

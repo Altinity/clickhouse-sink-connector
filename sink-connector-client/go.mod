@@ -10,6 +10,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.32.0
 	github.com/tidwall/pretty v1.2.1
 	github.com/urfave/cli v1.22.13
+	gopkg.in/yaml.v2 v2.4.0
 //testcontainers
 )
 
@@ -38,10 +39,6 @@ require (
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
