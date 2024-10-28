@@ -137,10 +137,6 @@ ffails = {
         Skip,
         "Test requires fixing.",
     ),
-    "/mysql to clickhouse replication/auto replicated table creation/multiple databases/source destination overrides": (
-        Skip,
-        "https://github.com/Altinity/clickhouse-sink-connector/issues/874.",
-    ),
 }
 
 xflags = {}
