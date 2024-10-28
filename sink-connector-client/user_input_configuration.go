@@ -59,10 +59,10 @@ func readConfig() Config {
 	config := Config{}
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Print("Enter name: ")
+	fmt.Print("Enter a unique name for the connector: ")
 	config.Name, _ = reader.ReadString('\n')
 
-	fmt.Print("Enter topic.prefix: ")
+	fmt.Print("Enter topic.prefix : ")
 	config.TopicPrefix, _ = reader.ReadString('\n')
 
 	fmt.Print("Enter database.hostname: ")
@@ -83,12 +83,11 @@ func readConfig() Config {
 	config.ClickhouseDatabaseOverrideMap, _ = reader.ReadString('\n')
 
 	yamlData, err := yaml.Marshal(&config)
-	if err != nil {
-		fmt.Printf("Error marshalling YAML: %v\n", err)
-		return Config{}
-	}
+	// if err != nil {
+	// 	fmt.Printf("Error marshalling YAML: %v\n", err)
+	// 	return
+	// }
 
 	fmt.Println("\nGenerated YAML:")
 	fmt.Println(string(yamlData))
-	return config
 }

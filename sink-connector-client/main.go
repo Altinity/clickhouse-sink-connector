@@ -10,6 +10,7 @@ import (
 	"github.com/levigross/grequests"
 	"github.com/tidwall/pretty"
 	cli "github.com/urfave/cli"
+	// Add color library
 )
 
 var requestOptions = &grequests.RequestOptions{}
