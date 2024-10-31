@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 
+
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.ZoneId;
@@ -106,8 +107,16 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
+            // Add username/password to the url.
+            url = url + "?user=" + userName + "&password=" + password;
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
-            conn = dataSource.getConnection(userName, password);
+            // Get connection from the pool.
+            HikariDbSource hikariDbSource = HikariDbSource.getInstance(dataSource);
+            // Create a new ClickHouseConnection object with the connection from the pool.
+            // Convert Connection to ClickHouseConnection.
+
+            conn = (ClickHouseConnection) hikariDbSource.getConnection();
+            //conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
             log.error("Error creating ClickHouse connection" + e);
         }
