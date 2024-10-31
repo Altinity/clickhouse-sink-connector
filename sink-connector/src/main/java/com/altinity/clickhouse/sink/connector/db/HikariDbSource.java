@@ -7,26 +7,37 @@ import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 
-// Singleton class to manage the Hikari connection pool
+// Singleton class.
 public class HikariDbSource {
-    
+    private static HikariDbSource instance;
+
     private HikariDataSource dataSource;
 
-
-    public HikariDbSource(HikariDataSource dataSource, String jdbcUrl, String username, String password) {
-
-        this.dataSource = dataSource;
-
-        HikariConfig poolConfig = new HikariConfig();
-        poolConfig.setConnectionTimeout(5000L);
-        poolConfig.setMaximumPoolSize(20);
-        poolConfig.setMaxLifetime(300_000L);
-        poolConfig.setDataSource(new ClickHouseDataSource(dataSource.getJdbcUrl(), dataSource.getUsername(), dataSource.getPassword()));
-
-        HikariDataSource ds = new HikariDataSource(poolConfig);
+    // private constructor
+    private HikariDbSource(ClickHouseDataSource dataSource) {
+        this.createConnectionPool(dataSource);
     }
 
     public Connection getConnection() throws SQLException {
         return this.dataSource.getConnection();
     }
+
+    public static HikariDbSource getInstance(ClickHouseDataSource dataSource) {
+        if (instance == null) {
+            instance = new HikariDbSource(dataSource);
+        }
+        return instance;
+    }
+    public void createConnectionPool(ClickHouseDataSource dataSource) {
+        // pass the clickhouse config to create the datasource
+
+     
+        HikariConfig poolConfig = new HikariConfig();
+        poolConfig.setConnectionTimeout(5000L);
+        poolConfig.setMaximumPoolSize(20);
+        poolConfig.setMaxLifetime(300_000L);
+        poolConfig.setDataSource(dataSource);
+
+        this.dataSource = new HikariDataSource(poolConfig);
+    }   
 }
