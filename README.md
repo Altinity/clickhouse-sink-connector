@@ -106,3 +106,8 @@ to ClickHouse and analytic applications built on ClickHouse.
 - [Slack](https://altinity.com/slack) - Talk directly with ClickHouse users and Altinity devs.
 - [Contact us](https://hubs.la/Q020sH3Z0) - Contact Altinity with your questions or issues.
 - [Free consultation](https://hubs.la/Q020sHkv0) - Get a free consultation with a ClickHouse expert today.
+
+## Credits
+YourKit supports open source projects with innovative and intelligent tools
+for monitoring and profiling Java and .NET applications.Click the YourKit logo below to learn more.<br/>
+[![](https://github.com/brettwooldridge/HikariCP/wiki/yklogo.png)](http://www.yourkit.com/java/profiler/index.jsp)<br/>
