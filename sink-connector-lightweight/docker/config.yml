@@ -130,7 +130,7 @@ database.connectionTimeZone: "UTC"
 
 # Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
 # provided, the MySQL database name will be used as the ClickHouse database name.
-#clickhouse.database.override.map: "employees:employees2, products:productsnew
+clickhouse.database.override.map: "test:ch_test"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
@@ -146,6 +146,9 @@ database.connectionTimeZone: "UTC"
 
 #disable.ddl: If set to true, the connector will ignore DDL events. The default is false.
 #disable.ddl: "false"
+
+#ignore.ddl.regex: If set, the connector will ignore DDL events that match the regex.
+ignore.ddl.regex: "^ANALYZE PARTITION.*"
 
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
