@@ -330,8 +330,10 @@ public class PreparedStatementExecutor {
                             } else {
                                 ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
                             }
-                        } else {
+                        } else if (record.getSequenceNumber() != -1) {
                             ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
+                        } else {
+                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
                         }
                     }
 
