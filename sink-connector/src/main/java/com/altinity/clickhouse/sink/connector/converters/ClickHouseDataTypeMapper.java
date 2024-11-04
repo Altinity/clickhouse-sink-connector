@@ -249,6 +249,7 @@ public class ClickHouseDataTypeMapper {
                     ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
                     wkbBytes = new byte[byteBuffer.remaining()];
                     byteBuffer.get(wkbBytes);
+                    byteBuffer.rewind();
                 } else {
                     // Set an empty polygon if WKB value is not available
                     ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
@@ -335,6 +336,7 @@ public class ClickHouseDataTypeMapper {
                     ByteBuffer unscaledByteBuffer = (ByteBuffer) unscaledValueObject;
                     unscaledValueBytes = new byte[unscaledByteBuffer.remaining()];
                     unscaledByteBuffer.get(unscaledValueBytes);
+                    unscaledByteBuffer.rewind();
                 } else if (unscaledValueObject instanceof byte[]) {
                     unscaledValueBytes = (byte[]) unscaledValueObject;
                 } else {
