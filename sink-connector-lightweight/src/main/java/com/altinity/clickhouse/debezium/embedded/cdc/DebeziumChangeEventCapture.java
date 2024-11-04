@@ -46,6 +46,8 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.text.SimpleDateFormat;
@@ -337,7 +339,9 @@ public class DebeziumChangeEventCapture {
         String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
 
         for(String regex : separatedIgnoreDDLRegexList) {
-            if(DDL.matches(regex)) {
+            Pattern p = Pattern.compile(regex);
+            Matcher m = p.matcher(DDL);
+            if (m.find()) {
                 log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
                 return true;
             }
