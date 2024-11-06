@@ -616,9 +616,17 @@ public class MySqlDDLParserListenerImplTest {
     public void renameTableWithoutTableKeyword() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String sql = "ALTER TABLE old_table RENAME new_table";
+        String sql = "ALTER TABLE employees.old_table RENAME employees.new_table";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+    }
+
+    @Test
+    public void renameTableWithTableKeyword() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE old_table RENAME new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
     }
 
