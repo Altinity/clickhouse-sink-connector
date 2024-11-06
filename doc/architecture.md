@@ -37,7 +37,7 @@ The connector is tested with the following converters
 The Kafka Sink Connector has a complete set of features for transactional 
 replication. 
 
-- Inserts, Updates and Deletes using ReplacingMergeTree - [Updates/Deletes](doc/mutable_data.md)
+- Inserts, Updates and Deletes using ReplacingMergeTree - [Updates/Deletes](mutable_data.md)
 - Auto create tables in ClickHouse
 - Exactly once semantics 
 - Bulk insert to Clickhouse 
