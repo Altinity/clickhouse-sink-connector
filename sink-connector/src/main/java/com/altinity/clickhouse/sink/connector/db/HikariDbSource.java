@@ -33,7 +33,7 @@ public class HikariDbSource {
 
      
         HikariConfig poolConfig = new HikariConfig();
-        poolConfig.setConnectionTimeout(5000L);
+        poolConfig.setConnectionTimeout(50000L);
         poolConfig.setMaximumPoolSize(20);
         poolConfig.setMaxLifetime(300_000L);
         poolConfig.setDataSource(dataSource);
