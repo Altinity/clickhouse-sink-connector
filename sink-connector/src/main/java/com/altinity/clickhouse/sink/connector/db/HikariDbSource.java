@@ -28,13 +28,18 @@ public class HikariDbSource {
         }
         return instance;
     }
-    public void createConnectionPool(ClickHouseDataSource dataSource) {
+    public void createConnectionPool(ClickHouseDataSource dataSource)  {
         // pass the clickhouse config to create the datasource
 
      
         HikariConfig poolConfig = new HikariConfig();
+        poolConfig.setJdbcUrl("jdbc:ch:{hostname}:{port}/default?insert_quorum=auto&server_time_zone&server_version=22.13.1.24495");
+        poolConfig.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver"); // Ensure driver is set
+       // poolConfig.setUsername(dataSource.getConnection().getCurrentUser()); // Optional, if already in JDBC URL
+        // poolConfig.setPassword(dataSource.getConnection().()); // Optional, if already in JDBC URL
         poolConfig.setConnectionTimeout(50000L);
-        poolConfig.setMaximumPoolSize(20);
+        poolConfig.setMaximumPoolSize(500);
+        poolConfig.setMinimumIdle(10);
         poolConfig.setMaxLifetime(300_000L);
         poolConfig.setDataSource(dataSource);
 
