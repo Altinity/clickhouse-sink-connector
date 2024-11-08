@@ -10,6 +10,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -49,7 +50,7 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngine(ClickHouseConnection conn, String databaseName, String tableName) {
+    public MutablePair<TABLE_ENGINE, String> getTableEngine(Connection conn, String databaseName, String tableName) {
 
         MutablePair<TABLE_ENGINE, String> result;
         result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
@@ -67,7 +68,7 @@ public class DBMetadata {
      * @param databaseName
      * @return
      */
-    public boolean checkIfDatabaseExists(ClickHouseConnection conn, String databaseName) throws SQLException {
+    public boolean checkIfDatabaseExists(Connection conn, String databaseName) throws SQLException {
 
         boolean result = false;
         try (Statement stmt = conn.createStatement()) {
@@ -98,7 +99,7 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(ClickHouseConnection conn, String databaseName,
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(Connection conn, String databaseName,
                                                                           String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
@@ -197,7 +198,7 @@ public class DBMetadata {
      * @param tableName Table Name.
      * @return TABLE_ENGINE type
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String database,
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final Connection conn, final String database,
                                                         final String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
@@ -277,7 +278,7 @@ public class DBMetadata {
      * Function to get the column name and isNullable as key/value pair.
      */
     public Map<String, Boolean> getColumnsIsNullableForTable(String tableName,
-                                                             ClickHouseConnection conn,
+                                                             Connection conn,
                                                              String database) throws SQLException {
         Map<String, Boolean> columnsIsNullable = new HashMap<>();
 
@@ -301,7 +302,7 @@ public class DBMetadata {
      * to get the column name and column data type as key/value pair.
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName,
-                                                           ClickHouseConnection conn,
+                                                           Connection conn,
                                                            String database,
                                                            ClickHouseSinkConnectorConfig config) {
 
@@ -351,15 +352,22 @@ public class DBMetadata {
     /**
      * Function to get the ClickHouse server timezone(Defaults to UTC)
      */
-    public ZoneId getServerTimeZone(ClickHouseConnection conn) {
+    public ZoneId getServerTimeZone(Connection conn)  {
         ZoneId result = ZoneId.of("UTC");
         if(conn != null) {
-            TimeZone serverTimeZone = conn.getServerTimeZone();
-            if(serverTimeZone != null) {
-                result = serverTimeZone.toZoneId();
-            }
+            try {
+                // Perform a query to get the server timezone
+                ResultSet rs = conn.prepareStatement("SELECT timezone()").executeQuery();
+                if (rs.next()) {
+                    String serverTimeZone = rs.getString(1);
+                    result = ZoneId.of(serverTimeZone);
+                }
+                rs.close();
+            } catch (Exception e) {
+                log.error("Error retrieving server timezone", e);
         }
 
+        }
         return result;
     }
 
@@ -368,7 +376,7 @@ public class DBMetadata {
      * @return
      */
     public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
-                                                                         ClickHouseConnection conn) throws SQLException {
+                                                                         Connection conn) throws SQLException {
 
         Set<String> aliasColumns = new HashSet<>();
         String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +

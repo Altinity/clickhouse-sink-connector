@@ -6,6 +6,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +54,7 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
      * @para
      * m modifiedFields
      */
-    public void alterTable(List<Field> modifiedFields, String tableName, ClickHouseConnection connection, Map<String, String> columnNameToDataTypeMap) {
+    public void alterTable(List<Field> modifiedFields, String tableName, Connection connection, Map<String, String> columnNameToDataTypeMap) {
         List<Field> missingFieldsInCH = new ArrayList<Field>();
         // Identify the columns that need to be added/removed in ClickHouse.
         for(Field f: modifiedFields) {

@@ -18,6 +18,7 @@ import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,7 +30,7 @@ public class ClickHouseAutoCreateTableTest {
 
     static Map<String, String> columnToDataTypesMap;
 
-    static ClickHouseConnection conn;
+    static Connection conn;
 
     @Container
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
@@ -55,7 +56,7 @@ public class ClickHouseAutoCreateTableTest {
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
         DbWriter writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
 
         conn = writer.getConnection();
@@ -170,7 +171,7 @@ public class ClickHouseAutoCreateTableTest {
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);

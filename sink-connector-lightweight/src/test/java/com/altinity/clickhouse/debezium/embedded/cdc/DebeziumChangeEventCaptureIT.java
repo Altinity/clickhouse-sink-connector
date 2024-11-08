@@ -60,7 +60,7 @@ public class DebeziumChangeEventCaptureIT{
 
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                     dbCredentials.getDatabase());
-            ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(),
+            Connection connection = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config);
 
             BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
@@ -152,7 +152,7 @@ public class DebeziumChangeEventCaptureIT{
         // Create connection to ClickHouse and get the version numbers.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),

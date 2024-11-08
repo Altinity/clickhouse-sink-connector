@@ -12,6 +12,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
@@ -100,7 +101,7 @@ public class ClickHouseTableOperationsBase {
      * @param query
      * @param conn
      */
-    public void runQuery(String query, ClickHouseConnection conn) throws SQLException {
+    public void runQuery(String query, Connection conn) throws SQLException {
 
         if(conn == null) {
             log.error("ClickHouse connection not created");

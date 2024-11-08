@@ -24,6 +24,7 @@ import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -69,7 +70,7 @@ public class PreparedStatementExecutor {
     public boolean addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
             List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
                                                      ClickHouseSinkConnectorConfig config,
-                                                     ClickHouseConnection conn,
+                                                     Connection conn,
                                                      String tableName,
                                                      Map<String, String> columnToDataTypeMap,
                                                      DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
@@ -106,7 +107,7 @@ public class PreparedStatementExecutor {
     private boolean executePreparedStatement(String insertQuery, String topicName,
                                           Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
-                                          ClickHouseConnection conn, String tableName, Map<String, String> columnToDataTypeMap,
+                                          Connection conn, String tableName, Map<String, String> columnToDataTypeMap,
                                           DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
 
         AtomicBoolean result = new AtomicBoolean(false);

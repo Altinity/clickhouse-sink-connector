@@ -19,6 +19,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -34,11 +35,11 @@ public class ClickHouseBatchWriter {
 
     // Connection that will be used to create
     // the debezium storage database.
-    private ClickHouseConnection systemConnection;
+    private Connection systemConnection;
 
     // For insert batch the database connection has to be the same.
     // Create a map of database name to ClickHouseConnection.
-    private Map<String, ClickHouseConnection> databaseToConnectionMap = new HashMap<>();
+    private Map<String, Connection> databaseToConnectionMap = new HashMap<>();
     
     private static final Logger log = LogManager.getLogger(ClickHouseBatchWriter.class);
 
@@ -78,7 +79,7 @@ public class ClickHouseBatchWriter {
         }
     }
 
-    private ClickHouseConnection createConnection() {
+    private Connection createConnection() {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
 
@@ -88,7 +89,7 @@ public class ClickHouseBatchWriter {
 
     // Function to check if we have already stored a ClickHouseConnection
     // in the databaseToConnectionMap.
-    private ClickHouseConnection getClickHouseConnection(String databaseName) {
+    private Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }
@@ -96,7 +97,7 @@ public class ClickHouseBatchWriter {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
 
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight",
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight",
                 this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), config);
 
         this.databaseToConnectionMap.put(databaseName, conn);
@@ -196,7 +197,7 @@ public class ClickHouseBatchWriter {
     }
 
     public DbWriter getDbWriterForTable(String topicName, String tableName, String databaseName,
-                                        ClickHouseStruct record, ClickHouseConnection connection) {
+                                        ClickHouseStruct record, Connection connection) {
         DbWriter writer = null;
 
         if (this.topicToDbWriterMap.containsKey(topicName)) {
@@ -254,7 +255,7 @@ public class ClickHouseBatchWriter {
         if(this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
             databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
 
-        ClickHouseConnection databaseConn = getClickHouseConnection(databaseName);
+        Connection databaseConn = getClickHouseConnection(databaseName);
 
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -43,7 +44,7 @@ public class ClickHouseCreateDatabaseTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
         dbWriter = new DbWriter(hostName, port, dbName, null, userName, password, config, null, conn);
         maintenanceDbWriter = new DbWriter(hostName, port, systemDb, null, userName, password, config, null, conn);
     }
@@ -57,7 +58,7 @@ public class ClickHouseCreateDatabaseTest {
     @Test
     public void testCreateNewDatabase() throws SQLException {
         ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
-        ClickHouseConnection conn = dbWriter.getConnection();
+        Connection conn = dbWriter.getConnection();
         try {
             act.createNewDatabase(conn, dbName);
         } catch(SQLException se) {

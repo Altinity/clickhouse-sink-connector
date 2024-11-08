@@ -7,6 +7,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Map;
@@ -25,7 +26,7 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
     private static final Logger log = LogManager.getLogger(ClickHouseAutoCreateTable.class.getName());
 
     public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
-                               ClickHouseConnection connection, boolean isNewReplacingMergeTree,
+                               Connection connection, boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree, String rmtDeleteColumn) throws SQLException {
         Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,

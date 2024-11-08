@@ -7,10 +7,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -30,7 +27,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
             String userName,
             String password,
             ClickHouseSinkConnectorConfig config,
-            ClickHouseConnection connection
+            Connection connection
     ) {
 
         super(hostName, port, database, userName, password, config, connection);

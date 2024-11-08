@@ -12,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
@@ -251,14 +252,14 @@ public class DebeziumConverterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = DbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn1 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn1 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn1);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
         String insertQueryTemplate = "insert into test_ch_jdbc_complex_2(col1, col2, col3, col4, col5, col6) values(?, ?, ?, ?, ?, ?)";
         try {
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
-            ClickHouseConnection conn = dataSource.getConnection(userName, password);
+            Connection conn = dataSource.getConnection(userName, password);
 
             PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
 

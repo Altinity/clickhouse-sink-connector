@@ -13,6 +13,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -71,7 +72,7 @@ public class DbWriter extends BaseDbWriter {
             String password,
             ClickHouseSinkConnectorConfig config,
             ClickHouseStruct record,
-            ClickHouseConnection connection
+            Connection connection
     )  {
         // Base class initiates connection using JDBC.
         super(hostName, port, database, userName, password, config, connection);

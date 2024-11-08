@@ -15,6 +15,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.util.*;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
@@ -37,7 +38,7 @@ public class GroupInsertQueryWithBatchRecords {
                                                  queryToRecordsMap,
                                          Map<TopicPartition, Long> partitionToOffsetMap,
                                          ClickHouseSinkConnectorConfig config,
-                                         String tableName, String databaseName, ClickHouseConnection connection,
+                                         String tableName, String databaseName, Connection connection,
                                          Map<String, String> columnNameToDataTypeMap) {
         boolean result = false;
 

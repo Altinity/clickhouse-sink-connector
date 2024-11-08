@@ -39,6 +39,7 @@ import org.json.simple.JSONObject;
 import org.json.simple.parser.ParseException;
 
 import java.io.IOException;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -85,7 +86,7 @@ public class DebeziumChangeEventCapture {
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
     // Keep one clickhouse connection.
-    private ClickHouseConnection conn;
+    private Connection conn;
 
     ClickHouseBatchWriter singleThreadedWriter;
 
@@ -189,7 +190,7 @@ public class DebeziumChangeEventCapture {
     private BaseDbWriter createWriter(ClickHouseSinkConnectorConfig config, String databaseName) {
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName);
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
         return new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName, dbCredentials.getUserName(), dbCredentials.getPassword(), config, conn);
     }
 
@@ -353,7 +354,7 @@ public class DebeziumChangeEventCapture {
 
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system");
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
             BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
@@ -385,7 +386,7 @@ public class DebeziumChangeEventCapture {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system", dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, conn);
@@ -475,7 +476,7 @@ public class DebeziumChangeEventCapture {
             log.error("**** Connection to ClickHouse is not established, re-initiating ****");
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                     databaseName);
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+            Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
                     dbCredentials.getUserName(), dbCredentials.getPassword(), config);
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     databaseName, dbCredentials.getUserName(),

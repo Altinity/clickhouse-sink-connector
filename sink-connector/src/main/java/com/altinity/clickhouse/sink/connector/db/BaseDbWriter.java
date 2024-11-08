@@ -6,6 +6,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.ZoneId;
@@ -18,7 +19,7 @@ import org.apache.logging.log4j.Logger;
 
 public class BaseDbWriter {
 
-    protected ClickHouseConnection conn;
+    protected Connection conn;
 
     private String hostName;
     private Integer port;
@@ -39,7 +40,7 @@ public class BaseDbWriter {
             String userName,
             String password,
             ClickHouseSinkConnectorConfig config,
-            ClickHouseConnection conn
+            Connection conn
     ) {
 
         this.hostName = hostName;
@@ -73,7 +74,7 @@ public class BaseDbWriter {
         return properties;
     }
 
-    public ClickHouseConnection getConnection() {
+    public Connection getConnection() {
         return this.conn;
     }
     public static String getConnectionString(String hostName, Integer port, String database) {
@@ -88,11 +89,11 @@ public class BaseDbWriter {
      * @param userName   UserName
      * @param password   Password
      */
-    public static ClickHouseConnection createConnection(String url, String clientName, String userName, String password,
-                                 ClickHouseSinkConnectorConfig config) {
+    public static Connection createConnection(String url, String clientName, String userName, String password,
+                                              ClickHouseSinkConnectorConfig config) {
 
         String jdbcParams = "";
-        ClickHouseConnection conn = null;
+        Connection conn = null;
         if(config != null) {
             config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
         }
@@ -115,7 +116,7 @@ public class BaseDbWriter {
             // Create a new ClickHouseConnection object with the connection from the pool.
             // Convert Connection to ClickHouseConnection.
 
-            conn = (ClickHouseConnection) hikariDbSource.getConnection();
+            conn = hikariDbSource.getConnection();
             //conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
             log.error("Error creating ClickHouse connection" + e);
