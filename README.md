@@ -62,6 +62,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
 * [Configuration](doc/configuration.md)
 * [State Storage](doc/state_storage.md)
+* [Data Type Mapping](doc/data_types.md)
 
 ### Operations
 
