@@ -2,7 +2,7 @@
 |---------------------------------|------------------------------------------------------|--------------------------------|----------------------------------------|-----------------------------------------------|
 | **Replication Type**            | Real-time CDC                                        | Batch (Scheduled)              | Direct Query                           | Batch or Scheduled                           |
 | **Data Freshness**              | Near real-time                                      | Configurable (e.g., hourly)    | Near real-time (with latency)          | Configurable                                 |
-| **Schema Change Handling**      | Partial support, some manual config may be required  | Manual schema refresh required | No automatic schema sync               | Manual intervention needed                   |
+| **Schema Change Handling**      | Full support(MySQL), Partial(PostgreSQL)  | Manual schema refresh required | No automatic schema sync               | Manual intervention needed                   |
 | **Complexity**                  | Low to Medium (single binary setup)                  | Moderate                       | Low                                    | High (requires coding and scheduling)        |
 | **Ease of Setup**               | Easy (standalone binary, no Kafka needed)            | Easy                           | Very easy                              | Complex (custom coding)                      |
 | **Maintenance**                 | Low to Moderate (single binary process)              | Low                            | Low                                    | High                                        |
