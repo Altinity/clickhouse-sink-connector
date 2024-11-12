@@ -73,6 +73,9 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Development](doc/development.md)
 * [Testing](doc/TESTING.md)
 
+## Comparison with other technologies
+- [Comparison](doc/comparison.md)
+
 ## Roadmap 
 
 [2024 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)
