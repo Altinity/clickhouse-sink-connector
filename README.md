@@ -15,6 +15,7 @@ transactional database tables in MySQL and PostgreSQL to ClickHouse
 for analysis. 
 
 ## Features
+Refer [Feature Matrix](doc/feature_matrix.md) for detailed features.
 
 * [Initial data dump and load(MySQL)](sink-connector/python/README.md) 
 * Change data capture of new transactions using [Debezium](https://debezium.io/)
