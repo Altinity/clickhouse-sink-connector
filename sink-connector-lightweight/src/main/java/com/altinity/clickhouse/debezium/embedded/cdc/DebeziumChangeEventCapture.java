@@ -28,6 +28,8 @@ import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.relational.history.SchemaHistory;
 import io.debezium.storage.jdbc.history.JdbcSchemaHistoryConfig;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -93,6 +95,10 @@ public class DebeziumChangeEventCapture {
 
 
     DebeziumOffsetStorage debeziumOffsetStorage;
+
+    @Getter
+    @Setter
+    private String lastIgnoredDDL;
 
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
@@ -336,14 +342,18 @@ public class DebeziumChangeEventCapture {
         // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipe(##).
         // Example: ^ALTER TABLE .* ADD COLUMN .*##^ALTER TABLE .* DROP COLUMN .*##^ALTER TABLE .* MODIFY COLUMN .*
         // Separate the list.
-        String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
 
-        for(String regex : separatedIgnoreDDLRegexList) {
-            Pattern p = Pattern.compile(regex);
-            Matcher m = p.matcher(DDL);
-            if (m.find()) {
-                log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
-                return true;
+        if(ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
+            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
+
+            for (String regex : separatedIgnoreDDLRegexList) {
+                Pattern p = Pattern.compile(regex);
+                Matcher m = p.matcher(DDL);
+                if (m.find()) {
+                    lastIgnoredDDL = DDL;
+                    log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
+                    return true;
+                }
             }
         }
 

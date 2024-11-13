@@ -1,8 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import org.apache.log4j.BasicConfigurator;
-import org.bouncycastle.util.Properties;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -16,24 +15,9 @@ import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeight
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
-import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
-
-import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,7 +34,7 @@ public class DDLIgnoreRegExIT {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withInitScript("data_types.sql")
+                //.withInitScript("data_types.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -63,7 +47,7 @@ public class DDLIgnoreRegExIT {
     static {
         clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
-                .withInitScript("init_clickhouse_it.sql")
+                //.withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
                 .withPassword("password")
                 .withExposedPorts(8123);
@@ -79,14 +63,16 @@ public class DDLIgnoreRegExIT {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+
+        DebeziumChangeEventCapture debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         executorService.execute(() -> {
             try {
 
                 java.util.Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // Add the ignore DDL regex.
-                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*");
+                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*||^CREATE\\s+DEFINER*.*\\n*.*\\n*.*\\n*.*\\n*.*");
 
-                engine.set(new DebeziumChangeEventCapture());
+                engine.set(debeziumChangeEventCapture);
                 engine.get().setup(props, new SourceRecordParserService()
                         , false);
             } catch (Exception e) {
@@ -107,18 +93,39 @@ public class DDLIgnoreRegExIT {
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
 
-        // Get columns for sales table.
-        Map<String, String> salesColumns = writer.getColumnsDataTypesForTable("sales");
-        Assert.assertTrue(salesColumns.get("id").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(salesColumns.get("sale_date").equalsIgnoreCase("Date32"));
-        Assert.assertTrue(salesColumns.get("amount").equalsIgnoreCase("Decimal(10,2)"));
 
+       // Thread.sleep(5000);
         // Run MySQL DDL to run analyze partition.
         String analyzePartitionDDL = "alter table sales analyze partition p2022";
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(analyzePartitionDDL);
         Thread.sleep(10000);
 
+        // Validate that the last DDL that was ignored is the one that was ignored.
+        Assert.assertEquals(debeziumChangeEventCapture.getLastIgnoredDDL(), analyzePartitionDDL);
 
+        Thread.sleep(10000);
+
+        String createTableAccountDDL = "CREATE TABLE account (\n" +
+                "    id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
+                "    account_number VARCHAR(20) NOT NULL,\n" +
+                "    amount DECIMAL(10, 2) NOT NULL\n" +
+                ")";
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTableAccountDDL);
+
+        Thread.sleep(10000);
+
+        // Run the CREATE TRIGGER DDL
+        String createTriggerDDL = "CREATE TRIGGER ins_transaction BEFORE INSERT ON account\n" +
+                "       FOR EACH ROW\n" +
+                "       SET\n" +
+                "       @deposits = @deposits + IF(NEW.amount>0,NEW.amount,0),\n" +
+                "       @withdrawals = @withdrawals + IF(NEW.amount<0,-NEW.amount,0);";
+
+        ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTriggerDDL);
+        Thread.sleep(10000);
+
+        // Validate that the last DDL that was ignored is the one that was ignored.
+        Assert.assertTrue(debeziumChangeEventCapture.getLastIgnoredDDL().contains("CREATE DEFINER"));
         if(engine.get() != null) {
             engine.get().stop();
         }
