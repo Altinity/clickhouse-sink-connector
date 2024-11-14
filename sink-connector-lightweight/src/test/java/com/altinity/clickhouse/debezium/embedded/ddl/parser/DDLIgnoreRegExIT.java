@@ -70,7 +70,7 @@ public class DDLIgnoreRegExIT {
 
                 java.util.Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // Add the ignore DDL regex.
-                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*||^CREATE\\s+DEFINER*.*\\n*.*\\n*.*\\n*.*\\n*.*");
+                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*||^CREATE DEFINER.*(?:\\r?\\n.*)*");
 
                 engine.set(debeziumChangeEventCapture);
                 engine.get().setup(props, new SourceRecordParserService()
