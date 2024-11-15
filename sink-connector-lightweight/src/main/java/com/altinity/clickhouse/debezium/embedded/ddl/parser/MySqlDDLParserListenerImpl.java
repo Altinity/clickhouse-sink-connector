@@ -656,6 +656,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for(ParseTree alterByRenameChildren: tree.children) {
             if(alterByRenameChildren instanceof MySqlParser.UidContext) {
                 newTableName = alterByRenameChildren.getText();
+            } else if(alterByRenameChildren instanceof MySqlParser.FullIdContext) {
+                newTableName = alterByRenameChildren.getText();
             }
         }
 
