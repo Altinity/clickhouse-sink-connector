@@ -482,6 +482,19 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testRenameColumnWithDatabaseOverride() {
+
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "ch1");
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE mysql1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col";
+        mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE ch1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col"));
+    }
+    @Test
     public void testChangeColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
