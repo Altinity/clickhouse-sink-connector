@@ -370,6 +370,28 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    private void createSchemaHistoryTable(ClickHouseSinkConnectorConfig config, Properties props) {
+        String createSchemaHistoryTable = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX + JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+        if(createSchemaHistoryTable == null || createSchemaHistoryTable.isEmpty() == true) {
+            log.warn("Skipping creating schema history table as the query was not provided in configuration");
+            return;
+        }
+
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system");
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system", dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config, conn);
+
+        try {
+            writer.executeQuery(createSchemaHistoryTable);
+        } catch(Exception e) {
+            log.error("Error creating schema history table", e);
+        }
+    }
+
     /**
      * Function to create view for show_replica_status
      * @param config
@@ -743,7 +765,17 @@ public class DebeziumChangeEventCapture {
                                     isReplicationRunning = true;
                                     log.debug("Connector started");
                                     // Create view.
-                                    createViewForShowReplicaStatus(config, props);
+                                    try {
+                                        createViewForShowReplicaStatus(config, props);
+                                    } catch(Exception e) {
+                                        log.error("Error creating view for replica status", e);
+                                    }
+
+                                    try {
+                                        createSchemaHistoryTable(config, props);
+                                    } catch(Exception e) {
+                                        log.error("Error creating schema history table", e);
+                                    }
                                 }
 
                                 @Override
