@@ -13,3 +13,8 @@
 | **Additional Infrastructure**   | None                                                | None                           | None                                   | Optional (scheduling tools like Airflow)     |
 | **Data Accuracy**               | High (real-time CDC)                                | Medium (depends on sync frequency) | Medium                              | High                                        |
 | **Ideal Use Case**              | Low-latency, real-time replication without Kafka     | Batch syncs, easy setup        | Simple queries without replication     | Custom, flexible ETL                        |
+
+
+| Feature                         | Altinity Sink Connector (Lightweight, Single Binary) | Airbyte                        |
+|---------------------------------|------------------------------------------------------|--------------------------------|
+|
