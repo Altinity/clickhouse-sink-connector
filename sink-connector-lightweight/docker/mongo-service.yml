@@ -9,3 +9,5 @@ services:
     environment:
         - MONGODB_USER=debezium
         - MONGODB_PASSWORD=dbz
+    volumes:
+      - ./run-mongodb.sh:/docker-entrypoint-initdb.d/run-mongodb.sh

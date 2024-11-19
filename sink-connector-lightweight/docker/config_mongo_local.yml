@@ -31,7 +31,7 @@ slot.name: connector2
 #table.include.list: "public.tm,public.tm2"
 
 # clickhouse.server.url: Specify only the hostname of the Clickhouse Server.
-clickhouse.server.url: "clickhouse"
+clickhouse.server.url: "localhost"
 
 # clickhouse.server.user: Clickhouse Server User
 clickhouse.server.user: "root"
@@ -54,7 +54,7 @@ offset.flush.interval.ms: 5000
 # connector.class: The Java class for the connector. This must be set to io.debezium.connector.postgresql.PostgresConnector.
 connector.class: "io.debezium.connector.mongodb.MongoDbConnector"
 
-mongodb.connection.string : "mongodb://mongo:27017/?replicaSet=rs0"
+mongodb.connection.string : "mongodb://localhost:27017/?replicaSet=rs0"
 topic.prefix : "dbserver1"
 mongodb.user : "myUserAdmin"
 mongodb.password : "admin"
