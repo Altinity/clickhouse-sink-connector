@@ -1,0 +1,11 @@
+version: "3.4"
+
+services:
+  mongo:
+    image: quay.io/debezium/example-mongodb:3.0.0.Final
+    hostname: mongo
+    ports:
+        - 27017:27017
+    environment:
+        - MONGODB_USER=debezium
+        - MONGODB_PASSWORD=dbz
