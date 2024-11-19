@@ -131,7 +131,11 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                                     if(value instanceof Map) {
                                         afterStruct.put((String) key, value.toString());
                                     } else {
-                                        afterStruct.put((String) key, jsonObject.get(key));
+                                        try {
+                                            afterStruct.put((String) key, value);
+                                        } catch(Exception e) {
+                                            log.error("Error converting source record", e);
+                                        }
                                     }
                                 }
                             }
