@@ -131,12 +131,52 @@
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-connector-mongodb</artifactId>
-      <version>2.7.2.Final</version>
+      <version>3.0.0.Final</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
           <artifactId>mongodb-driver-sync</artifactId>
           <groupId>org.mongodb</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-testing-testcontainers</artifactId>
+      <version>3.0.0.Final</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>kafka</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>awaitility</artifactId>
+          <groupId>org.awaitility</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>mssqlserver</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>oracle-xe</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-platform-launcher</artifactId>
+          <groupId>org.junit.platform</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-jupiter</artifactId>
+          <groupId>org.junit.jupiter</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>quarkus-test-common</artifactId>
+          <groupId>io.quarkus</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>okhttp</artifactId>
+          <groupId>com.squareup.okhttp3</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -274,12 +314,12 @@
           <groupId>org.junit.jupiter</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>junit-platform-launcher</artifactId>
-          <groupId>org.junit.platform</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>junit-jupiter-api</artifactId>
           <groupId>org.junit.jupiter</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-platform-launcher</artifactId>
+          <groupId>org.junit.platform</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -326,7 +366,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
     <maven.compiler.target>17</maven.compiler.target>
-    <version.debezium>2.7.2.Final</version.debezium>
+    <version.debezium>3.0.0.Final</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>
 </project>
