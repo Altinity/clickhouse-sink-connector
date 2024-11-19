@@ -143,14 +143,6 @@
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
-            <artifactId>debezium-connector-mongodb</artifactId>
-            <version>${version.debezium}</version>
-            <scope>test</scope>
-        </dependency>
-
-
-        <dependency>
-            <groupId>io.debezium</groupId>
             <artifactId>debezium-storage-jdbc</artifactId>
             <version>${version.debezium}</version>
          <!--    <scope>system</scope>

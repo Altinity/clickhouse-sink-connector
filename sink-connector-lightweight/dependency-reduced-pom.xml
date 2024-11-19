@@ -129,18 +129,6 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>io.debezium</groupId>
-      <artifactId>debezium-connector-mongodb</artifactId>
-      <version>2.7.0.Beta2</version>
-      <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <artifactId>mongodb-driver-sync</artifactId>
-          <groupId>org.mongodb</groupId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
       <groupId>org.mongodb</groupId>
       <artifactId>mongo-java-driver</artifactId>
       <version>3.12.12</version>
@@ -326,7 +314,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
     <maven.compiler.target>17</maven.compiler.target>
-    <version.debezium>2.7.0.Beta2</version.debezium>
+    <version.debezium>2.7.2.Final</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>
 </project>
