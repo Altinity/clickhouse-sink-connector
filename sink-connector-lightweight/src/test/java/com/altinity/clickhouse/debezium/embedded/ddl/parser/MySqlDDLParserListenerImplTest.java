@@ -249,6 +249,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE new_tbl LIKE orig_tbl;", clickHouseQuery.toString());
         log.info("Create table " + clickHouseQuery);
     }
     @Test
