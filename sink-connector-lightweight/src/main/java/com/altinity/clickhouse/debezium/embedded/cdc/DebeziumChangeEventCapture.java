@@ -28,6 +28,8 @@ import io.debezium.engine.spi.OffsetCommitPolicy;
 import io.debezium.relational.history.SchemaHistory;
 import io.debezium.storage.jdbc.history.JdbcSchemaHistoryConfig;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -46,6 +48,8 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.text.SimpleDateFormat;
@@ -92,6 +96,10 @@ public class DebeziumChangeEventCapture {
 
     DebeziumOffsetStorage debeziumOffsetStorage;
 
+    @Getter
+    @Setter
+    private String lastIgnoredDDL;
+
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
         this.debeziumOffsetStorage = new DebeziumOffsetStorage();
@@ -122,7 +130,7 @@ public class DebeziumChangeEventCapture {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
-        if (checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
+        if (checkIfDDLNeedsToBeIgnored(DDL,props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
         }
@@ -313,7 +321,7 @@ public class DebeziumChangeEventCapture {
      * @param sr
      * @return
      */
-    private boolean checkIfDDLNeedsToBeIgnored(Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
+    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
 
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
@@ -327,6 +335,26 @@ public class DebeziumChangeEventCapture {
         boolean enableSnapshotDDLPropertyFlag = false;
         if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true" )) {
             enableSnapshotDDLPropertyFlag = true;
+        }
+
+        // Also if the DDL matches the regex, then ignore it.
+        String ignoreDDLRegexProperty = props.getProperty(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX);
+        // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipe(##).
+        // Example: ^ALTER TABLE .* ADD COLUMN .*##^ALTER TABLE .* DROP COLUMN .*##^ALTER TABLE .* MODIFY COLUMN .*
+        // Separate the list.
+
+        if(ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
+            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
+
+            for (String regex : separatedIgnoreDDLRegexList) {
+                Pattern p = Pattern.compile(regex);
+                Matcher m = p.matcher(DDL);
+                if (m.find()) {
+                    lastIgnoredDDL = DDL;
+                    log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
+                    return true;
+                }
+            }
         }
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
