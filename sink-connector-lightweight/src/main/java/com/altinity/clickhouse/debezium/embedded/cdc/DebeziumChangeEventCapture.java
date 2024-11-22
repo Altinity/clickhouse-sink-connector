@@ -376,25 +376,39 @@ public class DebeziumChangeEventCapture {
      * @param config
      */
     private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
-        try {
-            DBCredentials dbCredentials = parseDBConfiguration(config);
 
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+        int numCreateDbRetries = 0;
+        while(numCreateDbRetries < MAX_RETRIES) {
+            try {
+                DBCredentials dbCredentials = parseDBConfiguration(config);
+
+                String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system");
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
 
-            Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
-            String databaseName = tableNameDatabaseName.getRight();
+                Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
+                String databaseName = tableNameDatabaseName.getRight();
 
-            String createDbQuery = String.format("create database if not exists %s", databaseName);
-            log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-            writer.executeQuery(createDbQuery);
+                String createDbQuery = String.format("create database if not exists %s", databaseName);
+                log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
+                writer.executeQuery(createDbQuery);
 
-        } catch(Exception e) {
-            log.error("Error creating Debezium storage database", e);
+                break;
+            } catch (Exception e) {
+                log.error("Error creating Debezium storage database: retrying", e);
+                if(numCreateDbRetries++ >= MAX_RETRIES) {
+                    throw new RuntimeException("Max retries exceeded for creating Debezium storage database");
+                } else {
+                    try {
+                        Thread.sleep(SLEEP_TIME);
+                    } catch (InterruptedException ex) {
+                        log.error("Error sleeping in retrying Debezium storage database creation", ex);
+                    }
+                }
+            }
         }
     }
 
