@@ -60,6 +60,16 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
     }
 
+    // @Test
+    // public void testAlterTableWithAnalyzePartition() {
+
+    //     String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
+    //     StringBuffer clickHouseQuery = new StringBuffer();
+    //     mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
+    //     Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+    //     log.info("Alter table " + clickHouseQuery);
+    // }
+
     @Test
     public void testCreateTableWithParitionRange() {
         String createQuery = "create table t(\n" +
@@ -249,6 +259,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
