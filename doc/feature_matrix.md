@@ -8,7 +8,7 @@
 | Supported ClickHouse Versions     | 24.8 and above     |  
 | Clickhouse Tables Types     | ReplacingMergeTree, MergeTree, ReplicatedReplacingMergeTree     |
 | Replication Start positioning     | Using sink-connector-client to start replication from a specific offset or LSN(MySQL Binlog Position, PostgreSQL LSN)     |
-| Supported Datatypes| Refer [Datatypes](https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-supported-data-types)     |
+| Supported Datatypes| Refer [Datatypes](data_types.md)     |
 | Initial Data load     | Scripts to perform initial data load (MySQL)    |
 | Fault Tolerance     | Sink Connector Client to continue replication from the last committed offset/LSN in case of a failure     |
 | Update, Delete     | Supported with ReplacingMergeTree
