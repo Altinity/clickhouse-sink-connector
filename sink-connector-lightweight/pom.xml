@@ -143,6 +143,13 @@
             <version>${version.debezium}</version>
             <scope>test</scope>
         </dependency>
+        <!-- https://mvnrepository.com/artifact/io.debezium/debezium-testing-testcontainers -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-testing-testcontainers</artifactId>
+            <version>${version.debezium}</version>
+            <scope>test</scope>
+        </dependency>
 
 
         <dependency>
