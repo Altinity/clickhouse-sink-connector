@@ -78,8 +78,7 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(defaultProps, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
+                engine.get().setup(defaultProps, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
