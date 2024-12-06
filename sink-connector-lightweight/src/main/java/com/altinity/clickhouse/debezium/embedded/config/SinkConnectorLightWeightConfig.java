@@ -24,6 +24,10 @@ public class SinkConnectorLightWeightConfig {
     public static final String DDL_RETRY = "ddl.retry";
 
 
+    // Add variable to ignore DDL with regex.
+    public static final String IGNORE_DDL_REGEX = "ignore.ddl.regex";
+
+
     // Create a Map of all the configuration variables
     // with the value as a description of the variable
     // Createa a Map of all the configuration variables
@@ -35,6 +39,7 @@ public class SinkConnectorLightWeightConfig {
         configVariables.put(ENABLE_SNAPSHOT_DDL, "Enable snapshot DDL (Enables execution of DDL that are received during snapshot) (Applies only to MySQL)");
         configVariables.put(CLI_PORT, "Sink connector Client CLI port");
         configVariables.put(DDL_RETRY, "If this configuration is set to true, the sink connector will retry executing DDL after a failure");
+        configVariables.put(IGNORE_DDL_REGEX, "If this configuration is set, the sink connector will ignore DDL statements that match the regex");
     }
 
 

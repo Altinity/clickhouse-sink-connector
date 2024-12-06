@@ -25,7 +25,11 @@ import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import io.debezium.engine.spi.OffsetCommitPolicy;
+import io.debezium.relational.history.SchemaHistory;
+import io.debezium.storage.jdbc.history.JdbcSchemaHistoryConfig;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
@@ -44,6 +48,8 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.text.SimpleDateFormat;
@@ -90,6 +96,10 @@ public class DebeziumChangeEventCapture {
 
     DebeziumOffsetStorage debeziumOffsetStorage;
 
+    @Getter
+    @Setter
+    private String lastIgnoredDDL;
+
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
         this.debeziumOffsetStorage = new DebeziumOffsetStorage();
@@ -120,7 +130,7 @@ public class DebeziumChangeEventCapture {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
-        if (checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
+        if (checkIfDDLNeedsToBeIgnored(DDL,props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
         }
@@ -164,10 +174,20 @@ public class DebeziumChangeEventCapture {
         updateMetrics(DDL, writer);
     }
 
+    /**
+     * Function to get the database name from the SourceRecord.
+     * If the database name is not present in the SourceRecord, then
+     * the database name is set to "system".
+     * Also if a database is overridden in the configuration, then
+     * the database name is set to the overridden database name.
+     * @param sr
+     * @return
+     */
     private String getDatabaseName(SourceRecord sr) {
         if (sr != null && sr.key() instanceof Struct) {
             String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
             if (recordDbName != null && !recordDbName.isEmpty()) {
+
                 return recordDbName;
             }
         }
@@ -301,7 +321,7 @@ public class DebeziumChangeEventCapture {
      * @param sr
      * @return
      */
-    private boolean checkIfDDLNeedsToBeIgnored(Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
+    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
 
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
@@ -315,6 +335,26 @@ public class DebeziumChangeEventCapture {
         boolean enableSnapshotDDLPropertyFlag = false;
         if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true" )) {
             enableSnapshotDDLPropertyFlag = true;
+        }
+
+        // Also if the DDL matches the regex, then ignore it.
+        String ignoreDDLRegexProperty = props.getProperty(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX);
+        // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipe(##).
+        // Example: ^ALTER TABLE .* ADD COLUMN .*##^ALTER TABLE .* DROP COLUMN .*##^ALTER TABLE .* MODIFY COLUMN .*
+        // Separate the list.
+
+        if(ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
+            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
+
+            for (String regex : separatedIgnoreDDLRegexList) {
+                Pattern p = Pattern.compile(regex);
+                Matcher m = p.matcher(DDL);
+                if (m.find()) {
+                    lastIgnoredDDL = DDL;
+                    log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
+                    return true;
+                }
+            }
         }
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
@@ -336,25 +376,61 @@ public class DebeziumChangeEventCapture {
      * @param config
      */
     private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
-        try {
-            DBCredentials dbCredentials = parseDBConfiguration(config);
 
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+        int numCreateDbRetries = 0;
+        while(numCreateDbRetries < MAX_RETRIES) {
+            try {
+                DBCredentials dbCredentials = parseDBConfiguration(config);
+
+                String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system");
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                         "system", dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
 
-            Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
-            String databaseName = tableNameDatabaseName.getRight();
+                Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
+                String databaseName = tableNameDatabaseName.getRight();
 
-            String createDbQuery = String.format("create database if not exists %s", databaseName);
-            log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-            writer.executeQuery(createDbQuery);
+                String createDbQuery = String.format("create database if not exists %s", databaseName);
+                log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
+                writer.executeQuery(createDbQuery);
 
+                break;
+            } catch (Exception e) {
+                log.error("Error creating Debezium storage database: retrying", e);
+                if(numCreateDbRetries++ >= MAX_RETRIES) {
+                    throw new RuntimeException("Max retries exceeded for creating Debezium storage database");
+                } else {
+                    try {
+                        Thread.sleep(SLEEP_TIME);
+                    } catch (InterruptedException ex) {
+                        log.error("Error sleeping in retrying Debezium storage database creation", ex);
+                    }
+                }
+            }
+        }
+    }
+
+    private void createSchemaHistoryTable(ClickHouseSinkConnectorConfig config, Properties props) {
+        String createSchemaHistoryTable = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX + JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+        if(createSchemaHistoryTable == null || createSchemaHistoryTable.isEmpty() == true) {
+            log.warn("Skipping creating schema history table as the query was not provided in configuration");
+            return;
+        }
+
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system");
+        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                "system", dbCredentials.getUserName(),
+                dbCredentials.getPassword(), config, conn);
+
+        try {
+            writer.executeQuery(createSchemaHistoryTable);
         } catch(Exception e) {
-            log.error("Error creating Debezium storage database", e);
+            log.error("Error creating schema history table", e);
         }
     }
 
@@ -411,8 +487,8 @@ public class DebeziumChangeEventCapture {
      * @return
      */
     private Pair<String, String> getDebeziumSchemaHistoryDatabaseName(Properties props) {
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
+                JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
         return splitTableName(tableName);
     }
 
@@ -605,10 +681,11 @@ public class DebeziumChangeEventCapture {
                 databaseName, dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, this.conn);
 
-        // Get topic.prefix from config
-        String topicPrefix = config.getString(CommonConnectorConfig.TOPIC_PREFIX.name());
-        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableNameDatabaseName.getRight() + "."
-                + tableNameDatabaseName.getLeft(),writer);
+        // Get topic.prefix from properies
+        String topicPrefix = props.getProperty(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // String topicPrefix = config.getString(CommonConnectorConfig.TOPIC_PREFIX.name());
+        // Jdbc adds the database name to the table name, so we need to remove it
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, writer);
 
     }
     /**
@@ -730,7 +807,17 @@ public class DebeziumChangeEventCapture {
                                     isReplicationRunning = true;
                                     log.debug("Connector started");
                                     // Create view.
-                                    createViewForShowReplicaStatus(config, props);
+                                    try {
+                                        createViewForShowReplicaStatus(config, props);
+                                    } catch(Exception e) {
+                                        log.error("Error creating view for replica status", e);
+                                    }
+
+                                    try {
+                                        createSchemaHistoryTable(config, props);
+                                    } catch(Exception e) {
+                                        log.error("Error creating schema history table", e);
+                                    }
                                 }
 
                                 @Override
@@ -770,7 +857,7 @@ public class DebeziumChangeEventCapture {
      * @param debeziumRecordParserService
      */
     public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
+                      boolean forceStart) throws IOException, ClassNotFoundException {
 
         // Check if max queue size was defined by the user.
         if(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {

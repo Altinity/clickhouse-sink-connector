@@ -14,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -58,6 +59,16 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQuery);
     }
+
+    // @Test
+    // public void testAlterTableWithAnalyzePartition() {
+
+    //     String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
+    //     StringBuffer clickHouseQuery = new StringBuffer();
+    //     mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
+    //     Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+    //     log.info("Alter table " + clickHouseQuery);
+    // }
 
     @Test
     public void testCreateTableWithParitionRange() {
@@ -215,6 +226,25 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testCreateTableWithReplicatedReplacingMergeTree() {
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE IF NOT EXISTS mysql1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` (id INT NOT NULL,col1 varchar(255), col2 int, PRIMARY KEY (id)) ENGINE = InnoDB))";
+
+        // Set ClickHouse sink connector config to set replicated tables.
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+
+        ClickHouseSinkConnectorConfig clickHouseSinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(clickHouseSinkConnectorConfig, "ch1");
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        log.info("Create table " + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists ch1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` ON CLUSTER `{cluster}`(id Int32 NOT NULL ,col1 Nullable(String),col2 Nullable(Int32),`_version` UInt64,`is_deleted` UInt8)Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (id)"));
+
+    }
+    @Test
     public void testCreateTableAutoIncrement() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE IF NOT EXISTS 730b595f_d475_11ed_b64a_398b553542b2 (id INT AUTO_INCREMENT,x INT, PRIMARY KEY (id)) ENGINE = InnoDB;";
@@ -229,6 +259,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -241,6 +272,7 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
 
     }
+
     @Test
     public void testCreateTableWithNulLFields() {
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -298,7 +330,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterAddColumnWithColumnKeyword() {
 
         String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
-        String clickhouseExpectedQuery = "ALTER TABLE db1.table1 ADD COLUMN entity Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.table1 ADD COLUMN entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -421,7 +453,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
-        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 String\n" +
+        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 String\n" +
                 "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN col1 to new_col"));
     }
 
@@ -460,6 +492,19 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
+    @Test
+    public void testRenameColumnWithDatabaseOverride() {
+
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "ch1");
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE mysql1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col";
+        mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE ch1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col"));
+    }
     @Test
     public void testChangeColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -592,6 +637,24 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void renameTableWithoutTableKeyword() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE employees.old_table RENAME employees.new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+    }
+
+    @Test
+    public void renameTableWithTableKeyword() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE old_table RENAME new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+    }
+
+    @Test
     public void renameTable() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
@@ -601,6 +664,20 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.add_test to employees.add_test_old"));
     }
 
+    @Test
+    public void testRenameTableWithDatabaseOverride() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "employees2");
+
+        String sql = "rename table employees.add_test to employees.add_test_old";
+
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees2.add_test to employees2.add_test_old"));
+    }
     @Test
     public void testAddIndex() {
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -677,7 +754,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename /* gh-ost */ table `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`, `trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`\n";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`,`trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.`enriched_trade` to employees.`_enriched_trade_del`,employees.`_enriched_trade_gho` to employees.`enriched_trade`"));
     }
     @Test
     public void alterTableRenameTable() {
