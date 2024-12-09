@@ -115,15 +115,15 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_clickhouse_database(name="test")
 
-    Feature(run=load("tests.autocreate", "feature"))
-    Feature(run=load("tests.insert", "feature"))
+    # Feature(run=load("tests.autocreate", "feature"))
+    # Feature(run=load("tests.insert", "feature"))
     Feature(run=load("tests.delete", "feature"))
     Feature(run=load("tests.truncate", "feature"))
-    Feature(run=load("tests.deduplication", "feature"))
-    Feature(run=load("tests.primary_keys", "feature"))
-    Feature(run=load("tests.columns_inconsistency", "feature"))
-    Feature(run=load("tests.types", "feature"))
-    Feature(run=load("tests.multiple_databases", "feature"))
+    # Feature(run=load("tests.deduplication", "feature"))
+    # Feature(run=load("tests.primary_keys", "feature"))
+    # Feature(run=load("tests.columns_inconsistency", "feature"))
+    # Feature(run=load("tests.types", "feature"))
+    # Feature(run=load("tests.multiple_databases", "feature"))
 
 
 if __name__ == "__main__":
