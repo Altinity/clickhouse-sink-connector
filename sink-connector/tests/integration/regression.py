@@ -115,8 +115,8 @@ def regression(
     with And("I create test database in ClickHouse"):
         create_clickhouse_database(name="test")
 
-    # Feature(run=load("tests.autocreate", "feature"))
-    # Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.autocreate", "feature"))
+    Feature(run=load("tests.insert", "feature"))
     Feature(run=load("tests.delete", "feature"))
     Feature(run=load("tests.truncate", "feature"))
     # Feature(run=load("tests.deduplication", "feature"))
