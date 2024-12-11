@@ -138,7 +138,7 @@ public class PostgresPgoutputMultipleSchemaIT {
 
         // valdate table_with_timezone
         int tableWithTimezoneCount = 0;
-        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from public.table_with_timezone").executeQuery();
+        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from table_time_with_timezone final").executeQuery();
         while(chRsTz.next()) {
             tableWithTimezoneCount =  chRsTz.getInt(1);
         }
