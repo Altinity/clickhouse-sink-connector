@@ -278,8 +278,8 @@
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>3.5.1</version>
-            <scope>test</scope>
+            <version>2.7.12</version>
+            <!-- <scope>runtime</scope> -->
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
