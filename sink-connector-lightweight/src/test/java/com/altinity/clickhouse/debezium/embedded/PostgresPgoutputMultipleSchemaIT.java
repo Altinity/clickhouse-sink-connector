@@ -65,7 +65,7 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people,public2.table_time_with_timezone" );
         properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
@@ -135,6 +135,14 @@ public class PostgresPgoutputMultipleSchemaIT {
             tm2Count =  chRs2.getInt(1);
         }
         Assert.assertTrue(tm2Count == 1);
+
+        // valdate table_with_timezone
+        int tableWithTimezoneCount = 0;
+        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from public.table_with_timezone").executeQuery();
+        while(chRsTz.next()) {
+            tableWithTimezoneCount =  chRsTz.getInt(1);
+        }
+        Assert.assertTrue(tableWithTimezoneCount == 1);
 
         // Create a connection to postgresql and create a new table.
         Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
