@@ -171,15 +171,12 @@ public class DebeziumEmbeddedRestApi {
         });
 
         MySQLDDLParserService finalSqlddlParserService = sqlddlParserService;
-        app.post("mysql-ddl-translate", ctx -> {
+        app.post("/mysql-ddl-translate", ctx -> {
             String ddl = ctx.body();
-
             log.info(String.format("Received DDL for translation %s", ddl));
             StringBuffer clickHouseQuery = new StringBuffer();
-            finalSqlddlParserService.parseSql(ddl, "", clickHouseQuery);
-
-            return clickHouseQuery.toString();
-
+            finalSqlddlParserService.parseSql(ddl, "employees", clickHouseQuery);
+            ctx.result(clickHouseQuery.toString());
         });
     }
     // Stop the javalin server
