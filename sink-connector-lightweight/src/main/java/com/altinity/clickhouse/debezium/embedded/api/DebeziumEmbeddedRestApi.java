@@ -171,11 +171,14 @@ public class DebeziumEmbeddedRestApi {
         });
 
         MySQLDDLParserService finalSqlddlParserService = sqlddlParserService;
-        app.post("/mysql-ddl-translate", ctx -> {
+        app.post("/ddl-translate", ctx -> {
             String ddl = ctx.body();
             log.info(String.format("Received DDL for translation %s", ddl));
+            // get the ddl value from JSON.
+            JSONObject jsonObject = (JSONObject) new JSONParser().parse(ddl);
+            String ddlValue = (String) jsonObject.get("ddl");
             StringBuffer clickHouseQuery = new StringBuffer();
-            finalSqlddlParserService.parseSql(ddl, "employees", clickHouseQuery);
+            finalSqlddlParserService.parseSql(ddlValue, "employees", clickHouseQuery);
             ctx.result(clickHouseQuery.toString());
         });
     }
