@@ -8,7 +8,7 @@ services:
     ports:
       - "8083:8083"
       - "5005:5005"
-      - "7001:7000"
+      - "7000:7000"
       - "39999:39999" 
     extra_hosts:
       - "host.docker.internal:host-gateway"
