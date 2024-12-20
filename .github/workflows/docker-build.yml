@@ -111,6 +111,6 @@ jobs:
           name: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
           path: clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
-      - name: Upload Docker image (Lightweight)
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        run: docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
+      #- name: Upload Docker image (Lightweight)
+      #  if: ${{ env.DOCKERHUB_USERNAME != '' }}
+      #  run: docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
