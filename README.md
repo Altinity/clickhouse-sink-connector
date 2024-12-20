@@ -79,7 +79,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ## Roadmap 
 
-[2024 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)
+[2025 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)
 
 ## Help
 
