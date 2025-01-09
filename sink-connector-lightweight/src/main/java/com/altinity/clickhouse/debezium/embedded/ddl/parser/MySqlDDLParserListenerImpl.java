@@ -446,6 +446,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isNullColumn = false;
         boolean isAlterChangeColumn = false;
         boolean nullExplicitlySet = false;
+        boolean notNullExplicitlySet = false;
 
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
@@ -490,6 +491,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
                             isNullColumn = false;
+                            notNullExplicitlySet = true;
                         }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
@@ -541,7 +543,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (columnName != null && columnType != null)
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
-            } else
+            } else{
+                if(notNullExplicitlySet) {
+                    this.query.append(" ").append(String.format(modifierWithNotNull, columnName, columnType)).append(" ");
+                } else
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
