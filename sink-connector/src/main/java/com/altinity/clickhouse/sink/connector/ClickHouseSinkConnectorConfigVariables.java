@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector;
 
 public enum ClickHouseSinkConnectorConfigVariables {
 
+    DEFAULT_COLUMN_DATATYPE_MAPPING("default_column_datatype_mapping"),
     IGNORE_DELETE("ignore_delete"),
     THREAD_POOL_SIZE("thread.pool.size"),
     BUFFER_COUNT("buffer.count"),
