@@ -9,9 +9,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import com.clickhouse.data.ClickHouseDataType;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class ColumnOverrideParser {
+    
+    private static final Logger log = LogManager.getLogger(ColumnOverrideParser.class);
     public static Map<String, String> parseColumnOverrides(String yamlFile) throws FileNotFoundException {
+
 
         Yaml yaml = new Yaml();
         FileInputStream inputStream = new FileInputStream(yamlFile);
@@ -36,7 +41,11 @@ public class ColumnOverrideParser {
 
             // Match to ClickHouseDataType
             ClickHouseDataType clickHouseDataType = ClickHouseDataType.valueOf(value.toString());   
-
+            
+            // if clickhouseDataType is null, then log an error.
+            if(clickHouseDataType == null) {
+                log.error("*********** Invalid ClickHouse data type passed by user in yaml file for column override:******** " + value.toString());
+            }
             columnOverrides.put(key, clickHouseDataType.toString());
         }
         

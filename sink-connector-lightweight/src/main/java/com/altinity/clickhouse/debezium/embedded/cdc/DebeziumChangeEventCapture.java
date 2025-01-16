@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
+import com.altinity.clickhouse.debezium.embedded.config.ColumnOverrideParser;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
@@ -869,6 +870,7 @@ public class DebeziumChangeEventCapture {
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
+
 
         // Start debezium event loop if its requested from REST API.
         if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString()) || forceStart) {

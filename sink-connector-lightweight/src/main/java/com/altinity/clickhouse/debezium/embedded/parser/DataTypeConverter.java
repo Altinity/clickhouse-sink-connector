@@ -16,7 +16,6 @@ import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.jdbc.JdbcValueConverters;
 import io.debezium.jdbc.TemporalPrecisionMode;
 import io.debezium.relational.Column;
-import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.ddl.DataType;
 import io.debezium.service.DefaultServiceRegistry;
 import io.debezium.service.spi.ServiceRegistry;
@@ -25,7 +24,6 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import java.sql.Types;
 import java.time.ZoneId;
 import java.util.Arrays;
-import java.util.Map;
 
 /**
  *
