@@ -45,6 +45,6 @@ public class DataTypeRange
 
     public static final String DATETIME_6_MAX = "2299-12-31 23:59:59.999999";
 
-    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.99999999";
+    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.00000000";
 
 }
