@@ -113,3 +113,16 @@ metrics.enable: "true"
 
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
+
+replica.status.view: "CREATE VIEW %s.show_replica_status
+(
+    `seconds_behind_source` Int32,
+    `utc_time` DateTime('UTC'),
+    `local_time` DateTime
+) AS
+SELECT
+    now() - fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS seconds_behind_source,
+    toDateTime(fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)), 'UTC') AS utc_time,
+    fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS local_time
+FROM altinity_sink_connector.replica_source_info
+SETTINGS final = 1"

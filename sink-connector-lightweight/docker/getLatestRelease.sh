@@ -28,7 +28,7 @@ echo -e "\n"
 echo "****************************************************************************************************"
 
 # Display a message to the usage of the latest_version in color green
-echo -e "\e[32m export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:$latest_version-lt'\e[0m"
+echo -e "\e[32m export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:$latest_version-lt\e[0m"
 echo "****************************************************************************************************"
 echo -e "\n"
 
