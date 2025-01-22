@@ -544,7 +544,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
             }
-
+            else
+                this.query.append(" ").append(String.format(modifier, columnName, columnType));
 //        else{
 //                if(notNullExplicitlySet) {
 //                    this.query.append(" ").append(String.format(modifierWithNotNull, columnName, columnType)).append(" ");
