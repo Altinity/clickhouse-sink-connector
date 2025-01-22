@@ -434,13 +434,15 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(alterTableModifyColumn, "add_test", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+    }
 
+    @Test
+    public void testAlterTableModifyAddColumn() {
         StringBuffer clickHouseQuery2 = new StringBuffer();
         String alterTableModifyColumn2 = "alter table  test1 add  column `vendor_folder` varchar(128) COLLATE latin1_general_cs NOT NULL after expected_arrival_time";
         mySQLDDLParserService.parseSql(alterTableModifyColumn2, "add_test", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32 NOT NULL"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.test1 ADD COLUMN `vendor_folder` Nullable(String)  after expected_arrival_time"));
     }
-
 
     @Test
     public void testAlterDatabaseModifyColumns() {

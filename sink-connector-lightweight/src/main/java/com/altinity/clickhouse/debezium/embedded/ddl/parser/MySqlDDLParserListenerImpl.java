@@ -446,7 +446,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isNullColumn = false;
         boolean isAlterChangeColumn = false;
         boolean nullExplicitlySet = false;
-        boolean notNullExplicitlySet = false;
 
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
@@ -490,8 +489,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            isNullColumn = false;
-                            notNullExplicitlySet = true;
+                            if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                                isNullColumn = false;
+                            }
                         }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
@@ -530,6 +530,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
                     if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
                         isNullColumn = true;
+                    } else if (isNullableList.get(columnName) == null) {
+                        isNullColumn = true;
                     } else {
                         isNullColumn = false;
                     }
@@ -546,12 +548,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
             else
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
-//        else{
-//                if(notNullExplicitlySet) {
-//                    this.query.append(" ").append(String.format(modifierWithNotNull, columnName, columnType)).append(" ");
-//                } else {
-//                    this.query.append(" ").append(String.format(modifier, columnName, columnType));
-//                }
+
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
         }
