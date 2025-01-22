@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import org.apache.commons.lang3.tuple.Pair;
@@ -74,7 +75,7 @@ public class DebeziumOffsetManagement {
     /**
      * Function to check if there are inflight requests that are within the range of the
      * current batch.
-     * @param batch
+     * @param currentBatch
      */
     static boolean checkIfThereAreInflightRequests(List<ClickHouseStruct> currentBatch) {
         boolean result = false;
@@ -130,7 +131,7 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch, ConnectorType connectorType ) throws InterruptedException {
         // Acknowledge the records.
 
         // acknowledge records
@@ -140,15 +141,18 @@ public class DebeziumOffsetManagement {
             if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
                 record.getCommitter().markProcessed(record.getSourceRecord());
-//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
                     record.getCommitter().markBatchFinished();
-                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+
+                    if(ConnectorType.MYSQL.getValue().equalsIgnoreCase(connectorType.getValue())) {
+                        log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                             record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
                             + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    } else if(ConnectorType.POSTGRES.getValue().equalsIgnoreCase(connectorType.getValue())) {
+                        log.info("***** BATCH marked as processed to debezium ****" + "LSN: " + record.getLsn()
+                        + "Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    }
                 }
             }
         }
