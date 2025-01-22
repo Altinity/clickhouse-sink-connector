@@ -398,7 +398,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test ADD COLUMN customer_address String, ADD COLUMN customer_name Nullable(String)";
+        String expectedCHQuery = "ALTER TABLE employees.add_test ADD COLUMN customer_address Nullable(String), ADD COLUMN customer_name Nullable(String)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
         log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
     }
