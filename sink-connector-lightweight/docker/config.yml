@@ -183,3 +183,10 @@ metrics.enable: "true"
 # to reduce slow startup when replicating dbs with large number of tables
 #schema.history.internal.store.only.captured.tables.ddl: "true"
 #schema.history.internal.store.only.captured.databases.ddl: "true"
+
+# Required for fixing bug with freeze in debezium loop.
+use.nongraceful.disconnect: "true"
+database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
+database.connection.reconnect.backoff.ms: "1000"
+database.connection.reconnect.backoff.max.ms: "10000"
+database.ssl.mode: "disabled"

@@ -126,3 +126,11 @@ SELECT
     fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS local_time
 FROM altinity_sink_connector.replica_source_info
 SETTINGS final = 1"
+
+
+# Required for fixing bug with freeze in debezium loop.
+use.nongraceful.disconnect: "true"
+database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
+database.connection.reconnect.backoff.ms: "1000"
+database.connection.reconnect.backoff.max.ms: "10000"
+database.ssl.mode: "disabled"
