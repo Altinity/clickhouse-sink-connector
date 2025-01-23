@@ -135,7 +135,7 @@ jobs:
           AWS_DEFAULT_REGION: 'eu-west-2'
         run: aws s3 cp . s3://altinity-test-reports/altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_sink/ --recursive --exclude "*" --include "*.log" --include "*.html"
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: testflows-sink-connector-kafka-artefacts
