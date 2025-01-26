@@ -64,7 +64,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(30000);
+        Thread.sleep(40000);
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");

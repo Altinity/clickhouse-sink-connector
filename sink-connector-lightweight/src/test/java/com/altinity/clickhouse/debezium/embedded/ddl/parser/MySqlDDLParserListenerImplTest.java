@@ -60,6 +60,16 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
     }
 
+    // @Test
+    // public void testAlterTableWithAnalyzePartition() {
+
+    //     String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
+    //     StringBuffer clickHouseQuery = new StringBuffer();
+    //     mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
+    //     Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+    //     log.info("Alter table " + clickHouseQuery);
+    // }
+
     @Test
     public void testCreateTableWithParitionRange() {
         String createQuery = "create table t(\n" +
@@ -249,6 +259,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -319,7 +330,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterAddColumnWithColumnKeyword() {
 
         String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
-        String clickhouseExpectedQuery = "ALTER TABLE db1.table1 ADD COLUMN entity Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.table1 ADD COLUMN entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -442,7 +453,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
-        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 String\n" +
+        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 String\n" +
                 "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN col1 to new_col"));
     }
 
@@ -481,6 +492,19 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
+    @Test
+    public void testRenameColumnWithDatabaseOverride() {
+
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "ch1");
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE mysql1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col";
+        mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE ch1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col"));
+    }
     @Test
     public void testChangeColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -610,6 +634,24 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table add_test,add_test2"));
+    }
+
+    @Test
+    public void renameTableWithoutTableKeyword() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE employees.old_table RENAME employees.new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+    }
+
+    @Test
+    public void renameTableWithTableKeyword() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE old_table RENAME new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
     }
 
     @Test

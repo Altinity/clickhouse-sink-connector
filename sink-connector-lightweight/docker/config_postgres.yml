@@ -113,3 +113,24 @@ metrics.enable: "true"
 
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
+
+replica.status.view: "CREATE VIEW %s.show_replica_status
+(
+    `seconds_behind_source` Int32,
+    `utc_time` DateTime('UTC'),
+    `local_time` DateTime
+) AS
+SELECT
+    now() - fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS seconds_behind_source,
+    toDateTime(fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)), 'UTC') AS utc_time,
+    fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS local_time
+FROM altinity_sink_connector.replica_source_info
+SETTINGS final = 1"
+
+
+# Required for fixing bug with freeze in debezium loop.
+use.nongraceful.disconnect: "true"
+database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
+database.connection.reconnect.backoff.ms: "1000"
+database.connection.reconnect.backoff.max.ms: "10000"
+database.ssl.mode: "disabled"

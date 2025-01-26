@@ -11,7 +11,7 @@
                 additivity="false">
         <AppenderRef ref="console"/>
         </Logger>-->
-        <Logger name="io.debezium" level="ERROR"
+        <Logger name="io.debezium" level="INFO"
                 additivity="false">
             <AppenderRef ref="console"/>
         </Logger>
@@ -19,11 +19,7 @@
                 additivity="false">
             <AppenderRef ref="console"/>
         </Logger>
-        <Logger name="io.debezium" level="ERROR"
-                additivity="false">
-            <AppenderRef ref="console"/>
-        </Logger>
-    <Root level="warn" additivity="false">
+    <Root level="info" additivity="false">
             <AppenderRef ref="console" />
         </Root>
     </Loggers>
