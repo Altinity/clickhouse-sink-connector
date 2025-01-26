@@ -17,6 +17,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+
+import java.sql.Connection;
 import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -89,12 +91,11 @@ public class DDLIgnoreRegExIT {
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",clickHouseContainer.getUsername(),
+                clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
 
-       // Thread.sleep(5000);
+        // Thread.sleep(5000);
         // Run MySQL DDL to run analyze partition.
         String analyzePartitionDDL = "alter table sales analyze partition p2022";
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(analyzePartitionDDL);
