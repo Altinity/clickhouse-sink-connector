@@ -6,14 +6,12 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
@@ -122,13 +120,7 @@ public class TableOperationsIT {
                     "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
                     "email VARCHAR(100) NOT NULL);\n").execute();
 
-            String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                    "employees");
-            Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-            BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                    "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 
@@ -142,7 +134,7 @@ public class TableOperationsIT {
 
 
             // Validate table created with partitions.
-            String membersResult = writer.executeQuery("show create table members");
+            String membersResult = writer.executeSystemQuery("show create table members");
             Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
@@ -158,7 +150,7 @@ public class TableOperationsIT {
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
 
-            String rcxResult = writer.executeQuery("show create table rcx");
+            String rcxResult = writer.executeSystemQuery("show create table rcx");
 
             Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
                         "(\n" +

@@ -97,11 +97,7 @@ public class MySQLGenerateColumnsTest {
         conn.prepareStatement("insert into contacts(first_name, last_name, email) values('John', 'Doe', 'john.doe@gmail.com')").execute();
         Thread.sleep(20000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        Connection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         Map<String, String> columnsToDataTypeMap = writer.getColumnsDataTypesForTable("contacts");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));

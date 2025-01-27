@@ -107,13 +107,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         String DATETIME6_MID = "2022-09-29 01:50:56.123456";
         String DATETIME6_MAX = "2299-12-31 23:59:59.999999";
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
 
         // Validate that the MySQL server is set to Central timezone.

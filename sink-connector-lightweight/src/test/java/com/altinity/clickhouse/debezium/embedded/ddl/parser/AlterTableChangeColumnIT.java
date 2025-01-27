@@ -72,11 +72,7 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 
         Thread.sleep(10000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        Connection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
         Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");

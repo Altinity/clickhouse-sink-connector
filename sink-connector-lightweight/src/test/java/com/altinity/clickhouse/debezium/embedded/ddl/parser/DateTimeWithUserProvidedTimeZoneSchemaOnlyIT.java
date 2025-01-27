@@ -96,7 +96,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees");
-        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
@@ -106,7 +106,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         writer.getConnection().close();
         Thread.sleep(10000);
 
-        Connection chConn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
+        Connection chConn2 = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
          writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),

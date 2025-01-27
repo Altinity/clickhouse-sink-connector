@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 
 
@@ -19,6 +18,8 @@ import org.apache.logging.log4j.Logger;
 
 public class BaseDbWriter {
 
+    public static final String DATABASE_CLIENT_NAME = "Sink_Connector";
+    public static final String SYSTEM_DB = "system";
     protected Connection conn;
 
     private String hostName;
@@ -89,8 +90,9 @@ public class BaseDbWriter {
      * @param userName   UserName
      * @param password   Password
      */
-    public static Connection createConnection(String url, String clientName, String userName, String password,
-                                              ClickHouseSinkConnectorConfig config) {
+    public static Connection createConnection(String url, String clientName, String userName,
+                                              String password, String databaseName
+            , ClickHouseSinkConnectorConfig config) {
 
         String jdbcParams = "";
         Connection conn = null;
@@ -112,7 +114,7 @@ public class BaseDbWriter {
             url = url + "?user=" + userName + "&password=" + password;
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
             // Get connection from the pool.
-            HikariDbSource hikariDbSource = HikariDbSource.getInstance(dataSource);
+            HikariDbSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName);
             // Create a new ClickHouseConnection object with the connection from the pool.
             // Convert Connection to ClickHouseConnection.
 
@@ -133,12 +135,12 @@ public class BaseDbWriter {
      * @return
      * @throws SQLException
      */
-    public String executeQuery(String sql) throws SQLException {
+    public String executeSystemQuery(String sql) throws SQLException {
         String result = null;
         if(this.conn == null) {
             String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port,
                     database);
-            conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", userName, password, config);
+            conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password, BaseDbWriter.SYSTEM_DB, config);
         }
         ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
         if(rs != null) {
@@ -172,7 +174,7 @@ public class BaseDbWriter {
      * @throws SQLException
      */
     public String getClickHouseVersion() throws SQLException {
-        return this.executeQuery("SELECT VERSION()");
+        return this.executeSystemQuery("SELECT VERSION()");
     }
 
 

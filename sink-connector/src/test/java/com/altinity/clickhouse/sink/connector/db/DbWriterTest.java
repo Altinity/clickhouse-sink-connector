@@ -50,8 +50,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
 
     }
@@ -104,7 +104,8 @@ public class DbWriterTest {
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
@@ -115,7 +116,8 @@ public class DbWriterTest {
 
         String database2 = "employees2";
         String jdbcUrl2 = BaseDbWriter.getConnectionString(dbHostName, port, database2);
-        Connection conn2 = DbWriter.createConnection(jdbcUrl2, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn2 = DbWriter.createConnection(jdbcUrl2, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn2);
         Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
@@ -136,8 +138,8 @@ public class DbWriterTest {
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "employees");
@@ -168,8 +170,8 @@ public class DbWriterTest {
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
@@ -238,7 +240,8 @@ public class DbWriterTest {
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
 
         //String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        Connection conn = DbWriter.createConnection(connectionUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(connectionUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, config, null, conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
@@ -282,7 +285,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
         PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(null,
                 false, null, null, database, ZoneId.of("UTC"));
@@ -313,7 +317,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        Connection conn2 = DbWriter.createConnection(jdbcUrl, "client_1", userName, "", config);
+        Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, "",
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, "", config,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);
@@ -378,7 +383,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        Connection conn2 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);

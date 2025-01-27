@@ -81,7 +81,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
-        this.systemConnection = createConnection();
+        this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
 
 
         try {
@@ -92,12 +92,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
     }
 
-    private Connection createConnection() {
+    private Connection createConnection(String databaseName) {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
 
         return BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), config);
+                this.dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
     }
 
     // Function to check if we have already stored a ClickHouseConnection
@@ -110,8 +110,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
 
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight",
-                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), databaseName, config);
 
         this.databaseToConnectionMap.put(databaseName, conn);
         return conn;

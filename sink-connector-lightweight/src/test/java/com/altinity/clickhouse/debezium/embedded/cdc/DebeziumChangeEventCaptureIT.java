@@ -4,24 +4,16 @@ import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLBaseIT;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.collect.Maps;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
-
-import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
-import static org.junit.Assert.assertTrue;
-
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -33,12 +25,15 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-import java.sql.*;
-import java.util.HashMap;
+import java.sql.Connection;
+import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static org.junit.Assert.assertTrue;
 
 @Testcontainers
 public class DebeziumChangeEventCaptureIT{
@@ -58,14 +53,7 @@ public class DebeziumChangeEventCaptureIT{
                     JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
             DBCredentials dbCredentials = dec.parseDBConfiguration(config);
 
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    dbCredentials.getDatabase());
-            Connection connection = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config);
-
-            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    dbCredentials.getDatabase(), dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config, connection);
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
             String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
             //String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
 
@@ -149,14 +137,7 @@ public class DebeziumChangeEventCaptureIT{
 
         Thread.sleep(20000);
 
-        // Create connection to ClickHouse and get the version numbers.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         long version1 = 1L;
         long version2 = 1L;

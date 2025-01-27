@@ -91,7 +91,7 @@ public class DDLIgnoreRegExIT {
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",clickHouseContainer.getUsername(),
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,clickHouseContainer.getUsername(),
                 clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
 

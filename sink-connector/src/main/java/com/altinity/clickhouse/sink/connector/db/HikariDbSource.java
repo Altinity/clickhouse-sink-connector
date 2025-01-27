@@ -7,33 +7,35 @@ import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 
-// Singleton class.
+// Singleton class(one per database)
 public class HikariDbSource {
     private static HikariDbSource instance;
 
     private HikariDataSource dataSource;
+    private String databaseName;
 
     // private constructor
-    private HikariDbSource(ClickHouseDataSource dataSource) {
-        this.createConnectionPool(dataSource);
+    private HikariDbSource(ClickHouseDataSource dataSource, String databaseName) {
+        this.createConnectionPool(dataSource, databaseName);
     }
 
     public Connection getConnection() throws SQLException {
         return this.dataSource.getConnection();
     }
 
-    public static HikariDbSource getInstance(ClickHouseDataSource dataSource) {
+    public static HikariDbSource getInstance(ClickHouseDataSource dataSource, String databaseName) {
         if (instance == null) {
-            instance = new HikariDbSource(dataSource);
+            instance = new HikariDbSource(dataSource, databaseName);
         }
         return instance;
     }
-    public void createConnectionPool(ClickHouseDataSource dataSource)  {
+    public void createConnectionPool(ClickHouseDataSource dataSource, String databaseName)  {
         // pass the clickhouse config to create the datasource
 
      
         HikariConfig poolConfig = new HikariConfig();
-        poolConfig.setJdbcUrl("jdbc:ch:{hostname}:{port}/default?insert_quorum=auto&server_time_zone&server_version=22.13.1.24495");
+        String jdbcUrl = String.format("jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone&server_version=22.13.1.24495", databaseName);
+        poolConfig.setJdbcUrl(jdbcUrl);
         poolConfig.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver"); // Ensure driver is set
        // poolConfig.setUsername(dataSource.getConnection().getCurrentUser()); // Optional, if already in JDBC URL
         // poolConfig.setPassword(dataSource.getConnection().()); // Optional, if already in JDBC URL

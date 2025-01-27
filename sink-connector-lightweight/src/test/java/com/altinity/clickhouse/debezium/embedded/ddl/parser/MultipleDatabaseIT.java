@@ -119,13 +119,7 @@ public class MultipleDatabaseIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         // query clickhouse connection and get data for test_table1 and test_table2
 
 
@@ -162,7 +156,7 @@ public class MultipleDatabaseIT
         // Jdbc url with test_db database.
         String testDb2JdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "test_db2");
-        Connection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, "Client_1",
+        Connection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
         BaseDbWriter testDb2Writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "test_db2", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, testDb2Conn);

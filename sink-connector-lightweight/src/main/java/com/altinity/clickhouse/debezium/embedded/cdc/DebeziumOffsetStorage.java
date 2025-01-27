@@ -51,7 +51,7 @@ public class DebeziumOffsetStorage {
 
         // String connectorName = config.getString("connector.name");
         String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" , tableName, offsetKey);
-        writer.executeQuery(debeziumStorageStatusQuery);
+        writer.executeSystemQuery(debeziumStorageStatusQuery);
     }
 
     /**
@@ -67,7 +67,7 @@ public class DebeziumOffsetStorage {
 
         String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
         log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
-        writer.executeQuery(debeziumStorageStatusQuery);
+        writer.executeSystemQuery(debeziumStorageStatusQuery);
     }
     /**
      * Function to get the latest timestamp of the record in the table
@@ -81,7 +81,7 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s" , tableName);
-        return writer.executeQuery(debeziumLatestRecordTimestampQuery);
+        return writer.executeSystemQuery(debeziumLatestRecordTimestampQuery);
     }
 
     public String getDebeziumStorageStatusQuery(
@@ -92,7 +92,7 @@ public class DebeziumOffsetStorage {
         String offsetKey = getOffsetKey(props);
         // String connectorName = config.getString("connector.name");
         String debeziumStorageStatusQuery = String.format("select offset_val from %s where offset_key='%s'" , tableName, offsetKey);
-        return writer.executeQuery(debeziumStorageStatusQuery);
+        return writer.executeSystemQuery(debeziumStorageStatusQuery);
     }
 
     /**

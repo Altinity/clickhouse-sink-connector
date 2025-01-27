@@ -63,7 +63,8 @@ public class ClickHouseDataTypeMapperTest {
         String password = clickHouseContainer.getPassword();
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter dbWriter = new BaseDbWriter(dbHostName, port,
                 database, userName, password, null, conn);

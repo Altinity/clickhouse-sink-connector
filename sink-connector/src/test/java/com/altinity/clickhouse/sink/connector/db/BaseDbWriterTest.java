@@ -23,7 +23,7 @@ public class BaseDbWriterTest {
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
 
         Connection conn = BaseDbWriter.createConnection(
-                "localhost", "client_1","default", "", config);
+                "localhost", BaseDbWriter.DATABASE_CLIENT_NAME,"default", "",BaseDbWriter.SYSTEM_DB, config);
         Properties properties = new BaseDbWriter(
                 "localhost",
                 8123,

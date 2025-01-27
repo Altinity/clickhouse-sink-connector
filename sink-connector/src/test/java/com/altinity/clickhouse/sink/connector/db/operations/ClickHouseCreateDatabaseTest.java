@@ -44,7 +44,8 @@ public class ClickHouseCreateDatabaseTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
-        Connection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                DbWriter.SYSTEM_DB, config);
         dbWriter = new DbWriter(hostName, port, dbName, null, userName, password, config, null, conn);
         maintenanceDbWriter = new DbWriter(hostName, port, systemDb, null, userName, password, config, null, conn);
     }

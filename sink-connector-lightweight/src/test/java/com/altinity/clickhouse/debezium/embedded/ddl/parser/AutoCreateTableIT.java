@@ -90,14 +90,7 @@ public class AutoCreateTableIT {
 
         Thread.sleep(10000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        Connection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         Thread.sleep(10000);
         ResultSet dateTimeResult = writer.executeQueryWithResultSet("select count(*) from `new-table`");
         boolean resultReceived = false;

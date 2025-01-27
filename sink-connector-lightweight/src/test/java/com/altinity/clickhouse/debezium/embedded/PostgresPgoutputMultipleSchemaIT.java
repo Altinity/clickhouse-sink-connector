@@ -103,14 +103,8 @@ public class PostgresPgoutputMultipleSchemaIT {
 
         Thread.sleep(10000);
 
-        // Create connection.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        
         Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
         Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));

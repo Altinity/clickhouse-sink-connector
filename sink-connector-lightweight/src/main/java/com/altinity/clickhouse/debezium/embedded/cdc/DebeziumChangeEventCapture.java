@@ -2,7 +2,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -17,7 +16,6 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
 import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.config.CommonConnectorConfig;
@@ -198,7 +196,8 @@ public class DebeziumChangeEventCapture {
     private BaseDbWriter createWriter(ClickHouseSinkConnectorConfig config, String databaseName) {
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1", dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, dbCredentials.getUserName(), dbCredentials.getPassword(),
+                databaseName, config);
         return new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(), databaseName, dbCredentials.getUserName(), dbCredentials.getPassword(), config, conn);
     }
 
@@ -384,10 +383,11 @@ public class DebeziumChangeEventCapture {
                 DBCredentials dbCredentials = parseDBConfiguration(config);
 
                 String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "system");
-                Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+                        BaseDbWriter.SYSTEM_DB);
+                Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                        dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
                 BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "system", dbCredentials.getUserName(),
+                        BaseDbWriter.SYSTEM_DB, dbCredentials.getUserName(),
                         dbCredentials.getPassword(), config, conn);
 
                 Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
@@ -395,7 +395,7 @@ public class DebeziumChangeEventCapture {
 
                 String createDbQuery = String.format("create database if not exists %s", databaseName);
                 log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-                writer.executeQuery(createDbQuery);
+                writer.executeSystemQuery(createDbQuery);
 
                 break;
             } catch (Exception e) {
@@ -423,13 +423,14 @@ public class DebeziumChangeEventCapture {
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system");
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system", dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, conn);
 
         try {
-            writer.executeQuery(createSchemaHistoryTable);
+            writer.executeSystemQuery(createSchemaHistoryTable);
         } catch(Exception e) {
             log.error("Error creating schema history table", e);
         }
@@ -450,7 +451,8 @@ public class DebeziumChangeEventCapture {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system");
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
         BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 "system", dbCredentials.getUserName(),
                 dbCredentials.getPassword(), config, conn);
@@ -463,7 +465,7 @@ public class DebeziumChangeEventCapture {
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
         try {
-            writer.executeQuery(formattedView);
+            writer.executeSystemQuery(formattedView);
         } catch(Exception e) {
             log.error("**** Error creating VIEW **** " + formattedView);
         }
@@ -540,8 +542,9 @@ public class DebeziumChangeEventCapture {
             log.error("**** Connection to ClickHouse is not established, re-initiating ****");
             String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
                     databaseName);
-            Connection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
+            Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                    dbCredentials.getUserName(), dbCredentials.getPassword(),
+                    BaseDbWriter.SYSTEM_DB, config);
             writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                     databaseName, dbCredentials.getUserName(),
                     dbCredentials.getPassword(), config, conn);

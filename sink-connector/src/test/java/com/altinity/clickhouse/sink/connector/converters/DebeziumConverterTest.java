@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
@@ -252,7 +253,8 @@ public class DebeziumConverterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = DbWriter.getConnectionString(hostName, port, database);
-        Connection conn1 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn1 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn1);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
