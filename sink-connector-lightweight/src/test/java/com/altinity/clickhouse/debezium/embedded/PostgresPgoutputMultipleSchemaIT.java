@@ -139,11 +139,11 @@ public class PostgresPgoutputMultipleSchemaIT {
         Thread.sleep(10000);
 
         // ClickHouse, add ALIAS column to public.people
-        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
         Thread.sleep(10000);
 
         // Add MATERIALIZED column to public.people
-        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
         Thread.sleep(20000);
 
