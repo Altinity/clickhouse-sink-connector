@@ -119,7 +119,7 @@ public class MultipleDatabaseIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "test_db");
         // query clickhouse connection and get data for test_table1 and test_table2
 
 

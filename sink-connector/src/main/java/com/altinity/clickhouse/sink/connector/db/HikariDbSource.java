@@ -6,10 +6,13 @@ import com.zaxxer.hikari.HikariDataSource;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 
 // Singleton class(one per database)
 public class HikariDbSource {
-    private static HikariDbSource instance;
+    private static Map<String, HikariDbSource> instance = new HashMap<>();
+    //private static HikariDbSource instance;
 
     private HikariDataSource dataSource;
     private String databaseName;
@@ -24,10 +27,14 @@ public class HikariDbSource {
     }
 
     public static HikariDbSource getInstance(ClickHouseDataSource dataSource, String databaseName) {
-        if (instance == null) {
-            instance = new HikariDbSource(dataSource, databaseName);
+
+        if(instance.containsKey(databaseName)) {
+            return instance.get(databaseName);
+        } else {
+            HikariDbSource hikariDbSource = new HikariDbSource(dataSource, databaseName);
+            instance.put(databaseName, hikariDbSource);
         }
-        return instance;
+        return instance.get(databaseName);
     }
     public void createConnectionPool(ClickHouseDataSource dataSource, String databaseName)  {
         // pass the clickhouse config to create the datasource

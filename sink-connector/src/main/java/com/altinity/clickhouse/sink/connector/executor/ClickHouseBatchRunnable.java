@@ -96,8 +96,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
 
-        return BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, this.dbCredentials.getUserName(),
+                this.dbCredentials.getPassword(), databaseName, config);
     }
 
     // Function to check if we have already stored a ClickHouseConnection
