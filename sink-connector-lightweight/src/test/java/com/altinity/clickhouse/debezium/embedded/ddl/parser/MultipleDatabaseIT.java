@@ -154,12 +154,7 @@ public class MultipleDatabaseIT
         // Create a test_db DBWriter instance.
         // A new ClickHouseConnection with test_db database.
         // Jdbc url with test_db database.
-        String testDb2JdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "test_db2");
-        Connection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter testDb2Writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "test_db2", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, testDb2Conn);
+        BaseDbWriter testDb2Writer = ITCommon.getDBWriter(clickHouseContainer, "test_db2");
 
         // Validate the columns in Clickhouse for test_db.test_table
         Map<String, String> columnMap = testDb2Writer.getColumnsDataTypesForTable("test_table");

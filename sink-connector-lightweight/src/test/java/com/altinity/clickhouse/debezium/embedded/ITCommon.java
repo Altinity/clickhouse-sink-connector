@@ -213,4 +213,17 @@ public class ITCommon {
 
         return writer;
     }
+
+    static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer, String databaseName) {
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                databaseName);
+        Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(),
+                clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                databaseName, clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+
+        return writer;
+    }
 }

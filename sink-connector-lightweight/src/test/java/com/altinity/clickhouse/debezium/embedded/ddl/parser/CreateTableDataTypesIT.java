@@ -104,11 +104,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
         //Thread.sleep(10000);
 
-        //String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        writer = ITCommon.getDBWriter(clickHouseContainer);
         // Validate temporal_types_DATE data.
         ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
 

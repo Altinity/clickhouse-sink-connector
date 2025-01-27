@@ -109,12 +109,6 @@ public class CreateTableDataTypesTimeZoneIT {
         writer.getConnection().close();
         Thread.sleep(10000);
 
-        Connection conn2 = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
-                "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
         // Validate temporal_types_DATE data.
         ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
         boolean dateResultValueChecked = false;

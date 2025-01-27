@@ -90,11 +90,6 @@ public class DDLIgnoreRegExIT {
         Thread.sleep(10000);
 
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,clickHouseContainer.getUsername(),
-                clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-
         // Thread.sleep(5000);
         // Run MySQL DDL to run analyze partition.
         String analyzePartitionDDL = "alter table sales analyze partition p2022";
