@@ -95,7 +95,17 @@ public class ClickHouseBatchRunnableTest {
         Assert.assertTrue(connectorType == ConnectorType.MYSQL);
     }
 
+    @Test
+    public void testGetConnectorTypePostgres() {
+        HashMap<String, String> configMap = new HashMap<>();
+        configMap.put("connector.class", "io.debezium.connector.postgresql.PostgresConnector");
 
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
+        ClickHouseBatchRunnable run = new ClickHouseBatchRunnable(this.records, config, this.topic2TableMap);
+
+        ConnectorType connectorType = run.getConnectorType();
+        Assert.assertTrue(connectorType == ConnectorType.POSTGRES);
+    }
 
     @Test
     public void testGetTableNameFromTopic() {
