@@ -94,18 +94,18 @@ def check_datetime_column(self, precision, data):
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
                     == "2299-12-31 23:59:59"
                 ), error()
-        elif data[:19] == "2299-12-31 23:59:59.9":
+        elif data[:19] == "2299-12-31 23:59:59.0":
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (
