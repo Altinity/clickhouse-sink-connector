@@ -23,7 +23,7 @@ import io.debezium.metadata.ConnectorDescriptor;
 
             String displayName = ConnectorDescriptor.getIdForConnectorClass(value);
             if(displayName != null) {
-                connectorType =ConnectorType.valueOf(displayName);
+                //connectorType =ConnectorType.valueOf(displayName);
                 if(displayName.contains(MYSQL.getValue())) {
                     connectorType = ConnectorType.MYSQL;
                 } else if(displayName.contains(POSTGRES.getValue())) {
