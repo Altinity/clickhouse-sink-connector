@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -27,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.CONNECTOR_CLASS;
 
 /**
  * Runnable object that will be called on
@@ -135,7 +138,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     @Override
     public void run() {
 
-
+        ConnectorType connectorType = ConnectorType.fromString(config.getString(CONNECTOR_CLASS));
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
 
@@ -195,7 +198,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
                 if(result) {
                     // Step 2: Check if the batch can be committed.
-                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
+                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch, connectorType)) {
                         currentBatch = null;
                     }
                 }
