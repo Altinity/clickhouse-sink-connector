@@ -1,20 +1,21 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -24,7 +25,7 @@ public class ClickHouseBatchRunnableTest {
     LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
     Map<String, String> topic2TableMap = new HashMap<>();
 
-    @Before
+    @BeforeEach
     public void initTest() {
 
 
@@ -81,6 +82,20 @@ public class ClickHouseBatchRunnableTest {
 
         return kafkaConnectStruct;
     }
+
+    @Test
+    public void testGetConnectorType() {
+        HashMap<String, String> configMap = new HashMap<>();
+        configMap.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
+        ClickHouseBatchRunnable run = new ClickHouseBatchRunnable(this.records, config, this.topic2TableMap);
+
+        ConnectorType connectorType = run.getConnectorType();
+        Assert.assertTrue(connectorType == ConnectorType.MYSQL);
+    }
+
+
 
     @Test
     public void testGetTableNameFromTopic() {

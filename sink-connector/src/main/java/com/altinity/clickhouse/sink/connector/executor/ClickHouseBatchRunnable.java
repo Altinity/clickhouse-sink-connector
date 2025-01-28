@@ -15,6 +15,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.embedded.EmbeddedEngineConfig;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.logging.log4j.LogManager;
@@ -130,6 +131,16 @@ public class ClickHouseBatchRunnable implements Runnable {
         return dbCredentials;
     }
 
+    ConnectorType getConnectorType() {
+        ConnectorType connectorType = ConnectorType.MYSQL;
+
+        try {
+            connectorType = ConnectorType.fromString(config.getString(EmbeddedEngineConfig.CONNECTOR_CLASS.toString()));
+        } catch (Exception e) {
+            log.error("Error while getting connector type", e);
+        }
+        return connectorType;
+    }
     /**
      * Main run loop of the thread
      * which is called based on the schedule
@@ -138,7 +149,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     @Override
     public void run() {
 
-        ConnectorType connectorType = ConnectorType.fromString(config.getString(CONNECTOR_CLASS));
+        ConnectorType connectorType = getConnectorType();
         Long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
 

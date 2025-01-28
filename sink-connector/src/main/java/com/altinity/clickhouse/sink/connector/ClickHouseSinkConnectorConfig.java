@@ -91,6 +91,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      */
     static ConfigDef newConfigDef() {
         return new ConfigDef()
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        Type.STRING,
+                        "",
+                        null,
+                        Importance.HIGH,
+                        "Connector class"
+                )
                 // Config Group "Connector config"
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
