@@ -101,7 +101,7 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
+    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch, ConnectorType connectorType) throws InterruptedException {
         boolean result = false;
 
         if(true == checkIfThereAreInflightRequests(batch)) {
@@ -112,13 +112,13 @@ public class DebeziumOffsetManagement {
             completedBatches.put(pair, batch);
         } else {
             // Acknowledge current batch
-            acknowledgeRecords(batch);
+            acknowledgeRecords(batch, connectorType);
             result = true;
             // Check if completed batch can also be acknowledged.
             completedBatches.forEach((k, v) -> {
                 if(false == checkIfThereAreInflightRequests(v)) {
                     try {
-                        acknowledgeRecords(v);
+                        acknowledgeRecords(v, connectorType);
                     } catch (InterruptedException e) {
                         log.error("*** Error acknowlegeRecords ***", e);
                         throw new RuntimeException(e);

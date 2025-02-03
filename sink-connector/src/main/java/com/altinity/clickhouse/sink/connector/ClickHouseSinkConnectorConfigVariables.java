@@ -75,8 +75,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
-    SINGLE_THREADED("single.threaded");
+    SINGLE_THREADED("single.threaded"),
 
+    CONNECTOR_CLASS("connector.class");
     private String label;
 
     ClickHouseSinkConnectorConfigVariables(String s) {

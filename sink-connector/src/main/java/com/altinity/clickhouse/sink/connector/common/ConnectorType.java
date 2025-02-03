@@ -19,8 +19,17 @@ import io.debezium.metadata.ConnectorDescriptor;
         }
 
         public static ConnectorType fromString(String value) {
+            ConnectorType connectorType = ConnectorType.MYSQL;
 
-            ConnectorDescriptor.getDisplayNameForConnectorClass(value);
-            return ConnectorType.valueOf(value);
+            String displayName = ConnectorDescriptor.getIdForConnectorClass(value);
+            if(displayName != null) {
+                //connectorType =ConnectorType.valueOf(displayName);
+                if(displayName.contains(MYSQL.getValue())) {
+                    connectorType = ConnectorType.MYSQL;
+                } else if(displayName.contains(POSTGRES.getValue())) {
+                    connectorType = ConnectorType.POSTGRES;
+                }
+            }
+            return connectorType;
         }
     }

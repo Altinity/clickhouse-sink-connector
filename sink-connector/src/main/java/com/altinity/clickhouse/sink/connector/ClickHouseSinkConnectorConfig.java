@@ -28,7 +28,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
 
     // Configuration groups
-
+    public static final String CONNECTOR_CLASS = "connector.class";
     // Configuration group "clickhouse login info"
     private static final String CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO = "ClickHouse Login Info";
     // Configuration group "connector config"
@@ -91,6 +91,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      */
     static ConfigDef newConfigDef() {
         return new ConfigDef()
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        Type.STRING,
+                        "",
+                        null,
+                        Importance.HIGH,
+                        "Connector class"
+                )
                 // Config Group "Connector config"
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
