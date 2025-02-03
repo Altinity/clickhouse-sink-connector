@@ -52,8 +52,8 @@ public class ClickHouseCreateDatabaseTest {
 
     @BeforeEach                                         
     void dropTestDatabase() throws SQLException {
-        Statement drop = maintenanceDbWriter.getConnection().createStatement();
-        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", dbName));
+//        Statement drop = maintenanceDbWriter.getConnection().createStatement();
+//        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", dbName));
     }
 
     @Test
