@@ -42,7 +42,7 @@ public class MySQLDemoIT extends DDLBaseIT {
     }
 
     @Test
-    public void testAddColumn() throws Exception {
+    public void testMySQLDemo() throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
@@ -59,7 +59,7 @@ public class MySQLDemoIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(10000);//
+        Thread.sleep(20000);//
 
         Connection conn = connectToMySQL();
 
