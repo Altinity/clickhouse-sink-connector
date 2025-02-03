@@ -46,8 +46,8 @@ public class ClickHouseCreateDatabaseTest {
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 DbWriter.SYSTEM_DB, config);
-        dbWriter = new DbWriter(hostName, port, dbName, null, userName, password, config, null, conn);
-        maintenanceDbWriter = new DbWriter(hostName, port, systemDb, null, userName, password, config, null, conn);
+        dbWriter = new DbWriter(hostName, port, dbName, "employees", userName, password, config, null, conn);
+        maintenanceDbWriter = new DbWriter(hostName, port, systemDb, "employees", userName, password, config, null, conn);
     }
 
     @BeforeEach                                         
