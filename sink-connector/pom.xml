@@ -313,7 +313,13 @@
             <artifactId>debezium-core</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-storage-jdbc</artifactId>
+            <version>${version.debezium}</version>
+            <!--    <scope>system</scope>
+               <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

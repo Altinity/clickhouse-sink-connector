@@ -83,7 +83,7 @@ public class DateTimeWithTimeZoneIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME");
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
@@ -97,7 +97,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1");
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
@@ -110,7 +110,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2");
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());

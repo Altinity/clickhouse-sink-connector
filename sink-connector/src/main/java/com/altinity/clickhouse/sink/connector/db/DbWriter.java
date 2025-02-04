@@ -6,6 +6,8 @@ import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreate
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.jdbc.JdbcConfiguration;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -157,34 +159,51 @@ public class DbWriter extends BaseDbWriter {
 
     // Create offset/schema history storage database.
     public void createOffsetSchemaHistoryDatabase() {
+        String offsetSchemaHistoryTable = null;
+        try {
+            offsetSchemaHistoryTable = config.getString(JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        } catch(Exception e) {
+            log.error("***** Error retrieving offset store configuration ****", e);
+        }
+        if(offsetSchemaHistoryTable == null || offsetSchemaHistoryTable.isEmpty() == true) {
+            log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
+            return;
+        }
+        String offsetStorageDatabaseNameArray[] = offsetSchemaHistoryTable.split("\\.");
+        if(offsetStorageDatabaseNameArray.length <= 2) {
+            log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
+            return;
+        }
+        String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];
+        String offsetStorageTableName = offsetStorageDatabaseNameArray[1];
         DBMetadata metadata = new DBMetadata();
         try {
-            if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+            if (false == metadata.checkIfDatabaseExists(this.conn, offsetStorageDatabaseName)) {
+                new ClickHouseCreateDatabase().createNewDatabase(this.conn, offsetStorageDatabaseName);
             }
         } catch(Exception e) {
 
             int maxRetries = 0;
             final int MAX_RETRIES = 5;
-            log.error("Error creating Database: " + database);
+            log.error("Error creating Database: " + offsetStorageDatabaseName);
 
             // Keep retrying to createNewDatabase until Max number of retries is reached.
             boolean createDatabaseFailed = false;
             while(maxRetries++ > MAX_RETRIES) {
                 try {
                     Thread.sleep(maxRetries * 5000);
-                    if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
+                    if (false == metadata.checkIfDatabaseExists(this.conn, offsetStorageDatabaseName)) {
+                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, offsetStorageDatabaseName);
                         createDatabaseFailed = true;
                         break;
                     }
                 } catch (Exception ex) {
-                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + database);
+                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + offsetStorageDatabaseName);
                 }
             }
             // if maxRetries exceeded, throw runtime exception.
             if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + database);
+                throw new RuntimeException("Error creating Database: " + offsetStorageDatabaseName);
             }
         }
     }
@@ -204,27 +223,6 @@ public class DbWriter extends BaseDbWriter {
 
         return result;
     }
-
-
-
-    /**
-     * Function to check if the column is of DateTime64
-     * from the column type(string name)
-     *
-     * @param columnType
-     * @return true if its DateTime64, false otherwise.
-     */
-    public static boolean isColumnDateTime64(String columnType) {
-        //ClickHouseDataType dt = ClickHouseDataType.of(columnType);
-        //ToDo: Figure out a way to get the ClickHouseDataType
-        // from column name.
-        boolean result = false;
-        if (columnType.contains("DateTime64")) {
-            result = true;
-        }
-        return result;
-    }
-
     public Map<String, String> getColumnNameToDataTypeMap() {
         return this.columnNameToDataTypeMap;
     }

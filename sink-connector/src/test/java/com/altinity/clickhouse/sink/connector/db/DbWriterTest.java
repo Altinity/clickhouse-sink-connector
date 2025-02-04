@@ -89,10 +89,6 @@ public class DbWriterTest {
     }
 
     @Test
-    public void testIsColumnTypeDate64() {
-       boolean result = DbWriter.isColumnDateTime64("Nullable(DateTime64(3))");
-    }
-    @Test
     @Tag("IntegrationTest")
     public void testGetColumnsDataTypesForTable() {
 
