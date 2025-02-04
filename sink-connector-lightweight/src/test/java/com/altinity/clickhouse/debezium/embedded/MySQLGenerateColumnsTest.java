@@ -106,7 +106,7 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from contacts");
+        ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from employees.contacts");
         boolean insertCheck = false;
         while (resultSet.next()) {
                 insertCheck = true;
