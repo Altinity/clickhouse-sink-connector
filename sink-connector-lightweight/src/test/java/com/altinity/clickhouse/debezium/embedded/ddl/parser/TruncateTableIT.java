@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,11 @@ public class TruncateTableIT {
         clickHouseContainer.start();
     }
 
+    @AfterEach
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @Test
     @DisplayName("Test that validates create table in CH when MySQL has is_deleted columns")
@@ -84,7 +90,7 @@ public class TruncateTableIT {
 
         //Validate if ship_class was truncated also in ClickHouse.
         // Validate that the table is empty in ClickHouse
-        ResultSet rs = writer.executeQueryWithResultSet("select * from ship_class");
+        ResultSet rs = writer.executeQueryWithResultSet("select * from employees.ship_class");
         boolean recordFoundShipClass = false;
         while(rs.next()) {
             recordFoundShipClass = true;
@@ -100,7 +106,7 @@ public class TruncateTableIT {
         conn.close();
         Thread.sleep(10000);
 
-        rs = writer.executeQueryWithResultSet("select * from new_table");
+        rs = writer.executeQueryWithResultSet("select * from employees.new_table");
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
@@ -118,7 +124,7 @@ public class TruncateTableIT {
         conn.close();
 
         // Validate that the table is empty in ClickHouse
-        rs = writer.executeQueryWithResultSet("select * from new_table");
+        rs = writer.executeQueryWithResultSet("select * from employees.new_table");
         recordFound = false;
         while(rs.next()) {
             recordFound = true;

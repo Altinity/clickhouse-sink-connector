@@ -10,10 +10,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -64,6 +61,11 @@ public class DestinationDBColumnMissingIT {
         Thread.sleep(35000);
     }
 
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @Test
     public void testColumnMismatch() throws Exception {

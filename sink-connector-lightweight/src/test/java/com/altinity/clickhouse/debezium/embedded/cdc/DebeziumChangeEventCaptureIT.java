@@ -13,9 +13,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -39,34 +37,7 @@ import static org.junit.Assert.assertTrue;
 public class DebeziumChangeEventCaptureIT{
 
     private static final Logger log = LoggerFactory.getLogger(DebeziumChangeEventCaptureIT.class);
-    @Test
-    public void testDeleteOffsetStorageRow2()  {
-        //System.out.println("Delete offset");
-        DebeziumChangeEventCapture dec = new DebeziumChangeEventCapture();
 
-        try {
-            Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-            props.setProperty("name", "altinity_sink_connector");
-            Map<String, String> propertiesMap = Maps.newHashMap(Maps.fromProperties(props));
-            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(propertiesMap);
-            String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                    JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
-            DBCredentials dbCredentials = dec.parseDBConfiguration(config);
-
-            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-            String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
-            //String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-
-            String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue, "mysql-bin.001", "2333", null);
-
-            //new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-            //new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue, System.currentTimeMillis());
-
-            System.out.print("Test");
-        } catch(Exception e) {
-            log.error("Exception in testDeleteOffsetStorageRow2", e);
-        }
-    }
 
     protected MySQLContainer mySqlContainer;
 
@@ -92,6 +63,13 @@ public class DebeziumChangeEventCaptureIT{
         clickHouseContainer.start();
         Thread.sleep(35000);
     }
+
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
+
 
     @Test
     @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly.")
@@ -144,22 +122,22 @@ public class DebeziumChangeEventCaptureIT{
         long version3 = 1L;
         long version4 = 1L;
 
-        ResultSet version1Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'a'");
+        ResultSet version1Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'a'");
         while(version1Result.next()) {
             version1 = version1Result.getLong("_version");
         }
 
-        ResultSet version2Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'b'");
+        ResultSet version2Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'b'");
         while(version2Result.next()) {
             version2 = version2Result.getLong("_version");
         }
 
-        ResultSet version3Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'c'");
+        ResultSet version3Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'c'");
         while(version3Result.next()) {
             version3 = version3Result.getLong("_version");
         }
 
-        ResultSet version4Result = writer.executeQueryWithResultSet("select _version from newtable final where col1 = 'd'");
+        ResultSet version4Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'd'");
         while(version4Result.next()) {
             version4 = version4Result.getLong("_version");
         }

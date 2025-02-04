@@ -10,10 +10,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -53,6 +50,11 @@ public class Debezium15KTablesLoadIT {
         mySqlContainer.start();
         clickHouseContainer.start();
         Thread.sleep(35000);
+    }
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
     }
 
     @Test

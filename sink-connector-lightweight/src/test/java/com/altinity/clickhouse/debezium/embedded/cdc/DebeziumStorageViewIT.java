@@ -10,6 +10,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,13 @@ public class DebeziumStorageViewIT {
         clickHouseContainer.start();
         Thread.sleep(15000);
     }
+
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
+
 
     @Test
     @DisplayName("Validates that the debezium storage view is created successfully")

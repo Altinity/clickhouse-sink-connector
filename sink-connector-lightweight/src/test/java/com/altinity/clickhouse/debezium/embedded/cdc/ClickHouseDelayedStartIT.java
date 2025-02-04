@@ -11,10 +11,7 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -59,6 +56,11 @@ public class ClickHouseDelayedStartIT {
         clickHouseContainer.start();
         Thread.sleep(15000);
     }
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @Test
     public void testClickHouseDelayedStart() throws Exception {
@@ -94,7 +96,7 @@ public class ClickHouseDelayedStartIT {
             // Check if Batch was inserted.
             BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
             try {
-                ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
+                ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
                 while (dateTimeResult.next()) {
                     insertCheck = true;
                     Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));

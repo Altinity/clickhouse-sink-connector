@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,11 @@ public class DatabaseOverrideIT {
         Thread.sleep(35000);
     }
 
+    @AfterEach()
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @DisplayName("Test that validates overriding database name in ClickHouse")
     @Test

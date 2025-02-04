@@ -9,10 +9,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -62,6 +59,12 @@ public class MySQLGenerateColumnsTest {
         mySqlContainer.start();
         clickHouseContainer.start();
         Thread.sleep(25000);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import junit.framework.Assert;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,12 @@ public class DateTimeWithTimeZoneIT {
         mySqlContainer.start();
         clickHouseContainer.start();
         Thread.sleep(15000);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
     }
 
     @Test

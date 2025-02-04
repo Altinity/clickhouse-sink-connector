@@ -4,14 +4,12 @@ import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -65,6 +63,11 @@ public class SourceDBColumnMissingIT {
         Thread.sleep(35000);
     }
 
+    @AfterEach
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @Test
     public void testColumnMismatch() throws Exception {
@@ -106,7 +109,7 @@ public class SourceDBColumnMissingIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         long col2 = 1L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from newtable final where col1 = 'a'");
+        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees.newtable final where col1 = 'a'");
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
