@@ -1,8 +1,10 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -53,5 +55,11 @@ public class HikariDbSource {
         poolConfig.setDataSource(dataSource);
 
         this.dataSource = new HikariDataSource(poolConfig);
+
+        PrometheusMeterRegistry meterRegistry = Metrics.meterRegistry();
+
+        if(meterRegistry != null) {
+            this.dataSource.setMetricRegistry(meterRegistry);
+        }
     }   
 }
