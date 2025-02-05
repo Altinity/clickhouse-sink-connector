@@ -95,7 +95,7 @@ services:
 
   sink:
     container_name: sink
-    image: altinityinfra/clickhouse-sink-connector:975-51743254d5e3cdf2eaeb8ab6dd4eb3cfc2b74683-kafka
+    image: altinity/clickhouse-sink-connector:${SINK_VERSION}
     restart: "no"
     ports:
       - "18083:8083"
