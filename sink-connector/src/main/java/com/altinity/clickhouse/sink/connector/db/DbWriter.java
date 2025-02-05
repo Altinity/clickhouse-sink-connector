@@ -5,8 +5,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.clickhouse.jdbc.ClickHouseConnection;
-import io.debezium.jdbc.JdbcConfiguration;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import lombok.Getter;
 import lombok.Setter;
@@ -90,7 +88,12 @@ public class DbWriter extends BaseDbWriter {
             }
             DBMetadata metadata = new DBMetadata();
 
-            createOffsetSchemaHistoryDatabase();
+            String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
+            if(offsetStorageDatabaseName != null) {
+                createDestinationDatabase(offsetStorageDatabaseName);
+            }
+            // ToDO: create destination database if not exists
+            createDestinationDatabase(database);
 
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
@@ -157,8 +160,8 @@ public class DbWriter extends BaseDbWriter {
         }
     }
 
-    // Create offset/schema history storage database.
-    public void createOffsetSchemaHistoryDatabase() {
+    public String getOffsetStorageDatabaseName() {
+
         String offsetSchemaHistoryTable = null;
         try {
             offsetSchemaHistoryTable = config.getString(JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
@@ -167,43 +170,49 @@ public class DbWriter extends BaseDbWriter {
         }
         if(offsetSchemaHistoryTable == null || offsetSchemaHistoryTable.isEmpty() == true) {
             log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
-            return;
+            return null;
         }
         String offsetStorageDatabaseNameArray[] = offsetSchemaHistoryTable.split("\\.");
         if(offsetStorageDatabaseNameArray.length <= 2) {
             log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
-            return;
+            return null;
         }
         String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];
         String offsetStorageTableName = offsetStorageDatabaseNameArray[1];
+
+        return offsetStorageDatabaseName;
+    }
+    // Create offset/schema history storage database.
+    public void createDestinationDatabase(String databaseName) {
+
         DBMetadata metadata = new DBMetadata();
         try {
-            if (false == metadata.checkIfDatabaseExists(this.conn, offsetStorageDatabaseName)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, offsetStorageDatabaseName);
+            if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
+                new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
             }
         } catch(Exception e) {
 
             int maxRetries = 0;
             final int MAX_RETRIES = 5;
-            log.error("Error creating Database: " + offsetStorageDatabaseName);
+            log.error("Error creating Database: " + databaseName);
 
             // Keep retrying to createNewDatabase until Max number of retries is reached.
             boolean createDatabaseFailed = false;
             while(maxRetries++ > MAX_RETRIES) {
                 try {
                     Thread.sleep(maxRetries * 5000);
-                    if (false == metadata.checkIfDatabaseExists(this.conn, offsetStorageDatabaseName)) {
-                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, offsetStorageDatabaseName);
+                    if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
+                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
                         createDatabaseFailed = true;
                         break;
                     }
                 } catch (Exception ex) {
-                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + offsetStorageDatabaseName);
+                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + databaseName);
                 }
             }
             // if maxRetries exceeded, throw runtime exception.
             if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + offsetStorageDatabaseName);
+                throw new RuntimeException("Error creating Database: " + databaseName);
             }
         }
     }
