@@ -55,15 +55,16 @@ public class ReplicatedRMTDDLIT {
         // clickHouseContainer.start();
         Thread.sleep(15000);
 
-        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:23.8")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
                 .withPassword("password")
                 .withClasspathResourceMapping("config_replicated.xml", "/etc/clickhouse-server/config.d/config.xml", BindMode.READ_ONLY)
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
-                .withExposedPorts(8123)
-                        .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
+                .withExposedPorts(8123);
+
+        //                .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
@@ -104,7 +105,7 @@ public class ReplicatedRMTDDLIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet rs = writer.executeQueryWithResultSet("show create table string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet rs = writer.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4");
         // Validate that all the tables are created.
         boolean resultValidated = false;
         while(rs.next()) {
@@ -118,7 +119,7 @@ public class ReplicatedRMTDDLIT {
 
         boolean dataValidated = false;
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4");
 
         while(dateTimeResult.next()) {
             dataValidated = true;
