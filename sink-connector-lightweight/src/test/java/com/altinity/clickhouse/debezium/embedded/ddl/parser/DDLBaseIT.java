@@ -3,8 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+
 
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.AfterEach;

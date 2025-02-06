@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.runner.RunWith;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -58,10 +60,15 @@ public class DebeziumStorageViewIT {
         Thread.sleep(15000);
     }
 
-    @AfterEach()
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
 
@@ -111,5 +118,7 @@ public class DebeziumStorageViewIT {
         ClickHouseDebeziumEmbeddedApplication.stop();
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
         executorService.shutdown();
+
+        HikariDbSource.close();
     }
 }

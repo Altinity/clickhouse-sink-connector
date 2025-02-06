@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -65,10 +66,15 @@ public class MultipleUpdatesWSameTimestampIT {
         Thread.sleep(35000);
     }
 
-    @AfterEach()
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
     @DisplayName("Test that validates that the sequence number that is created in non-gtid mode is incremented correctly,"
@@ -128,7 +134,7 @@ public class MultipleUpdatesWSameTimestampIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         long col2 = 1L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from newtable final where col1 = 'a'");
+        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees.newtable final where col1 = 'a'");
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
@@ -141,5 +147,8 @@ public class MultipleUpdatesWSameTimestampIT {
         conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
+
     }
 }

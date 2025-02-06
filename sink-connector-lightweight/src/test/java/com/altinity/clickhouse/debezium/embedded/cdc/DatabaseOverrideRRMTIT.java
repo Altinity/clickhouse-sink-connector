@@ -7,10 +7,10 @@ import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,7 +32,6 @@ import java.util.concurrent.Executors;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 import static org.junit.Assert.assertTrue;
-
 public class DatabaseOverrideRRMTIT {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseOverrideRRMTIT.class);
@@ -68,19 +67,14 @@ public class DatabaseOverrideRRMTIT {
                 .withExposedPorts(8123)
                 .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
-        clickHouseContainer.start();
+//        clickHouseContainer.start();
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-        clickHouseContainer.start();
+     //   clickHouseContainer.start();
         Thread.sleep(35000);
-    }
-    @AfterEach()
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
-    }
 
+    }
 
     @DisplayName("Test that validates overriding database name in ClickHouse for ReplicatedReplacingMergeTree(RRMT)")
     @Test
@@ -208,5 +202,8 @@ public class DatabaseOverrideRRMTIT {
         conn.close();
         // Files.deleteIfExists( tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
+
     }
 }

@@ -6,11 +6,13 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.*;
+import org.junit.runner.RunWith;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -51,10 +53,16 @@ public class Debezium15KTablesLoadIT {
         clickHouseContainer.start();
         Thread.sleep(35000);
     }
-    @AfterEach()
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
+
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
     @Test
@@ -111,5 +119,8 @@ public class Debezium15KTablesLoadIT {
 
         // Close connection.
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+
+        HikariDbSource.close();
+
     }
 }

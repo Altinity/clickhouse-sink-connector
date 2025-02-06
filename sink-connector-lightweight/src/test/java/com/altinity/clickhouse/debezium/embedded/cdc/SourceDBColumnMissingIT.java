@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -64,9 +65,14 @@ public class SourceDBColumnMissingIT {
     }
 
     @AfterEach
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
     }
 
     @Test
@@ -120,6 +126,9 @@ public class SourceDBColumnMissingIT {
 
         conn.close();
         executorService.shutdown();
+
+        HikariDbSource.close();
+
     }
 
 }

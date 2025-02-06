@@ -21,7 +21,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,10 +55,15 @@ public class ClickHouseDelayedStartIT {
         clickHouseContainer.start();
         Thread.sleep(15000);
     }
-    @AfterEach()
-    public void stop() {
-        mySqlContainer.stop();
-        clickHouseContainer.stop();
+
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
     }
 
     @Test
