@@ -47,7 +47,7 @@ public class HikariDbSource {
         // pass the clickhouse config to create the datasource
 
         int maxPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString());
-        long poolConnectionTimeout = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString());
+        long poolConnectionTimeout = config.getLong(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString());
         int minIdle = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString());
         
         HikariConfig poolConfig = new HikariConfig();
