@@ -130,7 +130,7 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME");
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
