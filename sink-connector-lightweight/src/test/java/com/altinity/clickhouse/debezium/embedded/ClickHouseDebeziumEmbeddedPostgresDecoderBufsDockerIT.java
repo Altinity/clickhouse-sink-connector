@@ -97,7 +97,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
 
 
         int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
