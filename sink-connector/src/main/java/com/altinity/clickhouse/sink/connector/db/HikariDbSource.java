@@ -1,10 +1,14 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -13,35 +17,39 @@ import java.util.Map;
 
 // Singleton class(one per database)
 public class HikariDbSource {
-    private static Map<String, HikariDbSource> instance = new HashMap<>();
+    private static Map<String, HikariDataSource> instance = new HashMap<>();
     //private static HikariDbSource instance;
 
-    private HikariDataSource dataSource;
+    private static final Logger log = LogManager.getLogger(HikariDbSource.class);
+    //private HikariDataSource dataSource;
     private String databaseName;
 
     // private constructor
     private HikariDbSource(ClickHouseDataSource dataSource, String databaseName) {
-        this.createConnectionPool(dataSource, databaseName);
+        // this.createConnectionPool(dataSource, databaseName);
     }
 
-    public Connection getConnection() throws SQLException {
-        return this.dataSource.getConnection();
-    }
 
-    public static HikariDbSource getInstance(ClickHouseDataSource dataSource, String databaseName) {
+    public static HikariDataSource getInstance(ClickHouseDataSource dataSource, String databaseName,
+                                               ClickHouseSinkConnectorConfig config) {
 
         if(instance.containsKey(databaseName)) {
             return instance.get(databaseName);
         } else {
-            HikariDbSource hikariDbSource = new HikariDbSource(dataSource, databaseName);
-            instance.put(databaseName, hikariDbSource);
+            HikariDataSource hikariDataSource = createConnectionPool(dataSource, databaseName, config);
+            instance.put(databaseName, hikariDataSource);
         }
         return instance.get(databaseName);
     }
-    public void createConnectionPool(ClickHouseDataSource dataSource, String databaseName)  {
+
+    private static HikariDataSource createConnectionPool(ClickHouseDataSource chDataSource, 
+        String databaseName, ClickHouseSinkConnectorConfig config)  {
         // pass the clickhouse config to create the datasource
 
-     
+        int maxPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString());
+        long poolConnectionTimeout = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString());
+        int minIdle = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString());
+        
         HikariConfig poolConfig = new HikariConfig();
         poolConfig.setPoolName("clickhouse" + "-" + databaseName);
         String jdbcUrl = String.format("jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone&server_version=22.13.1.24495", databaseName);
@@ -49,18 +57,33 @@ public class HikariDbSource {
         poolConfig.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver"); // Ensure driver is set
        // poolConfig.setUsername(dataSource.getConnection().getCurrentUser()); // Optional, if already in JDBC URL
         // poolConfig.setPassword(dataSource.getConnection().()); // Optional, if already in JDBC URL
-        poolConfig.setConnectionTimeout(50000L);
-        poolConfig.setMaximumPoolSize(500);
-        poolConfig.setMinimumIdle(10);
+        poolConfig.setConnectionTimeout(poolConnectionTimeout);
+        poolConfig.setMaximumPoolSize(maxPoolSize);
+        poolConfig.setMinimumIdle(minIdle);
         poolConfig.setMaxLifetime(300_000L);
-        poolConfig.setDataSource(dataSource);
+        poolConfig.setDataSource(chDataSource);
 
-        this.dataSource = new HikariDataSource(poolConfig);
+        HikariDataSource dataSource = new HikariDataSource(poolConfig);
 
         PrometheusMeterRegistry meterRegistry = Metrics.meterRegistry();
 
         if(meterRegistry != null) {
-            this.dataSource.setMetricRegistry(meterRegistry);
+            dataSource.setMetricRegistry(meterRegistry);
         }
-    }   
+        return dataSource;
+    }
+
+    public static void close() {
+
+        if(instance != null) {
+            for(HikariDataSource hikariDataSource: instance.values()) {
+                try {
+                    hikariDataSource.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            instance.clear();
+        }
+    }
 }

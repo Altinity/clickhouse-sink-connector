@@ -2,13 +2,10 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.junit.Assert;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -18,9 +15,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
-import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -115,5 +110,6 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
 
+        HikariDbSource.close();
     }
 }

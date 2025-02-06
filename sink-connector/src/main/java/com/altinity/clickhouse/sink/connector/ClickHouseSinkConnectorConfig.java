@@ -474,7 +474,35 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString())
-
-                ;
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString(),
+                        Type.INT,
+                        500,
+                        Importance.HIGH,
+                        "The maximum size of the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString(),
+                        Type.LONG,
+                        50000,
+                        Importance.HIGH,
+                        "The timeout for the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString(),
+                        Type.INT,
+                        10,
+                        Importance.HIGH,
+                        "The minimum number of idle connections in the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString());
     }
 }

@@ -1,10 +1,8 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.mongodb.MongoException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -112,6 +110,7 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
     // Files.deleteIfExists(tmpFilePath);
     executorService.shutdown();
 
+    HikariDbSource.close();
     //writer.getConnection().close();
 
 

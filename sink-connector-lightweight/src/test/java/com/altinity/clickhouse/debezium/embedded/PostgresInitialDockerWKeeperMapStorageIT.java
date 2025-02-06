@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -162,6 +163,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+        HikariDbSource.close();
 
     }
 }

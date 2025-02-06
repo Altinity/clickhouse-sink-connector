@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.collect.Maps;
 import com.google.inject.Guice;
@@ -14,6 +15,7 @@ import com.google.inject.Injector;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.*;
+import org.junit.runner.RunWith;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -157,6 +159,9 @@ public class DebeziumChangeEventCaptureIT{
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
         conn.close();
         executorService.shutdown();
+
+        HikariDbSource.close();
+
     }
 
 }

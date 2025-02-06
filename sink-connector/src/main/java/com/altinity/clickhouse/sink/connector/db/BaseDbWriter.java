@@ -13,6 +13,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+
+import com.zaxxer.hikari.HikariDataSource;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -114,7 +116,7 @@ public class BaseDbWriter {
             url = url + "?user=" + userName + "&password=" + password;
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
             // Get connection from the pool.
-            HikariDbSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName);
+            HikariDataSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName, config);
             // Create a new ClickHouseConnection object with the connection from the pool.
             // Convert Connection to ClickHouseConnection.
 
@@ -149,6 +151,7 @@ public class BaseDbWriter {
             }
         }
 
+        //conn.close();
         return result;
     }
 
