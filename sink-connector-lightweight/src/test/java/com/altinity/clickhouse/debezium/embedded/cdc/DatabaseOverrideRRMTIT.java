@@ -67,11 +67,11 @@ public class DatabaseOverrideRRMTIT {
                 .withExposedPorts(8123);
                 //.waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
-//        clickHouseContainer.start();
+        //clickHouseContainer.start();
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-     //   clickHouseContainer.start();
+       clickHouseContainer.start();
         Thread.sleep(35000);
 
     }

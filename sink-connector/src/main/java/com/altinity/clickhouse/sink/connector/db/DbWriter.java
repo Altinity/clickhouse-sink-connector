@@ -18,6 +18,8 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static io.debezium.storage.jdbc.JdbcCommonConfig.CONFIGURATION_FIELD_PREFIX_STRING;
+
 /**
  * Class that abstracts all functionality
  * related to interacting with Clickhouse DB.
@@ -164,7 +166,7 @@ public class DbWriter extends BaseDbWriter {
 
         String offsetSchemaHistoryTable = null;
         try {
-            offsetSchemaHistoryTable = config.getString(JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+            offsetSchemaHistoryTable = config.getString(CONFIGURATION_FIELD_PREFIX_STRING  + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         } catch(Exception e) {
             log.error("***** Error retrieving offset store configuration ****", e);
         }
