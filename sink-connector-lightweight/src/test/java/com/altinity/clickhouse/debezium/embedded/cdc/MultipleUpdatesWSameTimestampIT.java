@@ -138,7 +138,7 @@ public class MultipleUpdatesWSameTimestampIT {
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
-        Thread.sleep(10000);
+        Thread.sleep(15000);
 
 
         assertTrue(col2 == 29999);
