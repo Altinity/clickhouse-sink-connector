@@ -116,7 +116,7 @@ public class ReplicatedRMTIT {
 
         boolean dataValidated = false;
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4");
 
         while(dateTimeResult.next()) {
             dataValidated = true;

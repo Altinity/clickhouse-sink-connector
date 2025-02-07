@@ -20,7 +20,6 @@ public class ClickHouseBatchExecutor extends ScheduledThreadPoolExecutor {
 
     @Override
     public void beforeExecute(Thread t, Runnable r) {
-
             while (isPaused) {
                 try {
                     TimeUnit.MILLISECONDS.sleep(100); // Polling
@@ -28,7 +27,8 @@ public class ClickHouseBatchExecutor extends ScheduledThreadPoolExecutor {
                     t.interrupt();
                 }
             }
-        }
+
+    }
     public void resume() {
         isPaused = false;
     }
