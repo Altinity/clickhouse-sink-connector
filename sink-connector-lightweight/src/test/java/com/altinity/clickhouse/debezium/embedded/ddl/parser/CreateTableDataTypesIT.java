@@ -106,7 +106,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         writer = ITCommon.getDBWriter(clickHouseContainer);
         // Validate temporal_types_DATE data.
-        ResultSet dateResult = writer.executeQueryWithResultSet("select * employees.from temporal_types_DATE");
+        ResultSet dateResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATE");
 
         while(dateResult.next()) {
             Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1900-01-01"));
