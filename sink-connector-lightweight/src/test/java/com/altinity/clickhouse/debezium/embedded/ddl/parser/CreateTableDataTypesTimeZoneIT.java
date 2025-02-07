@@ -109,7 +109,7 @@ public class CreateTableDataTypesTimeZoneIT {
         Thread.sleep(10000);
 
         // Validate temporal_types_DATE data.
-        ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
+        ResultSet dateResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATE");
         boolean dateResultValueChecked = false;
         while(dateResult.next()) {
             dateResultValueChecked = true;
@@ -126,7 +126,7 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(dateResultValueChecked);
 
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME");
         boolean dateTimeResultValueChecked = false;
 
 
@@ -184,7 +184,7 @@ public class CreateTableDataTypesTimeZoneIT {
         // DATETIME1
         boolean dateTimeResult1ValueChecked = false;
 
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1");
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             dateTimeResult1ValueChecked = true;
@@ -200,7 +200,7 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(dateTimeResult1ValueChecked);
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2");
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
