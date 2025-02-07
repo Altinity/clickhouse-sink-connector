@@ -143,7 +143,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Thread.sleep(10000);
 
         // Verify on ClickHouse if the table is created.
-        rs = writer.executeQueryWithResultSet("show create table l1");
+        rs = writer.executeQueryWithResultSet("show create table employees.l1");
         // Validate that all the tables are created.
         resultValidated = false;
         while(rs.next()) {

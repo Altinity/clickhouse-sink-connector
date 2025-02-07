@@ -102,7 +102,7 @@ public class ReplicatedRMTIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet rs = writer.executeQueryWithResultSet("show create table string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet rs = writer.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4");
         // Validate that all the tables are created.
         boolean resultValidated = false;
         while(rs.next()) {
