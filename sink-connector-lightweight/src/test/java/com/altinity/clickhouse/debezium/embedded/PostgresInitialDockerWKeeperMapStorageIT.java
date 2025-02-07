@@ -151,7 +151,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Thread.sleep(15000);
 
         // Check if the clickhouse table is empty.
-        chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
