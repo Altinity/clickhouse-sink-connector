@@ -97,7 +97,7 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
 
-        writer.getConnection().close();
+        //writer.getConnection().close();
         Thread.sleep(20000);
 
         /**
