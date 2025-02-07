@@ -105,7 +105,7 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
         Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
 
-        writer.getConnection().close();
+        //writer.getConnection().close();
         Thread.sleep(10000);
 
         // Validate temporal_types_DATE data.
