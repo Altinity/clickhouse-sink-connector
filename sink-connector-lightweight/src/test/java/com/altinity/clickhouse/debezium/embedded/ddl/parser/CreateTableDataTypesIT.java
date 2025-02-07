@@ -106,7 +106,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         writer = ITCommon.getDBWriter(clickHouseContainer);
         // Validate temporal_types_DATE data.
-        ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
+        ResultSet dateResult = writer.executeQueryWithResultSet("select * employees.from temporal_types_DATE");
 
         while(dateResult.next()) {
             Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1900-01-01"));
@@ -114,7 +114,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2299-12-31"));
         }
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME");
 
         /**
         DATE TIME
@@ -163,7 +163,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1");
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
 
@@ -178,7 +178,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2");
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
 
