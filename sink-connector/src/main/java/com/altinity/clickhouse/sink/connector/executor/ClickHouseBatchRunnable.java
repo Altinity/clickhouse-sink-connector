@@ -4,10 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
@@ -81,6 +78,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
+
         this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
 
 

@@ -78,6 +78,7 @@ public class BaseDbWriter {
     }
 
     public Connection getConnection() {
+        HikariDbSource.printConnectionInfo();
         return this.conn;
     }
     public static String getConnectionString(String hostName, Integer port, String database) {

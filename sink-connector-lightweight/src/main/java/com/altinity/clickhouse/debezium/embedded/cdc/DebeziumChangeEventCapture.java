@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
@@ -270,11 +271,17 @@ public class DebeziumChangeEventCapture {
                 if (DDL != null && DDL.isEmpty() == false)
                 {
                     log.info("***** DDL received, Flush all existing records");
-                    this.executor.shutdown();
-                    this.executor.awaitTermination(60, TimeUnit.SECONDS);
+//                    this.executor.shutdown();
+//                    this.executor.awaitTermination(60, TimeUnit.SECONDS);
+//                    //HikariDbSource.closeDatabaseConnection(BaseDbWriter.SYSTEM_DB);
+                    this.executor.pause();
 
+                    //this.writer = null;
+                    //this.writer = null;
                     performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch);
-                    setupProcessingThread(config);
+                    this.executor.resume();
+                    //HikariDbSource.closeDatabaseConnection(BaseDbWriter.SYSTEM_DB);
+                    //setupProcessingThread(config);
                 }
 
             } else {
@@ -959,6 +966,7 @@ public class DebeziumChangeEventCapture {
      * @param config
      */
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config) {
+
 
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             log.info("********* Running in Single Threaded mode *********");

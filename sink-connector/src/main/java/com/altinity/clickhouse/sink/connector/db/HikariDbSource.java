@@ -11,13 +11,14 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
 // Singleton class(one per database)
 public class HikariDbSource {
     private static Map<String, HikariDataSource> instance = new HashMap<>();
+
+    private static Map<String, Connection> connectionPool = new HashMap<>();
     //private static HikariDbSource instance;
 
     private static final Logger log = LogManager.getLogger(HikariDbSource.class);
@@ -59,7 +60,8 @@ public class HikariDbSource {
         // poolConfig.setPassword(dataSource.getConnection().()); // Optional, if already in JDBC URL
         poolConfig.setConnectionTimeout(poolConnectionTimeout);
         poolConfig.setMaximumPoolSize(maxPoolSize);
-        poolConfig.setMinimumIdle(minIdle);
+        //poolConfig.setMinimumIdle(minIdle);
+        poolConfig.setIdleTimeout(2_000L);
         poolConfig.setMaxLifetime(300_000L);
         poolConfig.setDataSource(chDataSource);
 
@@ -84,6 +86,23 @@ public class HikariDbSource {
                 }
             }
             instance.clear();
+        }
+    }
+
+    public static void closeDatabaseConnection(String databaseName) {
+        if(instance.containsKey(databaseName)) {
+            try {
+                instance.get(databaseName).close();
+            } catch (Exception e) {
+                e.printStackTrace();
+                log.error("Error closing database connection pool", e);
+            }
+        }
+    }
+
+    public static void printConnectionInfo() {
+        for(HikariDataSource hikariDataSource: instance.values()) {
+            log.debug("Connection Pool Info: " + hikariDataSource.getPoolName() + " Max Size: " + hikariDataSource.getMaximumPoolSize() + " Active Connections: " + hikariDataSource.getHikariPoolMXBean().getActiveConnections());
         }
     }
 }

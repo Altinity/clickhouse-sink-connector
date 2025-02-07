@@ -503,6 +503,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         6,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString());
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString(),
+                        Type.STRING,
+                        "altinity_sink_connector",
+                        Importance.HIGH,
+                        "The name of the offset storage table",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        7,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
+                ;
     }
 }
