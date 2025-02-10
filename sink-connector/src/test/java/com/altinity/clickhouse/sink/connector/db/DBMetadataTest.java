@@ -74,13 +74,13 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                "newdb", new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
 
         // Default database exists.
-        boolean result = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "default");
+        boolean result = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "system");
         Assert.assertTrue(result);
 
         boolean result2 = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "newdb");
@@ -151,7 +151,7 @@ public class DBMetadataTest {
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+        DbWriter writer = new DbWriter(dbHostName, port, "employees", tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         ZoneId serverTimeZone = new DBMetadata().getServerTimeZone(writer.getConnection());
 
