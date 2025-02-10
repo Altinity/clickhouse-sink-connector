@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP;
+
 
 public class MySqlDDLParserListenerImplTest {
 
@@ -226,6 +228,18 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testDropDatabaseWithOverrideMap() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String dropQuery = "DROP DATABASE `test`";
+        Map<String, String> config = new HashMap<>();
+        config.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "test:test2");
+
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "test");
+        mySQLDDLParserService1.parseSql(dropQuery, "test", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP DATABASE IF EXISTS test2"));
+        log.info("Drop database " + clickHouseQuery);
+    }
+    @Test
     public void testCreateTableWithReplicatedReplacingMergeTree() {
 
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -234,7 +248,7 @@ public class MySqlDDLParserListenerImplTest {
         // Set ClickHouse sink connector config to set replicated tables.
         Map<String, String> config = new HashMap<>();
         config.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+        config.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
 
         ClickHouseSinkConnectorConfig clickHouseSinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(clickHouseSinkConnectorConfig, "ch1");
@@ -496,7 +510,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testRenameColumnWithDatabaseOverride() {
 
         Map<String, String> props = new HashMap<>();
-        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
+        props.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "ch1");
 
@@ -669,7 +683,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         HashMap<String, String> props = new HashMap<>();
-        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
+        props.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "employees2");
 

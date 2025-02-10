@@ -24,6 +24,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
+import java.sql.Connection;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -132,6 +133,10 @@ public class DatabaseOverrideInitialIT {
             customersCol2 = customersVersionResult.getLong("col2");
         }
         assertTrue(customersCol2 == 1);
+
+        //Execute drop database tests to see if the clickhouse database is correctly mapped and dropped.
+        Connection mySqlConn = ITCommon.connectToMySQL(mySqlContainer);
+        mySqlConn.createStatement().execute("DROP DATABASE IF EXISTS employees");
 
 
 
