@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/196014292373768012/a75a39f0faa24d009e263f7f682eecc9/artifacts
+end_time: 1737995325113
+entry_point_name: ''
+experiment_id: '196014292373768012'
+lifecycle_stage: active
+run_id: a75a39f0faa24d009e263f7f682eecc9
+run_name: loud-whale-641
+run_uuid: a75a39f0faa24d009e263f7f682eecc9
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1737995325062
+status: 3
+tags: []
+user_id: kanthi

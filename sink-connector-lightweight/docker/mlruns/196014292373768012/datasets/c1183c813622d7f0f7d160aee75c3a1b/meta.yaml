@@ -1,0 +1,14 @@
+digest: 2a1e42c4
+name: wine quality - white
+profile: '{"num_rows": 4898, "num_elements": 58776}'
+schema: '{"mlflow_colspec": [{"type": "double", "name": "fixed acidity", "required":
+  true}, {"type": "double", "name": "volatile acidity", "required": true}, {"type":
+  "double", "name": "citric acid", "required": true}, {"type": "double", "name": "residual
+  sugar", "required": true}, {"type": "double", "name": "chlorides", "required": true},
+  {"type": "double", "name": "free sulfur dioxide", "required": true}, {"type": "double",
+  "name": "total sulfur dioxide", "required": true}, {"type": "double", "name": "density",
+  "required": true}, {"type": "double", "name": "pH", "required": true}, {"type":
+  "double", "name": "sulphates", "required": true}, {"type": "double", "name": "alcohol",
+  "required": true}, {"type": "long", "name": "quality", "required": true}]}'
+source: '{"url": "https://raw.githubusercontent.com/mlflow/mlflow/master/tests/datasets/winequality-white.csv"}'
+source_type: http
