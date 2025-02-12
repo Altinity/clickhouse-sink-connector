@@ -76,8 +76,8 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         DBMetadata dbMetadata = new DBMetadata();
-        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(conn, "ship_class", "employees");
-        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(conn, "add_test", "employees");
+        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
         Thread.sleep(10000);
         // Validate all ship_class columns.
