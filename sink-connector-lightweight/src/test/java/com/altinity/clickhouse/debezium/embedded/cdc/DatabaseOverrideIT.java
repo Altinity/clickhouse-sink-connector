@@ -122,7 +122,7 @@ public class DatabaseOverrideIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         long col2 = 0L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'");
+        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
@@ -130,7 +130,7 @@ public class DatabaseOverrideIT {
         assertTrue(col2 == 1);
 
         long productsCol2 = 0L;
-        ResultSet productsVersionResult = writer.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'");
+        ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
         while(productsVersionResult.next()) {
             productsCol2 = productsVersionResult.getLong("col2");
         }
@@ -138,7 +138,7 @@ public class DatabaseOverrideIT {
         Thread.sleep(10000);
 
         long customersCol2 = 0L;
-        ResultSet customersVersionResult = writer.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'");
+        ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
         while(customersVersionResult.next()) {
             customersCol2 = customersVersionResult.getLong("col2");
         }

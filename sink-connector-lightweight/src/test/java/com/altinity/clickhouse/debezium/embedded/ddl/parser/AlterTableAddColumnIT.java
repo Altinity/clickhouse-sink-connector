@@ -5,7 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
-
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -86,9 +86,9 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Thread.sleep(25000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-       
-        Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
-        Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
         // Validate all ship_class columns.
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("String"));

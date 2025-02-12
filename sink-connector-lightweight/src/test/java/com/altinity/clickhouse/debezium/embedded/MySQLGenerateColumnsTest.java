@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.*;
@@ -97,7 +98,8 @@ public class MySQLGenerateColumnsTest {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        Map<String, String> columnsToDataTypeMap = writer.getColumnsDataTypesForTable("contacts");
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
@@ -105,7 +107,7 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from employees.contacts");
+        ResultSet resultSet = ITCommon.executeQueryWithResultSet("select fullname from employees.contacts", writer.getConnection());
         boolean insertCheck = false;
         while (resultSet.next()) {
                 insertCheck = true;

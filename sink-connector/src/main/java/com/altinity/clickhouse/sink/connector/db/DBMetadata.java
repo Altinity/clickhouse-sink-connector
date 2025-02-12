@@ -273,6 +273,11 @@ public class DBMetadata {
         return result;
     }
 
+    public String getClickHouseVersion(Connection connection) throws SQLException {
+        return this.executeSystemQuery(connection, "SELECT VERSION()");
+    }
+
+
 
     /**
      * Function to get the column name and isNullable as key/value pair.
@@ -394,5 +399,68 @@ public class DBMetadata {
             }
         }
         return aliasColumns;
+    }
+
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
+        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        return rs;
+
+    }
+
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public String executeSystemQuery(Connection conn, String sql) throws SQLException {
+        String result = null;
+        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        if(rs != null) {
+            while(rs.next()) {
+                result = rs.getString(1);
+            }
+        }
+
+        //conn.close();
+        return result;
+    }
+
+
+
+    public Map<String, String> getColumnsDataTypesForTable(Connection conn, String tableName, String database ) {
+
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        try {
+            if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
+
+            ResultSet columns = conn.getMetaData().getColumns(null, database,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+//                Object dataType = columns.getString("DATA_TYPE");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                result.put(columnName, typeName);
+            }
+        } catch (SQLException sq) {
+            log.error("Exception retrieving Column Metadata", sq);
+        }
+        return result;
     }
 }

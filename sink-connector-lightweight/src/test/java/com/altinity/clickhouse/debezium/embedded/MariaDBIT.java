@@ -125,7 +125,7 @@ public class MariaDBIT
         // Create connection to clickhouse and validate if the tables are replicated.
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM employees.audience");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {

@@ -115,7 +115,7 @@ public class SourceDBColumnMissingIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         long col2 = 1L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees.newtable final where col1 = 'a'");
+        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }

@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.logging.Logger;
 import com.clickhouse.logging.LoggerFactory;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
@@ -50,8 +51,10 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         // String connectorName = config.getString("connector.name");
-        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" , tableName, offsetKey);
-        writer.executeSystemQuery(debeziumStorageStatusQuery);
+        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" ,
+                tableName, offsetKey);
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(writer.getConnection(), debeziumStorageStatusQuery);
     }
 
     /**
@@ -67,7 +70,8 @@ public class DebeziumOffsetStorage {
 
         String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
         log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
-        writer.executeSystemQuery(debeziumStorageStatusQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(writer.getConnection(), debeziumStorageStatusQuery);
     }
     /**
      * Function to get the latest timestamp of the record in the table
@@ -81,7 +85,9 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s" , tableName);
-        return writer.executeSystemQuery(debeziumLatestRecordTimestampQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        return dbMetadata.executeSystemQuery(writer.getConnection(), debeziumLatestRecordTimestampQuery);
+
     }
 
     public String getDebeziumStorageStatusQuery(
@@ -92,7 +98,8 @@ public class DebeziumOffsetStorage {
         String offsetKey = getOffsetKey(props);
         // String connectorName = config.getString("connector.name");
         String debeziumStorageStatusQuery = String.format("select offset_val from %s where offset_key='%s'" , tableName, offsetKey);
-        return writer.executeSystemQuery(debeziumStorageStatusQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        return dbMetadata.executeSystemQuery(writer.getConnection(), debeziumStorageStatusQuery);
     }
 
     /**

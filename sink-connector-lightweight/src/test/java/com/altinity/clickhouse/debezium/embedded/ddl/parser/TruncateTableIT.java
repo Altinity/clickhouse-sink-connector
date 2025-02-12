@@ -89,7 +89,7 @@ public class TruncateTableIT {
 
         //Validate if ship_class was truncated also in ClickHouse.
         // Validate that the table is empty in ClickHouse
-        ResultSet rs = writer.executeQueryWithResultSet("select * from employees.ship_class");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.ship_class", writer.getConnection());
         boolean recordFoundShipClass = false;
         while(rs.next()) {
             recordFoundShipClass = true;
@@ -105,7 +105,7 @@ public class TruncateTableIT {
         conn.close();
         Thread.sleep(10000);
 
-        rs = writer.executeQueryWithResultSet("select * from employees.new_table");
+        rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
@@ -123,7 +123,7 @@ public class TruncateTableIT {
         conn.close();
 
         // Validate that the table is empty in ClickHouse
-        rs = writer.executeQueryWithResultSet("select * from employees.new_table");
+        rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
         recordFound = false;
         while(rs.next()) {
             recordFound = true;

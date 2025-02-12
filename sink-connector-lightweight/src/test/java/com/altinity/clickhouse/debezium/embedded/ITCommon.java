@@ -10,6 +10,7 @@ import org.testcontainers.containers.*;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.HashMap;
@@ -225,5 +226,19 @@ public class ITCommon {
                 databaseName, clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
 
         return writer;
+    }
+
+
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    static public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
+        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        return rs;
+
     }
 }

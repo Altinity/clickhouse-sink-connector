@@ -101,7 +101,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet rs = writer.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
         // Validate that all the tables are created.
         boolean resultValidated = false;
         while(rs.next()) {
@@ -115,7 +115,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
 
         boolean dataValidated = false;
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
 
         while(dateTimeResult.next()) {
             dataValidated = true;
@@ -143,7 +143,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Thread.sleep(10000);
 
         // Verify on ClickHouse if the table is created.
-        rs = writer.executeQueryWithResultSet("show create table employees.l1");
+        rs = ITCommon.executeQueryWithResultSet("show create table employees.l1", writer.getConnection());
         // Validate that all the tables are created.
         resultValidated = false;
         while(rs.next()) {

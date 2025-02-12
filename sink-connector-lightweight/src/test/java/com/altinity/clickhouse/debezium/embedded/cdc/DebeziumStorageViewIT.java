@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserServ
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -105,7 +106,7 @@ public class DebeziumStorageViewIT {
 
 
         // Check if the view altinity_sink_connector.show_replica_status was created successfully.
-        ResultSet resultSet = writer.executeQueryWithResultSet("show create view altinity_sink_connector.show_replica_status");
+        ResultSet resultSet = ITCommon.executeQueryWithResultSet("show create view altinity_sink_connector.show_replica_status", writer.getConnection());
 
         boolean viewCheck = false;
         while (resultSet.next()) {

@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
@@ -82,8 +83,9 @@ public class DatabaseOverrideRRMTIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        writer.executeSystemQuery("CREATE DATABASE employees2");
-        writer.executeSystemQuery("CREATE DATABASE productsnew");
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
 
         Thread.sleep(10000);
         Injector injector = Guice.createInjector(new AppInjector());
@@ -138,7 +140,7 @@ public class DatabaseOverrideRRMTIT {
 
 
         long col2 = 0L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'");
+        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
@@ -146,7 +148,7 @@ public class DatabaseOverrideRRMTIT {
         assertTrue(col2 == 1);
 
         long productsCol2 = 0L;
-        ResultSet productsVersionResult = writer.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'");
+        ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
         while(productsVersionResult.next()) {
             productsCol2 = productsVersionResult.getLong("col2");
         }
@@ -154,7 +156,7 @@ public class DatabaseOverrideRRMTIT {
         Thread.sleep(10000);
 
         long customersCol2 = 0L;
-        ResultSet customersVersionResult = writer.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'");
+        ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
         while(customersVersionResult.next()) {
             customersCol2 = customersVersionResult.getLong("col2");
         }
@@ -173,7 +175,7 @@ public class DatabaseOverrideRRMTIT {
 //        assertTrue(customersCol2 == 2);
 
         // validate that the table prodtaable2 is present in clickhouse
-        ResultSet chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable2");
+        ResultSet chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable2", writer.getConnection());
         boolean recordFound = false;
         while(chRs.next()) {
             recordFound = true;
@@ -189,7 +191,7 @@ public class DatabaseOverrideRRMTIT {
 
         Thread.sleep(10000);
         // Validate on CH that the table prodtable3 is present.
-        chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable3");
+         chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
         boolean prod3RecordFound = false;
         while(chRs.next()) {
             prod3RecordFound = true;

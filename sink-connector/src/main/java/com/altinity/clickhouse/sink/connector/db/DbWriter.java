@@ -104,8 +104,9 @@ public class DbWriter extends BaseDbWriter {
             long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
             boolean isNewReplacingMergeTreeEngine = false;
             try {
-                String clickHouseVersion = this.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                DBMetadata dbMetadata = new DBMetadata();
+                String clickHouseVersion = dbMetadata.getClickHouseVersion(this.conn);
+                isNewReplacingMergeTreeEngine = dbMetadata
                         .checkIfNewReplacingMergeTree(clickHouseVersion);
             } catch (Exception e) {
                 log.error("Error retrieving ClickHouse version");

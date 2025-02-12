@@ -11,6 +11,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -30,6 +31,11 @@ public class HikariDbSource {
         // this.createConnectionPool(dataSource, databaseName);
     }
 
+    public static Connection initiateNewConnectionIfClosed(String databaseName) throws SQLException {
+
+        HikariDataSource dbSource = instance.get(databaseName);
+        return dbSource.getConnection();
+    }
 
     public static HikariDataSource getInstance(ClickHouseDataSource dataSource, String databaseName,
                                                ClickHouseSinkConnectorConfig config) {

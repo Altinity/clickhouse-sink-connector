@@ -98,9 +98,6 @@ public class SinkConnectorClientRestAPITest {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
-
-
         HttpUriRequest request = new HttpGet("http://localhost:7000/status");
 
         // Validate the status call.

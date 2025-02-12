@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.*;
@@ -129,7 +130,7 @@ public class MultipleDatabaseIT
         // query clickhouse connection and get data for test_table1 and test_table2
 
 
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM test_db.test_table", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {
@@ -139,7 +140,7 @@ public class MultipleDatabaseIT
         }
         Assert.assertTrue(recordFound);
 
-        rs = writer.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2");
+        rs = ITCommon.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2", writer.getConnection());
         // Validate the data
         recordFound = false;
         while(rs.next()) {
@@ -163,7 +164,8 @@ public class MultipleDatabaseIT
         BaseDbWriter testDb2Writer = ITCommon.getDBWriter(clickHouseContainer, "test_db2");
 
         // Validate the columns in Clickhouse for test_db.test_table
-        Map<String, String> columnMap = testDb2Writer.getColumnsDataTypesForTable("test_table");
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> columnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
 
         assert columnMap.containsKey("id");
         assert columnMap.containsKey("name2");

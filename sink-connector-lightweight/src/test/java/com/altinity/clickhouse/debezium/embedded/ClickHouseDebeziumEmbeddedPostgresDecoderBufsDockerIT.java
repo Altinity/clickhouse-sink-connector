@@ -4,6 +4,7 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
@@ -87,8 +88,8 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         Thread.sleep(50000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));

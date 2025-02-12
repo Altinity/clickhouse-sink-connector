@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -73,7 +74,7 @@ public class PreparedStatementExecutor {
                                                      Connection conn,
                                                      String tableName,
                                                      Map<String, String> columnToDataTypeMap,
-                                                     DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
+                                                     DBMetadata.TABLE_ENGINE engine) throws Exception {
 
         boolean result = false;
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
@@ -108,7 +109,7 @@ public class PreparedStatementExecutor {
                                           Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
                                           Connection conn, String tableName, Map<String, String> columnToDataTypeMap,
-                                          DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
+                                          DBMetadata.TABLE_ENGINE engine) throws Exception {
 
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
@@ -119,6 +120,7 @@ public class PreparedStatementExecutor {
 
             String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
+
             try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();

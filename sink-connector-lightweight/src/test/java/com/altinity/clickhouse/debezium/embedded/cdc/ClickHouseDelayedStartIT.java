@@ -100,7 +100,7 @@ public class ClickHouseDelayedStartIT {
             // Check if Batch was inserted.
             BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
             try {
-                ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME where Type = 'DATETIME-INSERT55'");
+                ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME where Type = 'DATETIME-INSERT55'", writer.getConnection());
                 while (dateTimeResult.next()) {
                     insertCheck = true;
                     Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
@@ -144,7 +144,7 @@ public class ClickHouseDelayedStartIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         // Check if the view altinity_sink_connector.show_replica_status was created successfully.
-        ResultSet resultSet = writer.executeQueryWithResultSet("show create view altinity_sink_connector.show_replica_status");
+        ResultSet resultSet = ITCommon.executeQueryWithResultSet("show create view altinity_sink_connector.show_replica_status", writer.getConnection());
 
         boolean viewCheck = false;
         while (resultSet.next()) {

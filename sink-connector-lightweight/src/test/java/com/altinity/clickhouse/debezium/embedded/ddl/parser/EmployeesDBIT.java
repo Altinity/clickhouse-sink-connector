@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,34 +78,34 @@ public class EmployeesDBIT extends DDLBaseIT {
 
             BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-
+            DBMetadata dbMetadata = new DBMetadata();
             // Validate that all the tables are created.
-            Map<String, String> departmentsColumns = writer.getColumnsDataTypesForTable("departments");
+            Map<String, String> departmentsColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "departments", "employees");
             Assert.assertTrue(departmentsColumns.get("dept_no").equalsIgnoreCase("String"));
             Assert.assertTrue(departmentsColumns.get("dept_name").equalsIgnoreCase("String"));
 
-            Map<String, String> departmentEmpsColumns = writer.getColumnsDataTypesForTable("dept_emp");
+            Map<String, String> departmentEmpsColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "dept_emp", "employees");
             Assert.assertTrue(departmentEmpsColumns.get("emp_no").equalsIgnoreCase("Int32"));
             Assert.assertTrue(departmentEmpsColumns.get("dept_no").equalsIgnoreCase("String"));
             Assert.assertTrue(departmentEmpsColumns.get("from_date").equalsIgnoreCase("Date32"));
             Assert.assertTrue(departmentEmpsColumns.get("to_date").equalsIgnoreCase("Date32"));
 
-            Map<String, String> deptManagerColumns = writer.getColumnsDataTypesForTable("dept_manager");
+            Map<String, String> deptManagerColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "dept_manager", "employees");
 
-            Map<String, String> employeesColumns = writer.getColumnsDataTypesForTable("employees");
+            Map<String, String> employeesColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
             Assert.assertTrue(employeesColumns.get("emp_no").equalsIgnoreCase("Int32"));
             Assert.assertTrue(employeesColumns.get("birth_date").equalsIgnoreCase("Date32"));
             Assert.assertTrue(employeesColumns.get("first_name").equalsIgnoreCase("String"));
             Assert.assertTrue(employeesColumns.get("last_name").equalsIgnoreCase("String"));
             Assert.assertTrue(employeesColumns.get("gender").equalsIgnoreCase("String"));
 
-            Map<String, String> salariesColumns = writer.getColumnsDataTypesForTable("salaries");
+            Map<String, String> salariesColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "salaries", "employees");
             Assert.assertTrue(salariesColumns.get("emp_no").equalsIgnoreCase("Int32"));
             Assert.assertTrue(salariesColumns.get("salary").equalsIgnoreCase("Int32"));
             Assert.assertTrue(salariesColumns.get("from_date").equalsIgnoreCase("Date32"));
             Assert.assertTrue(salariesColumns.get("to_date").equalsIgnoreCase("Date32"));
 
-            Map<String, String> titlesColumns = writer.getColumnsDataTypesForTable("titles");
+            Map<String, String> titlesColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "titles", "employees");
             Assert.assertTrue(titlesColumns.get("emp_no").equalsIgnoreCase("Int32"));
             Assert.assertTrue(titlesColumns.get("title").equalsIgnoreCase("String"));
             Assert.assertTrue(titlesColumns.get("from_date").equalsIgnoreCase("Date32"));

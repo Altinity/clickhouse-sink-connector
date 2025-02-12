@@ -146,7 +146,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
          * 2106-02-07 00:28:15.0
          */
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
@@ -161,7 +161,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
@@ -174,7 +174,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
@@ -187,7 +187,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
          //DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -203,7 +203,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -218,7 +218,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -233,7 +233,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 

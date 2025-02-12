@@ -105,7 +105,8 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
+        DBMetadata metadata = new DBMetadata();
+        Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap.size() == 44);
@@ -116,7 +117,7 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn2);
-        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap2.size() ==44);
@@ -245,8 +246,10 @@ public class DbWriterTest {
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
+        DBMetadata metadata = new DBMetadata();
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(), dbWriter.getColumnsDataTypesForTable(tableName));
+                , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(),
+                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         Assert.assertTrue(result.isEmpty() == false);
 

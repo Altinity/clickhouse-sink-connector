@@ -204,11 +204,12 @@ public class DebeziumChangeEventCapture {
 
     private void executeDDL(String clickHouseQuery, BaseDbWriter writer) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
+        DBMetadata dbMetadata = new DBMetadata();
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {
                 log.info("ClickHouse DDL: " + query);
-                cat.runQuery(query, writer.getConnection());
+                dbMetadata.executeSystemQuery(writer.getConnection(), query);
             }
         }
     }
@@ -219,7 +220,8 @@ public class DebeziumChangeEventCapture {
         Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
 
         try {
-            String clickHouseVersion = writer.getClickHouseVersion();
+            DBMetadata dbMetadata = new DBMetadata();
+            String clickHouseVersion = dbMetadata.getClickHouseVersion(conn);
             isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
         } catch (Exception e) {
             log.error("Error retrieving version", e);
@@ -393,16 +395,13 @@ public class DebeziumChangeEventCapture {
                         BaseDbWriter.SYSTEM_DB);
                 Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                         dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
-                BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        BaseDbWriter.SYSTEM_DB, dbCredentials.getUserName(),
-                        dbCredentials.getPassword(), config, conn);
 
                 Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
                 String databaseName = tableNameDatabaseName.getRight();
 
                 String createDbQuery = String.format("create database if not exists %s", databaseName);
                 log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-                writer.executeSystemQuery(createDbQuery);
+                new DBMetadata().executeSystemQuery(conn, createDbQuery);
 
                 break;
             } catch (Exception e) {
@@ -432,12 +431,9 @@ public class DebeziumChangeEventCapture {
                 "system");
         Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                "system", dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, conn);
 
         try {
-            writer.executeSystemQuery(createSchemaHistoryTable);
+            new DBMetadata().executeSystemQuery(conn, createSchemaHistoryTable);
         } catch(Exception e) {
             log.error("Error creating schema history table", e);
         }
@@ -460,9 +456,6 @@ public class DebeziumChangeEventCapture {
                 "system");
         Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                "system", dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, conn);
         Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
 
         String tableName = tableNameDatabaseName.getLeft();
@@ -472,7 +465,7 @@ public class DebeziumChangeEventCapture {
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
         try {
-            writer.executeSystemQuery(formattedView);
+            new DBMetadata().executeSystemQuery(conn, formattedView);
         } catch(Exception e) {
             log.error("**** Error creating VIEW **** " + formattedView);
         }
@@ -558,7 +551,8 @@ public class DebeziumChangeEventCapture {
         }
         //DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format("select * from %s limit 1", databaseName + "." + tableName);
-        ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
+        DBMetadata metadata = new DBMetadata();
+        ResultSet resultSet = metadata.executeQueryWithResultSet( debeziumStorageStatusQuery, writer.getConnection());
 
         if(resultSet != null) {
             ResultSetMetaData md = resultSet.getMetaData();

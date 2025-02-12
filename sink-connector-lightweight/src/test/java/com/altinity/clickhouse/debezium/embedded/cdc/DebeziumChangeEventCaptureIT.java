@@ -124,22 +124,22 @@ public class DebeziumChangeEventCaptureIT{
         long version3 = 1L;
         long version4 = 1L;
 
-        ResultSet version1Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'a'");
+        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             version1 = version1Result.getLong("_version");
         }
 
-        ResultSet version2Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'b'");
+        ResultSet version2Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'b'", writer.getConnection());
         while(version2Result.next()) {
             version2 = version2Result.getLong("_version");
         }
 
-        ResultSet version3Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'c'");
+        ResultSet version3Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'c'", writer.getConnection());
         while(version3Result.next()) {
             version3 = version3Result.getLong("_version");
         }
 
-        ResultSet version4Result = writer.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'd'");
+        ResultSet version4Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'd'", writer.getConnection());
         while(version4Result.next()) {
             version4 = version4Result.getLong("_version");
         }

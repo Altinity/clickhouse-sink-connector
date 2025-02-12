@@ -98,7 +98,7 @@ public class Debezium15KTablesLoadIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select name from system.tables where database='employees'");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select name from system.tables where database='employees'", writer.getConnection());
         boolean insertCheck = false;
         List<String> tables = new ArrayList<>();
         while(dateTimeResult.next()) {

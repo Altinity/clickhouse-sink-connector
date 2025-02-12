@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
@@ -77,7 +78,8 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
                 log.info(" ***** ALTER TABLE QUERY **** " + alterTableQuery);
 
                 try {
-                    cat.runQuery(alterTableQuery, connection);
+                    DBMetadata metadata = new DBMetadata();
+                    metadata.executeSystemQuery(connection, alterTableQuery);
                 } catch(Exception e) {
                     log.error(" **** ALTER TABLE EXCEPTION ", e);
                 }

@@ -91,7 +91,7 @@ public class IsDeletedColumnsIT {
         Thread.sleep(10000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        ResultSet rs = writer.executeQueryWithResultSet("select * from employees.new_table");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;

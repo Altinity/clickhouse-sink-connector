@@ -79,6 +79,7 @@ public class BaseDbWriter {
 
     public Connection getConnection() {
         HikariDbSource.printConnectionInfo();
+
         return this.conn;
     }
     public static String getConnectionString(String hostName, Integer port, String database) {
@@ -102,7 +103,6 @@ public class BaseDbWriter {
         if(config != null) {
             config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
         }
-
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
@@ -122,7 +122,6 @@ public class BaseDbWriter {
             // Convert Connection to ClickHouseConnection.
 
             conn = hikariDbSource.getConnection();
-            //conn = dataSource.getConnection(userName, password);
         } catch (Exception e) {
             log.error("Error creating ClickHouse connection" + e);
         }
@@ -132,83 +131,6 @@ public class BaseDbWriter {
 
 
 
-    /**
-     * Function to execute query.
-     * @param sql
-     * @return
-     * @throws SQLException
-     */
-    public String executeSystemQuery(String sql) throws SQLException {
-        String result = null;
-        if(this.conn == null) {
-            String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port,
-                    database);
-            conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password, BaseDbWriter.SYSTEM_DB, config);
-        }
-        ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
-        if(rs != null) {
-            while(rs.next()) {
-                result = rs.getString(1);
-            }
-        }
-
-        //conn.close();
-        return result;
-    }
-
-    /**
-     * Function to execute query.
-     * @param sql
-     * @return
-     * @throws SQLException
-     */
-    public ResultSet executeQueryWithResultSet(String sql) throws SQLException {
-        if(this.conn == null || this.conn.isClosed()) {
-            String connectionUrl = getConnectionString(hostName, port, database);
-            //this.createConnection(connectionUrl, "Agent_1", userName, password);
-        }
-        ResultSet rs = this.conn.prepareStatement(sql).executeQuery();
-        return rs;
-
-    }
-
-    /**
-     * Function to get the clickhouse version.
-     * @return version as string.
-     * @throws SQLException
-     */
-    public String getClickHouseVersion() throws SQLException {
-        return this.executeSystemQuery("SELECT VERSION()");
-    }
-
-
-    public Map<String, String> getColumnsDataTypesForTable(String tableName ) {
-
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = conn.getMetaData().getColumns(null, database,
-                    tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
-
-//                Object dataType = columns.getString("DATA_TYPE");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                result.put(columnName, typeName);
-            }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
-        }
-        return result;
-    }
 
 }
 

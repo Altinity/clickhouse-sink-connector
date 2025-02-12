@@ -118,7 +118,7 @@ public class MySQLJsonIT
         // query clickhouse connection and get data for test_table1 and test_table2
 
 
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM employees.audience");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {

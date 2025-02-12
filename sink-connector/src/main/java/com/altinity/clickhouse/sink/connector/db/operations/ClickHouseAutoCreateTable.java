@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
@@ -33,7 +34,8 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree, rmtDeleteColumn);
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), Query :%s)", databaseName, createTableQuery));
         // ToDO: need to run it before a session is created.
-        this.runQuery(createTableQuery, connection);
+        DBMetadata metadata = new DBMetadata();
+        metadata.executeSystemQuery(connection, createTableQuery);
     }
 
     /**

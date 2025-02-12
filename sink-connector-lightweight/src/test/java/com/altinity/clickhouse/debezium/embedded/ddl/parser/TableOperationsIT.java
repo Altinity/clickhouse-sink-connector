@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
@@ -125,17 +126,17 @@ public class TableOperationsIT {
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 
-            Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class_new3");
-            Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test_new");
-            Map<String, String> copied_table = writer.getColumnsDataTypesForTable("copied_table");
+            DBMetadata dbMetadata = new DBMetadata();
+            Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class_new3", "employees"    );
+            Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
+            Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");
 
             Assert.assertTrue(shipClassColumns.size() == 9);
             Assert.assertTrue(addTestColumns.size() == 5);
             Assert.assertTrue(copied_table.size() == 5);
 
-
             // Validate table created with partitions.
-            String membersResult = writer.executeSystemQuery("show create table members");
+            String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table members");
             Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
@@ -151,7 +152,7 @@ public class TableOperationsIT {
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
 
-            String rcxResult = writer.executeSystemQuery("show create table rcx");
+            String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table rcx");
 
             Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
                         "(\n" +

@@ -96,26 +96,4 @@ public class ClickHouseTableOperationsBase {
         return columnToDataTypesMap;
     }
 
-    /**
-     * Function to execute the create table query using the ClickHouse JDBC connection
-     * @param query
-     * @param conn
-     */
-    public void runQuery(String query, Connection conn) throws SQLException {
-
-        if(conn == null) {
-            log.error("ClickHouse connection not created");
-            throw new SQLException("Connection empty");
-        }
-
-        //https://github.com/ClickHouse/clickhouse-jdbc/issues/127
-
-        Statement stmt = conn.createStatement();
-         //   stmt.execute("SET allow_experimental_object_type = 1");
-
-        stmt.executeQuery(query);
-        stmt.close();
-
-    }
-
 }
