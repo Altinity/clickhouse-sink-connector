@@ -219,13 +219,6 @@ public class DebeziumChangeEventCapture {
         boolean ddlProcessingResult = true;
         Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
 
-        try {
-            DBMetadata dbMetadata = new DBMetadata();
-            String clickHouseVersion = dbMetadata.getClickHouseVersion(conn);
-            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
-        } catch (Exception e) {
-            log.error("Error retrieving version", e);
-        }
 
         long elapsedTime = System.currentTimeMillis() - currentTime;
         Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
@@ -384,17 +377,11 @@ public class DebeziumChangeEventCapture {
      * Function to create database for Debezium storage.
      * @param config
      */
-    private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
+    private void createDatabaseForDebeziumStorage(Connection conn,  Properties props) {
 
         int numCreateDbRetries = 0;
         while(numCreateDbRetries < MAX_RETRIES) {
             try {
-                DBCredentials dbCredentials = parseDBConfiguration(config);
-
-                String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        BaseDbWriter.SYSTEM_DB);
-                Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
-                        dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
 
                 Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
                 String databaseName = tableNameDatabaseName.getRight();
@@ -741,7 +728,27 @@ public class DebeziumChangeEventCapture {
     public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config) throws IOException, ClassNotFoundException {
 
-        createDatabaseForDebeziumStorage(config, props);
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
+                BaseDbWriter.SYSTEM_DB);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
+
+        createDatabaseForDebeziumStorage(conn, props);
+
+        try {
+            DBMetadata dbMetadata = new DBMetadata();
+            String clickHouseVersion = dbMetadata.getClickHouseVersion(conn);
+            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+        } catch (Exception e) {
+            log.error("Error retrieving version", e);
+        }
+        try {
+            conn.close();
+        } catch (Exception e) {
+            log.error("Error closing connection for retrieving version", e);
+        }
         // This is required for Debezium JDBC storage to identify the clickhouse driver.
         // when it's bundled as a shaded JAR.
         Class chDriver = Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
