@@ -142,7 +142,7 @@ public class DBMetadata {
                     rs.close();
                     stmt.close();
                     log.info("getTableEngineUsingShowTable ResultSet" + rs);
-
+                    break;
                 } catch (Exception e) {
                     try {
                         conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
@@ -372,6 +372,7 @@ public class DBMetadata {
                     result.put(columnName, typeName);
                 }
                 columns.close();
+                break;
             } catch (SQLException sq) {
                 log.error("Exception retrieving Column Metadata", sq);
                 try {
@@ -433,6 +434,7 @@ public class DBMetadata {
                     }
                 }
                 rs.close();
+                break;
             } catch(Exception e) {
                 log.error("Error getting alias columns", e);
                 conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
@@ -534,6 +536,7 @@ public class DBMetadata {
 
                 result.put(columnName, typeName);
             }
+            break;
             } catch (Exception sq) {
                 log.error("Exception retrieving Column Metadata", sq);
                 try {
