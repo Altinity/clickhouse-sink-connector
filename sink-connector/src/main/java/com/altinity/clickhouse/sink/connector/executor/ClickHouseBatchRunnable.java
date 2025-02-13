@@ -105,6 +105,28 @@ public class ClickHouseBatchRunnable implements Runnable {
             return this.databaseToConnectionMap.get(databaseName);
         }
 
+        // Create database if it doesnt exist.
+        String systemJdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
+                this.dbCredentials.getPort(), "system");
+        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), "system", config);
+        try {
+
+
+            DBMetadata metadata = new DBMetadata();
+            metadata.executeSystemQuery(systemConn, "CREATE DATABASE IF NOT EXISTS " + databaseName);
+        } catch(Exception e) {
+            log.error("Error creating database " + e);
+        }
+        finally {
+            try {
+            systemConn.close();
+            } catch (SQLException e) {
+                log.error("Error closing connection when creating database" + e);
+            }
+
+        }
+
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
 
@@ -294,6 +316,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Check if user has overridden the database name.
         if(this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
             databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+
 
         Connection databaseConn = getClickHouseConnection(databaseName);
 

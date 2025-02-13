@@ -8,7 +8,7 @@ import java.sql.SQLException;
 
 public class ClickHouseCreateDatabase extends ClickHouseTableOperationsBase {
     public void createNewDatabase(Connection conn, String dbName) throws SQLException {
-        String query = String.format("USE system; CREATE DATABASE IF NOT EXISTS %s; USE %s", dbName, dbName);
+        String query = String.format("CREATE DATABASE IF NOT EXISTS %s", dbName);
         DBMetadata metadata = new DBMetadata();
         metadata.executeSystemQuery(conn, query);
     }
