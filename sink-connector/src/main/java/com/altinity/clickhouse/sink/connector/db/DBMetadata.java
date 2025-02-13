@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -422,8 +423,29 @@ public class DBMetadata {
      * @throws SQLException
      */
     public String executeSystemQuery(Connection conn, String sql) throws SQLException {
+        
+        // keep retrying for MAX_RETRIES times.
+        int maxRetries = 5;
+        int retryCount = 0;
         String result = null;
-        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        ResultSet rs = null;
+        while(retryCount < maxRetries) {
+            try {
+                rs = conn.prepareStatement(sql).executeQuery();
+                break;
+            } catch(Exception sqle) {
+                try {
+                    Thread.sleep(1000 * retryCount);
+
+                    // get a new connection from pool.
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                } catch(Exception e) {
+                    log.error("Error initiating DB connection", e);
+                }
+                retryCount++;
+            }
+        }
+
         if(rs != null) {
             while(rs.next()) {
                 result = rs.getString(1);

@@ -377,11 +377,9 @@ public class DebeziumChangeEventCapture {
      * Function to create database for Debezium storage.
      * @param config
      */
-    private void createDatabaseForDebeziumStorage(Connection conn,  Properties props) {
+    private void createDatabaseForDebeziumStorage(Connection conn,  Properties props) throws SQLException {
 
-        int numCreateDbRetries = 0;
-        while(numCreateDbRetries < MAX_RETRIES) {
-            try {
+
 
                 Pair<String, String> tableNameDatabaseName = getDebeziumOffsetStorageDatabaseName(props);
                 String databaseName = tableNameDatabaseName.getRight();
@@ -389,21 +387,6 @@ public class DebeziumChangeEventCapture {
                 String createDbQuery = String.format("create database if not exists %s", databaseName);
                 log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
                 new DBMetadata().executeSystemQuery(conn, createDbQuery);
-
-                break;
-            } catch (Exception e) {
-                log.error("Error creating Debezium storage database: retrying", e);
-                if(numCreateDbRetries++ >= MAX_RETRIES) {
-                    throw new RuntimeException("Max retries exceeded for creating Debezium storage database");
-                } else {
-                    try {
-                        Thread.sleep(SLEEP_TIME);
-                    } catch (InterruptedException ex) {
-                        log.error("Error sleeping in retrying Debezium storage database creation", ex);
-                    }
-                }
-            }
-        }
     }
 
     private void createSchemaHistoryTable(ClickHouseSinkConnectorConfig config, Properties props) {
@@ -735,8 +718,11 @@ public class DebeziumChangeEventCapture {
         Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
 
-        createDatabaseForDebeziumStorage(conn, props);
-
+        try {
+            createDatabaseForDebeziumStorage(conn, props);
+        } catch (SQLException e) {
+            log.error("Error creating Debezium storage database", e);
+        }
         try {
             DBMetadata dbMetadata = new DBMetadata();
             String clickHouseVersion = dbMetadata.getClickHouseVersion(conn);
