@@ -4,6 +4,7 @@ import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -23,6 +24,11 @@ public class DBMetadata {
 
     private static final Logger log = LogManager.getLogger(DBMetadata.class);
 
+    static int MAX_RETRIES = 2;
+
+    static void setMaxRetries(int maxRetries) {
+        MAX_RETRIES = maxRetries;
+    }
 
     public enum TABLE_ENGINE {
         COLLAPSING_MERGE_TREE("CollapsingMergeTree"),
@@ -71,24 +77,30 @@ public class DBMetadata {
      */
     public boolean checkIfDatabaseExists(Connection conn, String databaseName) throws SQLException {
 
+        int retryCount = 0;
         boolean result = false;
-        try (Statement stmt = conn.createStatement()) {
-            String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
-            ResultSet rs = stmt.executeQuery(showSchemaQuery);
-            if (rs != null && rs.next()) {
-                String response = rs.getString(1);
-                if(response.equalsIgnoreCase(databaseName)) {
-                    result = true;
+
+        while (!result && retryCount < MAX_RETRIES) {
+            try {
+                retryCount++;
+                log.info("Retrying checkIfDatabaseExists, attempt {}", retryCount);
+                try (Statement retryStmt = conn.createStatement()) {
+                    String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
+                    ResultSet retryRs = retryStmt.executeQuery(showSchemaQuery);
+                    if (retryRs != null && retryRs.next()) {
+                        String response = retryRs.getString(1);
+                        if (response.equalsIgnoreCase(databaseName)) {
+                            result = true;
+                        }
+                    }
+                    retryRs.close();
                 }
+            } catch (Exception retryException) {
+                log.error("Retry attempt {} failed", retryCount, retryException);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
             }
-
-            rs.close();
-        } catch(SQLException se) {
-            log.error("checkIfDatabaseExists exception", se);
-            // ToDO: For some reason, this query throws SQLException when DB is not available.
-
-            //throw se;
         }
+        
 
         return result;
     }
@@ -104,35 +116,43 @@ public class DBMetadata {
                                                                           String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
-        try {
-            if (conn == null) {
-                log.error("Error with DB connection");
-                return new MutablePair<>(null, null);
-            }
-            try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
-                ResultSet rs = stmt.executeQuery(showSchemaQuery);
-                if(rs != null && rs.next()) {
-                    String response =  rs.getString(1);
-                    if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
-                        result.right = getSignColumnForCollapsingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
-                        result.right = getVersionColumnForReplacingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.MERGE_TREE;
-                    }else {
-                        result.left = TABLE_ENGINE.DEFAULT;
+        // Add retry logic.
+        int retryCount = 0;
+            
+
+            
+            while (retryCount < MAX_RETRIES) {
+                try (Statement stmt = conn.createStatement()) {
+                    String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
+                    ResultSet rs = stmt.executeQuery(showSchemaQuery);
+                    if (rs != null && rs.next()) {
+                        String response = rs.getString(1);
+                        if (response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                            result.right = getSignColumnForCollapsingMergeTree(response);
+                        } else if (response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                            result.right = getVersionColumnForReplacingMergeTree(response);
+                        } else if (response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.MERGE_TREE;
+                        } else {
+                            result.left = TABLE_ENGINE.DEFAULT;
+                        }
                     }
+                    rs.close();
+                    stmt.close();
+                    log.info("getTableEngineUsingShowTable ResultSet" + rs);
+
+                } catch (Exception e) {
+                    try {
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                    } catch (SQLException sqlException) {
+                        log.error("Retry attempt {} failed", retryCount, sqlException);
+                    }
+                    retryCount++;
+                    log.info("getTableEngineUsingShowTable exception", e);
                 }
-                rs.close();
-                stmt.close();
-                log.info("getTableEngineUsingShowTable ResultSet" + rs);
             }
-        } catch(Exception e) {
-            log.info("getTableEngineUsingShowTable exception", e);
-        }
 
         return result;
     }
@@ -312,46 +332,55 @@ public class DBMetadata {
                                                            String database,
                                                            ClickHouseSinkConnectorConfig config) {
 
+        // Add retry logic.
+        int retryCount = 0;
         Set<String> aliasColumns = new HashSet<>();
-        try {
-            aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
-        } catch(Exception e) {
-            log.error("Error getting alias columns", e);
-        }
+            try {
+                aliasColumns = getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
+            } catch(Exception e) {
+                log.error("Error getting alias columns", e);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
+                }
+            }
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = conn.getMetaData().getColumns(database, null,
+        // Add retry logic.
+        retryCount = 0;
+        while (retryCount < MAX_RETRIES) {
+            try {
+                ResultSet columns = conn.getMetaData().getColumns(database, null,
                     tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
+                while (columns.next()) {
+                    String columnName = columns.getString("COLUMN_NAME");
+                    String typeName = columns.getString("TYPE_NAME");
 
-                String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
-                String columnDefinition = columns.getString("COLUMN_DEF");
-                String sqlDataType = columns.getString("SQL_DATA_TYPE");
-                String dataType = columns.getString("DATA_TYPE");
-               // String typeName = columns.getString("TYPE_NAME");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                // Skip generated columns.
-                if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
-                    continue;
+                    String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
+                    String columnDefinition = columns.getString("COLUMN_DEF");
+                    String sqlDataType = columns.getString("SQL_DATA_TYPE");
+                    String dataType = columns.getString("DATA_TYPE");
+              
+                    // Skip generated columns.
+                    if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                        continue;
+                    }
+                    if(aliasColumns.contains(columnName)) {
+                        log.debug("Skipping alias column: " + columnName);
+                        continue;
+                    }
+                    result.put(columnName, typeName);
                 }
-                if(aliasColumns.contains(columnName)) {
-                    log.debug("Skipping alias column: " + columnName);
-                    continue;
+                columns.close();
+            } catch (SQLException sq) {
+                log.error("Exception retrieving Column Metadata", sq);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
                 }
-                result.put(columnName, typeName);
+                retryCount++;
             }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
         }
         return result;
     }
@@ -384,19 +413,30 @@ public class DBMetadata {
     public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
                                                                          Connection conn) throws SQLException {
 
+        // Add retry logic.
+        int retryCount = 0;
         Set<String> aliasColumns = new HashSet<>();
-        String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
+        while (retryCount < MAX_RETRIES) {
+            try {
+                String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
                 "(default_kind='ALIAS' or default_kind='MATERIALIZED')";
-        String formattedQuery = String.format(query, tableName, databaseName);
+                String formattedQuery = String.format(query, tableName, databaseName);
 
-        // Execute query
-        ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
+                // Execute query
+                ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
 
-        // Get the list of columns from rs.
-        if(rs != null) {
-            while (rs.next()) {
-                String response = rs.getString(1);
-                aliasColumns.add(response);
+                // Get the list of columns from rs.
+                if(rs != null) {
+                    while (rs.next()) {
+                        String response = rs.getString(1);
+                        aliasColumns.add(response);
+                    }
+                }
+                rs.close();
+            } catch(Exception e) {
+                log.error("Error getting alias columns", e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                retryCount++;
             }
         }
         return aliasColumns;
@@ -410,11 +450,23 @@ public class DBMetadata {
      * @throws SQLException
      */
     public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
-        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        // Add retry logic.
+        int retryCount = 0;
+        ResultSet rs = null;
+        while (retryCount < MAX_RETRIES) {
+            try {
+                rs = conn.prepareStatement(sql).executeQuery();
+                break;
+            } catch(Exception e) {
+                log.error("Error executing query", e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                retryCount++;
+            }
+        }
         return rs;
-
     }
 
+        /**
 
     /**
      * Function to execute query.
@@ -424,19 +476,18 @@ public class DBMetadata {
      */
     public String executeSystemQuery(Connection conn, String sql) throws SQLException {
         
-        // keep retrying for MAX_RETRIES times.
-        int maxRetries = 5;
+        // Add retry logic.
         int retryCount = 0;
         String result = null;
         ResultSet rs = null;
-        while(retryCount < maxRetries) {
+        while(retryCount < MAX_RETRIES) {
             try {
                 rs = conn.prepareStatement(sql).executeQuery();
                 break;
-            } catch(Exception sqle) {
+            } catch(SQLException sqle) {
                 try {
+                    log.error("Error executing query: Retrying: #" + retryCount, sqle);
                     Thread.sleep(1000 * retryCount);
-
                     // get a new connection from pool.
                     conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
                 } catch(Exception e) {
@@ -460,9 +511,12 @@ public class DBMetadata {
 
     public Map<String, String> getColumnsDataTypesForTable(Connection conn, String tableName, String database ) {
 
+        // Add retry logic. 
+        int retryCount = 0;
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (conn == null) {
+        while (retryCount < MAX_RETRIES) {
+            try {
+                if (conn == null) {
                 log.error("Error with DB connection");
                 return result;
             }
@@ -480,8 +534,16 @@ public class DBMetadata {
 
                 result.put(columnName, typeName);
             }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
+            } catch (Exception sq) {
+                log.error("Exception retrieving Column Metadata", sq);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
+                }
+
+                retryCount++;
+            }
         }
         return result;
     }

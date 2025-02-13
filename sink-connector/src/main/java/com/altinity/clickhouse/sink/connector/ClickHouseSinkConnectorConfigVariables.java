@@ -81,7 +81,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     CONNECTION_POOL_TIMEOUT("connection.pool.timeout"),
     CONNECTION_POOL_MIN_IDLE("connection.pool.min.idle"),
 
-    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name");
+    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
+
+    ERRORS_MAX_RETRIES("errors.max.retries");
 
     private String label;
 

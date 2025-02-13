@@ -34,6 +34,9 @@ public class HikariDbSource {
     public static Connection initiateNewConnectionIfClosed(String databaseName) throws SQLException {
 
         HikariDataSource dbSource = instance.get(databaseName);
+        if(dbSource == null) {
+
+        }
         return dbSource.getConnection();
     }
 

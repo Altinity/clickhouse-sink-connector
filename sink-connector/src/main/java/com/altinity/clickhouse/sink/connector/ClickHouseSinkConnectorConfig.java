@@ -514,6 +514,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         7,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
-                ;
+                // Define errors.max.retries
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
+                        Type.INT,
+                        3,
+                        Importance.HIGH,
+                        "The maximum number of retries for errors",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        15,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
     }
 }
