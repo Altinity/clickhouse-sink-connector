@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 
 
@@ -56,6 +57,41 @@ public class BaseDbWriter {
         this.conn = conn;
         //this.createConnection(connectionUrl, "Agent_1", userName, password);
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
+    }
+
+    // Create offset/schema history storage database.
+    protected void createDestinationDatabase(String databaseName) {
+
+        DBMetadata metadata = new DBMetadata();
+        try {
+            if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
+                new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
+            }
+        } catch(Exception e) {
+
+            int maxRetries = 0;
+            final int MAX_RETRIES = 5;
+            log.error("Error creating Database: " + databaseName);
+
+            // Keep retrying to createNewDatabase until Max number of retries is reached.
+            boolean createDatabaseFailed = false;
+            while(maxRetries++ > MAX_RETRIES) {
+                try {
+                    Thread.sleep(maxRetries * 5000);
+                    if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
+                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
+                        createDatabaseFailed = true;
+                        break;
+                    }
+                } catch (Exception ex) {
+                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + databaseName);
+                }
+            }
+            // if maxRetries exceeded, throw runtime exception.
+            if(createDatabaseFailed == false) {
+                throw new RuntimeException("Error creating Database: " + databaseName);
+            }
+        }
     }
 
     /**

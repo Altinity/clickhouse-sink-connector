@@ -138,7 +138,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue(tmCount == 2);
 
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
 
         // Parse offsetvalue json and check the keys
         Assert.assertTrue(offsetValue.contains("last_snapshot_record"));

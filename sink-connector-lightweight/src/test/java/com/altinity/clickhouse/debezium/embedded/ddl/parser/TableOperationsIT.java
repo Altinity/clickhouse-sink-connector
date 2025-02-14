@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -170,7 +171,7 @@ public class TableOperationsIT {
 
             Thread.sleep(10000);
             // Delete offset table.
-            debeziumChangeEventCapture.deleteOffsets(props);
+            new DebeziumJdbcStorageOperations().deleteOffsets(writer.getConnection(), props);
 
             if(engine.get() != null) {
                 engine.get().stop();
