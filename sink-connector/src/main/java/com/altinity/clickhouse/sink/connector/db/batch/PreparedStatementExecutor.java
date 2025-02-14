@@ -121,7 +121,8 @@ public class PreparedStatementExecutor {
             String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
 
-            try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
+            DBMetadata metadata = new DBMetadata();
+            try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : batch) {
@@ -179,17 +180,9 @@ public class PreparedStatementExecutor {
                 throw new RuntimeException(e);
             }
             if (!truncatedRecords.isEmpty()) {
-                PreparedStatement ps = null;
                 try {
-                    ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                    metadata.truncateTable(conn, databaseName, tableName);
                 } catch (SQLException e) {
-                    log.error("*** Error: Truncate table statement error ****", e);
-                    throw new RuntimeException(e);
-                }
-                try {
-                    ps.execute();
-                } catch (SQLException e) {
-                    log.error("*** Error: Truncate table statement execute error ****", e);
                     throw new RuntimeException(e);
                 }
             }

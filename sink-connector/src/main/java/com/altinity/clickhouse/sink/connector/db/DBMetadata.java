@@ -12,10 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -26,7 +23,7 @@ public class DBMetadata {
 
     static int MAX_RETRIES = 2;
 
-    static void setMaxRetries(int maxRetries) {
+    public static void setMaxRetries(int maxRetries) {
         MAX_RETRIES = maxRetries;
     }
 
@@ -549,5 +546,38 @@ public class DBMetadata {
             }
         }
         return result;
+    }
+
+    public void truncateTable(Connection conn, String databaseName, String tableName) throws SQLException {
+        int retryCount = 0;
+        PreparedStatement ps = null;
+        while(retryCount < MAX_RETRIES) {
+            try {
+                ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                ps.execute();
+                break;
+            } catch (SQLException e) {
+                log.error("*** Error: Truncate table statement error, retry attempt: " + retryCount, e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                retryCount++;
+            }
+        }
+    }
+
+    public PreparedStatement getPreparedStatement(Connection conn, String sql) throws SQLException {
+
+        int retryCount = 0;
+        PreparedStatement ps = null;
+        while(retryCount < MAX_RETRIES) {
+            try {
+                ps = conn.prepareStatement(sql);
+                break;
+            } catch (SQLException e) {
+                log.error("Error getting prepared statement, retry attempt: " + retryCount, e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                retryCount++;
+            }
+        }
+        return ps;
     }
 }

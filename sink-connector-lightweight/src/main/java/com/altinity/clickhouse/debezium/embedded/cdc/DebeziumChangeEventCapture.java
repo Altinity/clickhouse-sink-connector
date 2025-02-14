@@ -865,6 +865,15 @@ public class DebeziumChangeEventCapture {
             this.records = new LinkedBlockingQueue<>();
         }
 
+        try {
+            if (props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
+                Integer maxRetries = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()));
+                DBMetadata.setMaxRetries(maxRetries);
+            }
+        }
+        catch(Exception e) {
+            log.error("Error retrieving max retries", e);
+        }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
