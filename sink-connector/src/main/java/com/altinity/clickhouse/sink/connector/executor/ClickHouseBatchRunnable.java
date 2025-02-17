@@ -134,6 +134,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         ConnectorType connectorType = ConnectorType.MYSQL;
 
         try {
+            String connectorClass = config.getString("connector.class");
+            // For Kafka. connector.class -> com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
+            if(connectorClass.contains("sink")) {
+                // Skip kafka check.
+                return connectorType;
+            }
             connectorType = ConnectorType.fromString(config.getString("connector.class"));
         } catch (Exception e) {
             log.error("Error while getting connector type", e);
