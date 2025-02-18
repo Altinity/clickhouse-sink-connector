@@ -37,6 +37,7 @@ public class HikariDbSource {
         if(dbSource == null) {
 
         }
+        HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
     }
 

@@ -38,7 +38,7 @@ public class DbWriterTest {
             .withInitScript("./init_clickhouse.sql");
 
     @BeforeAll
-    public static void init() {
+    public static void init() throws InterruptedException {
 
         clickHouseContainer.start();
         String hostName = clickHouseContainer.getHost();
@@ -53,6 +53,8 @@ public class DbWriterTest {
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, config);
         writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
+
+        Thread.sleep(10000);
 
     }
 
@@ -129,7 +131,7 @@ public class DbWriterTest {
     public void testGetEngineType() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
+        String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
@@ -161,7 +163,7 @@ public class DbWriterTest {
     public void testGetEngineTypeUsingSystemTables() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
+        String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
