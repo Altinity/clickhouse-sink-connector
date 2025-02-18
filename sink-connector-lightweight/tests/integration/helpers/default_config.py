@@ -48,5 +48,5 @@ SETTINGS index_granularity = 8198""",
     "clickhouse.datetime.timezone": "UTC",
     "auto.create.tables": "true",
     "ddl.retry": "true",
-    "connection.pool.max.size": "3000"
+    # "connection.pool.max.size": "2300"
 }
