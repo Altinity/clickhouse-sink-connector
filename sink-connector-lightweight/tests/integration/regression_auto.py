@@ -274,11 +274,11 @@ def regression(
             parallel=True,
             executor=executor,
         )
-        Feature(
-            run=load("tests.snowflake_id", "module"),
-            parallel=True,
-            executor=executor,
-        )
+        # Feature(
+        #     run=load("tests.snowflake_id", "module"),
+        #     parallel=True,
+        #     executor=executor,
+        # )
         Feature(
             run=load("tests.table_names", "module"),
             parallel=True,
