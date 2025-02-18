@@ -168,7 +168,7 @@ ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
 #buffer.max.records: "10000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
-#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
 
 # Maximum number of threads in the thread pool for processing CDC records.
 #thread.pool.size: 10
