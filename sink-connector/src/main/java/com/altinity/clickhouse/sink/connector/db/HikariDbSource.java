@@ -67,7 +67,7 @@ public class HikariDbSource {
         
         HikariConfig poolConfig = new HikariConfig();
         poolConfig.setPoolName("clickhouse" + "-" + databaseName);
-        String jdbcUrl = String.format("jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone&server_version=22.13.1.24495", databaseName);
+        String jdbcUrl = String.format("jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone&http_connection_provider=HTTP_URL_CONNECTION&server_version=22.13.1.24495", databaseName);
         poolConfig.setJdbcUrl(jdbcUrl);
         poolConfig.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver"); // Ensure driver is set
        // poolConfig.setUsername(dataSource.getConnection().getCurrentUser()); // Optional, if already in JDBC URL
