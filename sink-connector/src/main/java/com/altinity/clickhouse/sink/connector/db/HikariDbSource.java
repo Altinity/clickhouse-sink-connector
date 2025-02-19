@@ -41,7 +41,7 @@ public class HikariDbSource {
         return dbSource.getConnection();
     }
 
-    public static HikariDataSource getInstance(ClickHouseDataSource dataSource, String databaseName,
+    public static HikariDataSource getInstance(SinkConnectorDataSource dataSource, String databaseName,
                                                ClickHouseSinkConnectorConfig config) {
 
         if(instance.containsKey(databaseName)) {
@@ -57,7 +57,7 @@ public class HikariDbSource {
         return instance.get(databaseName);
     }
 
-    private static HikariDataSource createConnectionPool(ClickHouseDataSource chDataSource, 
+    private static HikariDataSource createConnectionPool(SinkConnectorDataSource chDataSource,
         String databaseName, ClickHouseSinkConnectorConfig config)  {
         // pass the clickhouse config to create the datasource
 

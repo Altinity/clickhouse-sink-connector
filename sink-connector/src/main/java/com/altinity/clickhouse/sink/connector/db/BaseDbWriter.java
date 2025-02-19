@@ -3,8 +3,7 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
-import com.clickhouse.jdbc.ClickHouseDataSource;
-
+import okhttp3.*;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -142,7 +141,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1,max_open_connections=100");
+            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
             //properties.setProperty("max_open_connections", "100");
             if(!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
@@ -151,7 +150,10 @@ public class BaseDbWriter {
             }
             // Add username/password to the url.
             url = url + "?user=" + userName + "&password=" + password;
-            ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
+            OkHttpClient customHttpClient = new OkHttpClient.Builder()
+                    .retryOnConnectionFailure(true)
+                    .build();
+            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, customHttpClient);
             // Get connection from the pool.
             HikariDataSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName, config);
             // Create a new ClickHouseConnection object with the connection from the pool.
