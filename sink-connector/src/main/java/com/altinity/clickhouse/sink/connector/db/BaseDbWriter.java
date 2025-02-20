@@ -141,7 +141,8 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1,http_connection_provider=HTTP_URL_CONNECTION");
+            properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
+            properties.setProperty("http_connection_provider", "HTTP_URL_CONNECTION");
             //properties.setProperty("max_open_connections", "100");
             if(!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
