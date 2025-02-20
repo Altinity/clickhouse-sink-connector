@@ -48,5 +48,7 @@ SETTINGS index_granularity = 8198""",
     "clickhouse.datetime.timezone": "UTC",
     "auto.create.tables": "true",
     "ddl.retry": "true",
+    "clickhouse.jdbc.params": "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000",
+    "connection.pool.disable": "true"
     # "connection.pool.max.size": "2300"
 }

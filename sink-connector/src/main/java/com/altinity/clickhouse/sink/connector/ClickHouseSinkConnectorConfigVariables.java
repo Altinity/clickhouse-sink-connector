@@ -80,6 +80,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
     CONNECTION_POOL_MAX_SIZE("connection.pool.max.size"),
     CONNECTION_POOL_TIMEOUT("connection.pool.timeout"),
     CONNECTION_POOL_MIN_IDLE("connection.pool.min.idle"),
+    CONNECTION_POOL_MAX_LIFETIME("connection.pool.max.lifetime"),
+
+    CONNECTION_POOL_DISABLE("connection.pool.disable"),
 
     OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
 

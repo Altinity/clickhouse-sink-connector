@@ -64,7 +64,8 @@ public class HikariDbSource {
         int maxPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString());
         long poolConnectionTimeout = config.getLong(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString());
         int minIdle = config.getInt(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString());
-        
+        long maxLifetime = config.getLong(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_LIFETIME.toString());
+
         HikariConfig poolConfig = new HikariConfig();
         poolConfig.setPoolName("clickhouse" + "-" + databaseName);
         String jdbcUrl = String.format("jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone&http_connection_provider=HTTP_URL_CONNECTION&server_version=22.13.1.24495", databaseName);
@@ -76,7 +77,7 @@ public class HikariDbSource {
         poolConfig.setMaximumPoolSize(maxPoolSize);
         //poolConfig.setMinimumIdle(minIdle);
         //poolConfig.setIdleTimeout(2_000L);
-        poolConfig.setMaxLifetime(300_000L);
+        poolConfig.setMaxLifetime(maxLifetime);
         poolConfig.setDataSource(chDataSource);
 
         HikariDataSource dataSource = new HikariDataSource(poolConfig);

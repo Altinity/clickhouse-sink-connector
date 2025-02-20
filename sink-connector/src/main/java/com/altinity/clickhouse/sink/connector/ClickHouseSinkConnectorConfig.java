@@ -505,11 +505,30 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_LIFETIME.toString(),
+                        Type.LONG,
+                        300000,
+                        Importance.HIGH,
+                        "The maximum lifetime of the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_LIFETIME.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If set to true, the connection pool is disabled",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString(),
                         Type.STRING,
-                        "altinity_sink_connector",
                         Importance.HIGH,
-                        "The name of the offset storage table",
+                        "altinity_sink_connector",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         7,
                         ConfigDef.Width.NONE,
