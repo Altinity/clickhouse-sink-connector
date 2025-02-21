@@ -38,6 +38,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     // Configuration group "task config"
     private static final String CONFIG_GROUP_TASK_CONFIG = "Task Config";
 
+
     public ClickHouseSinkConnectorConfig(Map<String, String> properties) {
         this(newConfigDef(), properties);
     }
@@ -92,6 +93,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     static ConfigDef newConfigDef() {
         return new ConfigDef()
                 // Config Group "Connector config"
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        Type.STRING,
+                        "",
+                        null,
+                        Importance.HIGH,
+                        "Connector class"
+                )
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
                         Type.STRING,

@@ -83,7 +83,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
 
-    ERRORS_MAX_RETRIES("errors.max.retries");
+    ERRORS_MAX_RETRIES("errors.max.retries"),
+
+    CONNECTOR_CLASS("connector.class");
+
+
 
     private String label;
 
