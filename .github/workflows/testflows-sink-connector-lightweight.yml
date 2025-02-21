@@ -16,11 +16,11 @@ on:
         description: "Testflows output style."
         type: string
         default: new-fails
-    extra_args:
-      description: "Specific Suite To Run (Default * to run everything)."
-      required: false
-      type: string
-      default: ""
+      extra_args:
+        description: "Specific Suite To Run (Default * to run everything)."
+        required: false
+        type: string
+        default: ""
     secrets:
       DOCKERHUB_USERNAME:
         required: false
