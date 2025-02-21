@@ -18,6 +18,7 @@ from integration.tests.steps.clickhouse import *
 ffails = {}
 
 
+
 @TestModule
 @Name("mysql to clickhouse replication")
 @FFails(ffails)
