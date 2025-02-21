@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -10,7 +11,6 @@ import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.logging.log4j.LogManager;
@@ -147,6 +147,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         return dbCredentials;
     }
+
 
     /**
      * Main run loop of the thread

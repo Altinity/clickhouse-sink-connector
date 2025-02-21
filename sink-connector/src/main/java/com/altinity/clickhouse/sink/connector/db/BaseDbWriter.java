@@ -151,10 +151,8 @@ public class BaseDbWriter {
             }
             // Add username/password to the url.
             url = url + "?user=" + userName + "&password=" + password;
-            OkHttpClient customHttpClient = new OkHttpClient.Builder()
-                    .retryOnConnectionFailure(true)
-                    .build();
-            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, customHttpClient);
+
+            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, null);
             // Get connection from the pool.
             HikariDataSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName, config);
             // Create a new ClickHouseConnection object with the connection from the pool.
