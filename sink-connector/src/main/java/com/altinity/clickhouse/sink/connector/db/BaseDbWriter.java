@@ -88,7 +88,7 @@ public class BaseDbWriter {
             }
             // if maxRetries exceeded, throw runtime exception.
             if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + databaseName);
+                throw new RuntimeException("Error creating Database: " + databaseName, e);
             }
         }
     }
@@ -154,10 +154,8 @@ public class BaseDbWriter {
             }
             // Add username/password to the url.
             url = url + "?user=" + userName + "&password=" + password;
-            OkHttpClient customHttpClient = new OkHttpClient.Builder()
-                    .retryOnConnectionFailure(true)
-                    .build();
-            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, customHttpClient);
+
+            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, null);
             // Get connection from the pool.
             if(connectionPoolDisable) {
                 log.info("Connection pool is disabled, creating a new connection");
