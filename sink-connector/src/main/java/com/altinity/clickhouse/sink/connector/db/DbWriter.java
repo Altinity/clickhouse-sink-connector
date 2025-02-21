@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -91,9 +92,11 @@ public class DbWriter extends BaseDbWriter {
             }
             DBMetadata metadata = new DBMetadata();
 
-            String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
-            if(offsetStorageDatabaseName != null) {
-                createDestinationDatabase(offsetStorageDatabaseName);
+            if(ConnectorType.getConnectorType(config) != ConnectorType.KAFKA) {
+                String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
+                if (offsetStorageDatabaseName != null) {
+                    createDestinationDatabase(offsetStorageDatabaseName);
+                }
             }
             // ToDO: create destination database if not exists
             createDestinationDatabase(database);
