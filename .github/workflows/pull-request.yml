@@ -30,6 +30,14 @@ jobs:
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
 
+  testflows-lightweight-hikari-pool:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
+    secrets: inherit
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+      extra_args: --hikari-pool
+
   java-tests-kafka:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml

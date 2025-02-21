@@ -27,6 +27,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
+    hikari_pool,
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
@@ -38,6 +39,7 @@ def regression(
         "clickhouse_version": clickhouse_version,
         "stress": stress,
         "collect_service_logs": collect_service_logs,
+        "hikari_pool": hikari_pool,
     }
 
     self.context.stress = stress

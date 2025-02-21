@@ -25,6 +25,11 @@ on:
         required: false
       AWS_SECRET_ACCESS_KEY:
         required: false
+    extra_args:
+      description: "Specific Suite To Run (Default * to run everything)."
+      required: false
+      type: string
+      default: ""
   workflow_dispatch:
     inputs:
       SINK_CONNECTOR_IMAGE:
