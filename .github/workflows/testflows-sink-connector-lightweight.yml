@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: ""
+      artifact_suffix:
+        description: "Artifact sufix"
+        required: false
+        type: string
+        default: ""
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -149,7 +154,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: testflows-sink-connector-lightweight-artefacts
+          name: testflows-sink-connector-lightweight-artefacts${{ inputs.artifact_suffix != '' && '-' || '' }}${{ inputs.artifact_suffix }}
           path: |
             sink-connector-lightweight/tests/integration/logs/*.log
             sink-connector-lightweight/tests/integration/env/auto/configs/*.yml
@@ -227,7 +232,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: testflows-sink-connector-lightweight-replicated-artefacts
+          name: testflows-sink-connector-lightweight-replicated-artefacts${{ inputs.artifact_suffix != '' && '-' || '' }}${{ inputs.artifact_suffix }}
           path: |
             sink-connector-lightweight/tests/integration/logs/*.log
             sink-connector-lightweight/tests/integration/env/auto_replicated/configs/*.yml
