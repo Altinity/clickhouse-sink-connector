@@ -92,7 +92,7 @@ public class DbWriter extends BaseDbWriter {
             }
             DBMetadata metadata = new DBMetadata();
 
-            if(ConnectorType.getConnectorType(config) != ConnectorType.KAFKA) {
+            if(ConnectorType.getConnectorType(config, log) != ConnectorType.KAFKA) {
                 String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
                 if (offsetStorageDatabaseName != null) {
                     createDestinationDatabase(offsetStorageDatabaseName);

@@ -42,7 +42,7 @@ public enum ConnectorType {
     public static final String SINK_CONNECTOR_CLASS="sink.connector.ClickHouseSinkConnector";
     public static final String CONNECTOR_CLASS="connector.class";
 
-    public static ConnectorType getConnectorType(ClickHouseSinkConnectorConfig config) {
+    public static ConnectorType getConnectorType(ClickHouseSinkConnectorConfig config, Logger logger) {
         ConnectorType connectorType = ConnectorType.MYSQL;
 
         try {
@@ -54,6 +54,7 @@ public enum ConnectorType {
             }
             connectorType = ConnectorType.fromString(config.getString(CONNECTOR_CLASS));
         } catch (Exception e) {
+            logger.error("Error getting connector type", e);
             //log.error("Error while getting connector type", e);
         }
         return connectorType;
