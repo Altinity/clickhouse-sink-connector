@@ -58,7 +58,7 @@ def init_sink_connector(
             "schema.evolution": False,
             "deduplication.policy": "off",
             "metadata.max.age.ms": 10000,
-            "connection.pool.max.size": 1000
+            "connection.pool.disable": "true"
         },
     }
 
