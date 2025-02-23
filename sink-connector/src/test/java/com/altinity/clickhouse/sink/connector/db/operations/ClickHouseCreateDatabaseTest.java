@@ -1,13 +1,16 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 
+import org.junit.After;
 import org.junit.Assert;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.AfterAll;
+import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.junit.jupiter.Container;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,7 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 @Testcontainers
-@Disabled
+
 public class ClickHouseCreateDatabaseTest {
 
     static DbWriter dbWriter;
@@ -32,7 +35,8 @@ public class ClickHouseCreateDatabaseTest {
     static String dbName;
 
     @Container
-    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest");
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+            .waitingFor(new HttpWaitStrategy().forPort(8123));
     @BeforeAll
     static void initialize() {
 
@@ -43,7 +47,9 @@ public class ClickHouseCreateDatabaseTest {
         String systemDb = "system";
         dbName = "test_create_db";
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> options = new HashMap<>();
+        options.put(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(), "5");
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(options );
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 DbWriter.SYSTEM_DB, config);
@@ -57,10 +63,17 @@ public class ClickHouseCreateDatabaseTest {
 //        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", dbName));
     }
 
+    @AfterAll
+    public static void cleanup() {
+        clickHouseContainer.stop();
+    }
+
     @Test
-    public void testCreateNewDatabase() throws SQLException {
+    public void testCreateNewDatabase() throws SQLException, InterruptedException {
+        Thread.sleep(10000);
         ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
         Connection conn = dbWriter.getConnection();
+
         try {
             act.createNewDatabase(conn, dbName);
         } catch(SQLException se) {
