@@ -160,6 +160,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
+    hikari_pool,
     env="env/auto",
     stress=None,
     thread_fuzzer=None,
@@ -172,6 +173,13 @@ def regression(
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "zookeeper": ("zookeeper",),
     }
+
+    if not hikari_pool:
+        default_config["connection.pool.disable"] = "true"
+        default_config["clickhouse.jdbc.params"] = "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+    else:
+        default_config["connection.pool.disable"] = "false"
+
 
     self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
@@ -274,11 +282,11 @@ def regression(
             parallel=True,
             executor=executor,
         )
-        # Feature(
-        #     run=load("tests.snowflake_id", "module"),
-        #     parallel=True,
-        #     executor=executor,
-        # )
+        Feature(
+            run=load("tests.snowflake_id", "module"),
+            parallel=True,
+            executor=executor,
+        )
         Feature(
             run=load("tests.table_names", "module"),
             parallel=True,

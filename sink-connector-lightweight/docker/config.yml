@@ -179,7 +179,8 @@ clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_time
 #Metrics (Prometheus target), required for Grafana Dashboard
 metrics.enable: "true"
 
-connection.pool.max.size: 1000
+#connection.pool.disable: "true"
+#connection.pool.max.size: 500
 
 # Skip schema history capturing, use the following configuration
 # to reduce slow startup when replicating dbs with large number of tables
