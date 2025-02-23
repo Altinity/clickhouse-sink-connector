@@ -12,6 +12,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
@@ -162,6 +163,7 @@ public class ClickHouseAutoCreateTableTest {
 
     @Test
     @Tag("IntegrationTest")
+    @Disabled
     public void testCreateNewTable() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();

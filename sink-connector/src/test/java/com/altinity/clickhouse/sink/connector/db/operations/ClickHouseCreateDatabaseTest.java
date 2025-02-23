@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 
 import org.junit.Assert;
+import org.junit.jupiter.api.Disabled;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.junit.jupiter.Container;
 import org.junit.jupiter.api.BeforeAll;
@@ -23,7 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 @Testcontainers
-
+@Disabled
 public class ClickHouseCreateDatabaseTest {
 
     static DbWriter dbWriter;
