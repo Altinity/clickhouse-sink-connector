@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -27,6 +28,12 @@ public class DBMetadataTest {
     @Container
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql").withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml");
+
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
+
 
     @Test
     public void testGetSignColumnForCollapsingMergeTree() {

@@ -114,7 +114,13 @@ public class BaseDbWriter {
 
     public Connection getConnection() {
         HikariDbSource.printConnectionInfo();
-
+        if(this.conn == null) {
+            try {
+                this.conn = HikariDbSource.initiateNewConnectionIfClosed(this.database);
+            } catch (Exception e) {
+                log.error("Error retrieving new connection in getConnection");
+            }
+        }
         return this.conn;
     }
     public static String getConnectionString(String hostName, Integer port, String database) {

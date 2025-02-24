@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
@@ -31,7 +32,6 @@ import java.util.HashMap;
 public class ClickHouseCreateDatabaseTest {
 
     static DbWriter dbWriter;
-    static DbWriter maintenanceDbWriter;
     static String dbName;
 
     @Container
@@ -49,16 +49,18 @@ public class ClickHouseCreateDatabaseTest {
 
         HashMap<String, String> options = new HashMap<>();
         options.put(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(), "5");
+        options.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(options );
+
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
-        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 DbWriter.SYSTEM_DB, config);
-        dbWriter = new DbWriter(hostName, port, dbName, "employees", userName, password, config, null, conn);
-        maintenanceDbWriter = new DbWriter(hostName, port, systemDb, "employees", userName, password, config, null, conn);
+
+        dbWriter = new DbWriter(hostName, port, "employees", "employees", userName, password, config, null, conn);
     }
 
-    @BeforeEach                                         
-    void dropTestDatabase() throws SQLException {
+    @AfterAll
+    static void dropTestDatabase() throws SQLException {
 //        Statement drop = maintenanceDbWriter.getConnection().createStatement();
 //        drop.executeQuery(String.format("DROP DATABASE IF EXISTS %s", dbName));
     }
@@ -66,6 +68,7 @@ public class ClickHouseCreateDatabaseTest {
     @AfterAll
     public static void cleanup() {
         clickHouseContainer.stop();
+        HikariDbSource.close();
     }
 
     @Test

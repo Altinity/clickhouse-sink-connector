@@ -15,6 +15,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,12 @@ public class DbWriterTest {
     @Container
     private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql");
+
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
+
 
     @BeforeAll
     public static void init() throws InterruptedException {
@@ -153,7 +160,7 @@ public class DbWriterTest {
         Assert.assertTrue(result_employees.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result_employees.getRight().equalsIgnoreCase("_version_employees"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "products");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
         Assert.assertTrue(resultProducts.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
         Assert.assertTrue(resultProducts.getRight().equalsIgnoreCase("sign"));
     }
@@ -178,7 +185,7 @@ public class DbWriterTest {
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 
         MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                database, "products");
+                "default", "products");
         Assert.assertTrue(result_products.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.

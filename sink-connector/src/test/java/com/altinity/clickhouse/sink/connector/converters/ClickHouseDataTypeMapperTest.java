@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.VariableScaleDecimal;
@@ -9,6 +10,7 @@ import io.debezium.time.Date;
 import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -47,6 +49,10 @@ public class ClickHouseDataTypeMapperTest {
 
     }
 
+    @AfterAll
+    public static void tearDown() {
+        HikariDbSource.close();
+    }
     @Test
     public void convert() throws SQLException {
         //Integer tests.

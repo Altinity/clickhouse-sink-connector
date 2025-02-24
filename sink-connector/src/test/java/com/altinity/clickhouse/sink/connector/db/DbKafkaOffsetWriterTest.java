@@ -7,6 +7,8 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
@@ -26,6 +28,11 @@ public class DbKafkaOffsetWriterTest {
     @Container
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql");
+
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
 
     @Test
     @Tag("IntegrationTest")
