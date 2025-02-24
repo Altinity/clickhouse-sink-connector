@@ -90,7 +90,8 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         DBMetadata dbMetadata = new DBMetadata();
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
-        Assert.assertTrue(tmColumns.size() == 22);
+        Assert.assertTrue(tmColumns.size() == 23);
+
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));

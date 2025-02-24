@@ -22,7 +22,7 @@ public class DataTypeRange
     public static final Instant CLICKHOUSE_MIN_SUPPORTED_DATETIME64 = from(ofEpochMilli
             (DATETIME64_MIN * 1000).atZone(ZoneId.of("UTC"))).plusNanos(DATETIME64_MIN * 1000 % 1_000);
     public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME64 = from(ofEpochMilli
-            (DATETIME64_MAX * 1000).atZone(ZoneId.of("UTC")).withHour(23).withMinute(59).withSecond(59).withNano(999999999));
+            (DATETIME64_MAX * 1000).atZone(ZoneId.of("UTC")).withHour(23).withMinute(59).withSecond(59).withNano(000000));
 
 
     // DateTime and DateTime32
@@ -45,6 +45,6 @@ public class DataTypeRange
 
     public static final String DATETIME_6_MAX = "2299-12-31 23:59:59.999999";
 
-    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.99999999";
+    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.00000000";
 
 }
