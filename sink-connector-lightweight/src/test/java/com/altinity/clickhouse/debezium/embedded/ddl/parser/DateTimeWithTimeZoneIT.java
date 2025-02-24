@@ -2,14 +2,12 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
-import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import junit.framework.Assert;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Properties;
@@ -58,6 +57,12 @@ public class DateTimeWithTimeZoneIT {
         Thread.sleep(15000);
     }
 
+    @AfterEach
+    public void tearDown() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
+
     @Test
     public void testCreateTable() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
@@ -79,17 +84,10 @@ public class DateTimeWithTimeZoneIT {
         Thread.sleep(30000);
 
         // Create connection.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
@@ -103,7 +101,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
@@ -116,7 +114,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
@@ -129,7 +127,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -144,7 +142,7 @@ public class DateTimeWithTimeZoneIT {
 
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -160,7 +158,7 @@ public class DateTimeWithTimeZoneIT {
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -175,7 +173,7 @@ public class DateTimeWithTimeZoneIT {
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -197,6 +195,8 @@ public class DateTimeWithTimeZoneIT {
         executorService.shutdown();
 
         writer.getConnection().close();
+
+        HikariDbSource.close();
     }
 
 }

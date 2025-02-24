@@ -7,12 +7,15 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
@@ -26,6 +29,11 @@ public class DbKafkaOffsetWriterTest {
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql");
 
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
+
     @Test
     @Tag("IntegrationTest")
     public void testInsertTopicOffsetMetadata() throws SQLException {
@@ -33,13 +41,14 @@ public class DbKafkaOffsetWriterTest {
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "system";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
@@ -51,8 +60,10 @@ public class DbKafkaOffsetWriterTest {
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
+        DBMetadata metadata = new DBMetadata();
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(com.altinity.clickhouse.sink.connector.db.DbWriterTest.getSampleRecords()
-                , queryToRecordsMap, result, new ClickHouseSinkConnectorConfig(new HashMap<>()), tableName, database, writer.getConnection(), writer.getColumnsDataTypesForTable(tableName));
+                , queryToRecordsMap, result, new ClickHouseSinkConnectorConfig(new HashMap<>()), tableName, database, writer.getConnection(),
+                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);
         Map<TopicPartition, Long> offsetsMap = dbKafkaOffsetWriter.getStoredOffsets();

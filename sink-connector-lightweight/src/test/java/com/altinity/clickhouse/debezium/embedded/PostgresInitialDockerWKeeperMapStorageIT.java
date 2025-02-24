@@ -2,24 +2,25 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.*;
+import org.testcontainers.containers.BindMode;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
+import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -52,8 +53,8 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
                 .withPassword("password")
                 .withClasspathResourceMapping("config_replicated.xml", "/etc/clickhouse-server/config.d/config.xml", BindMode.READ_ONLY)
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
-                .withExposedPorts(8123)
-                .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
+                .withExposedPorts(8123);
+                //.waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
@@ -114,15 +115,12 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Thread.sleep(10000);//
         Thread.sleep(50000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
+
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
@@ -130,19 +128,19 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
 
 
         int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
 
         // Get the columns in re_data.
-        Map<String, String> reDataColumns = writer.getColumnsDataTypesForTable("redata");
+        Map<String, String> reDataColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "redata", "public");
 
         Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue(tmCount == 2);
 
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
 
         // Parse offsetvalue json and check the keys
         Assert.assertTrue(offsetValue.contains("last_snapshot_record"));
@@ -156,7 +154,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Thread.sleep(15000);
 
         // Check if the clickhouse table is empty.
-        chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
@@ -168,6 +166,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+        HikariDbSource.close();
 
     }
 }

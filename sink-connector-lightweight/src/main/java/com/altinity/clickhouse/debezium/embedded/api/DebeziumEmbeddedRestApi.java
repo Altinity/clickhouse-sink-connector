@@ -2,10 +2,14 @@ package com.altinity.clickhouse.debezium.embedded.api;
 
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
+import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Injector;
+import com.zaxxer.hikari.HikariDataSource;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.apache.logging.log4j.LogManager;
@@ -13,11 +17,13 @@ import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 
+import java.sql.Connection;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.LSN;
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 
 public class DebeziumEmbeddedRestApi {
 
@@ -45,7 +51,12 @@ public class DebeziumEmbeddedRestApi {
             String response = "";
 
             try {
-                response = debeziumChangeEventCapture.getDebeziumStorageStatus(config, finalProps1);
+                DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
+                Connection connection = ds.getConnection();
+                response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(connection, config, finalProps1);
+                connection.close();
+
             } catch (Exception e) {
                 log.error("Client - Error getting status", e);
                 // Create JSON response
@@ -66,7 +77,11 @@ public class DebeziumEmbeddedRestApi {
             String response = "";
 
             try {
-                debeziumChangeEventCapture.deleteOffsets(finalProps1);
+                DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
+                Connection connection = ds.getConnection();
+                debeziumJdbcStorageOperations.deleteOffsets(connection,finalProps1);
+                connection.close();
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
                 ctx.result(e.toString());
@@ -78,7 +93,7 @@ public class DebeziumEmbeddedRestApi {
         });
 
         app.post("/binlog", ctx -> {
-            if(debeziumChangeEventCapture.isReplicationRunning()) {
+            if(ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
                 ctx.status(HttpStatus.BAD_REQUEST);
                 return;
             }
@@ -115,8 +130,12 @@ public class DebeziumEmbeddedRestApi {
                 log.info("User Overridden properties: " + userProperties);
             }
 
-            debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, binlogFile, binlogPosition,
+            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+            HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
+            Connection connection = ds.getConnection();
+            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config, finalProps1, binlogFile, binlogPosition,
                     gtid);
+            connection.close();
             log.info("Received update-binlog request: " + body);
         });
         //Delete offsets
@@ -125,7 +144,11 @@ public class DebeziumEmbeddedRestApi {
             String response = "";
 
             try {
-                debeziumChangeEventCapture.deleteSchemaHistory(config, finalProps1);
+                DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
+                Connection connection = ds.getConnection();
+                debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
+                connection.close();
             } catch (Exception e) {
                 log.error("Client - Error deleting schema history", e);
                 ctx.result(e.toString());
@@ -143,7 +166,11 @@ public class DebeziumEmbeddedRestApi {
 
             ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
 
-            debeziumChangeEventCapture.updateDebeziumStorageStatus(config, finalProps1, lsn);
+            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+            HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
+            Connection connection = ds.getConnection();
+            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config, finalProps1, lsn);
+            connection.close();
             log.info("Received update-binlog request: " + body);
         });
 

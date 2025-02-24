@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.VariableScaleDecimal;
@@ -9,15 +10,13 @@ import io.debezium.time.Date;
 import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.time.ZoneId;
 import java.util.HashMap;
 
@@ -50,6 +49,10 @@ public class ClickHouseDataTypeMapperTest {
 
     }
 
+    @AfterAll
+    public static void tearDown() {
+        HikariDbSource.close();
+    }
     @Test
     public void convert() throws SQLException {
         //Integer tests.
@@ -66,7 +69,8 @@ public class ClickHouseDataTypeMapperTest {
         String password = clickHouseContainer.getPassword();
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter dbWriter = new BaseDbWriter(dbHostName, port,
                 database, userName, password, null, conn);

@@ -93,6 +93,8 @@ auto.create.tables: "true"
 # database.dbname: The name of the PostgreSQL database from which events are to be captured when not using snapshot mode.
 database.dbname: "public"
 
+clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
 
