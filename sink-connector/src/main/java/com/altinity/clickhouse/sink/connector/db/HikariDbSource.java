@@ -22,6 +22,8 @@ public class HikariDbSource {
     private static Map<String, Connection> connectionPool = new HashMap<>();
     //private static HikariDbSource instance;
 
+    private static boolean disabled = false;
+
     private static final Logger log = LogManager.getLogger(HikariDbSource.class);
     //private HikariDataSource dataSource;
     private String databaseName;
@@ -33,6 +35,9 @@ public class HikariDbSource {
 
     public static Connection initiateNewConnectionIfClosed(String databaseName) throws SQLException {
 
+        if(disabled) {
+            return null;
+        }
         HikariDataSource dbSource = instance.get(databaseName);
         if(dbSource == null) {
 
@@ -44,6 +49,7 @@ public class HikariDbSource {
     public static HikariDataSource getInstance(SinkConnectorDataSource dataSource, String databaseName,
                                                ClickHouseSinkConnectorConfig config) {
 
+        disabled = config.getBoolean(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString());
         if(instance.containsKey(databaseName)) {
             return instance.get(databaseName);
         } else {

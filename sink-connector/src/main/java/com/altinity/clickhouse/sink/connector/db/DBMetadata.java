@@ -4,8 +4,6 @@ import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.logging.log4j.LogManager;
@@ -142,7 +140,9 @@ public class DBMetadata {
                     break;
                 } catch (Exception e) {
                     try {
-                        conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                        if(conn == null || conn.isClosed() == true) {
+                            conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                        }
                     } catch (SQLException sqlException) {
                         log.error("Retry attempt {} failed", retryCount, sqlException);
                     }
