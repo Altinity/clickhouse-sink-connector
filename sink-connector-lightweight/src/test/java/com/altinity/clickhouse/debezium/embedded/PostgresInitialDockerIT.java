@@ -99,7 +99,7 @@ public class PostgresInitialDockerIT {
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
         Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
-        Assert.assertTrue(tmColumns.size() == 22);
+        Assert.assertTrue(tmColumns.size() == 23);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
