@@ -25,6 +25,7 @@ public class Constants {
     public static final String ADD_COLUMN = "ADD COLUMN %s %s";
     public static final String ADD_COLUMN_NULLABLE = "ADD COLUMN %s Nullable(%s)";
 
+
     public static final String MODIFY_COLUMN = "MODIFY COLUMN %s %s";
     public static final String MODIFY_COLUMN_NULLABLE = "MODIFY COLUMN %s Nullable(%s)";
 
