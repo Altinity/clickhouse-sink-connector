@@ -35,4 +35,4 @@ jobs:
       run: mvn -B package -DskipTests=true --file pom.xml
     - name: Run Unit tests
       working-directory: sink-connector
-      run: mvn test -Dgroups=IntegrationTest --file pom.xml
+      run: mvn test --file pom.xml

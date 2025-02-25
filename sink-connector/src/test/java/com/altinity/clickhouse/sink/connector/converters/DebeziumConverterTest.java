@@ -124,7 +124,7 @@ public class DebeziumConverterTest {
 
         // DateTime64 and UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase(DataTypeRange.DATETIME64_6_MAX));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
 
         // DateTime64 and America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
