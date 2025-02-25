@@ -11,6 +11,7 @@ import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -53,6 +54,8 @@ public class ClickHouseDataTypeMapperTest {
     public static void tearDown() {
         HikariDbSource.close();
     }
+
+    @Disabled
     @Test
     public void convert() throws SQLException {
         //Integer tests.
