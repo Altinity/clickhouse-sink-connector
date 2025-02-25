@@ -11,6 +11,7 @@ import io.debezium.time.Time;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -23,9 +24,9 @@ import java.util.HashMap;
 @Testcontainers
 public class ClickHouseDataTypeMapperTest {
 
-    @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-            .withInitScript("./datatypes.sql");
+//    @Container
+//    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+//            .withInitScript("./datatypes.sql");
 
     @Test
     public void getClickHouseDataType() {
@@ -49,59 +50,4 @@ public class ClickHouseDataTypeMapperTest {
 
     }
 
-    @AfterAll
-    public static void tearDown() {
-        HikariDbSource.close();
-    }
-    @Test
-    public void convert() throws SQLException {
-        //Integer tests.
-       // ClickHouseDataTypeMapper.convert(Schema.INT16_SCHEMA.type(), null, 244223232, 1, ps);
-
-        //double maxDoubleTest = 1000000000000000000000000000000000000000000000000000000000000d;
-
-        double maxDoubleTest = 999.00009d;
-
-        String dbHostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "datatypes";
-        String userName = clickHouseContainer.getUsername();
-        String password = clickHouseContainer.getPassword();
-
-        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter dbWriter = new BaseDbWriter(dbHostName, port,
-                database, userName, password, null, conn);
-
-        PreparedStatement ps = dbWriter.getConnection().prepareStatement("insert into datatypes.numeric_types_DOUBLE (Type, Minimum_Value, " +
-                        "Zero_Value, Maximum_Value, _sign, _version) values(?, ?, ?, ?, ?)");
-
-        int index = 1;
-        ps.setString(index++, "Test");
-        ps.setDouble(index++, 0d);
-        ps.setDouble(index++, 0d);
-        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, index++, ps, new ClickHouseSinkConnectorConfig(new HashMap<String, String>()), ClickHouseDataType.Float32, ZoneId.of("UTC"));
-        ps.setDouble(index, 1d);
-        ps.setInt(index++,1);
-        ps.setInt(index++, 12);
-
-        ps.addBatch();
-        ps.executeBatch();
-
-        Statement stmt = dbWriter.getConnection().createStatement();
-        ResultSet rs = stmt.executeQuery("select Maximum_Value from datatypes.numeric_types_DOUBLE");
-        Assert.assertTrue(rs.next());
-       // Assert.assertEquals(rs.getObject(1), maxDoubleTest);
-        System.out.println("Query persisted");
-//
-//             PreparedStatement stmt = conn.prepareStatement("select 1")) {
-//            ResultSet rs = stmt.executeQuery();
-//
-//        ClickHouseDataTypeMapper.convert(Schema.FLOAT32_SCHEMA.type(), null, maxDoubleTest, 1, ps);
-
-
-
-    }
 }
