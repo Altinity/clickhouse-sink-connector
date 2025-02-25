@@ -31,20 +31,20 @@ public class DataTypeRange
 
     // DateTime max limits.
     public static final String DATETIME_MIN="1900-01-01 00:00:00.0";
-    public static final String DATETIME_MAX="2299-12-31 23:59:59.999";
+    public static final String DATETIME_MAX="2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_1_MAX = "2299-12-31 23:59:59.9";
+    public static final String DATETIME_1_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_2_MAX = "2299-12-31 23:59:59.99";
+    public static final String DATETIME_2_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_3_MAX = "2299-12-31 23:59:59.999";
+    public static final String DATETIME_3_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_4_MAX = "2299-12-31 23:59:59.9999";
+    public static final String DATETIME_4_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_5_MAX = "2299-12-31 23:59:59.99999";
+    public static final String DATETIME_5_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME_6_MAX = "2299-12-31 23:59:59.999999";
+    public static final String DATETIME_6_MAX = "2299-12-31 23:59:59.0";
 
-    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.00000000";
+    public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.0";
 
 }

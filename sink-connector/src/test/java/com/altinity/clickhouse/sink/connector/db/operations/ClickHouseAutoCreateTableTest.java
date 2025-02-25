@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.Json;
@@ -10,11 +11,9 @@ import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
+import org.junit.After;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.containers.wait.strategy.WaitStrategy;
@@ -39,6 +38,10 @@ public class ClickHouseAutoCreateTableTest {
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
             .withInitScript("./init_clickhouse.sql").waitingFor(new HttpWaitStrategy().forPort(8123));
 
+    @AfterAll
+    public static void tearDown() throws SQLException {
+        HikariDbSource.close();
+    }
     @BeforeAll
     static void initialize() {
 
