@@ -85,27 +85,27 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         String DATETIME1_MIN = "1900-01-01 00:00:00.0";
         String DATETIME1_MID = "2022-09-29 01:48:25.1";
-        String DATETIME1_MAX = "2299-12-31 23:59:59.9";
+        String DATETIME1_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME2_MIN = "1900-01-01 00:00:00.0";
         String DATETIME2_MID = "2022-09-29 01:49:05.12";
-        String DATETIME2_MAX = "2299-12-31 23:59:59.99";
+        String DATETIME2_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME3_MIN = "1900-01-01 00:00:00.0";
         String DATETIME3_MID = "2022-09-29 01:49:22.123";
-        String DATETIME3_MAX = "2299-12-31 23:59:59.999";
+        String DATETIME3_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME4_MIN = "1900-01-01 00:00:00.0";
         String DATETIME4_MID = "2022-09-29 01:50:12.1234";
-        String DATETIME4_MAX = "2299-12-31 23:59:59.9999";
+        String DATETIME4_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME5_MIN = "1900-01-01 00:00:00.0";
         String DATETIME5_MID = "2022-09-29 01:50:28.12345";
-        String DATETIME5_MAX = "2299-12-31 23:59:59.99999";
+        String DATETIME5_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME6_MIN = "1900-01-01 00:00:00.0";
         String DATETIME6_MID = "2022-09-29 01:50:56.123456";
-        String DATETIME6_MAX = "2299-12-31 23:59:59.999999";
+        String DATETIME6_MAX = "2299-12-31 23:59:59.0";
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 

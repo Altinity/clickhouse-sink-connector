@@ -35,7 +35,7 @@ public class ClickHouseCreateDatabaseTest {
     static String dbName;
 
     @Container
-    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .waitingFor(new HttpWaitStrategy().forPort(8123));
     @BeforeAll
     static void initialize() {
