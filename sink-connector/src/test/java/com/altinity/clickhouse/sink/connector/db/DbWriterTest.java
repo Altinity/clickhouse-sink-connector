@@ -35,7 +35,7 @@ public class DbWriterTest {
 
     // will be started before and stopped after each test method
     @Container
-    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .withInitScript("./init_clickhouse.sql");
 
     @AfterAll

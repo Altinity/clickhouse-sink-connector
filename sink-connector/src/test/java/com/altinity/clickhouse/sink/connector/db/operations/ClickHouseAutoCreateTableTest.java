@@ -35,7 +35,7 @@ public class ClickHouseAutoCreateTableTest {
     static Connection conn;
 
     @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .withInitScript("./init_clickhouse.sql").waitingFor(new HttpWaitStrategy().forPort(8123));
 
     @AfterAll
