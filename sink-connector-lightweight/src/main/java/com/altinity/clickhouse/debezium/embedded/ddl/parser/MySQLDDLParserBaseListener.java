@@ -6224,4 +6224,36 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     public void exitEveryRule(ParserRuleContext parserRuleContext) {
 
     }
+
+    @Override
+    public void enterTableOptionSecondaryEngine(MySqlParser.TableOptionSecondaryEngineContext ctx) {
+    }
+
+    @Override
+    public void exitTableOptionSecondaryEngine(MySqlParser.TableOptionSecondaryEngineContext ctx) {
+    }
+
+    @Override
+    public void enterEmptyStatement_(MySqlParser.EmptyStatement_Context ctx) {
+    }
+
+    @Override
+    public void exitEmptyStatement_(MySqlParser.EmptyStatement_Context ctx) {
+    }
+
+    @Override
+    public void enterSequenceFunctionName(MySqlParser.SequenceFunctionNameContext ctx) {
+    }
+
+    @Override
+    public void exitSequenceFunctionName(MySqlParser.SequenceFunctionNameContext ctx) {
+    }
+
+    @Override
+    public void enterSequenceTableItem(MySqlParser.SequenceTableItemContext ctx) {
+    }
+
+    @Override
+    public void exitSequenceTableItem(MySqlParser.SequenceTableItemContext ctx) {
+    }
 }
