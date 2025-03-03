@@ -54,7 +54,7 @@ public class TableOperationsIT {
         }
 
         static {
-            clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+            clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                     .asCompatibleSubstituteFor("clickhouse"))
                     .withInitScript("init_clickhouse_it.sql")
                     .withUsername("ch_user")
@@ -84,7 +84,7 @@ public class TableOperationsIT {
 
                     engine.set(debeziumChangeEventCapture);
                     ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
-                    engine.get().setup(props, new SourceRecordParserService(),false);
+                    engine.get().setup(props, new SourceRecordParserService(), false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -98,15 +98,15 @@ public class TableOperationsIT {
             conn.prepareStatement("RENAME TABLE ship_class_new to ship_class_new2").execute();
             conn.prepareStatement("ALTER TABLE ship_class_new2 rename ship_class_new3").execute();
             conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, col3 int)").execute();
-            conn.prepareStatement("CREATE TABLE members (\n" +
-                            "    firstname VARCHAR(25) NOT NULL,\n" +
-                            "    lastname VARCHAR(25) NOT NULL,\n" +
-                            "    username VARCHAR(16) NOT NULL,\n" +
-                            "    email VARCHAR(35),\n" +
-                            "    joined DATE NOT NULL\n" +
-                            ")\n" +
-                            "PARTITION BY KEY(joined)\n" +
-                            "PARTITIONS 6;").execute();
+            conn.prepareStatement("CREATE TABLE members (\n"
+                            + "    firstname VARCHAR(25) NOT NULL,\n"
+                            + "    lastname VARCHAR(25) NOT NULL,\n"
+                            + "    username VARCHAR(16) NOT NULL,\n"
+                            + "    email VARCHAR(35),\n"
+                            + "    joined DATE NOT NULL\n"
+                            + ")\n"
+                            + "PARTITION BY KEY(joined)\n"
+                            + "PARTITIONS 6;").execute();
             conn.prepareStatement("create table copied_table like new_table").execute();
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
 
@@ -116,19 +116,19 @@ public class TableOperationsIT {
             Thread.sleep(10000);
 
 
-            conn.prepareStatement("\n" +
-                    "CREATE TABLE contacts (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n" +
-                    "first_name VARCHAR(50) NOT NULL,\n" +
-                    "last_name VARCHAR(50) NOT NULL,\n" +
-                    "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
-                    "email VARCHAR(100) NOT NULL);\n").execute();
+            conn.prepareStatement("\n"
+                    + "CREATE TABLE contacts (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n"
+                    + "first_name VARCHAR(50) NOT NULL,\n"
+                    + "last_name VARCHAR(50) NOT NULL,\n"
+                    + "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n"
+                    + "email VARCHAR(100) NOT NULL);\n").execute();
 
             BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 
             DBMetadata dbMetadata = new DBMetadata();
-            Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class_new3", "employees"    );
+            Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class_new3", "employees");
             Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
             Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");
 
@@ -138,36 +138,36 @@ public class TableOperationsIT {
 
             // Validate table created with partitions.
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table members");
-            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                        "(\n" +
-                        "    `firstname` String,\n" +
-                        "    `lastname` String,\n" +
-                        "    `username` String,\n" +
-                        "    `email` Nullable(String),\n" +
-                        "    `joined` Date32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n"
+                        + "(\n"
+                        + "    `firstname` String,\n"
+                        + "    `lastname` String,\n"
+                        + "    `username` String,\n"
+                        + "    `email` Nullable(String),\n"
+                        + "    `joined` Date32,\n"
+                        + "    `_version` UInt64,\n"
+                        + "    `is_deleted` UInt8\n"
+                        + ")\n"
+                        + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                        + "PARTITION BY joined\n"
+                        + "ORDER BY tuple()\n"
+                        + "SETTINGS index_granularity = 8192"));
 
             String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table rcx");
 
-            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-                        "(\n" +
-                        "    `a` Int32,\n" +
-                        "    `b` Nullable(Int32),\n" +
-                        "    `c` String,\n" +
-                        "    `d` Int32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY (a, d, c)\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n"
+                        + "(\n"
+                        + "    `a` Int32,\n"
+                        + "    `b` Nullable(Int32),\n"
+                        + "    `c` String,\n"
+                        + "    `d` Int32,\n"
+                        + "    `_version` UInt64,\n"
+                        + "    `is_deleted` UInt8\n"
+                        + ")\n"
+                        + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                        + "PARTITION BY (a, d, c)\n"
+                        + "ORDER BY tuple()\n"
+                        + "SETTINGS index_granularity = 8192"));
 
             Thread.sleep(10000);
             // Delete offset table.

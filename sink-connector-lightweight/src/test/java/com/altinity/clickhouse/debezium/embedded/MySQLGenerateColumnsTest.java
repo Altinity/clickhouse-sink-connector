@@ -75,7 +75,7 @@ public class MySQLGenerateColumnsTest {
                 Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -85,12 +85,12 @@ public class MySQLGenerateColumnsTest {
 
         Connection conn = connectToMySQL(mySqlContainer);
 
-        conn.prepareStatement("\n" +
-                "CREATE TABLE employees.contacts (id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
-                "first_name VARCHAR(50) NOT NULL,\n" +
-                "last_name VARCHAR(50) NOT NULL,\n" +
-                "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
-                "email VARCHAR(100) NOT NULL);\n").execute();
+        conn.prepareStatement("\n"
+                + "CREATE TABLE employees.contacts (id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n"
+                + "first_name VARCHAR(50) NOT NULL,\n"
+                + "last_name VARCHAR(50) NOT NULL,\n"
+                + "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n"
+                + "email VARCHAR(100) NOT NULL);\n").execute();
 
         Thread.sleep(30000);
 
@@ -101,18 +101,18 @@ public class MySQLGenerateColumnsTest {
         DBMetadata dbMetadata = new DBMetadata();
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
-        Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
-        Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
-        Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
+        Assert.assertTrue("Int32".equalsIgnoreCase(columnsToDataTypeMap.get("id")));
+        Assert.assertTrue("String".equalsIgnoreCase(columnsToDataTypeMap.get("first_name")));
+        Assert.assertTrue("String".equalsIgnoreCase(columnsToDataTypeMap.get("last_name")));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(columnsToDataTypeMap.get("fullname")));
+        Assert.assertTrue("String".equalsIgnoreCase(columnsToDataTypeMap.get("email")));
 
         ResultSet resultSet = ITCommon.executeQueryWithResultSet("select fullname from employees.contacts", writer.getConnection());
         boolean insertCheck = false;
         while (resultSet.next()) {
                 insertCheck = true;
                 String fullname = resultSet.getString("fullname");
-                Assert.assertTrue(fullname.equalsIgnoreCase("John Doe"));
+                Assert.assertTrue("John Doe".equalsIgnoreCase(fullname));
         }
         Thread.sleep(10000);
 

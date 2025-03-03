@@ -68,7 +68,7 @@ public class MySQLDDLParserService implements DDLParserService {
     }
 
     @Override
-    public String parseSql(String sql, String tableName,  StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
+    public String parseSql(String sql, String tableName, StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
         String clickHouseResult = null;
 
         MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));

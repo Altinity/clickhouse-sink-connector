@@ -84,7 +84,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         properties.put("table.include.list", "public.tm,public.tm2,public.redata");
         properties.put("offset.storage.jdbc.offset.table.ddl", "CREATE TABLE if not exists %s on cluster '{cluster}' (id String, offset_key String, offset_val String, record_insert_ts DateTime, record_insert_seq UInt64) ENGINE =  KeeperMap('/asc_offsets201',10) PRIMARY KEY offset_key");
         properties.put("offset.storage.jdbc.offset.table.delete", "select 1");
-        properties.put("skipped.operations","none");
+        properties.put("skipped.operations", "none");
         properties.put("disable.drop.truncate", "false");
         return properties;
     }
@@ -106,7 +106,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -121,10 +121,10 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 
-        Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
-        Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
+        Assert.assertTrue("UUID".equalsIgnoreCase(tmColumns.get("id")));
+        Assert.assertTrue("Nullable(UUID)".equalsIgnoreCase(tmColumns.get("secid")));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        Assert.assertTrue("Nullable(DateTime64(6))".equalsIgnoreCase(tmColumns.get("created")));
 
 
         int tmCount = 0;
@@ -136,8 +136,8 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         // Get the columns in re_data.
         Map<String, String> reDataColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "redata", "public");
 
-        Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
-        Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
+        Assert.assertTrue("Decimal(64, 18)".equalsIgnoreCase(reDataColumns.get("amount")));
+        Assert.assertTrue("Decimal(21, 5)".equalsIgnoreCase(reDataColumns.get("total_amount")));
         Assert.assertTrue(tmCount == 2);
 
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());

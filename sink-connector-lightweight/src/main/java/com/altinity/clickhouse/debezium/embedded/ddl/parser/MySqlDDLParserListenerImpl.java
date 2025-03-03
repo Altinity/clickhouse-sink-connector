@@ -47,9 +47,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                       ClickHouseSinkConnectorConfig config) {
         this.config = config;
         try {
-        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
-            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
-                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+            if(this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null) {
+                sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
+                        getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+            }
 
         } catch(Exception e) {
             log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
@@ -98,7 +99,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         } catch (Exception e){
-            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
+            log.error("**** Error parsing user provided timezone:" + userProvidedTimeZone + e.toString());
         }
 
         return userProvidedTimeZoneId;
@@ -152,9 +153,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if(originalTableName.contains(".")) {
             this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(newTableName);
-        } else
+        } else {
             this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
-                .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
+                    .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
+        }
     }
 
     @Override
@@ -193,13 +195,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine == true) {
             if(isReplicatedReplacingMergeTree == true) {
                 this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
-            } else
+            } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
+            }
         } else {
             if (isReplicatedReplacingMergeTree == true) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)",  VERSION_COLUMN));
-            } else
+                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
+            } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+            }
         }
         if(partitionByColumn.length() > 0) {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
@@ -228,8 +232,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     String[] tableNameSplit = tableName.split("\\.");
                     this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
                     //this.query.append(tableName);
-                } else
+                } else {
                     this.query.append(databaseName).append(".").append(tree.getText());
+                }
 
                 // If its RRMT add on CLUSTER {cluster} to QUERY.
                 boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
@@ -313,12 +318,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // Null Column and DimensionDataType are children of ColumnDefinition
                 for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
-                        if (colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL))
+                        if(colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
                             isNullColumn = false;
-                    } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
-                        if (colDefinitionChildTree.getText() != null) {
-
                         }
+                    } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
+                        colDefinitionChildTree.getText();
                     } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
                         for(ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
                             System.out.println(primaryKeyTree.getText());
@@ -340,8 +344,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     if(isNullColumn){
                         this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                                 .append(")");
-                    } else
+                    } else {
                         this.query.append(colDataType);
+                    }
 
                     this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
                     continue;
@@ -386,8 +391,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.error("Error parsing precision, scale : columnName" + columnName);
             }
         }  // datetime(6)
-        else if(parsedDataType.contains("(") && parsedDataType.contains(")") &&
-                (containsIgnoreCase(parsedDataType, "datetime") || containsIgnoreCase(parsedDataType, "timestamp"))){
+        else if(parsedDataType.contains("(") && parsedDataType.contains(")")
+                && (containsIgnoreCase(parsedDataType, "datetime") || containsIgnoreCase(parsedDataType, "timestamp"))){
             try {
                 precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(")")));
             } catch(Exception e) {
@@ -487,7 +492,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         while (it.hasNext()) {
             ParseTree columnChild = it.next();
             if (columnChild instanceof MySqlParser.UidContext) {
-                columnName = (columnChild).getText();
+                columnName = columnChild.getText();
                 if (isAlterChangeColumn) {
                     // Change column comes in this format ALTER TABLE change column oldcol newcol.
                     ParseTree newColumnChild = it.next();
@@ -498,9 +503,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 for (ParseTree columnDefChild : ((MySqlParser.ColumnDefinitionContext) columnChild).children) {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
                         nullExplicitlySet = true;
-                        if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
+                        if(columnDefChild.getText().equalsIgnoreCase(Constants.NULL)) {
                             isNullColumn = true;
-                        else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
+                        } else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
                             if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
                                 isNullColumn = false;
                             }
@@ -510,7 +515,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
                         }
                     } else {
-                        columnType = (columnDefChild.getText());
+                        columnType = columnDefChild.getText();
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
                         if (chDataType != null) {
                             columnType = chDataType;
@@ -554,12 +559,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // Check if the column scehma is nullable from ClickHouse.
                 // Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
         }
-        if (columnName != null && columnType != null)
-            if (isNullColumn) {
+        if(columnName != null && columnType != null) {
+            if(isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
-            }
-            else
+            } else {
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
+            }
+        }
 
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
@@ -589,8 +595,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // If the tableName already includes the databaseName dont include databaseName in this.query
         if(tableName.contains(".")) {
             this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
-        } else
+        } else {
             this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
+        }
 
     }
 
@@ -608,9 +615,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     // Split database and table name.
                     String[] tableNameSplit = this.tableName.split("\\.");
                 
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
-                } else
+                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + tableNameSplit[1]));
+                } else {
                     this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
+                }
             }
 
             if (tree instanceof AlterByAddColumnContext) {
@@ -654,8 +662,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.info("INSTANT ALGORITHM not supported in ClickHouse");
                 // Remove any terminating commas and break out of the parser loop.
                 // If the last character was comma.
-                if(this.query.charAt(this.query.length() - 1) == ',')
+                if(this.query.charAt(this.query.length() - 1) == ',') {
                     this.query.deleteCharAt(this.query.length() - 1);
+                }
 
                 break;
             }
@@ -681,11 +690,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         // If the databasename already includes the table name dont include it in the query.
         if(originalTableName.contains(".")) {
-            this.query.delete(0, this.query.toString().length()).append(String.format
-                    (Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
-        } else
-            this.query.delete(0, this.query.toString().length()).append(String.format
-                (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
+            this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
+        } else {
+            this.query.delete(0, this.query.toString().length()).append(String.format(Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
+        }
 
     }
 
@@ -761,9 +769,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
                         this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").
                                 append(this.databaseName).append(".").append(newDatabaseAndTableNameArray[1]);
-                    } else
+                    } else {
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
                                 append(databaseName).append(".").append(newTableName);
+                    }
                 }
             } else if(child instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) child).symbol.getType() == MySqlParser.COMMA) {

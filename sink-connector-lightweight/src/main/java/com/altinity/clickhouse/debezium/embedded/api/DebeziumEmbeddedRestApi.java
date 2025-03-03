@@ -80,7 +80,7 @@ public class DebeziumEmbeddedRestApi {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
                 HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
                 Connection connection = ds.getConnection();
-                debeziumJdbcStorageOperations.deleteOffsets(connection,finalProps1);
+                debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
                 connection.close();
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
@@ -193,12 +193,16 @@ public class DebeziumEmbeddedRestApi {
     }
     // Stop the javalin server
     public static void stop() {
-        if(app != null)
+        if(app != null) {
             app.stop();
+        }
     }
 
     // Return the app instance.
     public static Javalin app() {
         return app;
+    }
+
+    private DebeziumEmbeddedRestApi() {
     }
 }

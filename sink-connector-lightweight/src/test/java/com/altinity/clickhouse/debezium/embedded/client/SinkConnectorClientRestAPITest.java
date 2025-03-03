@@ -79,7 +79,7 @@ public class SinkConnectorClientRestAPITest {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -101,7 +101,7 @@ public class SinkConnectorClientRestAPITest {
         HttpUriRequest request = new HttpGet("http://localhost:7000/status");
 
         // Validate the status call.
-        CloseableHttpResponse httpResponse = HttpClientBuilder.create().build().execute( request );
+        CloseableHttpResponse httpResponse = HttpClientBuilder.create().build().execute(request);
         HttpEntity entity = httpResponse.getEntity();
         if(entity != null) {
             String json = EntityUtils.toString(entity);

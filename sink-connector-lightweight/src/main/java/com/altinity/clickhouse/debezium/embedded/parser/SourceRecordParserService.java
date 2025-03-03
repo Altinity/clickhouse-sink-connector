@@ -44,9 +44,7 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
         } catch (Exception e) {
             log.error("Error parsing schema");
         }
-        if (matchingDDLField != null) {
-
-        } else {
+        if (matchingDDLField == null) {
             Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
             if (sourceObjStruct == null) {
@@ -55,8 +53,8 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
             if (sourceObjStruct.containsKey(SinkRecordColumns.OPERATION)) {
                 // Operation (u, c)
                 String operation = (String) sourceObjStruct.get(SinkRecordColumns.OPERATION);
-                if (operation.equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation()) ||
-                        operation.equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.READ.getOperation())) {
+                if (operation.equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.CREATE.getOperation())
+                        || operation.equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.READ.getOperation())) {
                     // Inserts.
                     chStruct = readBeforeOrAfterSection(sourceObjStruct, record, SinkRecordColumns.AFTER,
                             ClickHouseConverter.CDC_OPERATION.CREATE, committer, lastRecordInBatch);
@@ -73,6 +71,7 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                             ClickHouseConverter.CDC_OPERATION.TRUNCATE, committer, lastRecordInBatch);
                 }
             }
+
         }
 
         return chStruct;
@@ -158,4 +157,3 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
         return chStruct;
     }
 }
-

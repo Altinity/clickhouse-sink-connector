@@ -99,7 +99,7 @@ public class ITCommon {
 
     }
 
-    static public Properties getDebeziumProperties( ClickHouseContainer clickHouseContainer) throws Exception {
+    static public Properties getDebeziumProperties(ClickHouseContainer clickHouseContainer) throws Exception {
 
         Properties defaultProps = new Properties();
         Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
@@ -115,7 +115,7 @@ public class ITCommon {
         String mongoConnectionString = String.format("mongodb://%s:%s", "mongo",
                 "27017");
 
-        defaultProps.setProperty("mongodb.connection.string", mongoConnectionString +"/?replicaSet=rs0");
+        defaultProps.setProperty("mongodb.connection.string", mongoConnectionString + "/?replicaSet=rs0");
         //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString );
 
         //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString + "/?replicaSet=docker-rs");
@@ -240,5 +240,8 @@ public class ITCommon {
         ResultSet rs = conn.prepareStatement(sql).executeQuery();
         return rs;
 
+    }
+
+    private ITCommon() {
     }
 }

@@ -108,8 +108,8 @@ public class DebeziumJdbcStorageOperations {
     private Pair<String, String> getDebeziumOffsetStorageDatabaseName(Properties props) {
 
 
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX
+                + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         return splitTableName(tableName);
     }
 
@@ -178,7 +178,7 @@ public class DebeziumJdbcStorageOperations {
                 colNames.forEach(cn -> {
                     try {
                         Object v = resultSet.getObject(cn);
-                        if (v != null && v instanceof LocalDateTime) {
+                        if(v != null && v instanceof LocalDateTime) {
                             v = ((LocalDateTime) v).toString();
                         }
                         row.put(cn, v);
@@ -300,8 +300,8 @@ public class DebeziumJdbcStorageOperations {
      * @return
      */
     private Pair<String, String> getDebeziumSchemaHistoryDatabaseName(Properties props) {
-        String tableName = props.getProperty(SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
-                JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING
+                + JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
         return splitTableName(tableName);
     }
 

@@ -49,7 +49,7 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -81,14 +81,14 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 
         Thread.sleep(10000);
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
-        Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(shipClassColumns.get("class_name_new")));
+        Assert.assertTrue("Nullable(Decimal(10, 10))".equalsIgnoreCase(shipClassColumns.get("tonange_new")));
+        Assert.assertTrue("Nullable(Decimal(10, 2))".equalsIgnoreCase(shipClassColumns.get("max_length")));
 
         // Files.deleteIfExists(tmpFilePath);
-        Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("new_col3_name")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col1_new")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("new_col2_name")));
 
 
         if(engine.get() != null) {

@@ -48,11 +48,11 @@ public class DebeziumOffsetStorage {
                                        Connection connection) throws SQLException {
 
         // String databaseName = p
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX
+                + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         // String connectorName = config.getString("connector.name");
-        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" ,
+        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'",
                 tableName, offsetKey);
         DBMetadata dbMetadata = new DBMetadata();
         dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
@@ -69,7 +69,7 @@ public class DebeziumOffsetStorage {
                                          Connection connection) throws SQLException {
 
 
-        String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
+        String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'", tableName, offsetKey);
         log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
         DBMetadata dbMetadata = new DBMetadata();
         dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
@@ -82,10 +82,10 @@ public class DebeziumOffsetStorage {
      * @throws SQLException
      */
     public String getDebeziumLatestRecordTimestamp(Properties props, Connection connection) throws SQLException {
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX
+                + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
-        String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s" , tableName);
+        String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s", tableName);
         DBMetadata dbMetadata = new DBMetadata();
         return dbMetadata.executeSystemQuery(connection, debeziumLatestRecordTimestampQuery);
 
@@ -93,12 +93,12 @@ public class DebeziumOffsetStorage {
 
     public String getDebeziumStorageStatusQuery(
                                                 Properties props, Connection connection) throws SQLException {
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX
+                + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String offsetKey = getOffsetKey(props);
         // String connectorName = config.getString("connector.name");
-        String debeziumStorageStatusQuery = String.format("select offset_val from %s where offset_key='%s'" , tableName, offsetKey);
+        String debeziumStorageStatusQuery = String.format("select offset_val from %s where offset_key='%s'", tableName, offsetKey);
         DBMetadata dbMetadata = new DBMetadata();
         return dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
     }

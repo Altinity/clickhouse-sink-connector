@@ -37,7 +37,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     private static DebeziumChangeEventCapture debeziumChangeEventCapture;
 
-    private static Properties userProperties = new Properties();
+    private static final Properties userProperties = new Properties();
 
     private static Injector injector;
 
@@ -193,7 +193,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                 @Override
                 public void run() {
                     Thread.currentThread().setName("Sink connector Monitoring thread");
-                    if (debeziumChangeEventCapture == null) {
+                    if(debeziumChangeEventCapture == null) {
                         return;
                     }
                     try {
@@ -211,7 +211,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         // calculate delta.
                         long deltaInSecs = (System.currentTimeMillis() - lastRecordTimestamp) / 1000;
                         log.info("Last Record Timestamp: " + lastRecordTimestamp + " Delta: " + deltaInSecs + " Restart Event Loop Timeout: " + restartEventLoopTimeout);
-                        if (deltaInSecs < restartEventLoopTimeout) {
+                        if(deltaInSecs < restartEventLoopTimeout) {
                             return;
                         }
                         log.info("******* Restarting Event Loop ********");

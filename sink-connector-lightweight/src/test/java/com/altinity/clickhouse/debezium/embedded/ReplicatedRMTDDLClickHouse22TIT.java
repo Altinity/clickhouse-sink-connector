@@ -89,7 +89,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -122,23 +122,23 @@ public class ReplicatedRMTDDLClickHouse22TIT {
             System.out.println(dateTimeResult.getString("Type").toString());
             System.out.println(dateTimeResult.getString("Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            Assert.assertTrue("mediumtext".equalsIgnoreCase(dateTimeResult.getString("Type").toString()));
+            Assert.assertTrue("????".equalsIgnoreCase(dateTimeResult.getString("Value").toString()));
         }
         Assert.assertTrue(dataValidated);
 
         // Create a new table in MySQL
-        conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n" +
-                " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
-                " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
-                "  `dt_tz` int DEFAULT NULL,\n" +
-                "  `lat` decimal(9,7) DEFAULT NULL,\n" +
-                "  `long` decimal(10,7) DEFAULT NULL,\n" +
-                "  `did` int unsigned DEFAULT NULL,\n" +
-                "   `lname_id` int unsigned DEFAULT NULL,\n" +
-                " PRIMARY KEY (`uid`,`dt`),\n" +
-                "KEY `st` (`st`)\n" +
-                " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
+        conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n"
+                + " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+                + " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+                + "  `dt_tz` int DEFAULT NULL,\n"
+                + "  `lat` decimal(9,7) DEFAULT NULL,\n"
+                + "  `long` decimal(10,7) DEFAULT NULL,\n"
+                + "  `did` int unsigned DEFAULT NULL,\n"
+                + "   `lname_id` int unsigned DEFAULT NULL,\n"
+                + " PRIMARY KEY (`uid`,`dt`),\n"
+                + "KEY `st` (`st`)\n"
+                + " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
 
         Thread.sleep(10000);
 

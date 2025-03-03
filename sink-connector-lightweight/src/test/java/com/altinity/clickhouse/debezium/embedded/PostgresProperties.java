@@ -22,7 +22,7 @@ public class PostgresProperties {
 
         defaultProps.setProperty("database.hostname", postgreSQLContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(postgreSQLContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user",  postgreSQLContainer.getUsername());
+        defaultProps.setProperty("database.user", postgreSQLContainer.getUsername());
         defaultProps.setProperty("database.password", postgreSQLContainer.getPassword());
 
         defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
@@ -44,6 +44,9 @@ public class PostgresProperties {
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
         return defaultProps;
+    }
+
+    private PostgresProperties() {
     }
 
 }

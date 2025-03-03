@@ -64,5 +64,8 @@ public class Constants {
     // Create a set of these data types.
     public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES = new HashSet<>(Arrays.asList("point", "polygon"));
 
+    private Constants() {
+    }
+
 
 }

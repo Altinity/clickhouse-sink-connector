@@ -46,7 +46,7 @@ public class IsDeletedColumnsIT {
     }
 
     static {
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -73,7 +73,7 @@ public class IsDeletedColumnsIT {
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService()
-                        ,false);
+                        , false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -95,7 +95,7 @@ public class IsDeletedColumnsIT {
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
-            Assert.assertTrue(rs.getString("col1").equalsIgnoreCase("test"));
+            Assert.assertTrue("test".equalsIgnoreCase(rs.getString("col1")));
             Assert.assertTrue(rs.getInt("col2") == 1);
             Assert.assertTrue(rs.getInt("is_deleted") == 22);
             Assert.assertTrue(rs.getInt("_sign") == 1);

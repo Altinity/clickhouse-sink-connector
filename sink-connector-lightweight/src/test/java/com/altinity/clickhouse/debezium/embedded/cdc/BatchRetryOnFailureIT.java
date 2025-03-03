@@ -75,7 +75,7 @@ public class BatchRetryOnFailureIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class) , props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -105,7 +105,7 @@ public class BatchRetryOnFailureIT {
                 "employees");
         Connection chConn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
-                "employees",new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
@@ -114,7 +114,7 @@ public class BatchRetryOnFailureIT {
         boolean insertCheck = false;
         while(dateTimeResult.next()) {
             insertCheck = true;
-            Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
+            Assert.assertTrue("DATETIME-INSERT55".equalsIgnoreCase(dateTimeResult.getString("Type")));
         }
         Assert.assertTrue(insertCheck);
 

@@ -42,5 +42,8 @@ public class SinkConnectorLightWeightConfig {
         configVariables.put(IGNORE_DDL_REGEX, "If this configuration is set, the sink connector will ignore DDL statements that match the regex");
     }
 
+    private SinkConnectorLightWeightConfig() {
+    }
+
 
 }

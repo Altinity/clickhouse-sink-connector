@@ -106,7 +106,7 @@ public class DatabaseOverrideRRMTIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -179,7 +179,7 @@ public class DatabaseOverrideRRMTIT {
         boolean recordFound = false;
         while(chRs.next()) {
             recordFound = true;
-            assert chRs.getString("col1").equalsIgnoreCase("a");
+            assert "a".equalsIgnoreCase(chRs.getString("col1"));
             //assert rs.getString("name").equalsIgnoreCase("test");
         }
 
@@ -195,7 +195,7 @@ public class DatabaseOverrideRRMTIT {
         boolean prod3RecordFound = false;
         while(chRs.next()) {
             prod3RecordFound = true;
-            assert chRs.getString("col1").equalsIgnoreCase("a");
+            assert "a".equalsIgnoreCase(chRs.getString("col1"));
             //assert rs.getString("name").equalsIgnoreCase("test");
         }
         assertTrue(prod3RecordFound);

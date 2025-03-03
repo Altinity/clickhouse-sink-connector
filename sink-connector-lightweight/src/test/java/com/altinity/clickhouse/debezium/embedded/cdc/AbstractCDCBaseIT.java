@@ -41,5 +41,7 @@ public class AbstractCDCBaseIT {
                 throw new RuntimeException(e);
             }
         }
-}
 
+    private AbstractCDCBaseIT() {
+    }
+}

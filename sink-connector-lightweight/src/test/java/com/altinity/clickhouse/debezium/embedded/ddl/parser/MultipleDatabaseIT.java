@@ -49,7 +49,7 @@ public class MultipleDatabaseIT
     }
 
     static {
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -136,7 +136,7 @@ public class MultipleDatabaseIT
         while(rs.next()) {
             recordFound = true;
             assert rs.getInt("id") == 1;
-            assert rs.getString("name").equalsIgnoreCase("test");
+            assert "test".equalsIgnoreCase(rs.getString("name"));
         }
         Assert.assertTrue(recordFound);
 
@@ -146,7 +146,7 @@ public class MultipleDatabaseIT
         while(rs.next()) {
             recordFound = true;
             assert rs.getInt("id") == 1;
-            assert rs.getString("name").equalsIgnoreCase("test2");
+            assert "test2".equalsIgnoreCase(rs.getString("name"));
         }
 
         Assert.assertTrue(recordFound);

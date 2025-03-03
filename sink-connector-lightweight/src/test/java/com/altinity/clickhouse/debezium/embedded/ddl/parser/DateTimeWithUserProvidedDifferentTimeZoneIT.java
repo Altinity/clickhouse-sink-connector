@@ -127,7 +127,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         while(chTimeZoneRS.next()) {
             chTimeZoneValidated = true;
             System.out.println("ClickHouse Timezone: " + chTimeZoneRS.getString(1));
-            Assert.assertTrue(chTimeZoneRS.getString(1).equalsIgnoreCase("America/Chicago"));
+            Assert.assertTrue("America/Chicago".equalsIgnoreCase(chTimeZoneRS.getString(1)));
         }
         Assert.assertTrue(chTimeZoneValidated);
 

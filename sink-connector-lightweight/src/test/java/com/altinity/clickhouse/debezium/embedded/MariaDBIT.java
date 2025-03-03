@@ -82,7 +82,7 @@ public class MariaDBIT
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -116,8 +116,8 @@ public class MariaDBIT
 
         Thread.sleep(5000);
         // Insert a new row.
-        conn.createStatement().execute("INSERT INTO employees.audience (client_id, list_id, status, email, custom_properties, source, created_date, modified_date, property_update_date)" +
-                " VALUES (1, 100, 1, 'example@example.com', '{\"name\": \"John\", \"age\": 30}', 1, '2024-05-13 12:00:00', '2024-05-13 12:00:00', '2024-05-13 12:00:00')");
+        conn.createStatement().execute("INSERT INTO employees.audience (client_id, list_id, status, email, custom_properties, source, created_date, modified_date, property_update_date)"
+                + " VALUES (1, 100, 1, 'example@example.com', '{\"name\": \"John\", \"age\": 30}', 1, '2024-05-13 12:00:00', '2024-05-13 12:00:00', '2024-05-13 12:00:00')");
 
         Thread.sleep(10000);
         conn.close();

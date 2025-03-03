@@ -69,10 +69,6 @@ public class ReplicatedRMTDDLIT {
         clickHouseContainer.start();
     }
 
-    static {
-
-    }
-
     @ParameterizedTest
     @CsvSource({
             "clickhouse/clickhouse-server:latest"
@@ -126,8 +122,8 @@ public class ReplicatedRMTDDLIT {
             System.out.println(dateTimeResult.getString("Type").toString());
             System.out.println(dateTimeResult.getString("Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            Assert.assertTrue("mediumtext".equalsIgnoreCase(dateTimeResult.getString("Type").toString()));
+            Assert.assertTrue("????".equalsIgnoreCase(dateTimeResult.getString("Value").toString()));
         }
         Assert.assertTrue(dataValidated);
 

@@ -49,4 +49,7 @@ public class PropertiesHelper {
                 ));
     }
 
+    private PropertiesHelper() {
+    }
+
 }

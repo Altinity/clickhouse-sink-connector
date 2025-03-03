@@ -56,7 +56,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
                 //properties.put(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(properties, new SourceRecordParserService(),  false);
+                engine.get().setup(properties, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -91,18 +91,18 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
-        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(shipClassColumns.get("ship_spec")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(shipClassColumns.get("somecol")));
+        Assert.assertTrue("Nullable(Bool)".equalsIgnoreCase(shipClassColumns.get("newcol")));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(shipClassColumns.get("customer_address")));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(shipClassColumns.get("customer_name")));
 
         // Validate all add_test columns.
-        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("Nullable(String)"));
-        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(addTestColumns.get("col8")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col2")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col3")));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(addTestColumns.get("col5")));
+        Assert.assertTrue("Nullable(String)".equalsIgnoreCase(addTestColumns.get("col6")));
 
         if(engine.get() != null) {
             engine.get().stop();

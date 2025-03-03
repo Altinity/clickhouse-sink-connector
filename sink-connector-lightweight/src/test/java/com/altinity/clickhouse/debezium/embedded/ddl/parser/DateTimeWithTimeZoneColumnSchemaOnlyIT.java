@@ -108,7 +108,7 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -136,9 +136,9 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
             System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.0"));
+            Assert.assertTrue("1900-01-01 00:00:00.0".equalsIgnoreCase(dateTimeResult.getTimestamp("Minimum_Value").toString()));
+            Assert.assertTrue("2022-09-29 01:47:46.0".equalsIgnoreCase(dateTimeResult.getTimestamp("Mid_Value").toString()));
+            Assert.assertTrue("2299-12-31 23:59:59.0".equalsIgnoreCase(dateTimeResult.getTimestamp("Maximum_Value").toString()));
         }
 
         if(engine.get() != null) {

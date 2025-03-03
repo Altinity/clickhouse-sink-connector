@@ -16,6 +16,7 @@ import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserServic
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.junit.Assert;
 
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,7 +44,7 @@ public class DDLIgnoreRegExIT {
     }
 
     static {
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
                 //.withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -66,7 +67,7 @@ public class DDLIgnoreRegExIT {
         executorService.execute(() -> {
             try {
 
-                java.util.Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+                Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // Add the ignore DDL regex.
                 props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*||^CREATE DEFINER.*(?:\\r?\\n.*)*");
 
@@ -97,21 +98,21 @@ public class DDLIgnoreRegExIT {
 
         Thread.sleep(10000);
 
-        String createTableAccountDDL = "CREATE TABLE account (\n" +
-                "    id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
-                "    account_number VARCHAR(20) NOT NULL,\n" +
-                "    amount DECIMAL(10, 2) NOT NULL\n" +
-                ")";
+        String createTableAccountDDL = "CREATE TABLE account (\n"
+                + "    id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n"
+                + "    account_number VARCHAR(20) NOT NULL,\n"
+                + "    amount DECIMAL(10, 2) NOT NULL\n"
+                + ")";
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTableAccountDDL);
 
         Thread.sleep(10000);
 
         // Run the CREATE TRIGGER DDL
-        String createTriggerDDL = "CREATE TRIGGER ins_transaction BEFORE INSERT ON account\n" +
-                "       FOR EACH ROW\n" +
-                "       SET\n" +
-                "       @deposits = @deposits + IF(NEW.amount>0,NEW.amount,0),\n" +
-                "       @withdrawals = @withdrawals + IF(NEW.amount<0,-NEW.amount,0);";
+        String createTriggerDDL = "CREATE TRIGGER ins_transaction BEFORE INSERT ON account\n"
+                + "       FOR EACH ROW\n"
+                + "       SET\n"
+                + "       @deposits = @deposits + IF(NEW.amount>0,NEW.amount,0),\n"
+                + "       @withdrawals = @withdrawals + IF(NEW.amount<0,-NEW.amount,0);";
 
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTriggerDDL);
         Thread.sleep(10000);

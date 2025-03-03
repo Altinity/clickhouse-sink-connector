@@ -90,7 +90,7 @@ public class DebeziumChangeEventCapture {
     public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
-    public int numRetries = 0;
+    public int numRetries;
 
     /**
      *
@@ -133,7 +133,7 @@ public class DebeziumChangeEventCapture {
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
 
                     List<ClickHouseStruct> batch = new ArrayList<ClickHouseStruct>();
-                    for(int i = 0; i < list.size(); i++) {
+                    for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
                         boolean lastRecordInBatch = false;
                         if(i == list.size() - 1) {
@@ -157,14 +157,15 @@ public class DebeziumChangeEventCapture {
                     .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
                         @Override
                         public void handle(boolean b, String s, Throwable throwable) {
-                            if (b == false) {
+                            if(b == false) {
 
                                 log.error("Error starting connector" + throwable + " Message:" + s);
-                                if(throwable != null && throwable.getCause() != null && throwable.getCause().getLocalizedMessage() != null)
+                                if(throwable != null && throwable.getCause() != null && throwable.getCause().getLocalizedMessage() != null) {
                                     log.error("Error stating connector: Cause" + throwable.getCause().getLocalizedMessage());
+                                }
 
                                 log.error("Retrying - try number:" + numRetries);
-                                if (numRetries++ <= MAX_RETRIES) {
+                                if(numRetries++ <= MAX_RETRIES) {
                                     try {
                                         Thread.sleep(SLEEP_TIME);
                                     } catch (InterruptedException e) {
@@ -192,14 +193,14 @@ public class DebeziumChangeEventCapture {
                                     try {
                                         DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
                                         debeziumJdbcStorageOperations.createViewForShowReplicaStatus(systemDbConnection, config, props);
-                                    } catch(Exception e) {
+                                    } catch (Exception e) {
                                         log.error("Error creating view for replica status", e);
                                     }
 
                                     try {
                                         DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
                                         debeziumJdbcStorageOperations.createSchemaHistoryTable(systemDbConnection, props);
-                                    } catch(Exception e) {
+                                    } catch (Exception e) {
                                         log.error("Error creating schema history table", e);
                                     }
                                 }
@@ -345,7 +346,7 @@ public class DebeziumChangeEventCapture {
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
-        if (checkIfDDLNeedsToBeIgnored(DDL,props, sr, isDropOrTruncate)) {
+        if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
         }
@@ -360,7 +361,7 @@ public class DebeziumChangeEventCapture {
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
         boolean retryDDLProperty = false;
-        if(retryDDL != null && retryDDL.equalsIgnoreCase("true" )) {
+        if(retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
         }
 
@@ -546,7 +547,7 @@ public class DebeziumChangeEventCapture {
 
         String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
         boolean enableSnapshotDDLPropertyFlag = false;
-        if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true" )) {
+        if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true")) {
             enableSnapshotDDLPropertyFlag = true;
         }
 

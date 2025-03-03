@@ -65,7 +65,7 @@ public class DataTypeConverter {
                 TemporalPrecisionMode.ADAPTIVE,
                 JdbcValueConverters.BigIntUnsignedMode.LONG,
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
-                x ->x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, connectorConfig.getServiceRegistry());
+                x -> x, CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN, connectorConfig.getServiceRegistry());
 
 
         String convertedDataType = null;
@@ -217,5 +217,8 @@ public class DataTypeConverter {
                         .setSuffixTokens(MySqlParser.VARCHAR)));
 
         return dataTypeResolverBuilder.build();
+    }
+
+    private DataTypeConverter() {
     }
 }

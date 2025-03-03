@@ -103,7 +103,7 @@ public class ClickHouseDelayedStartIT {
                 ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME where Type = 'DATETIME-INSERT55'", writer.getConnection());
                 while (dateTimeResult.next()) {
                     insertCheck = true;
-                    Assert.assertTrue(dateTimeResult.getString("Type").equalsIgnoreCase("DATETIME-INSERT55"));
+                    Assert.assertTrue("DATETIME-INSERT55".equalsIgnoreCase(dateTimeResult.getString("Type")));
                     break;
                 }
             } catch (Exception e) {
@@ -132,7 +132,7 @@ public class ClickHouseDelayedStartIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {

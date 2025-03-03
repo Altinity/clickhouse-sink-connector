@@ -6377,4 +6377,5 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     public void exitEveryRule(ParserRuleContext parserRuleContext) {
 
     }
+
 }

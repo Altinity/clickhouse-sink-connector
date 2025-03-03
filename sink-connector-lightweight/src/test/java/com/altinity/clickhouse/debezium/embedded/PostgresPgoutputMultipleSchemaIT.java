@@ -55,15 +55,15 @@ public class PostgresPgoutputMultipleSchemaIT {
 
 
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
-        properties.put("plugin.name", "pgoutput" );
-        properties.put("plugin.path", "/" );
-        properties.put("table.include.list", "public.tm" );
-        properties.put("topic.prefix", "test-server" );
-        properties.put("slot.max.retries", "6" );
-        properties.put("slot.retry.delay.ms", "5000" );
-        properties.put("database.allowPublicKeyRetrieval", "true" );
+        properties.put("plugin.name", "pgoutput");
+        properties.put("plugin.path", "/");
+        properties.put("table.include.list", "public.tm");
+        properties.put("topic.prefix", "test-server");
+        properties.put("slot.max.retries", "6");
+        properties.put("slot.retry.delay.ms", "5000");
+        properties.put("database.allowPublicKeyRetrieval", "true");
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people");
         properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
@@ -85,7 +85,7 @@ public class PostgresPgoutputMultipleSchemaIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -107,10 +107,10 @@ public class PostgresPgoutputMultipleSchemaIT {
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 
-        Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
-        Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
+        Assert.assertTrue("UUID".equalsIgnoreCase(tmColumns.get("id")));
+        Assert.assertTrue("Nullable(UUID)".equalsIgnoreCase(tmColumns.get("secid")));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        Assert.assertTrue("Nullable(DateTime64(6))".equalsIgnoreCase(tmColumns.get("created")));
 
 
         int tmCount = 0;

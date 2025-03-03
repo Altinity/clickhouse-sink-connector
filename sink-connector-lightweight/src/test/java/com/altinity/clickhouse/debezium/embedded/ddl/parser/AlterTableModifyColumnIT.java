@@ -49,7 +49,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -74,12 +74,12 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
         Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
-        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(shipClassColumns.get("class_name")));
+        Assert.assertTrue("Nullable(Decimal(10, 10))".equalsIgnoreCase(shipClassColumns.get("tonange")));
 
-        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col1")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col2")));
+        Assert.assertTrue("Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col3")));
 
         // Validate logic of adding Nullable based on the existing schema.
         conn.prepareStatement("alter table office modify column office_code int").execute();

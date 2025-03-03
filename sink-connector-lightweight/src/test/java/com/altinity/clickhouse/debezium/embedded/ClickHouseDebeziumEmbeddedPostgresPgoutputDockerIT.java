@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
     @Container
-    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
             .asCompatibleSubstituteFor("clickhouse"))
             .withInitScript("init_clickhouse_it.sql")
             .withUsername("ch_user")
@@ -55,14 +55,14 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
 
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
-        properties.put("plugin.name", "pgoutput" );
-        properties.put("plugin.path", "/" );
-        properties.put("table.include.list", "public.tm" );
-        properties.put("topic.prefix", "test-server" );
-        properties.put("slot.max.retries", "6" );
-        properties.put("slot.retry.delay.ms", "5000" );
-        properties.put("database.allowPublicKeyRetrieval", "true" );
-        properties.put("table.include.list", "public.tm,public.tm2" );
+        properties.put("plugin.name", "pgoutput");
+        properties.put("plugin.path", "/");
+        properties.put("table.include.list", "public.tm");
+        properties.put("topic.prefix", "test-server");
+        properties.put("slot.max.retries", "6");
+        properties.put("slot.retry.delay.ms", "5000");
+        properties.put("database.allowPublicKeyRetrieval", "true");
+        properties.put("table.include.list", "public.tm,public.tm2");
         return properties;
     }
 
@@ -83,7 +83,7 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -99,10 +99,10 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 
-        Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
-        Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
+        Assert.assertTrue("UUID".equalsIgnoreCase(tmColumns.get("id")));
+        Assert.assertTrue("Nullable(UUID)".equalsIgnoreCase(tmColumns.get("secid")));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        Assert.assertTrue("Nullable(DateTime64(6))".equalsIgnoreCase(tmColumns.get("created")));
 
 
         int tmCount = 0;

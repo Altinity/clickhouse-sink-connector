@@ -76,7 +76,7 @@ public class TruncateTableIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService() ,false);
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -109,7 +109,7 @@ public class TruncateTableIT {
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
-            Assert.assertTrue(rs.getString("col1").equalsIgnoreCase("test"));
+            Assert.assertTrue("test".equalsIgnoreCase(rs.getString("col1")));
             Assert.assertTrue(rs.getInt("col2") == 1);
             Assert.assertTrue(rs.getInt("is_deleted") == 22);
             Assert.assertTrue(rs.getInt("_sign") == 1);

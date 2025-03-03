@@ -212,6 +212,33 @@
                     </execution>
                 </executions>
             </plugin>
+
+                  <plugin>
+        <groupId>org.openrewrite.maven</groupId>
+        <artifactId>rewrite-maven-plugin</artifactId>
+        <version>6.2.2</version>
+        <configuration>
+          <activeRecipes>
+            <recipe>org.openrewrite.staticanalysis.CodeCleanup</recipe>
+          </activeRecipes>
+        </configuration>
+        <dependencies>
+          <dependency>
+            <groupId>org.openrewrite.recipe</groupId>
+            <artifactId>rewrite-static-analysis</artifactId>
+            <version>{{VERSION_REWRITE_STATIC_ANALYSIS}}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-checkstyle-plugin</artifactId>
+        <version>3.4.0</version>
+        <configuration>
+          <configLocation>checkstyle.xml</configLocation>
+        </configuration>
+      </plugin>
+
         </plugins>
 
         <!-- disable default maven deploy plugin since we are using gpg:sign-and-deploy-file -->

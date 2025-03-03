@@ -55,7 +55,7 @@ public class ReplicatedRMTIT {
         // clickHouseContainer.start();
         Thread.sleep(15000);
 
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -66,10 +66,6 @@ public class ReplicatedRMTIT {
 //                        .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
-    }
-
-    static {
-
     }
 
     @ParameterizedTest
@@ -91,7 +87,7 @@ public class ReplicatedRMTIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -123,8 +119,8 @@ public class ReplicatedRMTIT {
             System.out.println(dateTimeResult.getString("Type").toString());
             System.out.println(dateTimeResult.getString("Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            Assert.assertTrue("mediumtext".equalsIgnoreCase(dateTimeResult.getString("Type").toString()));
+            Assert.assertTrue("????".equalsIgnoreCase(dateTimeResult.getString("Value").toString()));
         }
         Assert.assertTrue(dataValidated);
 

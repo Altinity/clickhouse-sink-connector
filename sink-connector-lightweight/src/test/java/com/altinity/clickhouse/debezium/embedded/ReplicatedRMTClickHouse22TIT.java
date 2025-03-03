@@ -89,7 +89,7 @@ public class ReplicatedRMTClickHouse22TIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -122,8 +122,8 @@ public class ReplicatedRMTClickHouse22TIT {
             System.out.println(dateTimeResult.getString("Type").toString());
             System.out.println(dateTimeResult.getString("Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            Assert.assertTrue("mediumtext".equalsIgnoreCase(dateTimeResult.getString("Type").toString()));
+            Assert.assertTrue("????".equalsIgnoreCase(dateTimeResult.getString("Value").toString()));
         }
         Assert.assertTrue(dataValidated);
         if(engine.get() != null) {
