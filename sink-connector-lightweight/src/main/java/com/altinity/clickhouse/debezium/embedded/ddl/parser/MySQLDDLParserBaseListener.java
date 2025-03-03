@@ -37,27 +37,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     public void exitSqlStatement(MySqlParser.SqlStatementContext sqlStatementContext) {
 
     }
-
-    @Override
-    public void enterSetStatementFor(MySqlParser.SetStatementForContext setStatementForContext) {
-
-    }
-
-    @Override
-    public void exitSetStatementFor(MySqlParser.SetStatementForContext setStatementForContext) {
-
-    }
-
-    @Override
-    public void enterEmptyStatement(MySqlParser.EmptyStatementContext emptyStatementContext) {
-
-    }
-
-    @Override
-    public void exitEmptyStatement(MySqlParser.EmptyStatementContext emptyStatementContext) {
-
-    }
-
     @Override
     public void enterDdlStatement(MySqlParser.DdlStatementContext ddlStatementContext) {
 
@@ -328,25 +307,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterCreateSequence(MySqlParser.CreateSequenceContext createSequenceContext) {
-
-    }
-
-    @Override
-    public void exitCreateSequence(MySqlParser.CreateSequenceContext createSequenceContext) {
-
-    }
-
-    @Override
-    public void enterSequenceSpec(MySqlParser.SequenceSpecContext sequenceSpecContext) {
-
-    }
-
-    @Override
-    public void exitSequenceSpec(MySqlParser.SequenceSpecContext sequenceSpecContext) {
-
-    }
 
     @Override
     public void enterCreateDatabaseOption(MySqlParser.CreateDatabaseOptionContext createDatabaseOptionContext) {
@@ -999,16 +959,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     }
 
     @Override
-    public void enterTableOptionEncrypted(MySqlParser.TableOptionEncryptedContext tableOptionEncryptedContext) {
-
-    }
-
-    @Override
-    public void exitTableOptionEncrypted(MySqlParser.TableOptionEncryptedContext tableOptionEncryptedContext) {
-
-    }
-
-    @Override
     public void enterTableOptionPageCompressed(MySqlParser.TableOptionPageCompressedContext tableOptionPageCompressedContext) {
 
     }
@@ -1209,16 +1159,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     }
 
     @Override
-    public void enterTableOptionWithSystemVersioning(MySqlParser.TableOptionWithSystemVersioningContext tableOptionWithSystemVersioningContext) {
-
-    }
-
-    @Override
-    public void exitTableOptionWithSystemVersioning(MySqlParser.TableOptionWithSystemVersioningContext tableOptionWithSystemVersioningContext) {
-
-    }
-
-    @Override
     public void enterTableType(MySqlParser.TableTypeContext tableTypeContext) {
 
     }
@@ -1288,35 +1228,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterPartitionSystemVersion(MySqlParser.PartitionSystemVersionContext partitionSystemVersionContext) {
-
-    }
-
-    @Override
-    public void exitPartitionSystemVersion(MySqlParser.PartitionSystemVersionContext partitionSystemVersionContext) {
-
-    }
-
-    @Override
-    public void enterPartitionSystemVersionDefinitions(MySqlParser.PartitionSystemVersionDefinitionsContext partitionSystemVersionDefinitionsContext) {
-
-    }
-
-    @Override
-    public void exitPartitionSystemVersionDefinitions(MySqlParser.PartitionSystemVersionDefinitionsContext partitionSystemVersionDefinitionsContext) {
-
-    }
-
-    @Override
-    public void enterPartitionSystemVersionDefinition(MySqlParser.PartitionSystemVersionDefinitionContext partitionSystemVersionDefinitionContext) {
-
-    }
-
-    @Override
-    public void exitPartitionSystemVersionDefinition(MySqlParser.PartitionSystemVersionDefinitionContext partitionSystemVersionDefinitionContext) {
-
-    }
 
     @Override
     public void enterSubPartitionFunctionHash(MySqlParser.SubPartitionFunctionHashContext subPartitionFunctionHashContext) {
@@ -1598,15 +1509,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterAlterSequence(MySqlParser.AlterSequenceContext alterSequenceContext) {
-
-    }
-
-    @Override
-    public void exitAlterSequence(MySqlParser.AlterSequenceContext alterSequenceContext) {
-
-    }
 
     @Override
     public void enterAlterByTableOption(MySqlParser.AlterByTableOptionContext alterByTableOptionContext) {
@@ -2245,16 +2147,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     @Override
     public void exitSetRole(MySqlParser.SetRoleContext setRoleContext) {
-
-    }
-
-    @Override
-    public void enterDropSequence(MySqlParser.DropSequenceContext dropSequenceContext) {
-
-    }
-
-    @Override
-    public void exitDropSequence(MySqlParser.DropSequenceContext dropSequenceContext) {
 
     }
 
@@ -4608,15 +4500,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterShowUserstatPlugin(MySqlParser.ShowUserstatPluginContext showUserstatPluginContext) {
-
-    }
-
-    @Override
-    public void exitShowUserstatPlugin(MySqlParser.ShowUserstatPluginContext showUserstatPluginContext) {
-
-    }
 
     @Override
     public void enterVariableClause(MySqlParser.VariableClauseContext variableClauseContext) {
@@ -5048,15 +4931,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterEncryptedLiteral(MySqlParser.EncryptedLiteralContext encryptedLiteralContext) {
-
-    }
-
-    @Override
-    public void exitEncryptedLiteral(MySqlParser.EncryptedLiteralContext encryptedLiteralContext) {
-
-    }
 
     @Override
     public void enterUuidSet(MySqlParser.UuidSetContext uuidSetContext) {
@@ -5288,15 +5162,6 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
-
-    }
-
-    @Override
-    public void exitUuidDataType(MySqlParser.UuidDataTypeContext uuidDataTypeContext) {
-
-    }
 
     @Override
     public void enterCollectionOptions(MySqlParser.CollectionOptionsContext collectionOptionsContext) {
@@ -5508,25 +5373,7 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     }
 
-    @Override
-    public void enterWaitNowaitClause(MySqlParser.WaitNowaitClauseContext waitNowaitClauseContext) {
 
-    }
-
-    @Override
-    public void exitWaitNowaitClause(MySqlParser.WaitNowaitClauseContext waitNowaitClauseContext) {
-
-    }
-
-    @Override
-    public void enterLockOption(MySqlParser.LockOptionContext lockOptionContext) {
-
-    }
-
-    @Override
-    public void exitLockOption(MySqlParser.LockOptionContext lockOptionContext) {
-
-    }
 
     @Override
     public void enterSpecificFunctionCall(MySqlParser.SpecificFunctionCallContext specificFunctionCallContext) {
