@@ -144,7 +144,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             ParseTree tree = it.next();
             if(tree instanceof MySqlParser.TableNameContext) {
                 originalTableName = tree.getText();
-                if(it.next().getText().equalsIgnoreCase(Constants.LIKE)) {
+                if(Constants.LIKE.equalsIgnoreCase(it.next().getText())) {
                     newTableName = it.next().getText();
                 }
             }
@@ -318,7 +318,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // Null Column and DimensionDataType are children of ColumnDefinition
                 for(ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
-                        if(colDefinitionChildTree.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
+                        if(Constants.NOT_NULL.equalsIgnoreCase(colDefinitionChildTree.getText())) {
                             isNullColumn = false;
                         }
                     } else if(colDefinitionChildTree instanceof MySqlParser.DimensionDataTypeContext) {
@@ -379,7 +379,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(dt.name().equalsIgnoreCase("ENUM"))
+        if("ENUM".equalsIgnoreCase(dt.name()))
         {
             // Dont try to get precision/scale for enums
         }
@@ -503,10 +503,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 for (ParseTree columnDefChild : ((MySqlParser.ColumnDefinitionContext) columnChild).children) {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
                         nullExplicitlySet = true;
-                        if(columnDefChild.getText().equalsIgnoreCase(Constants.NULL)) {
+                        if(Constants.NULL.equalsIgnoreCase(columnDefChild.getText())) {
                             isNullColumn = true;
-                        } else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                        } else if(Constants.NOT_NULL.equalsIgnoreCase(columnDefChild.getText())) {
+                            if(!Constants.ADD_COLUMN.equalsIgnoreCase(modifier)) {
                                 isNullColumn = false;
                             }
                         }
@@ -524,12 +524,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             } else if (columnChild instanceof TerminalNodeImpl) {
                 String columnPosition = columnChild.getText();
-                if (columnPosition.equalsIgnoreCase(Constants.AFTER)) {
+                if (Constants.AFTER.equalsIgnoreCase(columnPosition)) {
                     // The next element in the tree will be the column
                     if (it.hasNext()) {
                         columnPositionModifier.append(columnPosition).append(" ").append(it.next().getText());
                     }
-                } else if (columnPosition.equalsIgnoreCase(Constants.FIRST)) {
+                } else if (Constants.FIRST.equalsIgnoreCase(columnPosition)) {
                     columnPositionModifier.append(columnPosition);
                 }
                 // columnName = columnName + " " + columnChild.getText();

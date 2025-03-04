@@ -361,7 +361,7 @@ public class DebeziumChangeEventCapture {
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
         boolean retryDDLProperty = false;
-        if(retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
+        if("true".equalsIgnoreCase(retryDDL)) {
             retryDDLProperty = true;
         }
 
@@ -538,7 +538,7 @@ public class DebeziumChangeEventCapture {
     private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
 
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
-        if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
+        if ("true".equalsIgnoreCase(disableDDLProperty)) {
             log.debug("Ignoring DDL");
             return true;
         }
@@ -547,7 +547,7 @@ public class DebeziumChangeEventCapture {
 
         String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
         boolean enableSnapshotDDLPropertyFlag = false;
-        if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true")) {
+        if("true".equalsIgnoreCase(enableSnapshotDDLProperty)) {
             enableSnapshotDDLPropertyFlag = true;
         }
 
@@ -572,7 +572,7 @@ public class DebeziumChangeEventCapture {
         }
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
-        if(disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get()== true) {
+        if("true".equalsIgnoreCase(disableDropAndTruncateProperty) && isDropOrTruncate.get()== true) {
             log.debug("Ignoring Drop or Truncate");
             return true;
         }
