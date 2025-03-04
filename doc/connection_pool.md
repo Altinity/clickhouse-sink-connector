@@ -7,17 +7,18 @@ The connection pool is used to manage connections to the ClickHouse server.
 The connection pool is configured using the following properties:
 Refer to HikariCP documentation for more details.[HikariCP docs](https://github.com/brettwooldridge/HikariCP)
 
-connection.pool.max.size - Maximum number of connections in the pool.
-connection.pool.timeout - Timeout for acquiring a connection from the pool.
-connection.pool.min.idle - Minimum number of idle connections in the pool.
-connection.pool.max.lifetime - Maximum lifetime of a connection in the pool.
+`connection.pool.max.size` - Maximum number of connections in the pool. \
+`connection.pool.timeout` - Timeout for acquiring a connection from the pool.\
+`connection.pool.min.idle` - Minimum number of idle connections in the pool.\
+`connection.pool.max.lifetime` - Maximum lifetime of a connection in the pool.\
+`connection.pool.disable` - Default false, set to true to disable.
 
 ### Usage
 
 The connection pool is used to acquire connections from the pool when a new request is made.
 The connection is released back to the pool when the request is complete.
 
-By default the connection pool is enabled.
+By default the connection pool is **enabled**.
 To disable the connection pool set the following property to true.
 
 ```
