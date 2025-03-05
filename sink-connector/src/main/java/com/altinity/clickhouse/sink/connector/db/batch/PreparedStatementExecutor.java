@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -24,6 +25,7 @@ import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -69,10 +71,10 @@ public class PreparedStatementExecutor {
     public boolean addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
             List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
                                                      ClickHouseSinkConnectorConfig config,
-                                                     ClickHouseConnection conn,
+                                                     Connection conn,
                                                      String tableName,
                                                      Map<String, String> columnToDataTypeMap,
-                                                     DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
+                                                     DBMetadata.TABLE_ENGINE engine) throws Exception {
 
         boolean result = false;
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
@@ -106,8 +108,8 @@ public class PreparedStatementExecutor {
     private boolean executePreparedStatement(String insertQuery, String topicName,
                                           Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
                                           BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
-                                          ClickHouseConnection conn, String tableName, Map<String, String> columnToDataTypeMap,
-                                          DBMetadata.TABLE_ENGINE engine) throws RuntimeException {
+                                          Connection conn, String tableName, Map<String, String> columnToDataTypeMap,
+                                          DBMetadata.TABLE_ENGINE engine) throws Exception {
 
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
@@ -118,7 +120,9 @@ public class PreparedStatementExecutor {
 
             String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
+
+            DBMetadata metadata = new DBMetadata();
+            try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 //List<ClickHouseStruct> recordsList = entry.getValue();
                 for (ClickHouseStruct record : batch) {
@@ -176,17 +180,9 @@ public class PreparedStatementExecutor {
                 throw new RuntimeException(e);
             }
             if (!truncatedRecords.isEmpty()) {
-                PreparedStatement ps = null;
                 try {
-                    ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                    metadata.truncateTable(conn, databaseName, tableName);
                 } catch (SQLException e) {
-                    log.error("*** Error: Truncate table statement error ****", e);
-                    throw new RuntimeException(e);
-                }
-                try {
-                    ps.execute();
-                } catch (SQLException e) {
-                    log.error("*** Error: Truncate table statement execute error ****", e);
                     throw new RuntimeException(e);
                 }
             }

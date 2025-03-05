@@ -80,7 +80,7 @@ def add_change_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2","Nullable(String)"',
                         )
 
 
@@ -125,7 +125,7 @@ def change_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2","Nullable(String)"',
                         )
 
 
@@ -169,7 +169,7 @@ def add_modify_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x","Nullable(String)"',
                         )
 
 
@@ -214,7 +214,7 @@ def modify_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x","Nullable(String)"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x","Nullable(String)"',
                         )
 
 
@@ -258,7 +258,7 @@ def add_rename_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col","String","","","","",""\n"x2"',
+                            message='"new_col","Nullable(String)","","","","",""\n"x2"',
                         )
 
 
@@ -305,8 +305,8 @@ def multiple_add_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col3","String","","","","",""\n"new_col2","String","",""'
-                            ',"","",""\n"new_col1","String"',
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                            ',"","",""\n"new_col1","Nullable(String)"',
                         )
 
 
@@ -355,8 +355,8 @@ def multiple_modify_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col3","String","","","","",""\n"new_col2","String","",""'
-                            ',"","",""\n"new_col1","String"',
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                            ',"","",""\n"new_col1","Nullable(String)"',
                         )
 
                     with And(
@@ -377,8 +377,8 @@ def multiple_modify_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col3","Int32","","","","",""\n"new_col2","Int32","",""'
-                            ',"","",""\n"new_col1","Int32"',
+                            message='"new_col3","Nullable(Int32)","","","","",""\n"new_col2","Nullable(Int32)","",""'
+                            ',"","",""\n"new_col1","Nullable(Int32)"',
                         )
 
 
@@ -427,8 +427,8 @@ def multiple_change_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col3","String","","","","",""\n"new_col2","String","",""'
-                            ',"","",""\n"new_col1","String"',
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                            ',"","",""\n"new_col1","Nullable(String)"',
                         )
 
                     with And(
@@ -449,8 +449,8 @@ def multiple_change_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col33","Int32","","","","",""\n"new_col22","Int32","",""'
-                            ',"","",""\n"new_col11","Int32"',
+                            message='"new_col33","Nullable(Int32)","","","","",""\n"new_col22","Nullable(Int32)","",""'
+                            ',"","",""\n"new_col11","Nullable(Int32)"',
                         )
 
 
@@ -499,8 +499,8 @@ def multiple_drop_column(self, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message='"new_col3","String","","","","",""\n"new_col2","String","",""'
-                            ',"","",""\n"new_col1","String"',
+                            message='"new_col3","Nullable(String)","","","","",""\n"new_col2","Nullable(String)","",""'
+                            ',"","",""\n"new_col1","Nullable(String)"',
                         )
 
                     with And(

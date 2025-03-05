@@ -15,6 +15,7 @@ transactional database tables in MySQL and PostgreSQL to ClickHouse
 for analysis. 
 
 ## Features
+Refer [Feature Matrix](doc/feature_matrix.md) for detailed features.
 
 * [Initial data dump and load(MySQL)](sink-connector/python/README.md) 
 * Change data capture of new transactions using [Debezium](https://debezium.io/)
@@ -61,6 +62,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
 * [Configuration](doc/configuration.md)
 * [State Storage](doc/state_storage.md)
+* [Data Type Mapping](doc/data_types.md)
 
 ### Operations
 
@@ -72,9 +74,12 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Development](doc/development.md)
 * [Testing](doc/TESTING.md)
 
+## Comparison with other technologies
+- [Comparison](doc/comparison.md)
+
 ## Roadmap 
 
-[2024 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)
+[2025 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)
 
 ## Help
 
@@ -106,3 +111,7 @@ to ClickHouse and analytic applications built on ClickHouse.
 - [Slack](https://altinity.com/slack) - Talk directly with ClickHouse users and Altinity devs.
 - [Contact us](https://hubs.la/Q020sH3Z0) - Contact Altinity with your questions or issues.
 - [Free consultation](https://hubs.la/Q020sHkv0) - Get a free consultation with a ClickHouse expert today.
+
+### Credits
+YourKit supports the Altinity Sink Connector and other open source projects with its full-featured Java Profiler.  Click the YourKit logo below to learn more.<br/>
+[![](https://www.yourkit.com/images/yklogo.png)](http://www.yourkit.com/java/profiler/index.jsp)<br/>

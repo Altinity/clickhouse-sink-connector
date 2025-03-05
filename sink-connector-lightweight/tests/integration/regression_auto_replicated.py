@@ -137,10 +137,6 @@ ffails = {
         Skip,
         "Test requires fixing.",
     ),
-    "/mysql to clickhouse replication/auto replicated table creation/multiple databases/source destination overrides": (
-        Skip,
-        "https://github.com/Altinity/clickhouse-sink-connector/issues/874.",
-    ),
 }
 
 xflags = {}
@@ -162,6 +158,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
+    hikari_pool,
     env="env/auto_replicated",
     stress=None,
     thread_fuzzer=None,
@@ -174,6 +171,12 @@ def regression(
         "clickhouse": ("clickhouse", "clickhouse1", "clickhouse2", "clickhouse3"),
         "zookeeper": ("zookeeper",),
     }
+
+    if not hikari_pool:
+        default_config["connection.pool.disable"] = "true"
+        default_config["clickhouse.jdbc.params"] = "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+    else:
+        default_config["connection.pool.disable"] = "false"
 
     self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
