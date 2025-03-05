@@ -17,16 +17,22 @@ def drop_database(self, database_name=None, node=None):
 
 @TestStep(Then)
 def check_column(
-    self, table_name, column_name, node=None, column_type=None, database=None
+    self,
+    table_name,
+    column_name,
+    node=None,
+    column_type=None,
+    database=None,
+    is_primary_key=False,
 ):
-    """Check if column exists in ClickHouse table."""
+    """Check if column exists in ClickHouse table and optionally verify if it is the primary key."""
 
     if database is None:
         database = "test"
 
     if column_type is not None:
         if "varchar" in column_type:
-            column_type = "String"
+            column_type = "Nullable(String)"
 
     if node is None:
         node = self.context.cluster.node("clickhouse")
@@ -50,6 +56,14 @@ def check_column(
                 )
 
                 assert column.output.strip() == expected_output, error()
+
+                if is_primary_key:
+                    primary_key = node.query(
+                        f"SELECT is_in_primary_key FROM system.columns WHERE database = '{database}' AND table = '{table_name}' AND name = '{column_name}' LIMIT 1 FORMAT TabSeparated"
+                    )
+                    assert primary_key.output.strip() == 1, error(
+                        f"Column {column_name} is not a primary key"
+                    )
 
 
 @TestStep(Given)

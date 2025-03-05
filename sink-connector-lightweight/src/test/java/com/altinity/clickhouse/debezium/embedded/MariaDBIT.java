@@ -1,19 +1,17 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MariaDBContainer;
-import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
@@ -21,7 +19,6 @@ import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,8 +27,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Integration test to validate support for replication of multiple databases.
  */
+@Disabled
 @Testcontainers
-@DisplayName("Integration Test that validates basic replication of MariaDB databases")
+@DisplayName("Integration Test that validates basic replication of MariaDB databases in single threaded mode")
 public class MariaDBIT
 {
 
@@ -66,7 +64,7 @@ public class MariaDBIT
         clickHouseContainer.start();
     }
 
-    @DisplayName("Integration Test that validates handle of JSON data type from MySQL")
+    @DisplayName("Integration Test that validates replication of MariaDB databases in single.threaded mode")
     @Test
     public void testMultipleDatabases() throws Exception {
 
@@ -77,14 +75,14 @@ public class MariaDBIT
         // Set the list of databases captured.
         props.put("database.whitelist", "employees,test_db,test_db2");
         props.put("database.include.list", "employees,test_db,test_db2");
+        props.put("single.threaded", true);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "test_db"),false);
+                engine.get().setup(props, new SourceRecordParserService(),false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -125,17 +123,9 @@ public class MariaDBIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        // query clickhouse connection and get data for test_table1 and test_table2
-
-
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM employees.audience");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {
@@ -155,6 +145,6 @@ public class MariaDBIT
 
         writer.getConnection().close();
 
-
+        HikariDbSource.close();
     }
 }

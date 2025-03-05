@@ -1,11 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +17,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -65,12 +63,13 @@ public class PostgresPgoutputMultipleSchemaIT {
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2" );
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people" );
+        properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
 
     @Test
-    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas")
+    @DisplayName("Integration Test - Validates postgresql replication works with multiple schemas and ignoring ALIAS columns in ClickHouse")
     public void testMultipleSchemaReplication() throws Exception {
         Network network = Network.newNetwork();
 
@@ -86,8 +85,7 @@ public class PostgresPgoutputMultipleSchemaIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "system"), false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -103,16 +101,12 @@ public class PostgresPgoutputMultipleSchemaIT {
 
         Thread.sleep(10000);
 
-        // Create connection.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
+        Assert.assertTrue(tmColumns.size() == 23);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
-        Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
@@ -135,11 +129,37 @@ public class PostgresPgoutputMultipleSchemaIT {
         }
         Assert.assertTrue(tm2Count == 1);
 
+        // Create a connection to postgresql and create a new table.
+        Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
+        postgresConn2.createStatement().execute("CREATE TABLE public.people( height_cm numeric PRIMARY KEY, height_in numeric GENERATED ALWAYS AS (height_cm / 2.54) STORED)");
+
+        Thread.sleep(10000);
+        // insert new records into the new table.
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (180)");
+        Thread.sleep(10000);
+
+        // ClickHouse, add ALIAS column to public.people
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
+        Thread.sleep(10000);
+
+        // Add MATERIALIZED column to public.people
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
+        postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
+        Thread.sleep(20000);
+
+        // Check if public.people has 2 records.
+        int peopleCount = 0;
+        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people").executeQuery();
+        while(chRs3.next()) {
+            peopleCount =  chRs3.getInt(1);
+        }
+        Assert.assertTrue(peopleCount == 2);
+
         if(engine.get() != null) {
             engine.get().stop();
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-
+        HikariDbSource.close();
     }
 }

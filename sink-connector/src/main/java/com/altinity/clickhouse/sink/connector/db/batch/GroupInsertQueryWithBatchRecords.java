@@ -15,6 +15,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.util.*;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
@@ -37,7 +38,7 @@ public class GroupInsertQueryWithBatchRecords {
                                                  queryToRecordsMap,
                                          Map<TopicPartition, Long> partitionToOffsetMap,
                                          ClickHouseSinkConnectorConfig config,
-                                         String tableName, String databaseName, ClickHouseConnection connection,
+                                         String tableName, String databaseName, Connection connection,
                                          Map<String, String> columnNameToDataTypeMap) {
         boolean result = false;
 
@@ -58,13 +59,13 @@ public class GroupInsertQueryWithBatchRecords {
                 if(enableSchemaEvolution) {
                     try {
                         new ClickHouseAlterTable().alterTable(record.getAfterStruct().schema().fields(), tableName, connection, columnNameToDataTypeMap);
-                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName);
+                        columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config);
 
                     } catch(Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
                 }
-
+                //columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, connection, databaseName, config );
                 result = updateQueryToRecordsMap(record, record.getAfterModifiedFields(), queryToRecordsMap, tableName, config, columnNameToDataTypeMap);
             } else if(CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation()))  {
                 if(record.getBeforeModifiedFields() != null) {

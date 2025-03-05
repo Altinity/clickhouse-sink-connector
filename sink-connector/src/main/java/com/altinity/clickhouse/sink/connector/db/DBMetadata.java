@@ -1,25 +1,29 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
-import com.clickhouse.jdbc.ClickHouseConnection;
+
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.time.ZoneId;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.TimeZone;
+import java.util.*;
+
 
 public class DBMetadata {
 
     private static final Logger log = LogManager.getLogger(DBMetadata.class);
 
+    static int MAX_RETRIES = 2;
+
+    public static void setMaxRetries(int maxRetries) {
+        MAX_RETRIES = maxRetries;
+    }
 
     public enum TABLE_ENGINE {
         COLLAPSING_MERGE_TREE("CollapsingMergeTree"),
@@ -48,7 +52,7 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngine(ClickHouseConnection conn, String databaseName, String tableName) {
+    public MutablePair<TABLE_ENGINE, String> getTableEngine(Connection conn, String databaseName, String tableName) {
 
         MutablePair<TABLE_ENGINE, String> result;
         result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
@@ -66,26 +70,32 @@ public class DBMetadata {
      * @param databaseName
      * @return
      */
-    public boolean checkIfDatabaseExists(ClickHouseConnection conn, String databaseName) throws SQLException {
+    public boolean checkIfDatabaseExists(Connection conn, String databaseName) throws SQLException {
 
+        int retryCount = 0;
         boolean result = false;
-        try (Statement stmt = conn.createStatement()) {
-            String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
-            ResultSet rs = stmt.executeQuery(showSchemaQuery);
-            if (rs != null && rs.next()) {
-                String response = rs.getString(1);
-                if(response.equalsIgnoreCase(databaseName)) {
-                    result = true;
+
+        while (!result && retryCount < MAX_RETRIES) {
+            try {
+                retryCount++;
+                log.info("Retrying checkIfDatabaseExists, attempt {}", retryCount);
+                try (Statement retryStmt = conn.createStatement()) {
+                    String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
+                    ResultSet retryRs = retryStmt.executeQuery(showSchemaQuery);
+                    if (retryRs != null && retryRs.next()) {
+                        String response = retryRs.getString(1);
+                        if (response.equalsIgnoreCase(databaseName)) {
+                            result = true;
+                        }
+                    }
+                    retryRs.close();
                 }
+            } catch (Exception retryException) {
+                log.error("Retry attempt {} failed", retryCount, retryException);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
             }
-
-            rs.close();
-        } catch(SQLException se) {
-            log.error("checkIfDatabaseExists exception", se);
-            // ToDO: For some reason, this query throws SQLException when DB is not available.
-
-            //throw se;
         }
+        
 
         return result;
     }
@@ -97,39 +107,49 @@ public class DBMetadata {
      * @param tableName
      * @return
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(ClickHouseConnection conn, String databaseName,
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingShowTable(Connection conn, String databaseName,
                                                                           String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
-        try {
-            if (conn == null) {
-                log.error("Error with DB connection");
-                return new MutablePair<>(null, null);
-            }
-            try(Statement stmt = conn.createStatement()) {
-                String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
-                ResultSet rs = stmt.executeQuery(showSchemaQuery);
-                if(rs != null && rs.next()) {
-                    String response =  rs.getString(1);
-                    if(response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
-                        result.right = getSignColumnForCollapsingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
-                        result.right = getVersionColumnForReplacingMergeTree(response);
-                    } else if(response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
-                        result.left = TABLE_ENGINE.MERGE_TREE;
-                    }else {
-                        result.left = TABLE_ENGINE.DEFAULT;
+        // Add retry logic.
+        int retryCount = 0;
+            
+
+            
+            while (retryCount < MAX_RETRIES) {
+                try (Statement stmt = conn.createStatement()) {
+                    String showSchemaQuery = String.format("show create table %s.`%s`", databaseName, tableName);
+                    ResultSet rs = stmt.executeQuery(showSchemaQuery);
+                    if (rs != null && rs.next()) {
+                        String response = rs.getString(1);
+                        if (response.contains(TABLE_ENGINE.COLLAPSING_MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.COLLAPSING_MERGE_TREE;
+                            result.right = getSignColumnForCollapsingMergeTree(response);
+                        } else if (response.contains(TABLE_ENGINE.REPLACING_MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.REPLACING_MERGE_TREE;
+                            result.right = getVersionColumnForReplacingMergeTree(response);
+                        } else if (response.contains(TABLE_ENGINE.MERGE_TREE.engine)) {
+                            result.left = TABLE_ENGINE.MERGE_TREE;
+                        } else {
+                            result.left = TABLE_ENGINE.DEFAULT;
+                        }
                     }
+                    rs.close();
+                    stmt.close();
+                    log.info("getTableEngineUsingShowTable ResultSet" + rs);
+                    break;
+                } catch (Exception e) {
+                    try {
+                        if(conn == null || conn.isClosed() == true) {
+                            conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                        }
+                    } catch (SQLException sqlException) {
+                        log.error("Retry attempt {} failed", retryCount, sqlException);
+                    }
+                    retryCount++;
+                    log.info("getTableEngineUsingShowTable exception", e);
                 }
-                rs.close();
-                stmt.close();
-                log.info("getTableEngineUsingShowTable ResultSet" + rs);
             }
-        } catch(Exception e) {
-            log.info("getTableEngineUsingShowTable exception", e);
-        }
 
         return result;
     }
@@ -196,7 +216,7 @@ public class DBMetadata {
      * @param tableName Table Name.
      * @return TABLE_ENGINE type
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final ClickHouseConnection conn, final String database,
+    public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final Connection conn, final String database,
                                                         final String tableName) {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
@@ -271,62 +291,293 @@ public class DBMetadata {
         return result;
     }
 
+    public String getClickHouseVersion(Connection connection) throws SQLException {
+        return this.executeSystemQuery(connection, "SELECT VERSION()");
+    }
 
 
 
+    /**
+     * Function to get the column name and isNullable as key/value pair.
+     */
+    public Map<String, Boolean> getColumnsIsNullableForTable(String tableName,
+                                                             Connection conn,
+                                                             String database) throws SQLException {
+        Map<String, Boolean> columnsIsNullable = new HashMap<>();
+
+        // Execute the following query to get the column name and isNullable as key/value pair.
+        String query = String.format("SELECT name AS column_name, type LIKE 'Nullable(%%' AS is_nullable FROM system.columns WHERE (table = '%s') AND (database = '%s')", tableName, database);
+
+        try (Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+                String columnName = rs.getString("column_name");
+                boolean isNullable = rs.getBoolean("is_nullable");
+                columnsIsNullable.put(columnName, isNullable);
+            }
+        }
+
+        return columnsIsNullable;
+    }
+  
     /**
      * Function that uses the DatabaseMetaData JDBC functionality
      * to get the column name and column data type as key/value pair.
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName,
-                                                           ClickHouseConnection conn,
-                                                           String database) {
+                                                           Connection conn,
+                                                           String database,
+                                                           ClickHouseSinkConnectorConfig config) {
 
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        try {
-            if (conn == null) {
-                log.error("Error with DB connection");
-                return result;
-            }
-
-            ResultSet columns = conn.getMetaData().getColumns(database, null,
-                    tableName, null);
-            while (columns.next()) {
-                String columnName = columns.getString("COLUMN_NAME");
-                String typeName = columns.getString("TYPE_NAME");
-
-                String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
-                String columnDefinition = columns.getString("COLUMN_DEF");
-                String sqlDataType = columns.getString("SQL_DATA_TYPE");
-                String dataType = columns.getString("DATA_TYPE");
-               // String typeName = columns.getString("TYPE_NAME");
-//                String columnSize = columns.getString("COLUMN_SIZE");
-//                String isNullable = columns.getString("IS_NULLABLE");
-//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
-
-                // Skip generated columns.
-                if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
-                    continue;
+        // Add retry logic.
+        int retryCount = 0;
+        Set<String> aliasColumns = new HashSet<>();
+            try {
+                aliasColumns = getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
+            } catch(Exception e) {
+                log.error("Error getting alias columns", e);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
                 }
-                result.put(columnName, typeName);
             }
-        } catch (SQLException sq) {
-            log.error("Exception retrieving Column Metadata", sq);
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        // Add retry logic.
+        retryCount = 0;
+        while (retryCount < MAX_RETRIES) {
+            try {
+                ResultSet columns = conn.getMetaData().getColumns(database, null,
+                    tableName, null);
+                while (columns.next()) {
+                    String columnName = columns.getString("COLUMN_NAME");
+                    String typeName = columns.getString("TYPE_NAME");
+
+                    String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
+                    String columnDefinition = columns.getString("COLUMN_DEF");
+                    String sqlDataType = columns.getString("SQL_DATA_TYPE");
+                    String dataType = columns.getString("DATA_TYPE");
+              
+                    // Skip generated columns.
+                    if(isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                        continue;
+                    }
+                    if(aliasColumns.contains(columnName)) {
+                        log.debug("Skipping alias column: " + columnName);
+                        continue;
+                    }
+                    result.put(columnName, typeName);
+                }
+                columns.close();
+                break;
+            } catch (SQLException sq) {
+                log.error("Exception retrieving Column Metadata", sq);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
+                }
+                retryCount++;
+            }
         }
         return result;
     }
     /**
      * Function to get the ClickHouse server timezone(Defaults to UTC)
      */
-    public ZoneId getServerTimeZone(ClickHouseConnection conn) {
+    public ZoneId getServerTimeZone(Connection conn)  {
         ZoneId result = ZoneId.of("UTC");
         if(conn != null) {
-            TimeZone serverTimeZone = conn.getServerTimeZone();
-            if(serverTimeZone != null) {
-                result = serverTimeZone.toZoneId();
+            try {
+                // Perform a query to get the server timezone
+                ResultSet rs = conn.prepareStatement("SELECT timezone()").executeQuery();
+                if (rs.next()) {
+                    String serverTimeZone = rs.getString(1);
+                    result = ZoneId.of(serverTimeZone);
+                }
+                rs.close();
+            } catch (Exception e) {
+                log.error("Error retrieving server timezone", e);
+        }
+
+        }
+        return result;
+    }
+
+    /**
+     * Function to get the column names which are
+     * @return
+     */
+    public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
+                                                                         Connection conn) throws SQLException {
+
+        // Add retry logic.
+        int retryCount = 0;
+        Set<String> aliasColumns = new HashSet<>();
+        while (retryCount < MAX_RETRIES) {
+            try {
+                String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
+                "(default_kind='ALIAS' or default_kind='MATERIALIZED')";
+                String formattedQuery = String.format(query, tableName, databaseName);
+
+                // Execute query
+                ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
+
+                // Get the list of columns from rs.
+                if(rs != null) {
+                    while (rs.next()) {
+                        String response = rs.getString(1);
+                        aliasColumns.add(response);
+                    }
+                }
+                rs.close();
+                break;
+            } catch(Exception e) {
+                log.error("Error getting alias columns", e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                retryCount++;
+            }
+        }
+        return aliasColumns;
+    }
+
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
+        // Add retry logic.
+        int retryCount = 0;
+        ResultSet rs = null;
+        while (retryCount < MAX_RETRIES) {
+            try {
+                rs = conn.prepareStatement(sql).executeQuery();
+                break;
+            } catch(Exception e) {
+                log.error("Error executing query", e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                retryCount++;
+            }
+        }
+        return rs;
+    }
+
+        /**
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    public String executeSystemQuery(Connection conn, String sql) throws SQLException {
+        
+        // Add retry logic.
+        int retryCount = 0;
+        String result = null;
+        ResultSet rs = null;
+        while(retryCount < MAX_RETRIES) {
+            try {
+                rs = conn.prepareStatement(sql).executeQuery();
+                break;
+            } catch(SQLException sqle) {
+                try {
+                    log.error("Error executing query: Retrying: #" + retryCount, sqle);
+                    Thread.sleep(1000 * retryCount);
+                    // get a new connection from pool.
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                } catch(Exception e) {
+                    log.error("Error initiating DB connection", e);
+                }
+                retryCount++;
             }
         }
 
+        if(rs != null) {
+            while(rs.next()) {
+                result = rs.getString(1);
+            }
+        }
+
+        //conn.close();
         return result;
+    }
+
+
+
+    public Map<String, String> getColumnsDataTypesForTable(Connection conn, String tableName, String database ) {
+
+        // Add retry logic. 
+        int retryCount = 0;
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        while (retryCount < MAX_RETRIES) {
+            try {
+                if (conn == null) {
+                log.error("Error with DB connection");
+                return result;
+            }
+
+            ResultSet columns = conn.getMetaData().getColumns(null, database,
+                    tableName, null);
+            while (columns.next()) {
+                String columnName = columns.getString("COLUMN_NAME");
+                String typeName = columns.getString("TYPE_NAME");
+
+//                Object dataType = columns.getString("DATA_TYPE");
+//                String columnSize = columns.getString("COLUMN_SIZE");
+//                String isNullable = columns.getString("IS_NULLABLE");
+//                String isAutoIncrement = columns.getString("IS_AUTOINCREMENT");
+
+                result.put(columnName, typeName);
+            }
+            break;
+            } catch (Exception sq) {
+                log.error("Exception retrieving Column Metadata", sq);
+                try {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection", e1);
+                }
+
+                retryCount++;
+            }
+        }
+        return result;
+    }
+
+    public void truncateTable(Connection conn, String databaseName, String tableName) throws SQLException {
+        int retryCount = 0;
+        PreparedStatement ps = null;
+        while(retryCount < MAX_RETRIES) {
+            try {
+                ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                ps.execute();
+                break;
+            } catch (SQLException e) {
+                log.error("*** Error: Truncate table statement error, retry attempt: " + retryCount, e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                retryCount++;
+            }
+        }
+    }
+
+    public PreparedStatement getPreparedStatement(Connection conn, String sql) throws SQLException {
+
+        int retryCount = 0;
+        PreparedStatement ps = null;
+        while(retryCount < MAX_RETRIES) {
+            try {
+                ps = conn.prepareStatement(sql);
+                break;
+            } catch (SQLException e) {
+                log.error("Error getting prepared statement, retry attempt: " + retryCount, e);
+                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                retryCount++;
+            }
+        }
+        return ps;
     }
 }

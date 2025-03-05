@@ -38,6 +38,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     // Configuration group "task config"
     private static final String CONFIG_GROUP_TASK_CONFIG = "Task Config";
 
+
     public ClickHouseSinkConnectorConfig(Map<String, String> properties) {
         this(newConfigDef(), properties);
     }
@@ -92,6 +93,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     static ConfigDef newConfigDef() {
         return new ConfigDef()
                 // Config Group "Connector config"
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        Type.STRING,
+                        "",
+                        null,
+                        Importance.HIGH,
+                        "Connector class"
+                )
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
                         Type.STRING,
@@ -451,6 +460,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "Single threaded mode",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
                         "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - " +
@@ -464,7 +483,76 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString())
-
-                ;
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString(),
+                        Type.INT,
+                        500,
+                        Importance.HIGH,
+                        "The maximum size of the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString(),
+                        Type.LONG,
+                        50000,
+                        Importance.HIGH,
+                        "The timeout for the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_TIMEOUT.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString(),
+                        Type.INT,
+                        10,
+                        Importance.HIGH,
+                        "The minimum number of idle connections in the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MIN_IDLE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_LIFETIME.toString(),
+                        Type.LONG,
+                        300000,
+                        Importance.HIGH,
+                        "The maximum lifetime of the connection pool",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_MAX_LIFETIME.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If set to true, the connection pool is disabled",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString(),
+                        Type.STRING,
+                        "altinity_sink_connector",
+                        Importance.HIGH,
+                        "The name of the offset storage table",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        7,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
+                // Define errors.max.retries
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
+                        Type.INT,
+                        3,
+                        Importance.HIGH,
+                        "The maximum number of retries for errors",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        15,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
     }
 }

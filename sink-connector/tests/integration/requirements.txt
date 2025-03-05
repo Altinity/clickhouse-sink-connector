@@ -1,4 +1,4 @@
-testflows==2.1.5
+testflows==2.4.10
 python-dateutil==2.9.0
 numpy==1.26.4
 pyarrow==16.1.0

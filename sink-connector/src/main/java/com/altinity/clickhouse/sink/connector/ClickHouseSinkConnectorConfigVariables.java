@@ -73,7 +73,24 @@ public enum ClickHouseSinkConnectorConfigVariables {
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
 
     REPLICA_STATUS_VIEW("replica.status.view"),
-    MAX_QUEUE_SIZE("sink.connector.max.queue.size");
+    MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
+
+    SINGLE_THREADED("single.threaded"),
+
+    CONNECTION_POOL_MAX_SIZE("connection.pool.max.size"),
+    CONNECTION_POOL_TIMEOUT("connection.pool.timeout"),
+    CONNECTION_POOL_MIN_IDLE("connection.pool.min.idle"),
+    CONNECTION_POOL_MAX_LIFETIME("connection.pool.max.lifetime"),
+
+    CONNECTION_POOL_DISABLE("connection.pool.disable"),
+
+    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
+
+    ERRORS_MAX_RETRIES("errors.max.retries"),
+
+    CONNECTOR_CLASS("connector.class");
+
+
 
     private String label;
 

@@ -15,6 +15,8 @@ data VARCHAR(2048) NULL);
 table.include.list:"dbname.table1, dbname.table2`
 signal.data.collection: "dbname.dbz_signal"
 ```
+For **postgres**, the `signal.data.collection` variable should be `schema_name.table_name`.
+
 Restart the sink connector, either using the `sink-connector-client restart` or by stopping/starting sink connector.
 
 **Step 3**: Insert a new row to the `signaling` table created in Step 1 with the new table information.
