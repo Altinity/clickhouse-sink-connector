@@ -44,7 +44,7 @@
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
         <clickhouse.jdbc.version>0.6.0</clickhouse.jdbc.version>
         <version.kafka>3.8.0</version.kafka>
-        <version.debezium>3.0.0.Final</version.debezium>
+        <version.debezium>3.1.0.Alpha2</version.debezium>
     </properties>
 
 
@@ -320,6 +320,7 @@
             <!--    <scope>system</scope>
                <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
         </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

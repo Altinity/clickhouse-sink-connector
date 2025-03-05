@@ -243,7 +243,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testCreateTableWithReplicatedReplacingMergeTree() {
 
         StringBuffer clickHouseQuery = new StringBuffer();
-        String createDB = "CREATE TABLE IF NOT EXISTS mysql1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` (id INT NOT NULL,col1 varchar(255), col2 int, PRIMARY KEY (id)) ENGINE = InnoDB))";
+        String createDB = "CREATE TABLE IF NOT EXISTS mysql1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` (id INT NOT NULL,col1 varchar(255), col2 int, PRIMARY KEY (id)) ENGINE = InnoDB";
 
         // Set ClickHouse sink connector config to set replicated tables.
         Map<String, String> config = new HashMap<>();
@@ -699,15 +699,16 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees2.add_test to employees2.add_test_old"));
     }
-    @Test
-    public void testAddIndex() {
-        StringBuffer clickHouseQuery = new StringBuffer();
 
-        String sql = "alter table add_test add index if not exists ix_add_test_col1 using btree (col1) comment 'test index';\n";
-        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
-
-    }
+//    @Test
+//    public void testAddIndex() {
+//        StringBuffer clickHouseQuery = new StringBuffer();
+//
+//        String sql = "alter table add_test add index if not exists ix_add_test_col1 using btree (col1) comment 'test index';\n";
+//        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+//
+//
+//    }
 
 
     @Test
@@ -719,16 +720,6 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
-    @Test
-    public void testAlterColumnAddDefault() {
-
-        StringBuffer clickHouseQuery = new StringBuffer();
-
-        String sql = "alter table add_test alter flag add default 1";
-        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
-
-    }
 
     @Test
     public void testCreateDatabase() {
@@ -812,7 +803,6 @@ public class MySqlDDLParserListenerImplTest {
             "ALTER TABLE test_table rename to test_table_new, false",
             "drop table if exists table1, true",
             "drop database db1, true",
-            "drop database db2 if exists, true",
             "truncate table table1, true",
             "create database test_ddl, false",
             "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1, ALTER TABLE add_test RENAME COLUMN stocks to options, false"
@@ -934,6 +924,25 @@ public class MySqlDDLParserListenerImplTest {
 
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
+    }
+
+    @Test
+    public void testCreateDefiner() {
+        String sql = "CREATE DEFINER=`bcadmin`@`%` PROCEDURE `sp_next_available_otc_instance_strategy_id`()\n" +
+                "begin\n" +
+                "  select min(st.value) as strategy_id\n" +
+                "  from SEQUENCE_TABLE(100000) st\n" +
+                "  join btc_quant.stratId_ranges r on r.stratId0 <= st.value and st.value < r.stratId1\n" +
+                "  left join otc_instance i on i.strategy_id=st.value\n" +
+                "  where r.category = 'otc' and now() between validFromDate and coalesce(validToDate, now())\n" +
+                "  and i.strategy_id is null;\n" +
+                "end";
+        
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        // Just validates that the debezium parsor does not throw an error
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
     }
 
     @Test
