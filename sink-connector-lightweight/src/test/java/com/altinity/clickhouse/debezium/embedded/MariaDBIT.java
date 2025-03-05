@@ -1,11 +1,9 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +19,6 @@ import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -126,17 +123,9 @@ public class MariaDBIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        // query clickhouse connection and get data for test_table1 and test_table2
-
-
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM employees.audience");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {
@@ -156,6 +145,6 @@ public class MariaDBIT
 
         writer.getConnection().close();
 
-
+        HikariDbSource.close();
     }
 }

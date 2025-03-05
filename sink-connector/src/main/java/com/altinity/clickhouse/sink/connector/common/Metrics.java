@@ -81,17 +81,6 @@ public class Metrics {
 
         connectorStartTimeMs = System.currentTimeMillis();
 
-        // Register reporters here.
-//        reporter = ConsoleReporter.forRegistry(registry)
-//                .convertRatesTo(TimeUnit.SECONDS)
-//                .convertDurationsTo(TimeUnit.SECONDS)
-//                .build();
-//        reporter.start(1, TimeUnit.MINUTES);
-
-        //            registry = new MetricRegistry();
-//            registry.register("memory", new MemoryUsageGaugeSet());
-//            registry.register("jvm.thread-states",new ThreadStatesGaugeSet());
-//            registry.register("jvm.garbage-collector",new GarbageCollectorMetricSet());
         parseConfiguration(enableFlag, metricsPort);
 
         if(enableMetrics) {

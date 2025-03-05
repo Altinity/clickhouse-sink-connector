@@ -236,7 +236,7 @@ def multiple_parallel_add_and_change_column(self, column_number=5, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message=f'"new_{column_name}","Int32',
+                            message=f'"new_{column_name}","Nullable(Int32)',
                         )
 
 
@@ -309,7 +309,7 @@ def multiple_parallel_add_and_modify_column(self, column_number=5, node=None):
                             delay=5,
                         )(
                             f"DESC test.{table_name} FORMAT CSV",
-                            message=f'"{column_name}","Int32',
+                            message=f'"{column_name}","Nullable(Int32)',
                         )
 
 

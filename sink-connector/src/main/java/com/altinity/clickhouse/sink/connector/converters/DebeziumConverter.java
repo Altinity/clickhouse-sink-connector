@@ -7,6 +7,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -226,5 +227,20 @@ public class DebeziumConverter {
         }
 
         return result;
+    }
+
+    public static class BigDecimalConverter {
+
+        public BigDecimal truncate(BigDecimal value) {
+            if(value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
+                log.warn("Decimal value {} is greater than max value {}", value, BinaryStreamUtils.DECIMAL128_MAX);
+                return BinaryStreamUtils.DECIMAL128_MAX;
+            } else if(value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
+                log.warn("Decimal value {} is less than min value {}", value, BinaryStreamUtils.DECIMAL128_MIN);
+                return BinaryStreamUtils.DECIMAL128_MIN;
+            } else {
+                return value;
+            }
+        }
     }
 }
