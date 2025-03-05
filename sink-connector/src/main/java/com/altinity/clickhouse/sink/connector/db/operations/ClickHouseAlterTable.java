@@ -1,11 +1,13 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +55,7 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
      * @para
      * m modifiedFields
      */
-    public void alterTable(List<Field> modifiedFields, String tableName, ClickHouseConnection connection, Map<String, String> columnNameToDataTypeMap) {
+    public void alterTable(List<Field> modifiedFields, String tableName, Connection connection, Map<String, String> columnNameToDataTypeMap) {
         List<Field> missingFieldsInCH = new ArrayList<Field>();
         // Identify the columns that need to be added/removed in ClickHouse.
         for(Field f: modifiedFields) {
@@ -76,7 +78,8 @@ public class ClickHouseAlterTable extends ClickHouseTableOperationsBase{
                 log.info(" ***** ALTER TABLE QUERY **** " + alterTableQuery);
 
                 try {
-                    cat.runQuery(alterTableQuery, connection);
+                    DBMetadata metadata = new DBMetadata();
+                    metadata.executeSystemQuery(connection, alterTableQuery);
                 } catch(Exception e) {
                     log.error(" **** ALTER TABLE EXCEPTION ", e);
                 }

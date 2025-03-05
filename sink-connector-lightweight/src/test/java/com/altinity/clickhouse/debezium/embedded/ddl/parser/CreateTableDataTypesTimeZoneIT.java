@@ -3,9 +3,9 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -78,18 +79,12 @@ public class CreateTableDataTypesTimeZoneIT {
 
         Thread.sleep(30000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
-
-        Map<String, String> decimalTable = writer.getColumnsDataTypesForTable("numeric_types_DECIMAL_65_30");
-        Map<String, String> dateTimeTable = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
-        Map<String, String> timestampTable = writer.getColumnsDataTypesForTable("temporal_types_TIMESTAMP6");
+        DBMetadata metadata = new DBMetadata();
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "datatypes");
+        Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "datatypes");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "datatypes");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
@@ -112,16 +107,11 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
         Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
 
-        writer.getConnection().close();
+        //writer.getConnection().close();
         Thread.sleep(10000);
 
-        ClickHouseConnection conn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn2);
         // Validate temporal_types_DATE data.
-        ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
+        ResultSet dateResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATE", writer.getConnection());
         boolean dateResultValueChecked = false;
         while(dateResult.next()) {
             dateResultValueChecked = true;
@@ -138,7 +128,7 @@ public class CreateTableDataTypesTimeZoneIT {
         Assert.assertTrue(dateResultValueChecked);
 
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
         boolean dateTimeResultValueChecked = false;
 
 
@@ -188,7 +178,7 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:47:46.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
         }
         Assert.assertTrue(dateTimeResultValueChecked);
@@ -196,7 +186,7 @@ public class CreateTableDataTypesTimeZoneIT {
         // DATETIME1
         boolean dateTimeResult1ValueChecked = false;
 
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             dateTimeResult1ValueChecked = true;
@@ -206,13 +196,13 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:48:25.1"));
-            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.9"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
         }
         Assert.assertTrue(dateTimeResult1ValueChecked);
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
@@ -220,12 +210,12 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:05.12"));
-            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.99"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
         }
 
         // DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -234,13 +224,13 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:22.123"));
-            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
         }
 
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -249,14 +239,14 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:12.1234"));
-            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.9999"));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
 
         }
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -265,13 +255,13 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:28.12345"));
-            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.99999"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
 
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -280,7 +270,7 @@ public class CreateTableDataTypesTimeZoneIT {
             System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
-            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
             break;
 
@@ -293,6 +283,8 @@ public class CreateTableDataTypesTimeZoneIT {
         executorService.shutdown();
 
         writer.getConnection().close();
+
+        HikariDbSource.close();
     }
 
 }

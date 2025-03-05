@@ -2,15 +2,18 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+
 import org.testcontainers.clickhouse.ClickHouseContainer;
-import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.*;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
-
+import java.util.HashMap;
 public class ITCommon {
     static public Connection connectToMySQL(MySQLContainer mySqlContainer) {
         Connection conn = null;
@@ -96,6 +99,58 @@ public class ITCommon {
 
     }
 
+    static public Properties getDebeziumProperties( ClickHouseContainer clickHouseContainer) throws Exception {
+
+        Properties defaultProps = new Properties();
+        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+
+        defaultProps.putAll(defaultProperties);
+        Properties fileProps = new ConfigLoader().load("config.yml");
+        defaultProps.putAll(fileProps);
+
+
+        defaultProps.setProperty("connector.class", "io.debezium.connector.mongodb.MongoDbConnector");
+
+        // Construct mongodb connection string
+        String mongoConnectionString = String.format("mongodb://%s:%s", "mongo",
+                "27017");
+
+        defaultProps.setProperty("mongodb.connection.string", mongoConnectionString +"/?replicaSet=rs0");
+        //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString );
+
+        //defaultProps.setProperty("mongodb.connection.string", mongoConnectionString + "/?replicaSet=docker-rs");
+
+        defaultProps.setProperty("capture.scope", "database");
+        defaultProps.setProperty("mongodb.members.auto.discover", "true");
+        defaultProps.setProperty("topic.prefix", "mongo-ch");
+        defaultProps.setProperty("collection.include.list", "project.items");
+        defaultProps.setProperty("snapshot.include.collection.list", "project.items");
+        defaultProps.setProperty("database.include.list", "project");
+        defaultProps.setProperty("key.converter", "org.apache.kafka.connect.json.JsonConverter");
+
+        defaultProps.setProperty("value.converter", "org.apache.kafka.connect.storage.StringConverter");
+        defaultProps.setProperty("value.converter.schemas.enable", "true");
+
+        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
+        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
+        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
+        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
+
+
+        return defaultProps;
+    }
     static public Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
 
         // Start the debezium embedded application.
@@ -144,5 +199,46 @@ public class ITCommon {
         props.setProperty("disable.ddl", "true");
         props.setProperty("replica.status.view", "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,  toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time FROM %s settings final=1");
         return props;
+    }
+
+
+    static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer) {
+
+         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), 
+         "employees");
+        Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(), 
+        clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+
+        return writer;
+    }
+
+    static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer, String databaseName) {
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                databaseName);
+        Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(),
+                clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
+                databaseName, clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+
+        return writer;
+    }
+
+
+
+    /**
+     * Function to execute query.
+     * @param sql
+     * @return
+     * @throws SQLException
+     */
+    static public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
+        ResultSet rs = conn.prepareStatement(sql).executeQuery();
+        return rs;
+
     }
 }

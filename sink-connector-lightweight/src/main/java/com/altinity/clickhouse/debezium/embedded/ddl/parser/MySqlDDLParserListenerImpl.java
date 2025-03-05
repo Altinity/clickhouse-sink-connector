@@ -146,6 +146,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     @Override
+    public void enterDropDatabase(MySqlParser.DropDatabaseContext dropDatabaseContext) {
+        for (ParseTree child : dropDatabaseContext.children) {
+            if (child instanceof MySqlParser.UidContext) {
+                String databaseName = child.getText();
+                String overrideDatabaseName = overrideDatabaseName(databaseName);
+
+                this.query.append(String.format(Constants.DROP_DATABASE, overrideDatabaseName));
+            }
+        }
+    }
+
+    @Override
     public void enterCopyCreateTable(MySqlParser.CopyCreateTableContext copyCreateTableContext) {
         ListIterator<ParseTree> it = copyCreateTableContext.children.listIterator();
 
@@ -388,8 +400,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(dt.name().equalsIgnoreCase("ENUM"))
-        {
+        if(dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
             // Dont try to get precision/scale for enums
         }
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
@@ -515,7 +526,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            isNullColumn = false;
+                            if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                                isNullColumn = false;
+                            }
                         }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
@@ -554,6 +567,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
                     if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
                         isNullColumn = true;
+                    } else if (isNullableList.get(columnName) == null) {
+                        isNullColumn = true;
                     } else {
                         isNullColumn = false;
                     }
@@ -567,8 +582,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (columnName != null && columnType != null)
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
-            } else
+            }
+            else
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
+
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
         }
@@ -613,7 +630,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // If the table name already include the database name dont include it in the query.
                 if(this.tableName.contains(".")) {
-                    this.query.append(String.format(Constants.ALTER_TABLE, this.tableName));
+                    // Split database and table name.
+                    String[] tableNameSplit = this.tableName.split("\\.");
+                
+                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
                 } else
                     this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
             }
@@ -678,6 +698,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         String newTableName = null;
         for(ParseTree alterByRenameChildren: tree.children) {
             if(alterByRenameChildren instanceof MySqlParser.UidContext) {
+                newTableName = alterByRenameChildren.getText();
+            } else if(alterByRenameChildren instanceof MySqlParser.FullIdContext) {
                 newTableName = alterByRenameChildren.getText();
             }
         }

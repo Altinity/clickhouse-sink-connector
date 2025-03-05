@@ -15,6 +15,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import org.testcontainers.containers.ClickHouseContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.ZoneId;
 import java.util.*;
@@ -33,11 +35,17 @@ public class DbWriterTest {
 
     // will be started before and stopped after each test method
     @Container
-    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .withInitScript("./init_clickhouse.sql");
 
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
+
+
     @BeforeAll
-    public static void init() {
+    public static void init() throws InterruptedException {
 
         clickHouseContainer.start();
         String hostName = clickHouseContainer.getHost();
@@ -49,9 +57,11 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
+
+        Thread.sleep(10000);
 
     }
 
@@ -88,10 +98,6 @@ public class DbWriterTest {
     }
 
     @Test
-    public void testIsColumnTypeDate64() {
-       boolean result = DbWriter.isColumnDateTime64("Nullable(DateTime64(3))");
-    }
-    @Test
     @Tag("IntegrationTest")
     public void testGetColumnsDataTypesForTable() {
 
@@ -103,21 +109,24 @@ public class DbWriterTest {
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        Map<String, String> columnDataTypesMap = writer.getColumnsDataTypesForTable("employees");
+        DBMetadata metadata = new DBMetadata();
+        Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap.size() == 44);
 
         String database2 = "employees2";
         String jdbcUrl2 = BaseDbWriter.getConnectionString(dbHostName, port, database2);
-        ClickHouseConnection conn2 = DbWriter.createConnection(jdbcUrl2, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn2 = DbWriter.createConnection(jdbcUrl2, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn2);
-        Map<String, String> columnDataTypesMap2 = writer2.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
         Assert.assertTrue(columnDataTypesMap2.size() ==44);
@@ -129,19 +138,19 @@ public class DbWriterTest {
     public void testGetEngineType() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
+        String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
-        Assert.assertTrue(result.getRight().equalsIgnoreCase("_version"));
+        Assert.assertTrue(result.getRight().equalsIgnoreCase("_version22"));
 
         MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result_test.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
@@ -161,14 +170,14 @@ public class DbWriterTest {
     public void testGetEngineTypeUsingSystemTables() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
@@ -176,7 +185,7 @@ public class DbWriterTest {
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 
         MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
-                database, "products");
+                "default", "products");
         Assert.assertTrue(result_products.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.
@@ -237,7 +246,8 @@ public class DbWriterTest {
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
 
         //String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(connectionUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(connectionUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, config, null, conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
@@ -245,8 +255,10 @@ public class DbWriterTest {
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
+        DBMetadata metadata = new DBMetadata();
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(), dbWriter.getColumnsDataTypesForTable(tableName));
+                , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(),
+                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         Assert.assertTrue(result.isEmpty() == false);
 
@@ -281,7 +293,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
         PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(null,
                 false, null, null, database, ZoneId.of("UTC"));
@@ -312,7 +325,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn2 = DbWriter.createConnection(jdbcUrl, "client_1", userName, "", config);
+        Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, "",
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, "", config,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);
@@ -336,7 +350,7 @@ public class DbWriterTest {
         try {
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
 
-            ClickHouseConnection conn = dataSource.getConnection(userName, "");
+            Connection conn = dataSource.getConnection(userName, "");
 
             PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
 
@@ -377,7 +391,8 @@ public class DbWriterTest {
 
         ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn2 = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);
@@ -385,7 +400,7 @@ public class DbWriterTest {
         String insertQueryTemplate = "insert into employees values(?,?,?,?,?,?)";
         try {
             ClickHouseDataSource dataSource = new ClickHouseDataSource(url, properties);
-            ClickHouseConnection conn = dataSource.getConnection(userName, password);
+            Connection conn = dataSource.getConnection(userName, password);
 
             PreparedStatement ps = conn.prepareStatement(insertQueryTemplate);
 

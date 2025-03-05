@@ -34,7 +34,12 @@ def argparser(parser):
         default=False,
         help="enable stress testing (might take a long time)",
     )
-
+    parser.add_argument(
+        "--hikari-pool",
+        action="store_true",
+        default=False,
+        help="enable hikari connection pool. Default: False",
+    )
     parser.add_argument(
         "--thread-fuzzer",
         action="store_true",

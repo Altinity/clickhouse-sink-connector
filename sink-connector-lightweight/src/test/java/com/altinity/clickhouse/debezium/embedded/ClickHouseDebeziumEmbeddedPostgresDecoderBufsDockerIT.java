@@ -2,13 +2,11 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.junit.Assert;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.Testcontainers;
@@ -19,7 +17,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -90,15 +87,11 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         Thread.sleep(10000);//
         Thread.sleep(50000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
+        Assert.assertTrue(tmColumns.size() == 23);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
-        Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
@@ -106,7 +99,7 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
 
 
         int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
@@ -119,5 +112,6 @@ public class ClickHouseDebeziumEmbeddedPostgresDecoderBufsDockerIT {
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
 
+        HikariDbSource.close();
     }
 }
