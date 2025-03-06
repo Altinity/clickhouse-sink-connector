@@ -791,6 +791,26 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testAlterTableColumnWithComment() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE test_table ADD COLUMN col1 varchar(255) COMMENT 'test column';";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN col1 Nullable(String)"));
+    }
+
+    @Test
+    public void testAlterTableColumnWithCommentAndDecimalScale() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "ALTER TABLE test_table ADD COLUMN col1 decimal(10,2) COMMENT 'test column';";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN col1 Nullable(Decimal(10,2))"));
+    }
+
+    @Test
     public void testGeneratedColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
