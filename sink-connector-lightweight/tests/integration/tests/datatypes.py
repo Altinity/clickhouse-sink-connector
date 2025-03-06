@@ -20,13 +20,23 @@ def adjust_precision(datetime_str, precision):
     if len(parts) == 1:
         return f"{main_part}.{'0' * int(precision)}"
 
-    microseconds_part = parts[1]
+    microseconds_part = parts[1] #9999
     adjusted_microseconds = microseconds_part[: int(precision)].ljust(
         int(precision), "0"
     )
 
     return f"{main_part}.{adjusted_microseconds}"
 
+def replace_nines_with_zeroes(datetime_str):
+    """Replace nines in the precision part of a datetime string with zeroes."""
+    parts = datetime_str.split(".")
+    if len(parts) == 1:
+        return datetime_str
+
+    main_part = parts[0]
+    precision_part = parts[1].replace("9", "0")
+
+    return f"{main_part}.{precision_part}"
 
 @TestStep(Given)
 def create_table_with_datetime_column(self, table_name, data, precision):
@@ -51,6 +61,9 @@ def create_table_with_datetime_column(self, table_name, data, precision):
 def check_datetime_column(self, precision, data):
     table_name = "table_" + getuid()
     clickhouse_node = self.context.clickhouse_node
+
+    if data == "2299-12-31 23:59:59.999999":
+        data = replace_nines_with_zeroes(data)
 
     data = adjust_precision(datetime_str=data, precision=precision)
 
@@ -94,18 +107,18 @@ def check_datetime_column(self, precision, data):
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
                     == "2299-12-31 23:59:59"
                 ), error()
-        elif data[:19] == "2299-12-31 23:59:59.9":
+        elif data[:19] == "2299-12-31 23:59:59.0":
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (

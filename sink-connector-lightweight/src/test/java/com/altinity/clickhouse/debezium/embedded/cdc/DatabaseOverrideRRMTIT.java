@@ -5,10 +5,10 @@ import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedAppli
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -23,19 +23,16 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 import static org.junit.Assert.assertTrue;
-
 public class DatabaseOverrideRRMTIT {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseOverrideRRMTIT.class);
@@ -68,31 +65,27 @@ public class DatabaseOverrideRRMTIT {
                 .withPassword("password")
                 .withClasspathResourceMapping("config_replicated.xml", "/etc/clickhouse-server/config.d/config.xml", BindMode.READ_ONLY)
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
-                .withExposedPorts(8123)
-                .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
+                .withExposedPorts(8123);
+                //.waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
-        clickHouseContainer.start();
+        //clickHouseContainer.start();
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-        clickHouseContainer.start();
+       clickHouseContainer.start();
         Thread.sleep(35000);
-    }
 
+    }
 
     @DisplayName("Test that validates overriding database name in ClickHouse for ReplicatedReplacingMergeTree(RRMT)")
     @Test
     public void testDatabaseOverride() throws Exception {
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        writer.executeQuery("CREATE DATABASE employees2");
-        writer.executeQuery("CREATE DATABASE productsnew");
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
 
         Thread.sleep(10000);
         Injector injector = Guice.createInjector(new AppInjector());
@@ -147,7 +140,7 @@ public class DatabaseOverrideRRMTIT {
 
 
         long col2 = 0L;
-        ResultSet version1Result = writer.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'");
+        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
@@ -155,7 +148,7 @@ public class DatabaseOverrideRRMTIT {
         assertTrue(col2 == 1);
 
         long productsCol2 = 0L;
-        ResultSet productsVersionResult = writer.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'");
+        ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
         while(productsVersionResult.next()) {
             productsCol2 = productsVersionResult.getLong("col2");
         }
@@ -163,7 +156,7 @@ public class DatabaseOverrideRRMTIT {
         Thread.sleep(10000);
 
         long customersCol2 = 0L;
-        ResultSet customersVersionResult = writer.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'");
+        ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
         while(customersVersionResult.next()) {
             customersCol2 = customersVersionResult.getLong("col2");
         }
@@ -182,7 +175,7 @@ public class DatabaseOverrideRRMTIT {
 //        assertTrue(customersCol2 == 2);
 
         // validate that the table prodtaable2 is present in clickhouse
-        ResultSet chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable2");
+        ResultSet chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable2", writer.getConnection());
         boolean recordFound = false;
         while(chRs.next()) {
             recordFound = true;
@@ -198,7 +191,7 @@ public class DatabaseOverrideRRMTIT {
 
         Thread.sleep(10000);
         // Validate on CH that the table prodtable3 is present.
-        chRs = writer.executeQueryWithResultSet("select * from productsnew.prodtable3");
+         chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
         boolean prod3RecordFound = false;
         while(chRs.next()) {
             prod3RecordFound = true;
@@ -211,5 +204,8 @@ public class DatabaseOverrideRRMTIT {
         conn.close();
         // Files.deleteIfExists( tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
+
     }
 }
