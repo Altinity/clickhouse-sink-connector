@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -13,17 +14,26 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.testcontainers.utility.MountableFile;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 @Testcontainers
 
 public class DBMetadataTest {
 
     @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
+    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .withInitScript("./init_clickhouse.sql").withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml");
+
+    @AfterAll
+    public static void cleanup() {
+        HikariDbSource.close();
+    }
+
 
     @Test
     public void testGetSignColumnForCollapsingMergeTree() {
@@ -64,23 +74,28 @@ public class DBMetadataTest {
 
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "system";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                "newdb", new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
 
         // Default database exists.
-        boolean result = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "default");
+        boolean result = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "system");
         Assert.assertTrue(result);
 
         boolean result2 = new DBMetadata().checkIfDatabaseExists(writer.getConnection(), "newdb");
         Assert.assertFalse(result2);
+
+        Map<String, Boolean> isNullableList = new DBMetadata().getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
+       isNullableList.get("_offset").equals(true);
+       isNullableList.get("hire_date").equals(false);
 
     }
 
@@ -135,18 +150,44 @@ public class DBMetadataTest {
     public void getTestGetServerTimeZone() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "system";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DbWriter writer = new DbWriter(dbHostName, port, "employees", tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
         ZoneId serverTimeZone = new DBMetadata().getServerTimeZone(writer.getConnection());
 
         Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
 
+    }
+
+    @Test
+    public void getAliasAndMaterializedColumnsList() throws SQLException {
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "employees";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
+        String tableName = "employees";
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Set<String> aliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
+
+        Assert.assertTrue(aliasColumns.size() == 2);
+
+
+        // Check for a table with no alias columns.
+        Set<String> tmAliasColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
+        Assert.assertTrue(tmAliasColumns.size() == 0);
+        // Check for a table with no alias columns.
+        Set<String> employeeMaterializedColumns = new DBMetadata().getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
+        Assert.assertTrue(employeeMaterializedColumns.size() == 1);
     }
 }

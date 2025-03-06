@@ -8,6 +8,8 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -18,6 +20,7 @@ import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -35,7 +38,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
     String databaseName;
 
-    public MySqlDDLParserListenerImpl(StringBuffer transformedQuery, String tableName,
+    BaseDbWriter writer;
+
+    DBMetadata dbMetadata;
+
+    public MySqlDDLParserListenerImpl(BaseDbWriter writer, StringBuffer transformedQuery, String tableName,
                                       String databaseName,
                                       ClickHouseSinkConnectorConfig config) {
         this.config = config;
@@ -47,24 +54,35 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } catch(Exception e) {
             log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
         }
+
+        this.databaseName = overrideDatabaseName(databaseName);
+
+        this.query = transformedQuery;
+        this.tableName = tableName;
+
+        this.config = config;
+        this.dbMetadata = new DBMetadata();
+        this.writer = writer;
+        this.userProvidedTimeZone = parseTimeZone();
+    }
+
+    /**
+     * Function to override the database name.
+     * @param databaseName
+     * @return
+     */
+    private String overrideDatabaseName(String databaseName) {
+
         // databaseName might contain backticks. Remove them.
         if(databaseName.contains("`")) {
             databaseName = databaseName.replace("`", "");
         }
 
         if(sourceToDestinationMap.containsKey(databaseName)) {
-            this.databaseName = sourceToDestinationMap.get(databaseName);
-        } else {
-            this.databaseName = databaseName;
+            return sourceToDestinationMap.get(databaseName);
         }
-
-        this.query = transformedQuery;
-        this.tableName = tableName;
-
-
-        this.userProvidedTimeZone = parseTimeZone();
+        return databaseName;
     }
-
 
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
@@ -93,26 +111,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 String databaseName = tree.getText();
                 if(!databaseName.isEmpty()) {
-                    // Check if the database is overridden
-                    Map<String, String> sourceToDestinationMap = new HashMap<>();
 
-                    try {
-                        if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
-                            sourceToDestinationMap = Utils.parseSourceToDestinationDatabaseMap(this.config.
-                                    getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
-                    } catch(Exception e) {
-                        log.error("enterCreateDatabase: Error parsing source to destination database map:" + e.toString());
-                    }
-                    // databaseName might contain backticks. Remove them.
-                    if(databaseName.contains("`")) {
-                        databaseName = databaseName.replace("`", "");
-                    }
-                    if(sourceToDestinationMap.containsKey(databaseName)) {
-                        this.query.append(String.format(Constants.CREATE_DATABASE, sourceToDestinationMap.get(databaseName)));
-                    } else {
-                        this.query.append(String.format(Constants.CREATE_DATABASE, databaseName));
-                    }
+                    String overrideDatabaseName = overrideDatabaseName(tree.getText());
+                    this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
                 }
+            }
+        }
+    }
+
+    @Override
+    public void enterDropDatabase(MySqlParser.DropDatabaseContext dropDatabaseContext) {
+        for (ParseTree child : dropDatabaseContext.children) {
+            if (child instanceof MySqlParser.UidContext) {
+                String databaseName = child.getText();
+                String overrideDatabaseName = overrideDatabaseName(databaseName);
+
+                this.query.append(String.format(Constants.DROP_DATABASE, overrideDatabaseName));
             }
         }
     }
@@ -210,7 +224,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // If tableName already includes the database name don't include database name in this.query
                 if(tableName.contains(".")) {
-                    this.query.append(tableName);
+                    // split tableName into databaseName and tableName
+                    String[] tableNameSplit = tableName.split("\\.");
+                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    //this.query.append(tableName);
                 } else
                     this.query.append(databaseName).append(".").append(tree.getText());
 
@@ -357,8 +374,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(dt.name().equalsIgnoreCase("ENUM"))
-        {
+        if(dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
             // Dont try to get precision/scale for enums
         }
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
@@ -441,6 +457,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         boolean isNullColumn = false;
         boolean isAlterChangeColumn = false;
+        boolean nullExplicitlySet = false;
+
         if (tree instanceof AlterByAddColumnContext) {
             modifier = Constants.ADD_COLUMN;
             modifierWithNull = Constants.ADD_COLUMN_NULLABLE;
@@ -479,10 +497,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 for (ParseTree columnDefChild : ((MySqlParser.ColumnDefinitionContext) columnChild).children) {
                     if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
+                        nullExplicitlySet = true;
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            isNullColumn = false;
+                            if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                                isNullColumn = false;
+                            }
                         }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
@@ -514,12 +535,36 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             }
         }
-
+        // if null is not explicitly set.
+        if (!nullExplicitlySet) {
+            try {
+                if(writer == null) {
+                    log.error("Error with DB connection");
+                    throw new SQLException("Error with DB connection");
+                }
+                else {
+                    Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
+                    if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
+                        isNullColumn = true;
+                    } else if (isNullableList.get(columnName) == null) {
+                        isNullColumn = true;
+                    } else {
+                        isNullColumn = false;
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error retrieving NULL column schema from ClickHouse", e);
+            }
+            // Check if the column scehma is nullable from ClickHouse.
+                // Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
+        }
         if (columnName != null && columnType != null)
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
-            } else
+            }
+            else
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
+
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
         }
@@ -564,7 +609,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.tableName = tree.getText();
                 // If the table name already include the database name dont include it in the query.
                 if(this.tableName.contains(".")) {
-                    this.query.append(String.format(Constants.ALTER_TABLE, this.tableName));
+                    // Split database and table name.
+                    String[] tableNameSplit = this.tableName.split("\\.");
+                
+                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
                 } else
                     this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
             }
@@ -629,6 +677,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         String newTableName = null;
         for(ParseTree alterByRenameChildren: tree.children) {
             if(alterByRenameChildren instanceof MySqlParser.UidContext) {
+                newTableName = alterByRenameChildren.getText();
+            } else if(alterByRenameChildren instanceof MySqlParser.FullIdContext) {
                 newTableName = alterByRenameChildren.getText();
             }
         }
@@ -709,8 +759,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
                     // If the table name already includes the database name dont include it in the query.
-                    if(originalTableName.contains(".")) {
-                        this.query.append(originalTableName).append(" to ").append(newTableName);
+                    if(originalTableName.contains(".") && newTableName.contains(".")) {
+                        // Split database and table name.
+                        String[] databaseAndTableNameArray = originalTableName.split("\\.");
+                        String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
+                        this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").
+                                append(this.databaseName).append(".").append(newDatabaseAndTableNameArray[1]);
                     } else
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").
                                 append(databaseName).append(".").append(newTableName);

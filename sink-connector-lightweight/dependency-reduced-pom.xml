@@ -117,14 +117,56 @@
   </profiles>
   <dependencies>
     <dependency>
+      <groupId>io.javalin</groupId>
+      <artifactId>javalin-testtools</artifactId>
+      <version>5.5.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-connector-mongodb</artifactId>
-      <version>2.7.0.Beta2</version>
+      <version>3.1.0.Alpha2</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
+          <artifactId>debezium-sink</artifactId>
+          <groupId>io.debezium</groupId>
+        </exclusion>
+        <exclusion>
           <artifactId>mongodb-driver-sync</artifactId>
           <groupId>org.mongodb</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-testing-testcontainers</artifactId>
+      <version>3.1.0.Alpha2</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>kafka</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>awaitility</artifactId>
+          <groupId>org.awaitility</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>mssqlserver</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>oracle-xe</artifactId>
+          <groupId>org.testcontainers</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-jupiter</artifactId>
+          <groupId>org.junit.jupiter</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>quarkus-test-common</artifactId>
+          <groupId>io.quarkus</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -155,7 +197,7 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -179,7 +221,7 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>jdbc</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -191,37 +233,37 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>clickhouse</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mysql</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>postgresql</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mariadb</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mongodb</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -237,10 +279,6 @@
       <version>5.8.1</version>
       <scope>test</scope>
       <exclusions>
-        <exclusion>
-          <artifactId>junit-platform-engine</artifactId>
-          <groupId>org.junit.platform</groupId>
-        </exclusion>
         <exclusion>
           <artifactId>junit-jupiter-api</artifactId>
           <groupId>org.junit.jupiter</groupId>
@@ -262,12 +300,40 @@
           <groupId>org.junit.jupiter</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>junit-platform-launcher</artifactId>
+          <artifactId>junit-jupiter-api</artifactId>
+          <groupId>org.junit.jupiter</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <version>1.8.2</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>apiguardian-api</artifactId>
+          <groupId>org.apiguardian</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-engine</artifactId>
+      <version>1.8.2</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>opentest4j</artifactId>
+          <groupId>org.opentest4j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-platform-commons</artifactId>
           <groupId>org.junit.platform</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>junit-jupiter-api</artifactId>
-          <groupId>org.junit.jupiter</groupId>
+          <artifactId>apiguardian-api</artifactId>
+          <groupId>org.apiguardian</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -304,16 +370,18 @@
   <properties>
     <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-    <version.testcontainers>1.19.1</version.testcontainers>
+    <version.testcontainers>1.20.4</version.testcontainers>
     <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
+    <version.kafka>3.8.0</version.kafka>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <sink-connector-library-version>0.0.9</sink-connector-library-version>
+    <javalin-version>5.5.0</javalin-version>
     <version.junit>5.9.1</version.junit>
     <maven.compiler.source>17</maven.compiler.source>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
     <maven.compiler.target>17</maven.compiler.target>
-    <version.debezium>2.7.0.Beta2</version.debezium>
+    <version.debezium>3.1.0.Alpha2</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>
 </project>

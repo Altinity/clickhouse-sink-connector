@@ -9,7 +9,7 @@ version: "3.4"
 services:
   mysql-master:
     container_name: mysql-master
-    image: docker.io/bitnami/mysql:latest
+    image: docker.io/bitnami/mysql:8.0
     restart: "no"
     ports:
       - "3306:3306"
@@ -50,7 +50,7 @@ services:
     build:
       context: ../../docker/debezium_jmx
       args:
-        DEBEZIUM_VERSION: 2.1.0.Alpha1
+        DEBEZIUM_VERSION: 3.0.4.Final
         JMX_AGENT_VERSION: 0.15.0
     restart: "no"
     ports:
@@ -122,7 +122,7 @@ services:
   clickhouse:
     # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
     container_name: clickhouse
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:23.8.5
     restart: "no"
     depends_on:
       zookeeper:
