@@ -120,6 +120,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     @Override
+    public void enterDropDatabase(MySqlParser.DropDatabaseContext dropDatabaseContext) {
+        for (ParseTree child : dropDatabaseContext.children) {
+            if (child instanceof MySqlParser.UidContext) {
+                String databaseName = child.getText();
+                String overrideDatabaseName = overrideDatabaseName(databaseName);
+
+                this.query.append(String.format(Constants.DROP_DATABASE, overrideDatabaseName));
+            }
+        }
+    }
+
+    @Override
     public void enterCopyCreateTable(MySqlParser.CopyCreateTableContext copyCreateTableContext) {
         ListIterator<ParseTree> it = copyCreateTableContext.children.listIterator();
 
@@ -362,14 +374,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if(dt.name().equalsIgnoreCase("ENUM"))
-        {
+        if(dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
             // Dont try to get precision/scale for enums
         }
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
+            String sanitizedDataType = parsedDataType.split("COMMENT")[0].trim();
             try {
-                precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
-                scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
+                precision = Integer.parseInt(sanitizedDataType.substring(sanitizedDataType.indexOf("(") + 1, sanitizedDataType.indexOf(",")));
+                scale = Integer.parseInt(sanitizedDataType.substring(sanitizedDataType.indexOf(",") + 1, sanitizedDataType.indexOf(")")));
             } catch(Exception e) {
                 log.error("Error parsing precision, scale : columnName" + columnName);
             }
@@ -489,13 +501,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            isNullColumn = false;
+                            if(!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                                isNullColumn = false;
+                            }
                         }
                     } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
                         }
-                    } else {
+                    } else if(columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
+                        // Ignore comment for now.
+                        //commentModifier = columnDefChild.getChild(1).getText();
+                    }
+                    else   {
                         columnType = (columnDefChild.getText());
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
                         if (chDataType != null) {
@@ -528,6 +546,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
                     if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
                         isNullColumn = true;
+                    } else if (isNullableList.get(columnName) == null) {
+                        isNullColumn = true;
                     } else {
                         isNullColumn = false;
                     }
@@ -541,8 +561,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (columnName != null && columnType != null)
             if (isNullColumn) {
                 this.query.append(" ").append(String.format(modifierWithNull, columnName, columnType)).append(" ");
-            } else
+            }
+            else
                 this.query.append(" ").append(String.format(modifier, columnName, columnType));
+
         if (defaultModifier != null && defaultModifier.isEmpty() == false) {
             this.query.append(" ").append(defaultModifier);
         }

@@ -32,7 +32,7 @@ def check_column(
 
     if column_type is not None:
         if "varchar" in column_type:
-            column_type = "String"
+            column_type = "Nullable(String)"
 
     if node is None:
         node = self.context.cluster.node("clickhouse")

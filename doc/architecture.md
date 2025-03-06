@@ -5,9 +5,9 @@ using [Debezium](debezium) into a common log format and then applies those
 transactions to tables in ClickHouse. 
 
 There are two modes of operation. 
-* Lightweight Sink Connector - Combines extract and apply operations 
+* **Lightweight Sink Connector** - Combines extract and apply operations 
   into a single process. 
-* Kafka Sink Connector - Separates extract and apply operations into separate
+* **Kafka Sink Connector** - Separates extract and apply operations into separate
   processes, using a Kafka-compatible event stream for transport between them. 
 
 Debezium offers change data capture on a number of database types. The 
