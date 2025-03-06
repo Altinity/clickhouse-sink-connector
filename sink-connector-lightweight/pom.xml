@@ -13,9 +13,9 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <version.debezium>2.7.0.Beta2</version.debezium>
+        <version.debezium>3.1.0.Alpha2</version.debezium>
         <version.junit>5.9.1</version.junit>
-        <version.testcontainers>1.19.1</version.testcontainers>
+        <version.testcontainers>1.20.4</version.testcontainers>
         <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -24,6 +24,8 @@
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
         <sink-connector-library-version>0.0.9</sink-connector-library-version>
+        <version.kafka>3.8.0</version.kafka>
+        <javalin-version>5.5.0</javalin-version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -58,13 +60,30 @@
         <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin</artifactId>
-            <version>5.5.0</version>
+            <version>${javalin-version}</version>
             <exclusions>
             <exclusion>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
             </exclusion>
             </exclusions>
+        </dependency>
+        <!-- Dependency for kotlin -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <version>1.9.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib-common</artifactId>
+            <version>1.9.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin-testtools</artifactId>
+            <version>${javalin-version}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.googlecode.json-simple</groupId>
@@ -124,6 +143,13 @@
             <version>${version.debezium}</version>
             <scope>test</scope>
         </dependency>
+        <!-- https://mvnrepository.com/artifact/io.debezium/debezium-testing-testcontainers -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-testing-testcontainers</artifactId>
+            <version>${version.debezium}</version>
+            <scope>test</scope>
+        </dependency>
 
 
         <dependency>
@@ -152,7 +178,7 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
-            <version>3.3.1</version>
+            <version>${version.kafka}</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.slf4j</groupId>
@@ -173,7 +199,11 @@
                 </exclusion>
             </exclusions>
         </dependency>
-
+        <dependency>
+            <groupId>org.locationtech.jts</groupId>
+            <artifactId>jts-core</artifactId>
+            <version>1.18.2</version>
+        </dependency>
         <!-- DEBEZIUM dependencies: END -->
         <!-- https://mvnrepository.com/artifact/org.yaml/snakeyaml -->
         <dependency>
@@ -203,6 +233,11 @@
             <!-- <scope>test</scope>-->
         </dependency>
 
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>6.0.0</version>
+        </dependency>
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
@@ -243,6 +278,13 @@
             <artifactId>junit-jupiter</artifactId>
             <version>${version.testcontainers}</version>
             <scope>test</scope>
+        </dependency>
+        <!-- mariab.jdbc.Driver -->
+        <dependency>
+            <groupId>org.mariadb.jdbc</groupId>
+            <artifactId>mariadb-java-client</artifactId>
+            <version>2.7.12</version>
+            <!-- <scope>runtime</scope> -->
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
@@ -297,6 +339,18 @@
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>1.8.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-engine</artifactId>
+            <version>1.8.2</version>
+            <scope>test</scope>
+        </dependency>
         <dependency> <!-- necessary for Java 9+ -->
             <groupId>org.apache.tomcat</groupId>
             <artifactId>annotations-api</artifactId>
@@ -314,7 +368,7 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-api</artifactId>
-            <version>2.8.1</version>
+            <version>${version.kafka}</version>
             <!-- <scope>provided</scope> -->
             <exclusions>
                 <exclusion>
@@ -392,7 +446,7 @@
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
             <classifier>shaded</classifier>
-            <version>0.6.0</version>
+            <version>0.6.5</version>
             <exclusions>
                 <exclusion>
                     <groupId>*</groupId>
@@ -472,13 +526,13 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
-            <version>3.1.0</version>
+            <version>${version.kafka}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
-            <version>3.1.0</version>
+            <version>${version.kafka}</version>
             <scope>compile</scope>
         </dependency>
 

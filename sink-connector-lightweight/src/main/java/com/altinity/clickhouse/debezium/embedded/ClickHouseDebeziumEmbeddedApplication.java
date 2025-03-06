@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
+import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
@@ -9,6 +11,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.logging.log4j.Level;
@@ -17,11 +20,14 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.jul.Log4jBridgeHandler;
 
 import java.io.IOException;
+import java.sql.Connection;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 
 public class ClickHouseDebeziumEmbeddedApplication {
 
@@ -52,7 +58,6 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
     public static void main(String[] args) throws Exception {
 
-        //BasicConfigurator.configure();
 
         Log4jBridgeHandler.install(false, "", true);
         System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
@@ -69,6 +74,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
         }
         injector = Guice.createInjector(new AppInjector());
 
+        printDockerInfo();
         props = new Properties();
         if(args.length > 0) {
             log.info(String.format("****** CONFIGURATION FILE: %s ********", args[0]));
@@ -86,13 +92,28 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
         setupMonitoringThread(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
 
-        embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                injector.getInstance(DDLParserService.class), props, false);
+        embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
 
         try {
             DebeziumEmbeddedRestApi.startRestApi(props, injector, debeziumChangeEventCapture, userProperties);
         } catch(Exception e) {
             log.error("Error starting REST API server", e);
+        }
+    }
+
+    private static void printDockerInfo() {
+        try {
+
+            String dockerTag = System.getenv("DOCKER_TAG");
+            // log the docker tag if it is set
+            if(dockerTag != null) {
+                //Extract the string after :
+                // altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
+                //String version = dockerTag.substring(dockerTag.indexOf(":") + 1);
+                log.info("***** Sink Connector Release version: *********** " + dockerTag);
+            }
+        } catch(Exception e) {
+            log.error("Error printing docker info", e);
         }
     }
 
@@ -125,8 +146,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
             Thread.sleep(500);
             // embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-            embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                    injector.getInstance(DDLParserService.class), props, true);
+            embeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, true);
             return null;
         });
 
@@ -135,7 +155,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
 
 
     public static void start(DebeziumRecordParserService recordParserService,
-                             DDLParserService ddlParserService, Properties props, boolean forceStart) throws Exception {
+                             Properties props, boolean forceStart) throws Exception {
 
         if(forceStart == true) {
             // Reload the configuration file.
@@ -143,7 +163,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             loadPropertiesFile(configurationFile);
         }
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
-        debeziumChangeEventCapture.setup(props, recordParserService, ddlParserService, forceStart);
+        debeziumChangeEventCapture.setup(props, recordParserService, forceStart);
     }
 
     public static void stop() throws IOException {
@@ -177,10 +197,13 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         return;
                     }
                     try {
-                        long lastRecordTimestamp = debeziumChangeEventCapture.getLastRecordTimestamp();
+                        long lastRecordTimestamp = ReplicationStatusSingleton.getInstance().getLastRecordTimestamp();
                         if(lastRecordTimestamp == -1) {
                             // Check the last record timestamp from the table.
-                            long storedOffsetsInTable = debeziumChangeEventCapture.getLatestRecordTimestamp(config, props);
+                            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                            Connection conn = HikariDbSource.getInstance(SYSTEM_DB).getConnection();
+                            long storedOffsetsInTable = debeziumJdbcStorageOperations.getLatestRecordTimestamp(conn, props);
+                            conn.close();
                             if(storedOffsetsInTable == -1) {
                                 lastRecordTimestamp = storedOffsetsInTable;
                             }
@@ -194,8 +217,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         log.info("******* Restarting Event Loop ********");
                         debeziumChangeEventCapture.stop();
                         Thread.sleep(3000);
-                        start(injector.getInstance(DebeziumRecordParserService.class),
-                                injector.getInstance(DDLParserService.class), props, true);
+                        start(injector.getInstance(DebeziumRecordParserService.class), props, true);
                     } catch (IOException e) {
                         log.error("**** ERROR: Restarting Event Loop ****", e);
                         throw new RuntimeException(e);

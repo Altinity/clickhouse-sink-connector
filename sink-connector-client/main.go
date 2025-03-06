@@ -1,14 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/levigross/grequests"
-	"github.com/tidwall/pretty"
-	cli "github.com/urfave/cli"
 	"log"
 	"os"
 	"time"
+
+	"github.com/levigross/grequests"
+	"github.com/tidwall/pretty"
+	cli "github.com/urfave/cli"
 )
 
 var requestOptions = &grequests.RequestOptions{}
@@ -28,19 +30,26 @@ type UpdateLsn struct {
 }
 
 const (
-	START_REPLICATION_COMMAND = "start_replica"
-	STOP_REPLICATION_COMAND   = "stop_replica"
-	STATUS_COMMAND            = "show_replica_status"
-	UPDATE_BINLOG_COMMAND     = "change_replication_source"
-	UPDATE_LSN_COMMAND        = "lsn"
+	START_REPLICATION_COMMAND     = "start_replica"
+	STOP_REPLICATION_COMAND       = "stop_replica"
+	DDL_TRANSLATE_COMMAND         = "ddl_translate"
+	STATUS_COMMAND                = "show_replica_status"
+	UPDATE_BINLOG_COMMAND         = "change_replication_source"
+	UPDATE_LSN_COMMAND            = "lsn"
+	DELETE_OFFSETS_COMMAND        = "delete_offsets"
+	DELETE_SCHEMA_HISTORY_COMMAND = "delete_schema_history"
 )
+
 const (
-	START_REPLICATION   = "start"
-	STOP_REPLICATION    = "stop"
-	RESTART_REPLICATION = "restart"
-	STATUS              = "status"
-	UPDATE_BINLOG       = "binlog"
-	UPDATE_LSN          = "lsn"
+	START_REPLICATION     = "start"
+	STOP_REPLICATION      = "stop"
+	RESTART_REPLICATION   = "restart"
+	STATUS                = "status"
+	UPDATE_BINLOG         = "binlog"
+	UPDATE_LSN            = "lsn"
+	DELETE_OFFSETS        = "offsets"
+	DELETE_SCHEMA_HISTORY = "schema-history"
+	DDL_TRANSLATE         = "ddl-translate"
 )
 
 // Fetches the repos for the given Github users
@@ -53,7 +62,28 @@ func getHTTPCall(url string) *grequests.Response {
 	return resp
 }
 
-/**
+func getHTTPDeleteCall(url string) *grequests.Response {
+	resp, err := grequests.Delete(url, requestOptions)
+	// you can modify the request by passing an optional RequestOptions struct
+	if err != nil {
+		log.Fatalln("Unable to make request: ", err)
+	}
+	return resp
+}
+
+func getHTTPPostCall(url string, body string) *grequests.Response {
+	// Add body
+	// create a JSON with key as "ddl" and value as the body
+	requestOptions.JSON = map[string]string{"ddl": body}
+	resp, err := grequests.Post(url, requestOptions)
+	if err != nil {
+		log.Fatalln("Unable to make request: ", err)
+	}
+	return resp
+}
+
+/*
+*
 Function to get server url based on the parameters passed
 */
 func getServerUrl(action string, c *cli.Context) string {
@@ -151,6 +181,14 @@ func main() {
 			},
 		},
 		{
+			Name:  DDL_TRANSLATE_COMMAND,
+			Usage: "Translate DDL to target database",
+			Action: func(c *cli.Context) error {
+				handleDDLTranslate(c)
+				return nil
+			},
+		},
+		{
 			Name:  UPDATE_BINLOG_COMMAND,
 			Usage: "Update binlog file/position and gtids",
 			Flags: []cli.Flag{
@@ -215,10 +253,102 @@ func main() {
 				return nil
 			},
 		},
+		{
+			Name:  DELETE_OFFSETS_COMMAND,
+			Usage: "Delete offsets from the sink connector",
+			Action: func(c *cli.Context) error {
+				handleDeleteOffsets(c)
+				return nil
+			},
+		},
+		{
+			Name:  DELETE_SCHEMA_HISTORY_COMMAND,
+			Usage: "Delete schema history from the sink connector",
+			Action: func(c *cli.Context) error {
+				handleDeleteSchemaHistory(c)
+				return nil
+			},
+		},
 	}
-
 	app.Version = "1.0"
 	app.Run(os.Args)
+}
+
+func handleDeleteOffsets(c *cli.Context) bool {
+	log.Println("***** Delete offsets from the sink connector *****")
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Scanln(&userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
+	} else {
+		log.Println("Continuing...")
+	}
+	// Call a REST DELETE API to delete offsets from the sink connector
+	var deleteOffsetsUrl = getServerUrl(DELETE_OFFSETS, c)
+	log.Println("Sending request to URL: " + deleteOffsetsUrl)
+	resp := getHTTPDeleteCall(deleteOffsetsUrl)
+	time.Sleep(5 * time.Second)
+	if resp.StatusCode == 200 {
+		log.Println("Offsets deleted successfully")
+		return true
+	} else {
+		log.Println("Response Status Code:", resp.StatusCode)
+		log.Println("Error deleting offsets")
+		return false
+	}
+}
+
+func handleDDLTranslate(c *cli.Context) bool {
+	log.Println("***** Translate MySQL DDL to ClickHouse DDL *****")
+	log.Println("Enter DDL to translate: ")
+	var userInput string
+	scanner := bufio.NewScanner(os.Stdin)
+
+	if scanner.Scan() {
+		userInput = scanner.Text()
+	}
+	// Call a REST POST API to translate DDL to target database
+	var ddlTranslateUrl = getServerUrl(DDL_TRANSLATE, c)
+	log.Println("Sending request to URL: with DDL: " + userInput + " to " + ddlTranslateUrl)
+	resp := getHTTPPostCall(ddlTranslateUrl, userInput)
+	time.Sleep(5 * time.Second)
+	if resp.StatusCode == 200 {
+		log.Println(resp.String())
+		//log.Println("DDL translated successfully")
+		return true
+	} else {
+		log.Println("Response Status Code:", resp.StatusCode)
+		log.Println("Error translating DDL")
+		return false
+	}
+}
+
+func handleDeleteSchemaHistory(c *cli.Context) bool {
+	log.Println("***** Delete schema history from the sink connector *****")
+	log.Println("Are you sure you want to continue? (y/n): ")
+	var userInput string
+	fmt.Scanln(&userInput)
+	if userInput != "y" {
+		log.Println("Exiting...")
+		return false
+	} else {
+		log.Println("Continuing...")
+	}
+	// Call a REST DELETE API to delete offsets from the sink connector
+	var deleteOffsetsUrl = getServerUrl(DELETE_SCHEMA_HISTORY, c)
+	log.Println("Sending request to URL: " + deleteOffsetsUrl)
+	resp := getHTTPDeleteCall(deleteOffsetsUrl)
+	time.Sleep(5 * time.Second)
+	if resp.StatusCode == 200 {
+		log.Println("Schema history deleted successfully")
+		return true
+	} else {
+		log.Println("Response Status Code:", resp.StatusCode)
+		log.Println("Error deleting schema history")
+		return false
+	}
 }
 
 func handleUpdateLsn(c *cli.Context) bool {
@@ -263,7 +393,8 @@ func handleUpdateLsn(c *cli.Context) bool {
 	return true
 }
 
-/**
+/*
+*
 Function to handle update binlog action
 which is used to set binlog file/position and gtids
 */

@@ -12,12 +12,12 @@ services:
       file: mysql-master-service.yml
       service: mysql-master
 
-  mysql-slave:
-    extends:
-      file: mysql-slave-service.yml
-      service: mysql-slave
-    depends_on:
-      - mysql-master
+#  mysql-slave:
+#    extends:
+#      file: mysql-slave-service.yml
+#      service: mysql-slave
+#    depends_on:
+#      - mysql-master
 
   clickhouse:
     extends:

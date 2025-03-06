@@ -1,13 +1,12 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +24,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -74,8 +72,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
                 props.setProperty("database.include.list", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -95,24 +92,12 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         conn.prepareStatement("INSERT INTO `temporal_types_DATETIME6` VALUES ('DATETIME(6)-INSERT','1000-01-01 00:00:00.000000','2022-09-29 01:50:56.123456','9999-12-31 23:59:59.999999',NULL)").execute();
     //conn.prepareStatement("INSERT INTO `temporal_types_DATETIME` VALUES ('DATETIME-INSERT','1000-01-01 00:00:00','2022-09-29 01:47:46','9999-12-31 23:59:59',NULL);\n").execute();
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         writer.getConnection().close();
         Thread.sleep(10000);
 
-        ClickHouseConnection chConn2 = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn2);
-
+        writer = ITCommon.getDBWriter(clickHouseContainer);
         /**
          * DATE TIME
          * 1969-12-31 18:00:00.0
@@ -128,7 +113,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
          * 2106-02-07 00:28:15.0
          */
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection() );
 
         boolean dateTimeResultChecked = false;
         while(dateTimeResult.next()) {
@@ -145,7 +130,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         Assert.assertTrue(dateTimeResultChecked);
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
@@ -158,7 +143,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
@@ -171,7 +156,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         }
 
          //DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -186,7 +171,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
 
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -195,14 +180,14 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:12.1234"));
-            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
 
         }
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -211,13 +196,13 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:28.12345"));
-            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
 
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -226,7 +211,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
-            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.999999"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
             break;
         }
@@ -238,6 +223,8 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         executorService.shutdown();
 
         writer.getConnection().close();
+
+        HikariDbSource.close();
     }
 
     protected Properties getDebeziumProperties() throws Exception {

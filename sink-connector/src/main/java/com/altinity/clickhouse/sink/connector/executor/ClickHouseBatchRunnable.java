@@ -2,23 +2,21 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
-import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -41,11 +39,11 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     // Connection that will be used to create
     // the debezium storage database.
-    private ClickHouseConnection systemConnection;
+    private Connection systemConnection;
 
     // For insert batch the database connection has to be the same.
     // Create a map of database name to ClickHouseConnection.
-    private Map<String, ClickHouseConnection> databaseToConnectionMap = new HashMap<>();
+    private Map<String, Connection> databaseToConnectionMap = new HashMap<>();
     /**
      * Data structures with state
      */
@@ -80,7 +78,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.topicToRecordsMap = new HashMap<>();
 
         this.dbCredentials = parseDBConfiguration();
-        this.systemConnection = createConnection();
+
+        this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
 
 
         try {
@@ -91,26 +90,48 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
     }
 
-    private ClickHouseConnection createConnection() {
+    private Connection createConnection(String databaseName) {
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
 
-        return BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight", this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), config);
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, this.dbCredentials.getUserName(),
+                this.dbCredentials.getPassword(), databaseName, config);
     }
 
     // Function to check if we have already stored a ClickHouseConnection
     // in the databaseToConnectionMap.
-    private ClickHouseConnection getClickHouseConnection(String databaseName) {
+    private Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
+        }
+
+        // Create database if it doesnt exist.
+        String systemJdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
+                this.dbCredentials.getPort(), "system");
+        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), "system", config);
+        try {
+
+
+            DBMetadata metadata = new DBMetadata();
+            metadata.executeSystemQuery(systemConn, "CREATE DATABASE IF NOT EXISTS " + databaseName);
+        } catch(Exception e) {
+            log.error("Error creating database " + e);
+        }
+        finally {
+            try {
+            systemConn.close();
+            } catch (SQLException e) {
+                log.error("Error closing connection when creating database" + e);
+            }
+
         }
 
         String jdbcUrl = BaseDbWriter.getConnectionString(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
 
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Sink Connector Lightweight",
-                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), config);
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                this.dbCredentials.getUserName(), this.dbCredentials.getPassword(), databaseName, config);
 
         this.databaseToConnectionMap.put(databaseName, conn);
         return conn;
@@ -126,6 +147,7 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         return dbCredentials;
     }
+
 
     /**
      * Main run loop of the thread
@@ -152,6 +174,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     if(currentBatch == null) {
                         // No records in the queue.
                         continue;
+                        //Thread.sleep(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()));
                     }
                 } else {
                     log.debug("***** RETRYING the same batch again");
@@ -198,6 +221,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                         currentBatch = null;
                     }
                 }
+                Thread.sleep(config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()));
                     //acknowledgeRecords(batch);
                 ///// ***** END PROCESSING BATCH **************************
 
@@ -236,7 +260,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     public DbWriter getDbWriterForTable(String topicName, String tableName, String databaseName,
-                                        ClickHouseStruct record, ClickHouseConnection connection) {
+                                        ClickHouseStruct record, Connection connection) {
         DbWriter writer = null;
 
         if (this.topicToDbWriterMap.containsKey(topicName)) {
@@ -294,7 +318,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         if(this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
             databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
 
-        ClickHouseConnection databaseConn = getClickHouseConnection(databaseName);
+
+        Connection databaseConn = getClickHouseConnection(databaseName);
 
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName, firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new

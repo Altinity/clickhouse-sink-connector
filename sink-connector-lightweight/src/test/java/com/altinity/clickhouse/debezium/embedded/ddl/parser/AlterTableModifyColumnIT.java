@@ -1,10 +1,11 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,9 +49,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -70,26 +69,27 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
 
         Thread.sleep(15000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
-        Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
-        Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
+        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
 
-        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Decimal(10, 10)"));
+        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
 
-        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Int32"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Int32"));
+        // Validate logic of adding Nullable based on the existing schema.
+        conn.prepareStatement("alter table office modify column office_code int").execute();
+        Thread.sleep(10000);
 
         if(engine.get() != null) {
             engine.get().stop();
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-
+        HikariDbSource.close();
     }
 }

@@ -20,3 +20,4 @@ services:
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
       - KAFKA_DEBUG=true
       - JMX_PORT=39999
+      - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G

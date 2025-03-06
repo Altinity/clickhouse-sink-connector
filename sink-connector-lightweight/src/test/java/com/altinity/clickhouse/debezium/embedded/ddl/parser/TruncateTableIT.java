@@ -3,11 +3,11 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,6 +59,11 @@ public class TruncateTableIT {
         clickHouseContainer.start();
     }
 
+    @AfterEach
+    public void stop() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
 
     @Test
     @DisplayName("Test that validates create table in CH when MySQL has is_deleted columns")
@@ -71,8 +76,7 @@ public class TruncateTableIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "datatypes"),false);
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService() ,false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -80,18 +84,12 @@ public class TruncateTableIT {
 
 
         Thread.sleep(30000);
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
 
         //Validate if ship_class was truncated also in ClickHouse.
         // Validate that the table is empty in ClickHouse
-        ResultSet rs = writer.executeQueryWithResultSet("select * from ship_class");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.ship_class", writer.getConnection());
         boolean recordFoundShipClass = false;
         while(rs.next()) {
             recordFoundShipClass = true;
@@ -107,7 +105,7 @@ public class TruncateTableIT {
         conn.close();
         Thread.sleep(10000);
 
-        rs = writer.executeQueryWithResultSet("select * from new_table");
+        rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
         boolean recordFound = false;
         while(rs.next()) {
             recordFound = true;
@@ -125,7 +123,7 @@ public class TruncateTableIT {
         conn.close();
 
         // Validate that the table is empty in ClickHouse
-        rs = writer.executeQueryWithResultSet("select * from new_table");
+        rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
         recordFound = false;
         while(rs.next()) {
             recordFound = true;
@@ -137,5 +135,7 @@ public class TruncateTableIT {
             engine.get().stop();
         }
         executorService.shutdown();
+
+        HikariDbSource.close();
     }
 }

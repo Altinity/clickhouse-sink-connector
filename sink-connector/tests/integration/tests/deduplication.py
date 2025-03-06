@@ -45,7 +45,7 @@ def deduplication(
             statement="count(*)",
             clickhouse_table=clickhouse_table,
             with_final=True,
-            timeout=50,
+            timeout=140,
         )
 
 

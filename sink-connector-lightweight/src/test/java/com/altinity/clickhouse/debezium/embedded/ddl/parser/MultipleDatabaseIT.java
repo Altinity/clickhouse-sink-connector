@@ -3,14 +3,12 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -19,7 +17,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -62,6 +59,16 @@ public class MultipleDatabaseIT
         clickHouseContainer.start();
     }
 
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
+    }
     @DisplayName("Integration Test that validates handling of multiple databases")
     @Test
     public void testMultipleDatabases() throws Exception {
@@ -78,8 +85,7 @@ public class MultipleDatabaseIT
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "test_db"),false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -120,17 +126,11 @@ public class MultipleDatabaseIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "system", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "test_db");
         // query clickhouse connection and get data for test_table1 and test_table2
 
 
-        ResultSet rs = writer.executeQueryWithResultSet("SELECT * FROM test_db.test_table");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM test_db.test_table", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
         while(rs.next()) {
@@ -140,7 +140,7 @@ public class MultipleDatabaseIT
         }
         Assert.assertTrue(recordFound);
 
-        rs = writer.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2");
+        rs = ITCommon.executeQueryWithResultSet("SELECT * FROM test_db2.test_table2", writer.getConnection());
         // Validate the data
         recordFound = false;
         while(rs.next()) {
@@ -161,15 +161,11 @@ public class MultipleDatabaseIT
         // Create a test_db DBWriter instance.
         // A new ClickHouseConnection with test_db database.
         // Jdbc url with test_db database.
-        String testDb2JdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "test_db2");
-        ClickHouseConnection testDb2Conn = BaseDbWriter.createConnection(testDb2JdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter testDb2Writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "test_db2", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, testDb2Conn);
+        BaseDbWriter testDb2Writer = ITCommon.getDBWriter(clickHouseContainer, "test_db2");
 
         // Validate the columns in Clickhouse for test_db.test_table
-        Map<String, String> columnMap = testDb2Writer.getColumnsDataTypesForTable("test_table");
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> columnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
 
         assert columnMap.containsKey("id");
         assert columnMap.containsKey("name2");
@@ -182,6 +178,6 @@ public class MultipleDatabaseIT
 
         writer.getConnection().close();
 
-
+        HikariDbSource.close();
     }
 }

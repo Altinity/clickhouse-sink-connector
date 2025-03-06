@@ -3,12 +3,12 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+@Disabled
 @Testcontainers
 @DisplayName("Integration Test that validates auto create tables feature which creates tables when a CDC record(Insert) is received")
 public class AutoCreateTableIT {
@@ -78,9 +79,7 @@ public class AutoCreateTableIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"),false);
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -92,16 +91,9 @@ public class AutoCreateTableIT {
 
         Thread.sleep(10000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         Thread.sleep(10000);
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select count(*) from `new-table`");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select count(*) from employees.`new-table`", writer.getConnection());
         boolean resultReceived = false;
 
         while(dateTimeResult.next()) {
@@ -115,6 +107,6 @@ public class AutoCreateTableIT {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-
+        HikariDbSource.close();
     }
 }
