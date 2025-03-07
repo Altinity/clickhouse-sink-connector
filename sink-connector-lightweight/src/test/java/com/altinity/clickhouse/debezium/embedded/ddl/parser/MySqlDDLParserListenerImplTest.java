@@ -959,6 +959,21 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testGhostSQL() {
+        String sql = " alter /* gh-ost */ table `p_prod`.`_j_failed_s_g` REMOVE PARTITIONING;\n";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `p_prod`.`_j_failed_s_g` REMOVE PARTITIONING"));
+
+        String createTableQuery = "create /* gh-ost */ table `p_prod`.`_j_failed_s_g`(id int auto_increment primary key)engine=InnoDB comment='ghost-cut-over'";
+
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(createTableQuery, "employees", clickHouseQuery2);
+
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`_j_failed_s_g`(id Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
     public void testCreateDefiner() {
         String sql = "CREATE DEFINER=`bcadmin`@`%` PROCEDURE `sp_next_available_otc_instance_strategy_id`()\n" +
                 "begin\n" +
