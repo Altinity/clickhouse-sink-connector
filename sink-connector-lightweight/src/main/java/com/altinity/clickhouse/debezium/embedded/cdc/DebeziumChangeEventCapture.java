@@ -522,7 +522,11 @@ public class DebeziumChangeEventCapture {
 
         if(sr.sourceOffset() != null) {
             if (sr.sourceOffset().containsKey("snapshot")) {
-                snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
+                String snapshotMode = (String) sr.sourceOffset().get("snapshot");
+                if(snapshotMode.equalsIgnoreCase("INITIAL")) {
+                    snapshotDDL = true;
+                }
+                //snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
             }
         }
 
