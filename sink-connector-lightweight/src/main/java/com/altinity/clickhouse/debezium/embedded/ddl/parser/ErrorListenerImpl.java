@@ -18,6 +18,7 @@ public class ErrorListenerImpl implements ANTLRErrorListener {
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object o, int i, int i1, String s, RecognitionException e) {
         log.error("Error parsing");
+        throw new RuntimeException("Error parsing DDL");
     }
 
     @Override

@@ -1,11 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +17,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -87,8 +85,7 @@ public class PostgresPgoutputMultipleSchemaIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "system"), false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -104,16 +101,12 @@ public class PostgresPgoutputMultipleSchemaIT {
 
         Thread.sleep(10000);
 
-        // Create connection.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
+        Assert.assertTrue(tmColumns.size() == 23);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, conn);
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
-        Assert.assertTrue(tmColumns.size() == 22);
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
@@ -154,11 +147,11 @@ public class PostgresPgoutputMultipleSchemaIT {
         Thread.sleep(10000);
 
         // ClickHouse, add ALIAS column to public.people
-        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
         Thread.sleep(10000);
 
         // Add MATERIALIZED column to public.people
-        conn.createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
+        writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
         Thread.sleep(20000);
 
@@ -175,6 +168,6 @@ public class PostgresPgoutputMultipleSchemaIT {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
-
+        HikariDbSource.close();
     }
 }

@@ -1,18 +1,13 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLBaseIT;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -23,7 +18,6 @@ import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -64,6 +58,12 @@ public class MySQLGenerateColumnsTest {
         Thread.sleep(25000);
     }
 
+    @AfterEach
+    public void tearDown() {
+        mySqlContainer.stop();
+        clickHouseContainer.stop();
+    }
+
     @Test
     public void testMySQLGeneratedColumns() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
@@ -75,9 +75,7 @@ public class MySQLGenerateColumnsTest {
                 Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "employees"), false);
+                engine.get().setup(props, new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -99,12 +97,9 @@ public class MySQLGenerateColumnsTest {
         conn.prepareStatement("insert into contacts(first_name, last_name, email) values('John', 'Doe', 'john.doe@gmail.com')").execute();
         Thread.sleep(20000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
-        Map<String, String> columnsToDataTypeMap = writer.getColumnsDataTypesForTable("contacts");
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
@@ -112,7 +107,7 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = writer.executeQueryWithResultSet("select fullname from contacts");
+        ResultSet resultSet = ITCommon.executeQueryWithResultSet("select fullname from employees.contacts", writer.getConnection());
         boolean insertCheck = false;
         while (resultSet.next()) {
                 insertCheck = true;
@@ -131,5 +126,7 @@ public class MySQLGenerateColumnsTest {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
     }
 }

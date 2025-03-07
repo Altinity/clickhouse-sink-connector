@@ -2,20 +2,17 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
+import org.junit.runner.RunWith;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -24,7 +21,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.ResultSet;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +54,17 @@ public class Debezium15KTablesLoadIT {
         Thread.sleep(35000);
     }
 
+    @AfterEach
+    public void stopContainers() {
+        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();;
+        }
+        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+
+    }
+
     @Test
     @Disabled
     @DisplayName("Test that validates skipping of large tables in schema_only mode")
@@ -78,8 +85,7 @@ public class Debezium15KTablesLoadIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),
-                        injector.getInstance(DDLParserService.class), props, false);
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
                 DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
                         , new Properties());
             } catch (Exception e) {
@@ -90,16 +96,9 @@ public class Debezium15KTablesLoadIT {
 
         Thread.sleep(25000);
 
-        // Confirm if only the whitelisted tabes were replicated.
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select name from system.tables where database='employees'");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select name from system.tables where database='employees'", writer.getConnection());
         boolean insertCheck = false;
         List<String> tables = new ArrayList<>();
         while(dateTimeResult.next()) {
@@ -120,5 +119,8 @@ public class Debezium15KTablesLoadIT {
 
         // Close connection.
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+
+        HikariDbSource.close();
+
     }
 }

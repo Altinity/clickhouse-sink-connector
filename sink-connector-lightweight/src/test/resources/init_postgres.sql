@@ -19,7 +19,8 @@ vtid uuid ,
 vstatus character varying ,
 vamount numeric(21,5) ,
 vcreated timestamp with time zone,
-vbilling_currency character varying
+vbilling_currency character varying,
+amount numeric
 );
 
 
@@ -43,7 +44,8 @@ NULL,
 NULL,
 NULL,
 NULL,
-NULL
+NULL,
+20
 );
 
 insert into public.tm values(
@@ -66,7 +68,8 @@ NULL,
 'COMPLETED',
 200000.00000,
 '2022-10-16 16:53:15.01957',
-'IDR'
+'IDR',
+-57896044618658100000000000000000000000000000000000000000000000000000000000000000000000000
 );
 
 CREATE TABLE protocol_test

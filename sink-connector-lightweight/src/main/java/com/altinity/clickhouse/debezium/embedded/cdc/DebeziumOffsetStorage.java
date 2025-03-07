@@ -2,11 +2,15 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.clickhouse.logging.Logger;
+import com.clickhouse.logging.LoggerFactory;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -32,6 +36,7 @@ public class DebeziumOffsetStorage {
     public static final String SOURCE_PASSWORD = "source_password";
 
 
+    private static final Logger log = LoggerFactory.getLogger(DebeziumOffsetStorage.class);
 
     public String getOffsetKey(Properties props) {
         String connectorName = props.getProperty("name");
@@ -40,15 +45,17 @@ public class DebeziumOffsetStorage {
     }
     public void deleteOffsetStorageRow(String offsetKey,
                                        Properties props,
-                                       BaseDbWriter writer) throws SQLException {
+                                       Connection connection) throws SQLException {
 
         // String databaseName = p
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         // String connectorName = config.getString("connector.name");
-        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" , tableName, offsetKey);
-        writer.executeQuery(debeziumStorageStatusQuery);
+        String debeziumStorageStatusQuery = String.format("delete from %s where offset_key='%s'" ,
+                tableName, offsetKey);
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
     }
 
     /**
@@ -59,11 +66,13 @@ public class DebeziumOffsetStorage {
      */
     public void deleteSchemaHistoryTable(String offsetKey,
                                          String tableName,
-                                         BaseDbWriter writer) throws SQLException {
+                                         Connection connection) throws SQLException {
 
 
-        String debeziumStorageStatusQuery = String.format("delete from %s where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='\"%s\"" , tableName, offsetKey);
-        writer.executeQuery(debeziumStorageStatusQuery);
+        String debeziumStorageStatusQuery = String.format("delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,'source'), 'server')='%s'" , tableName, offsetKey);
+        log.info("Deleting schema history table query: " + debeziumStorageStatusQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
     }
     /**
      * Function to get the latest timestamp of the record in the table
@@ -72,23 +81,26 @@ public class DebeziumOffsetStorage {
      * @return
      * @throws SQLException
      */
-    public String getDebeziumLatestRecordTimestamp(Properties props, BaseDbWriter writer) throws SQLException {
+    public String getDebeziumLatestRecordTimestamp(Properties props, Connection connection) throws SQLException {
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String debeziumLatestRecordTimestampQuery = String.format("select max(record_insert_ts) from %s" , tableName);
-        return writer.executeQuery(debeziumLatestRecordTimestampQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        return dbMetadata.executeSystemQuery(connection, debeziumLatestRecordTimestampQuery);
+
     }
 
     public String getDebeziumStorageStatusQuery(
-                                                Properties props, BaseDbWriter writer) throws SQLException {
+                                                Properties props, Connection connection) throws SQLException {
         String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                 JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String offsetKey = getOffsetKey(props);
         // String connectorName = config.getString("connector.name");
         String debeziumStorageStatusQuery = String.format("select offset_val from %s where offset_key='%s'" , tableName, offsetKey);
-        return writer.executeQuery(debeziumStorageStatusQuery);
+        DBMetadata dbMetadata = new DBMetadata();
+        return dbMetadata.executeSystemQuery(connection, debeziumStorageStatusQuery);
     }
 
     /**
@@ -155,10 +167,10 @@ public class DebeziumOffsetStorage {
         return jsonObject.toJSONString();
     }
 
-    public void updateDebeziumStorageRow(BaseDbWriter writer, String tableName, String offsetKey, String offsetVal,
+    public void updateDebeziumStorageRow(Connection connection, String tableName, String offsetKey, String offsetVal,
                                          long currentTs) throws SQLException {
 
-        try(PreparedStatement sql = writer.getConnection().prepareStatement(String.format(JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT, tableName))) {
+        try(PreparedStatement sql = connection.prepareStatement(String.format(JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT, tableName))) {
 
             sql.setString(1, UUID.randomUUID().toString());
             sql.setString(2, offsetKey);

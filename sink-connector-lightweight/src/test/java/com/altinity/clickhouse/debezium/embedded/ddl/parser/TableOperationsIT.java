@@ -2,17 +2,20 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -22,6 +25,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -29,7 +33,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
-@Disabled
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
     static ClickHouseContainer clickHouseContainer;
@@ -60,22 +63,27 @@ public class TableOperationsIT {
             clickHouseContainer.start();
         }
         @ParameterizedTest
-        @CsvSource({
-            "clickhouse/clickhouse-server:latest",
-            "clickhouse/clickhouse-server:22.3"
-        })
+        @ValueSource(booleans = {
+            false,
+            true}
+        )
         @DisplayName("Test that validates DDL(Create, ALTER, RENAME)")
-        public void testTableOperations(String clickHouseServerVersion) throws Exception {
+        public void testTableOperations(boolean databaseOverride) throws Exception {
 
             AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            if(databaseOverride) {
+                props.setProperty("clickhouse.database.override.map", "employees:ch_employees, datatypes:ch_datatypes, public:ch_public, project:ch_project");
+            }
+            DebeziumChangeEventCapture debeziumChangeEventCapture = new DebeziumChangeEventCapture();
             ExecutorService executorService = Executors.newFixedThreadPool(1);
             executorService.execute(() -> {
                 try {
 
-                    engine.set(new DebeziumChangeEventCapture());
-                    engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),
-                            new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"),false);
+                    engine.set(debeziumChangeEventCapture);
+                    ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+                    engine.get().setup(props, new SourceRecordParserService(),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -100,40 +108,36 @@ public class TableOperationsIT {
                             "PARTITIONS 6;").execute();
             conn.prepareStatement("create table copied_table like new_table").execute();
             conn.prepareStatement("CREATE TABLE rcx ( a INT not null, b INT, c CHAR(3) not null, d INT not null) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'));").execute();
+
+            // insert a new row to new_table
+            conn.prepareStatement("insert into new_table values('a', 1, 1)").execute();
+
             Thread.sleep(10000);
 
 
             conn.prepareStatement("\n" +
-                    "CREATE TABLE contacts (id INT AUTO_INCREMENT PRIMARY KEY,\n" +
+                    "CREATE TABLE contacts (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n" +
                     "first_name VARCHAR(50) NOT NULL,\n" +
                     "last_name VARCHAR(50) NOT NULL,\n" +
                     "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
                     "email VARCHAR(100) NOT NULL);\n").execute();
 
-            String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                    "employees");
-            ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-            BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                    "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 
-            Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class_new3");
-            Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test_new");
-            Map<String, String> copied_table = writer.getColumnsDataTypesForTable("copied_table");
+            DBMetadata dbMetadata = new DBMetadata();
+            Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class_new3", "employees"    );
+            Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
+            Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");
 
             Assert.assertTrue(shipClassColumns.size() == 9);
             Assert.assertTrue(addTestColumns.size() == 5);
             Assert.assertTrue(copied_table.size() == 5);
 
-
             // Validate table created with partitions.
-            String membersResult = writer.executeQuery("show create table members");
-
-            if(clickHouseServerVersion.contains("latest")) {
-                Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
+            String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
+            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
                         "    `lastname` String,\n" +
@@ -147,27 +151,10 @@ public class TableOperationsIT {
                         "PARTITION BY joined\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
-            } else {
-                Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                        "(\n" +
-                        "    `firstname` String,\n" +
-                        "    `lastname` String,\n" +
-                        "    `username` String,\n" +
-                        "    `email` Nullable(String),\n" +
-                        "    `joined` Date32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
-            }
 
-            String rcxResult = writer.executeQuery("show create table rcx");
+            String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
-            if(clickHouseServerVersion.contains("latest")) {
-                Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
+            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
                         "(\n" +
                         "    `a` Int32,\n" +
                         "    `b` Nullable(Int32),\n" +
@@ -180,8 +167,10 @@ public class TableOperationsIT {
                         "PARTITION BY (a, d, c)\n" +
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
-            }
 
+            Thread.sleep(10000);
+            // Delete offset table.
+            new DebeziumJdbcStorageOperations().deleteOffsets(writer.getConnection(), props);
 
             if(engine.get() != null) {
                 engine.get().stop();
@@ -189,6 +178,7 @@ public class TableOperationsIT {
             // Files.deleteIfExists(tmpFilePath);
             executorService.shutdown();
 
+            HikariDbSource.close();
         }
 
 }

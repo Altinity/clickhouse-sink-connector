@@ -2,11 +2,10 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +16,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -82,8 +82,7 @@ public class PostgresInitialDockerIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -92,15 +91,12 @@ public class PostgresInitialDockerIT {
         Thread.sleep(10000);//
         Thread.sleep(50000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "public", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
-        Map<String, String> tmColumns = writer.getColumnsDataTypesForTable("tm");
-        Assert.assertTrue(tmColumns.size() == 22);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
+        Assert.assertTrue(tmColumns.size() == 23);
+
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
@@ -108,19 +104,19 @@ public class PostgresInitialDockerIT {
 
 
         int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from tm").executeQuery();
+        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
         while(chRs.next()) {
             tmCount =  chRs.getInt(1);
         }
 
         // Get the columns in re_data.
-        Map<String, String> reDataColumns = writer.getColumnsDataTypesForTable("redata");
+        Map<String, String> reDataColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "redata", "public");
 
         Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue(tmCount == 2);
 
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer);
+        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
 
         // Parse offsetvalue json and check the keys
         Assert.assertTrue(offsetValue.contains("last_snapshot_record"));
@@ -134,6 +130,8 @@ public class PostgresInitialDockerIT {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
 
     }
 }
