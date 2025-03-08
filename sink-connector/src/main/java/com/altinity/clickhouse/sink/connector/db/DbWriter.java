@@ -2,10 +2,11 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -13,9 +14,13 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import static io.debezium.storage.jdbc.JdbcCommonConfig.CONFIGURATION_FIELD_PREFIX_STRING;
+import static io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX;
 
 /**
  * Class that abstracts all functionality
@@ -71,7 +76,7 @@ public class DbWriter extends BaseDbWriter {
             String password,
             ClickHouseSinkConnectorConfig config,
             ClickHouseStruct record,
-            ClickHouseConnection connection
+            Connection connection
     )  {
         // Base class initiates connection using JDBC.
         super(hostName, port, database, userName, password, config, connection);
@@ -87,7 +92,14 @@ public class DbWriter extends BaseDbWriter {
             }
             DBMetadata metadata = new DBMetadata();
 
-            createOffsetSchemaHistoryDatabase();
+            if(ConnectorType.getConnectorType(config, log) != ConnectorType.KAFKA) {
+                String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
+                if (offsetStorageDatabaseName != null) {
+                    createDestinationDatabase(offsetStorageDatabaseName);
+                }
+            }
+            // ToDO: create destination database if not exists
+            createDestinationDatabase(database);
 
             MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
@@ -95,8 +107,9 @@ public class DbWriter extends BaseDbWriter {
             long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
             boolean isNewReplacingMergeTreeEngine = false;
             try {
-                String clickHouseVersion = this.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                DBMetadata dbMetadata = new DBMetadata();
+                String clickHouseVersion = dbMetadata.getClickHouseVersion(this.conn);
+                isNewReplacingMergeTreeEngine = dbMetadata
                         .checkIfNewReplacingMergeTree(clickHouseVersion);
             } catch (Exception e) {
                 log.error("Error retrieving ClickHouse version");
@@ -154,39 +167,29 @@ public class DbWriter extends BaseDbWriter {
         }
     }
 
-    // Create offset/schema history storage database.
-    public void createOffsetSchemaHistoryDatabase() {
-        DBMetadata metadata = new DBMetadata();
+    public String getOffsetStorageDatabaseName() {
+
+        String offsetSchemaHistoryTable = null;
         try {
-            if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
-            }
+            offsetSchemaHistoryTable = config.getString(OFFSET_STORAGE_PREFIX  + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         } catch(Exception e) {
-
-            int maxRetries = 0;
-            final int MAX_RETRIES = 5;
-            log.error("Error creating Database: " + database);
-
-            // Keep retrying to createNewDatabase until Max number of retries is reached.
-            boolean createDatabaseFailed = false;
-            while(maxRetries++ > MAX_RETRIES) {
-                try {
-                    Thread.sleep(maxRetries * 5000);
-                    if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
-                        createDatabaseFailed = true;
-                        break;
-                    }
-                } catch (Exception ex) {
-                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + database);
-                }
-            }
-            // if maxRetries exceeded, throw runtime exception.
-            if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + database);
-            }
+            log.error("***** Error retrieving offset store configuration ****", e);
         }
+        if(offsetSchemaHistoryTable == null || offsetSchemaHistoryTable.isEmpty() == true) {
+            log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
+            return null;
+        }
+        String offsetStorageDatabaseNameArray[] = offsetSchemaHistoryTable.split("\\.");
+        if(offsetStorageDatabaseNameArray.length <= 2) {
+            log.warn("Skipping creating offset schema history table as the query was not provided in configuration");
+            return null;
+        }
+        String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];
+        String offsetStorageTableName = offsetStorageDatabaseNameArray[1];
+
+        return offsetStorageDatabaseName;
     }
+
 
     public void updateColumnNameToDataTypeMap() throws SQLException {
         this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database, config);
@@ -203,27 +206,6 @@ public class DbWriter extends BaseDbWriter {
 
         return result;
     }
-
-
-
-    /**
-     * Function to check if the column is of DateTime64
-     * from the column type(string name)
-     *
-     * @param columnType
-     * @return true if its DateTime64, false otherwise.
-     */
-    public static boolean isColumnDateTime64(String columnType) {
-        //ClickHouseDataType dt = ClickHouseDataType.of(columnType);
-        //ToDo: Figure out a way to get the ClickHouseDataType
-        // from column name.
-        boolean result = false;
-        if (columnType.contains("DateTime64")) {
-            result = true;
-        }
-        return result;
-    }
-
     public Map<String, String> getColumnNameToDataTypeMap() {
         return this.columnNameToDataTypeMap;
     }
