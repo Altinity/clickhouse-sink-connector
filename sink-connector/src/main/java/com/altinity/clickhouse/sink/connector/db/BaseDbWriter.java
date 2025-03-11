@@ -3,15 +3,10 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
-import okhttp3.*;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Properties;
 
 import com.zaxxer.hikari.HikariDataSource;
@@ -142,7 +137,7 @@ public class BaseDbWriter {
         String jdbcParams = "";
         Connection conn = null;
         if(config != null) {
-            config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+            jdbcParams = config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
         }
         try {
             Properties properties = new Properties();
@@ -161,7 +156,7 @@ public class BaseDbWriter {
             // Add username/password to the url.
             url = url + "?user=" + userName + "&password=" + password;
 
-            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties, null);
+            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties);
             // Get connection from the pool.
             if(connectionPoolDisable) {
                 log.info("Connection pool is disabled, creating a new connection");
