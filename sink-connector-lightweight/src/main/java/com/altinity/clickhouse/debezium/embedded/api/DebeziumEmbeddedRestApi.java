@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperatio
 import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Injector;
@@ -16,7 +17,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
-
+import org.junit.Assert;
+import java.util.HashMap;
 import java.sql.Connection;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
@@ -34,6 +36,9 @@ public class DebeziumEmbeddedRestApi {
                              DebeziumChangeEventCapture debeziumChangeEventCapture,
                              Properties userProperties) {
         String cliPort = props.getProperty(SinkConnectorLightWeightConfig.CLI_PORT);
+        MySQLDDLParserService sqlddlParserService = new MySQLDDLParserService();
+        sqlddlParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                "employees");
         if(cliPort == null || cliPort.isEmpty()) {
             cliPort = "7000";
         }
@@ -189,6 +194,18 @@ public class DebeziumEmbeddedRestApi {
             CompletableFuture<String> cf = ClickHouseDebeziumEmbeddedApplication.startDebeziumEventLoop(injector, finalProps);
             ctx.result("Started Replication....");
 
+        });
+
+        MySQLDDLParserService finalSqlddlParserService = sqlddlParserService;
+        app.post("/ddl-translate", ctx -> {
+            String ddl = ctx.body();
+            log.info(String.format("Received DDL for translation %s", ddl));
+            // get the ddl value from JSON.
+            JSONObject jsonObject = (JSONObject) new JSONParser().parse(ddl);
+            String ddlValue = (String) jsonObject.get("ddl");
+            StringBuffer clickHouseQuery = new StringBuffer();
+            finalSqlddlParserService.parseSql(ddlValue, "employees", clickHouseQuery);
+            ctx.result(clickHouseQuery.toString());
         });
     }
     // Stop the javalin server

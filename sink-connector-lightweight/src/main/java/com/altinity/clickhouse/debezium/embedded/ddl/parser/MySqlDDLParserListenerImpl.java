@@ -379,14 +379,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if("ENUM".equalsIgnoreCase(dt.name()))
-        {
+
+        if(dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
             // Dont try to get precision/scale for enums
         }
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
+            String sanitizedDataType = parsedDataType.split("COMMENT")[0].trim();
             try {
-                precision = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf("(") + 1, parsedDataType.indexOf(",")));
-                scale = Integer.parseInt(parsedDataType.substring(parsedDataType.indexOf(",") + 1, parsedDataType.indexOf(")")));
+                precision = Integer.parseInt(sanitizedDataType.substring(sanitizedDataType.indexOf("(") + 1, sanitizedDataType.indexOf(",")));
+                scale = Integer.parseInt(sanitizedDataType.substring(sanitizedDataType.indexOf(",") + 1, sanitizedDataType.indexOf(")")));
             } catch(Exception e) {
                 log.error("Error parsing precision, scale : columnName" + columnName);
             }
@@ -514,8 +515,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getChildCount() >= 2) {
                             defaultModifier = "DEFAULT " + columnDefChild.getChild(1).getText();
                         }
-                    } else {
-                        columnType = columnDefChild.getText();
+                    } else if(columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
+                        // Ignore comment for now.
+                        //commentModifier = columnDefChild.getChild(1).getText();
+                    }
+                    else   {
+                        columnType = (columnDefChild.getText());
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
                         if (chDataType != null) {
                             columnType = chDataType;
