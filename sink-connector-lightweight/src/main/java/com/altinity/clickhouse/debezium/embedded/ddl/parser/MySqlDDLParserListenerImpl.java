@@ -380,7 +380,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         DataType dt = DataTypeConverter.getDataType(dtc);
 
 
-        if(dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
+        if("ENUM".equalsIgnoreCase(dt.name()) || "SET".equalsIgnoreCase(dt.name())) {
             // Dont try to get precision/scale for enums
         }
         else if(parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",") ) {
@@ -520,7 +520,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         //commentModifier = columnDefChild.getChild(1).getText();
                     }
                     else   {
-                        columnType = (columnDefChild.getText());
+                        columnType = columnDefChild.getText();
                         String chDataType = getClickHouseDataType(columnType, columnChild, columnName);
                         if (chDataType != null) {
                             columnType = chDataType;

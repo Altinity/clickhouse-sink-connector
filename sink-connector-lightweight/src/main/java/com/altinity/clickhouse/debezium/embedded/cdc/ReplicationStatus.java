@@ -2,11 +2,11 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 public class ReplicationStatus {
 
-    private long replicationLag = 0;
+    private long replicationLag;
 
     private long lastRecordTimestamp = -1;
 
-    private boolean isReplicationRunning = false;
+    private boolean isReplicationRunning;
 
     private String binLogFile = "";
 

@@ -137,20 +137,20 @@ public class TableOperationsIT {
 
             // Validate table created with partitions.
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
-            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                        "(\n" +
-                        "    `firstname` String,\n" +
-                        "    `lastname` String,\n" +
-                        "    `username` String,\n" +
-                        "    `email` Nullable(String),\n" +
-                        "    `joined` Date32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n"
+                        + "(\n"
+                        + "    `firstname` String,\n"
+                        + "    `lastname` String,\n"
+                        + "    `username` String,\n"
+                        + "    `email` Nullable(String),\n"
+                        + "    `joined` Date32,\n"
+                        + "    `_version` UInt64,\n"
+                        + "    `is_deleted` UInt8\n"
+                        + ")\n"
+                        + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                        + "PARTITION BY joined\n"
+                        + "ORDER BY tuple()\n"
+                        + "SETTINGS index_granularity = 8192"));
 
             String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
