@@ -342,7 +342,8 @@ public class ClickHouseDataTypeMapper {
                 }
 
                 BigDecimal bigDecimal = new BigDecimal(new BigInteger(unscaledValueBytes), (Integer) scale);
-                ps.setBigDecimal(index, bigDecimal);
+                BigDecimal truncated = new DebeziumConverter.BigDecimalConverter().truncate(bigDecimal);
+                ps.setBigDecimal(index, truncated);
             } else {
                 ps.setBigDecimal(index, new BigDecimal(0));
             }

@@ -12,6 +12,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
@@ -93,28 +94,6 @@ public class ClickHouseTableOperationsBase {
         }
 
         return columnToDataTypesMap;
-    }
-
-    /**
-     * Function to execute the create table query using the ClickHouse JDBC connection
-     * @param query
-     * @param conn
-     */
-    public void runQuery(String query, ClickHouseConnection conn) throws SQLException {
-
-        if(conn == null) {
-            log.error("ClickHouse connection not created");
-            throw new SQLException("Connection empty");
-        }
-
-        //https://github.com/ClickHouse/clickhouse-jdbc/issues/127
-
-        Statement stmt = conn.createStatement();
-         //   stmt.execute("SET allow_experimental_object_type = 1");
-
-        stmt.executeQuery(query);
-        stmt.close();
-
     }
 
 }

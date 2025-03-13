@@ -2,12 +2,15 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
+import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.logging.log4j.Level;
@@ -16,11 +19,14 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.jul.Log4jBridgeHandler;
 
 import java.io.IOException;
+import java.sql.Connection;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 
 public class ClickHouseDebeziumEmbeddedApplication {
 
@@ -190,10 +196,13 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         return;
                     }
                     try {
-                        long lastRecordTimestamp = debeziumChangeEventCapture.getLastRecordTimestamp();
+                        long lastRecordTimestamp = ReplicationStatusSingleton.getInstance().getLastRecordTimestamp();
                         if(lastRecordTimestamp == -1) {
                             // Check the last record timestamp from the table.
-                            long storedOffsetsInTable = debeziumChangeEventCapture.getLatestRecordTimestamp(config, props);
+                            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                            Connection conn = HikariDbSource.getInstance(SYSTEM_DB).getConnection();
+                            long storedOffsetsInTable = debeziumJdbcStorageOperations.getLatestRecordTimestamp(conn, props);
+                            conn.close();
                             if(storedOffsetsInTable == -1) {
                                 lastRecordTimestamp = storedOffsetsInTable;
                             }
