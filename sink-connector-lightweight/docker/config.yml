@@ -128,6 +128,9 @@ auto.create.tables: "true"
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "UTC"
 
+# number of retries in case of errors(mostly with clickhouse db connections)
+errors.max.retries: 20
+
 # Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
 # provided, the MySQL database name will be used as the ClickHouse database name.
 #clickhouse.database.override.map: "test:ch_test"
