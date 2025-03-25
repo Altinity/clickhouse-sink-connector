@@ -30,10 +30,10 @@ public class DebeziumConverterTest {
         Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
         // 6 hours difference.
         String timestampWithChicagoTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("UTC"));
-        Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00.000"));
+        Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
         String timestampWithPacificTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Los_Angeles"), ZoneId.of("UTC"));
-        Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2021-12-31 16:01:00.000"));
+        Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
     }
 
     @Test
