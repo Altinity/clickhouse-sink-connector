@@ -408,9 +408,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "Override timezone for DateTime columns in MySQL server",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(),
-                        Type.BOOLEAN,
-                        false,
+                        Type.STRING,
+                        "",
                         Importance.HIGH,
                         "If set to true, replication is not started, the user is expected to start replication with the sink-connector-client program",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
