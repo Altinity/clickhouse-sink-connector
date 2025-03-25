@@ -398,6 +398,12 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "Override timezone for DateTime columns in MySQL server",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
                         "",

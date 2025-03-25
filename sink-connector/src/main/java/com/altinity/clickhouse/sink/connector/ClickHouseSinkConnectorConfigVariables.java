@@ -63,6 +63,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     PERSIST_RAW_BYTES("persist.raw.bytes"),
 
+    SOURCE_DATETIME_TIMEZONE("source.datetime.timezone"),
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
     SKIP_REPLICA_START("skip_replica_start"),
