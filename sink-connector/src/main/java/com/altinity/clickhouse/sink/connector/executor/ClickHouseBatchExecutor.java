@@ -3,7 +3,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
+
 
 public class ClickHouseBatchExecutor extends ScheduledThreadPoolExecutor {
 
