@@ -217,7 +217,7 @@ public class ClickHouseDataTypeMapper {
                         sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
                     }
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, 
-                        ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone)));
+                        ZoneId.of(sourceTimeZone), serverTimeZone));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
