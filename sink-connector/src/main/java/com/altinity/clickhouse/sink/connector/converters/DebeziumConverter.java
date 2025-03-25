@@ -71,7 +71,7 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
@@ -81,8 +81,12 @@ public class DebeziumConverter {
             // Input is a long.
             Instant i = ofEpochMilli((long) value);
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
-            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
+            //Debezium gets the Epoch Milliseconds in UTC.
+            //We need to convert it to the source timezone.
+            Instant modifiedDT = i.atZone(sourceTimeZone).toInstant();
+
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(modifiedDT, clickHouseDataType);
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
 

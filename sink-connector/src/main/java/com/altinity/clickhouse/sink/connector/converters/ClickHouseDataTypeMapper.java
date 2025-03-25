@@ -20,7 +20,6 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 import org.locationtech.jts.geom.Coordinate;
-import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
@@ -213,7 +212,12 @@ public class ClickHouseDataTypeMapper {
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, serverTimeZone));
+                    String sourceTimeZone = "UTC";
+                    if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+                        sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+                    }
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, 
+                        ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone)));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
