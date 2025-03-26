@@ -28,15 +28,17 @@ public class DebeziumConverterTest {
 
 //        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC"), ZoneId.of("UTC"));
 //        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00.000"));
-//
-//        String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("UTC"), ZoneId.of("UTC"));
-//        Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
+
+        String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("UTC"), ZoneId.of("UTC"));
+        Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
         // 6 hours difference.
         String timestampWithChicagoTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
         Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
-        String timestampWithPacificTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Los_Angeles"), ZoneId.of("UTC"));
-      //  Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
+        Object timestampEpochWPacific = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000;
+
+        String timestampWithPacificTZ = DebeziumConverter.TimestampConverter.convert(timestampEpochWPacific, ClickHouseDataType.DateTime64, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"));
+        Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
         // With America/Chicago in source and destination.
 
