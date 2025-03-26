@@ -214,9 +214,13 @@ public class ClickHouseDataTypeMapper {
                     }
                     String sourceTimeZone = "UTC";
                     if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-                        sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+                        String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+                        if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                            sourceTimeZone = configSourceTimeZone;
+                        }
                     }
-                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, 
+
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
                         ZoneId.of(sourceTimeZone), serverTimeZone));
                 }
             } else if (isFieldTime) {

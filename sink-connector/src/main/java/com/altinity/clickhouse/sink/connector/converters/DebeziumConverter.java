@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.TimeZone;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -80,16 +81,19 @@ public class DebeziumConverter {
 
             Long epochMillis = (Long) value;
             // Step 1: Convert from incorrect timezone to LocalDateTime
-            LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
+            //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
 
-            // Step 2: Convert to UTC
-            ZonedDateTime correctedTime = wrongTime.atZone(sourceTimeZone).withZoneSameInstant(ZoneOffset.UTC);
+            // Get the milliseconds value of the timezone.
+            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
+            int sourceOffset = sourceTZ.getRawOffset();
 
-            // Step 3: Get the corrected epoch timestamp
-            //long correctedEpoch = correctedTime.toInstant().toEpochMilli();
+            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillis)))) {
+                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            }
 
-            // Input is a long.
-            Instant i = correctedTime.toInstant();
+            // Add this offset to wrongly calculated epoch.
+            Long epochMillisWithOffset = epochMillis - sourceOffset;
+            Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
 
             Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();

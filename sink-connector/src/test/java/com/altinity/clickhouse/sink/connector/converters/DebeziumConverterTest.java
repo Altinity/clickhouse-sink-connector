@@ -19,28 +19,27 @@ public class DebeziumConverterTest {
     public void testTimestampConverter() {
 
         // 2022-01-01: 00:01:00
-        Object timestampEpoch = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("America/Chicago")).toEpochSecond() * 1000;
+        Object timestampEpoch = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
 
         // 2022-09-29 01:48:25.100
         Object timestampEpoch2 = LocalDateTime.of(2022, 9, 29, 01 , 48, 25 ,100).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
 
-        Instant dateTimeMax = Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MAX));
-
-//        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("UTC"), ZoneId.of("UTC"));
-//        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2022-01-01 00:01:00.000"));
-
-        String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("UTC"), ZoneId.of("UTC"));
+        String formattedTimestamp2 = DebeziumConverter.TimestampConverter.convert(timestampEpoch2, ClickHouseDataType.DateTime, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
         Assert.assertTrue(formattedTimestamp2.equalsIgnoreCase("2022-09-29 01:48:25"));
         // 6 hours difference.
         String timestampWithChicagoTZ = DebeziumConverter.TimestampConverter.convert(timestampEpoch, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
         Assert.assertTrue(timestampWithChicagoTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
-        Object timestampEpochWPacific = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000;
+        Object timestampEpochWPacific = LocalDateTime.of(2022, 1, 1, 0, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
 
         String timestampWithPacificTZ = DebeziumConverter.TimestampConverter.convert(timestampEpochWPacific, ClickHouseDataType.DateTime64, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"));
         Assert.assertTrue(timestampWithPacificTZ.equalsIgnoreCase("2022-01-01 00:01:00.000"));
 
-        // With America/Chicago in source and destination.
+        //DST start time.
+        Object timestampDSTStart = LocalDateTime.of(2022, 3, 9, 2, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
+        String timestampWithDSTStart = DebeziumConverter.TimestampConverter.convert(timestampDSTStart, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
+        Assert.assertTrue(timestampWithDSTStart.equalsIgnoreCase("2022-03-09 02:01:00.000"));
+
 
     }
 
