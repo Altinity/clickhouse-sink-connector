@@ -78,14 +78,20 @@ public class DebeziumConverter {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
+            Long epochMillis = (Long) value;
+            // Step 1: Convert from incorrect timezone to LocalDateTime
+            LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
+
+            // Step 2: Convert to UTC
+            ZonedDateTime correctedTime = wrongTime.atZone(sourceTimeZone).withZoneSameInstant(ZoneOffset.UTC);
+
+            // Step 3: Get the corrected epoch timestamp
+            //long correctedEpoch = correctedTime.toInstant().toEpochMilli();
+
             // Input is a long.
-            Instant i = ofEpochMilli((long) value);
+            Instant i = correctedTime.toInstant();
 
-            //Debezium gets the Epoch Milliseconds in UTC.
-            //We need to convert it to the source timezone.
-            Instant modifiedDT = i.atZone(sourceTimeZone).toInstant();
-
-            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(modifiedDT, clickHouseDataType);
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
