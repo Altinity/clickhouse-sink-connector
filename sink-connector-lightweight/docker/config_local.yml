@@ -114,11 +114,11 @@ persist.raw.bytes: "false"
 auto.create.tables: "true"
 
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
-database.connectionTimeZone: "UTC"
-database.serverTimezone: "UTC"
+database.connectionTimeZone: "America/Chicago"
+database.serverTimezone: "America/Chicago"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
-clickhouse.datetime.timezone: "UTC"
+clickhouse.datetime.timezone: "America/Chicago"
 
 # skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
 #skip_replica_start: "false"
@@ -145,7 +145,10 @@ restart.event.loop.timeout.period.secs: "30"
 #buffer.max.records: "10000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
-#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000,input_format_null_as_default=0"
+
+# ClickHouse JDBC configuration settings, as a list of key-value pairs separated by commas.
+clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1"
 
 # The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
 sink.connector.max.queue.size: "100000"

@@ -447,6 +447,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "JDBC clickhouse settings, the settings should be in this format input_format_null_as_default=1,input_format_orc_allow_missing_columns=1, delimited by comma",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString())
                 // Define the max queue size.
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
