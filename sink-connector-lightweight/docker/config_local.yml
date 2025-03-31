@@ -148,7 +148,7 @@ restart.event.loop.timeout.period.secs: "30"
 clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000,input_format_null_as_default=0"
 
 # ClickHouse JDBC configuration settings, as a list of key-value pairs separated by commas.
-clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1"
+clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1"
 
 # The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
 sink.connector.max.queue.size: "100000"
