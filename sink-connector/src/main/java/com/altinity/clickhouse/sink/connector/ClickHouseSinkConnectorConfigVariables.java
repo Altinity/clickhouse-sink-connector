@@ -88,7 +88,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     ERRORS_MAX_RETRIES("errors.max.retries"),
 
-    CONNECTOR_CLASS("connector.class");
+    CONNECTOR_CLASS("connector.class"),
+
+    NON_DEFAULT_VALUE("non.default.value");
 
 
 

@@ -553,7 +553,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         7,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
-                // Define errors.max.retries
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "Non default value, if value is NULL, a default value will not be returned, NULL be used instead",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        7,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString())
+                        // Define errors.max.retries
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
                         Type.INT,

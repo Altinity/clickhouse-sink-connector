@@ -157,3 +157,6 @@ sink.connector.max.queue.size: "100000"
 schema.history.internal.store.only.captured.tables.ddl: "true"
 
 schema.history.internal.store.only.captured.databases.ddl: "true"
+
+# If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
+non.default.value: "true"
