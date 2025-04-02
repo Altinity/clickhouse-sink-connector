@@ -314,6 +314,10 @@ public class DebeziumChangeEventCapture {
         Metrics.stop();
     }
 
+    public Connection getSystemDbConnection() {
+        return systemDbConnection;
+    }
+
     DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
         DBCredentials dbCredentials = new DBCredentials();
 

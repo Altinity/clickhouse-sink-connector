@@ -8,16 +8,13 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Injector;
-import com.zaxxer.hikari.HikariDataSource;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
-import org.junit.Assert;
 import java.util.HashMap;
 import java.sql.Connection;
 import java.util.Properties;
@@ -30,6 +27,7 @@ import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 public class DebeziumEmbeddedRestApi {
 
     private static final Logger log = LogManager.getLogger(DebeziumEmbeddedRestApi.class);
+
 
     static Javalin app;
     public static void startRestApi(Properties props, Injector injector,
@@ -57,10 +55,7 @@ public class DebeziumEmbeddedRestApi {
 
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
-                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
-                response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(connection, config, finalProps1);
-                connection.close();
+                response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(debeziumChangeEventCapture.getSystemDbConnection(), config, finalProps1);
 
             } catch (Exception e) {
                 log.error("Client - Error getting status", e);
@@ -83,10 +78,8 @@ public class DebeziumEmbeddedRestApi {
 
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
-                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
-                debeziumJdbcStorageOperations.deleteOffsets(connection,finalProps1);
-                connection.close();
+                debeziumJdbcStorageOperations.deleteOffsets(debeziumChangeEventCapture.getSystemDbConnection(), finalProps1);
+
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
                 ctx.result(e.toString());
@@ -136,11 +129,9 @@ public class DebeziumEmbeddedRestApi {
             }
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
-            HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config, finalProps1, binlogFile, binlogPosition,
+            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(debeziumChangeEventCapture.getSystemDbConnection(),
+                    config, finalProps1, binlogFile, binlogPosition,
                     gtid);
-            connection.close();
             log.info("Received update-binlog request: " + body);
         });
         //Delete offsets
@@ -150,10 +141,7 @@ public class DebeziumEmbeddedRestApi {
 
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
-                HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
-                debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
-                connection.close();
+                debeziumJdbcStorageOperations.deleteSchemaHistory(debeziumChangeEventCapture.getSystemDbConnection(), config, finalProps1);
             } catch (Exception e) {
                 log.error("Client - Error deleting schema history", e);
                 ctx.result(e.toString());
@@ -172,10 +160,8 @@ public class DebeziumEmbeddedRestApi {
             ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(finalProps1));
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
-            HikariDataSource  ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config, finalProps1, lsn);
-            connection.close();
+            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(debeziumChangeEventCapture.getSystemDbConnection(),
+                    config, finalProps1, lsn);
             log.info("Received update-binlog request: " + body);
         });
 
