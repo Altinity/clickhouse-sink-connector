@@ -96,7 +96,7 @@ public class DateTimeWithTimeZoneIT {
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:47:46.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
         }
 
@@ -109,7 +109,7 @@ public class DateTimeWithTimeZoneIT {
             System.out.println(dateTimeResult1.getTimestamp("Maximum_Value").toString());
 
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
-            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:48:25.1"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
         }
 
@@ -122,7 +122,7 @@ public class DateTimeWithTimeZoneIT {
             System.out.println(dateTimeResult2.getTimestamp("Maximum_Value").toString());
 
             Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
-            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:05.12"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.12"));
             Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
         }
 
@@ -135,7 +135,7 @@ public class DateTimeWithTimeZoneIT {
             System.out.println(dateTimeResult3.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:49:22.123"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:22.123"));
             Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
             Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
         }
