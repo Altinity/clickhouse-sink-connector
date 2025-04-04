@@ -2,12 +2,12 @@
 #### https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-connector-properties
 
 # Unique name for the connector. Attempting to register again with the same name will fail.
-name: "company-1"
+name: "company-2"
 
 # Primary key used for state storage. Refer to State Storage documentation.
 # If multiple connectors are writing to the same ClickHouse instance, this 
 # value needs to be unique for a connector.
-topic.prefix: "sink-connector-1"
+topic.prefix: "sink-connector-2"
 
 # IP address or hostname of the MySQL database server.
 database.hostname: "mysql-master"
@@ -22,7 +22,7 @@ database.user: "root"
 database.password: "root"
 
 # Unique name for the connector.
-database.server.id: "12345"
+database.server.id: "22323"
 
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
@@ -128,12 +128,9 @@ auto.create.tables: "true"
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "UTC"
 
-# number of retries in case of errors(mostly with clickhouse db connections)
-errors.max.retries: 20
-
 # Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
 # provided, the MySQL database name will be used as the ClickHouse database name.
-#clickhouse.database.override.map: "test:ch_test"
+clickhouse.database.override.map: "test:ch_test"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
@@ -171,7 +168,7 @@ ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
 #buffer.max.records: "10000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
-clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
 
 # Maximum number of threads in the thread pool for processing CDC records.
 #thread.pool.size: 10
@@ -182,17 +179,7 @@ clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_time
 #Metrics (Prometheus target), required for Grafana Dashboard
 metrics.enable: "true"
 
-#connection.pool.disable: "true"
-#connection.pool.max.size: 500
-
 # Skip schema history capturing, use the following configuration
 # to reduce slow startup when replicating dbs with large number of tables
 #schema.history.internal.store.only.captured.tables.ddl: "true"
 #schema.history.internal.store.only.captured.databases.ddl: "true"
-
-# Required for fixing bug with freeze in debezium loop.
-use.nongraceful.disconnect: "true"
-database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
-database.connection.reconnect.backoff.ms: "1000"
-database.connection.reconnect.backoff.max.ms: "10000"
-database.ssl.mode: "disabled"
