@@ -234,6 +234,12 @@ public class PreparedStatementExecutor {
             // If the Received column is not a clickhouse column
             try {
                 Object value = struct.get(colName);
+
+                boolean nonDefault = config.getBoolean(ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString());
+                // if config non.default.value is set, use it.
+                if (nonDefault) {
+                    value = struct.getWithoutDefault(colName);
+                }
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     continue;
