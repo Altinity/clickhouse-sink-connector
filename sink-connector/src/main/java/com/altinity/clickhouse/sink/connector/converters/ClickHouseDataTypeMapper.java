@@ -84,9 +84,9 @@ public class ClickHouseDataTypeMapper {
 
         // Timestamp -> ZonedTimeStamp -> DateTime
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTimestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTime.SCHEMA_NAME.toLowerCase()), ClickHouseDataType.String);
 
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Enum.LOGICAL_NAME), ClickHouseDataType.String);
-
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Json.LOGICAL_NAME), ClickHouseDataType.String);
 
         dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Year.SCHEMA_NAME), ClickHouseDataType.Int32);
