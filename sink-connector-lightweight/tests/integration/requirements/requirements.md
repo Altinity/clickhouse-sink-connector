@@ -64,17 +64,19 @@
         * 12.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
     * 12.8 [Blob Types](#blob-types)
         * 12.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
-    * 12.9 [Nullable](#nullable)
-        * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
-    * 12.10 [Enum](#enum)
-        * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
-        * 12.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
-    * 12.11 [JSON](#json)
-        * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
-    * 12.12 [Year](#year)
-        * 12.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
-    * 12.13 [Bytes](#bytes)
-        * 12.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
+    * 12.9 [SET](#set)
+        * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesset)
+    * 12.10 [Nullable](#nullable)
+        * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+    * 12.11 [Enum](#enum)
+        * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
+        * 12.11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
+    * 12.12 [JSON](#json)
+        * 12.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
+    * 12.13 [Year](#year)
+        * 12.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 12.14 [Bytes](#bytes)
+        * 12.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
 * 13 [Queries](#queries)
     * 13.1 [Inserts](#inserts)
         * 13.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
@@ -901,6 +903,23 @@ Data types connection table:
 | Blob         |          String + hex           |
 | Longblob     |          String + hex           |
 | Mediumblob   |          String + hex           |
+
+### SET
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET
+version: 1.0
+
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'SET'
+data types as they supported by [MySQL].
+
+Data types connection table:
+
+| MySQL | ClickHouse |
+|:------|:----------:|
+| SET   |   String   |
+
+The SET values SHALL be replicated as comma-separated strings in ClickHouse.
+
 
 ### Nullable
 
