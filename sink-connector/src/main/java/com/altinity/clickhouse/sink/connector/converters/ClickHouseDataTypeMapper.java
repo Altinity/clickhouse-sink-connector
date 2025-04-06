@@ -132,11 +132,16 @@ public class ClickHouseDataTypeMapper {
                 ClickHouseDataType.Bool);
 
         // Timestamp -> ZonedTimeStamp -> DateTime
-        dataTypesMap.put(
+
+       dataTypesMap.put(
                 new MutablePair<>(Schema.Type.STRING,
                         ZonedTimestamp.SCHEMA_NAME),
                 ClickHouseDataType.DateTime64);
-
+      
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, 
+                 ZonedTime.SCHEMA_NAME.toLowerCase()), 
+                         ClickHouseDataType.String);
+ 
         dataTypesMap.put(
                 new MutablePair<>(Schema.Type.STRING,
                         Enum.LOGICAL_NAME),
@@ -352,6 +357,7 @@ public class ClickHouseDataTypeMapper {
                     ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
                     wkbBytes = new byte[byteBuffer.remaining()];
                     byteBuffer.get(wkbBytes);
+                    byteBuffer.rewind();
                 } else {
                     // Set an empty polygon if WKB value is not available
                     ps.setObject(index,
@@ -436,6 +442,7 @@ public class ClickHouseDataTypeMapper {
                     unscaledValueBytes =
                             new byte[unscaledByteBuffer.remaining()];
                     unscaledByteBuffer.get(unscaledValueBytes);
+                    unscaledByteBuffer.rewind();
                 } else if (unscaledValueObject instanceof byte[]) {
                     unscaledValueBytes =
                             (byte[]) unscaledValueObject;

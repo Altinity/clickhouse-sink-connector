@@ -231,6 +231,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 } else {
                     log.debug("***** RETRYING the same batch again");
                 }
+
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
                 DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
@@ -273,8 +274,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 }
                 if (result) {
                     // Step 2: Check if the batch can be committed.
-                    if (DebeziumOffsetManagement.
-                            checkIfBatchCanBeCommitted(currentBatch)) {
+                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch, config)) {
                         currentBatch = null;
                     }
                 }

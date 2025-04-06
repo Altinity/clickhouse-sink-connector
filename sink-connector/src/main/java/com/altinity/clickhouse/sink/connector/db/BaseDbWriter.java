@@ -225,23 +225,26 @@ public class BaseDbWriter {
                                               String databaseName,
                                               ClickHouseSinkConnectorConfig config) {
         String jdbcParams = "";
+        String jdbcSettings = "";
+        
         Connection conn = null;
-        if (config != null) {
-            jdbcParams = config.getString(ClickHouseSinkConnectorConfigVariables.
-                    JDBC_PARAMETERS.toString());
+
+        if(config != null) {
+            jdbcParams = config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
+            jdbcSettings = config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString());
         }
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            properties.setProperty("custom_settings",
-                    "allow_experimental_object_type=1,"
-                            + "insert_allow_materialized_columns=1");
-            boolean connectionPoolDisable = config.getBoolean(
-                    ClickHouseSinkConnectorConfigVariables.
-                            CONNECTION_POOL_DISABLE.toString());
-            if (!connectionPoolDisable) {
-                properties.setProperty("http_connection_provider",
-                        "HTTP_URL_CONNECTION");
+            if(!jdbcSettings.isEmpty()) {
+                properties.setProperty("custom_settings", jdbcSettings);
+            } else {
+                properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
+            }
+            boolean connectionPoolDisable = config.getBoolean(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString());
+            // Set the http connection provider to HTTP_URL_CONNECTION if connection pool is enabled.
+            if(!connectionPoolDisable) {
+                properties.setProperty("http_connection_provider", "HTTP_URL_CONNECTION");
             }
             if (!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
