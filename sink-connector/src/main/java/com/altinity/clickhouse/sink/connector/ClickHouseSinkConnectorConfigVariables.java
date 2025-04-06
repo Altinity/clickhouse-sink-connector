@@ -63,6 +63,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     PERSIST_RAW_BYTES("persist.raw.bytes"),
 
+    SOURCE_DATETIME_TIMEZONE("database.connectionTimeZone"),
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
     SKIP_REPLICA_START("skip_replica_start"),
@@ -71,7 +72,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
-
+    JDBC_SETTINGS("clickhouse.jdbc.settings"),
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
@@ -88,7 +89,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     ERRORS_MAX_RETRIES("errors.max.retries"),
 
-    CONNECTOR_CLASS("connector.class");
+    CONNECTOR_CLASS("connector.class"),
+
+    NON_DEFAULT_VALUE("non.default.value");
 
 
 

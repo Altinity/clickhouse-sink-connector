@@ -408,6 +408,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "Override timezone for DateTime columns in Source(MySQL/Postgres) server",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(),
                         Type.BOOLEAN,
                         false,
@@ -447,6 +457,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "JDBC clickhouse settings, the settings should be in this format input_format_null_as_default=1,input_format_orc_allow_missing_columns=1, delimited by comma",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString())
                 // Define the max queue size.
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
@@ -543,7 +563,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         7,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
-                // Define errors.max.retries
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "Non default value, if value is NULL, a default value will not be returned, NULL be used instead",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        7,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString())
+                        // Define errors.max.retries
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
                         Type.INT,

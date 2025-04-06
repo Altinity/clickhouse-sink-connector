@@ -20,7 +20,6 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 import org.locationtech.jts.geom.Coordinate;
-import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
@@ -85,9 +84,9 @@ public class ClickHouseDataTypeMapper {
 
         // Timestamp -> ZonedTimeStamp -> DateTime
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTimestamp.SCHEMA_NAME), ClickHouseDataType.DateTime64);
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, ZonedTime.SCHEMA_NAME.toLowerCase()), ClickHouseDataType.String);
 
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Enum.LOGICAL_NAME), ClickHouseDataType.String);
-
         dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, Json.LOGICAL_NAME), ClickHouseDataType.String);
 
         dataTypesMap.put(new MutablePair<>(Schema.INT32_SCHEMA.type(), Year.SCHEMA_NAME), ClickHouseDataType.Int32);
@@ -213,7 +212,16 @@ public class ClickHouseDataTypeMapper {
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType, serverTimeZone));
+                    String sourceTimeZone = "UTC";
+                    if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+                        String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+                        if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                            sourceTimeZone = configSourceTimeZone;
+                        }
+                    }
+
+                    ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
+                        ZoneId.of(sourceTimeZone), serverTimeZone));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
@@ -249,6 +257,7 @@ public class ClickHouseDataTypeMapper {
                     ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
                     wkbBytes = new byte[byteBuffer.remaining()];
                     byteBuffer.get(wkbBytes);
+                    byteBuffer.rewind();
                 } else {
                     // Set an empty polygon if WKB value is not available
                     ps.setObject(index, ClickHouseGeoPolygonValue.ofEmpty());
@@ -335,6 +344,7 @@ public class ClickHouseDataTypeMapper {
                     ByteBuffer unscaledByteBuffer = (ByteBuffer) unscaledValueObject;
                     unscaledValueBytes = new byte[unscaledByteBuffer.remaining()];
                     unscaledByteBuffer.get(unscaledValueBytes);
+                    unscaledByteBuffer.rewind();
                 } else if (unscaledValueObject instanceof byte[]) {
                     unscaledValueBytes = (byte[]) unscaledValueObject;
                 } else {

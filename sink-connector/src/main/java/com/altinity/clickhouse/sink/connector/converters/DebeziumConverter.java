@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.TimeZone;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -71,18 +72,31 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
-            // Input is a long.
-            Instant i = ofEpochMilli((long) value);
+            Long epochMillis = (Long) value;
+            // Step 1: Convert from incorrect timezone to LocalDateTime
+            //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
-            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
+            // Get the milliseconds value of the timezone.
+            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
+            int sourceOffset = sourceTZ.getRawOffset();
+
+            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillis)))) {
+                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            }
+
+            // Add this offset to wrongly calculated epoch.
+            Long epochMillisWithOffset = epochMillis - sourceOffset;
+            Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
+
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
 

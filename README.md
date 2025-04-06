@@ -61,6 +61,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Logging](doc/logging.md)
 * [Production Setup](doc/production_setup.md)
 * [Adding new tables(Incremental Snapshot)](doc/incremental_snapshot.md)
+* [Multiple Connectors](doc/multiple_connectors.md)
 * [Configuration](doc/configuration.md)
 * [State Storage](doc/state_storage.md)
 * [Data Type Mapping](doc/data_types.md)

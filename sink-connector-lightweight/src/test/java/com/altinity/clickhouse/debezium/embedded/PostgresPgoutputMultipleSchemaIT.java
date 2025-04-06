@@ -55,15 +55,15 @@ public class PostgresPgoutputMultipleSchemaIT {
 
 
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
-        properties.put("plugin.name", "pgoutput");
-        properties.put("plugin.path", "/");
-        properties.put("table.include.list", "public.tm");
-        properties.put("topic.prefix", "test-server");
-        properties.put("slot.max.retries", "6");
-        properties.put("slot.retry.delay.ms", "5000");
-        properties.put("database.allowPublicKeyRetrieval", "true");
+        properties.put("plugin.name", "pgoutput" );
+        properties.put("plugin.path", "/" );
+        properties.put("table.include.list", "public.tm" );
+        properties.put("topic.prefix", "test-server" );
+        properties.put("slot.max.retries", "6" );
+        properties.put("slot.retry.delay.ms", "5000" );
+        properties.put("database.allowPublicKeyRetrieval", "true" );
         properties.put("schema.include.list", "public,public2");
-        properties.put("table.include.list", "public.tm,public2.tm2,public.people");
+        properties.put("table.include.list", "public.tm,public2.tm2,public.people,public2.table_time_with_timezone" );
         properties.put("column.exclude.list", "public.people.full_name_mat");
         return properties;
     }
@@ -85,7 +85,7 @@ public class PostgresPgoutputMultipleSchemaIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
+                engine.get().setup(getProperties(), new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -107,10 +107,10 @@ public class PostgresPgoutputMultipleSchemaIT {
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 
-        Assert.assertTrue("UUID".equalsIgnoreCase(tmColumns.get("id")));
-        Assert.assertTrue("Nullable(UUID)".equalsIgnoreCase(tmColumns.get("secid")));
+        Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
+        Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue("Nullable(DateTime64(6))".equalsIgnoreCase(tmColumns.get("created")));
+        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
 
 
         int tmCount = 0;
@@ -128,6 +128,14 @@ public class PostgresPgoutputMultipleSchemaIT {
             tm2Count =  chRs2.getInt(1);
         }
         Assert.assertTrue(tm2Count == 1);
+
+        // valdate table_with_timezone
+        int tableWithTimezoneCount = 0;
+        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from table_time_with_timezone final").executeQuery();
+        while(chRsTz.next()) {
+            tableWithTimezoneCount =  chRsTz.getInt(1);
+        }
+        Assert.assertTrue(tableWithTimezoneCount == 1);
 
         // Create a connection to postgresql and create a new table.
         Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
