@@ -1,7 +1,5 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
@@ -102,8 +100,7 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch, 
-    ClickHouseSinkConnectorConfig config) throws InterruptedException {
+    static synchronized public boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> batch) throws InterruptedException {
         boolean result = false;
 
         if(true == checkIfThereAreInflightRequests(batch)) {
@@ -114,13 +111,13 @@ public class DebeziumOffsetManagement {
             completedBatches.put(pair, batch);
         } else {
             // Acknowledge current batch
-            acknowledgeRecords(batch, config);
+            acknowledgeRecords(batch);
             result = true;
             // Check if completed batch can also be acknowledged.
             completedBatches.forEach((k, v) -> {
                 if(false == checkIfThereAreInflightRequests(v)) {
                     try {
-                        acknowledgeRecords(v, config);
+                        acknowledgeRecords(v);
                     } catch (InterruptedException e) {
                         log.error("*** Error acknowlegeRecords ***", e);
                         throw new RuntimeException(e);
@@ -133,39 +130,32 @@ public class DebeziumOffsetManagement {
         return result;
     }
 
-    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch, ClickHouseSinkConnectorConfig config) throws InterruptedException {
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) throws InterruptedException {
+        // Acknowledge the records.
 
-        // get number of retries from config.
-        int maxRetries = config.getInt(String.valueOf(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES));
-        int retryCount = 0;
-        // Add retry logic here.
-        while(retryCount < maxRetries) {
-            try {
-                // acknowledge records
-                // Iterate through the records
-                // and use the record committer to commit the offsets.
-                for(ClickHouseStruct record: batch) {
-                if (record.getCommitter() != null && record.getSourceRecord() != null) {
+        // acknowledge records
+        // Iterate through the records
+        // and use the record committer to commit the offsets.
+        for(ClickHouseStruct record: batch) {
+            if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
                 record.getCommitter().markProcessed(record.getSourceRecord());
+//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
+//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
                     record.getCommitter().markBatchFinished();
                     log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                             record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
                             + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
-                    }
-                    }
                 }
-
-                // Remove the batch from the inFlightBatches
-                Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
-                inFlightBatches.remove(pair);
-            } catch (Exception e) {
-                log.error("*** Error acknowledging records ***", e);
-                retryCount++;
             }
         }
+
+        // Remove the batch from the inFlightBatches
+        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
+        inFlightBatches.remove(pair);
     }
 
     public static synchronized void acknowledgeRecords(DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
