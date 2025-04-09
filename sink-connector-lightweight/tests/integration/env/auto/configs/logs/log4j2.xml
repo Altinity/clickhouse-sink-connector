@@ -12,12 +12,12 @@
                 additivity="false">
         <AppenderRef ref="console"/>
         </Logger>-->
-            <Logger name="com.clickhouse" level="ERROR"
+            <Logger name="com.clickhouse" level="DEBUG"
                 additivity="false">
             <AppenderRef ref="console"/>
         </Logger>
 
-    <Root level="info" additivity="false">
+    <Root level="debug" additivity="false">
             <AppenderRef ref="console" />
         </Root>
     </Loggers>
