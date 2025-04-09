@@ -974,6 +974,7 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`_j_failed_s_g`(id Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
+    @Test
     public void testCreateDefiner() {
         String sql = "CREATE DEFINER=`bcadmin`@`%` PROCEDURE `sp_next_available_otc_instance_strategy_id`()\n" +
                 "begin\n" +
