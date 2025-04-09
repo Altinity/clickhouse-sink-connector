@@ -1,0 +1,18 @@
+version: "2.3"
+
+services:
+    clickhouse-sink-connector-lt:
+      hostname: clickhouse-sink-connector-lt
+      image: altinityinfra/clickhouse-sink-connector:1024-69fd297043f61cdfedf0cb872051a7d2bade3d64-lt
+      restart: "no"
+      expose:
+        - "8083"
+        - "1976"
+        - "5005"
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+      entrypoint: bash -c "tail -f /dev/null"
+      volumes:
+        - ./configs:/configs
+        - ../../logs:/logs
+        - ./configs/logs/log4j2.xml:/log4j2.xml
