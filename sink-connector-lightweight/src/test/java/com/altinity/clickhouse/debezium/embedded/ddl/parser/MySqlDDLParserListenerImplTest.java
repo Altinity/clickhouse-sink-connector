@@ -994,6 +994,70 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testCreateDefinerWithTrigger() {
+        String sql = "CREATE DEFINER=`bcadmin`@`%` TRIGGER host_id_constraint BEFORE INSERT ON host\n" +
+                "FOR EACH ROW\n" +
+                "BEGIN\n" +
+                "  declare next_id int;\n" +
+                "  declare max_id int;\n" +
+                "  declare error_msg varchar(100);\n" +
+                "  declare current_trade_date date;\n" +
+                "  set max_id = power(2, 9)-1;\n" +
+                "  set next_id = null;\n" +
+                "  select tradeDate() into current_trade_date;\n" +
+                "  IF (NEW.validFromDate <= '2000-01-01') THEN\n" +
+                "    set NEW.validFromDate = current_trade_date;\n" +
+                "  END IF;\n" +
+                "  IF (NEW.name in (select name from host where name = NEW.name and (validFromDate <= NEW.validFromDate) and (validToDate > NEW.validFromDate or validToDate is null))) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for name: ', NEW.name, ', as host already has a valid entry for this date range');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  ELSEIF (!isnull(NEW.validToDate) and NEW.name in (select name from host where name = NEW.name and (validFromDate <= NEW.validToDate) and (validToDate > NEW.validFromDate or validToDate is null))) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for name: ', NEW.name, ', as date range overlaps');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  ELSEIF (isnull(NEW.validToDate) and NEW.name in (select name from host where name = NEW.name and validToDate is null)) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for name: ', NEW.name, ', as host already has a valid current entry');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  END IF;\n" +
+                "  IF (NEW.id in (select id from host where id = NEW.id and (validFromDate <= NEW.validFromDate) and (validToDate > NEW.validFromDate or validToDate is null))) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for id: ', NEW.id, ', as host already has a valid entry for this date range');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  ELSEIF (!isnull(NEW.validToDate) and NEW.id in (select id from host where id = NEW.id and (validFromDate <= NEW.validToDate) and (validToDate > NEW.validFromDate or validToDate is null))) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for id: ', NEW.id, ', as date range overlaps');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  ELSEIF (isnull(NEW.validToDate) and NEW.id in (select id from host where id = NEW.id and validToDate is null)) THEN\n" +
+                "    SET @message_text = concat('cannot create new dated entry for id: ', NEW.id, ', as host already has a valid current entry');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = @message_text;\n" +
+                "  END IF;\n" +
+                "  select min(st.value) into next_id\n" +
+                "  from SEQUENCE_TABLE(max_id+1) st\n" +
+                "  left join host h on h.id=st.value\n" +
+                "  where st.value > 0\n" +
+                "  and h.id is null;\n" +
+                "  IF isnull(next_id) THEN\n" +
+                "    select t1.id into next_id from (select id from host where id = NEW.id and id not in (select id from host where id = NEW.id and (validFromDate <= NEW.validFromDate) and (validToDate > NEW.validFromDate or validToDate is null))) as t1;\n" +
+                "  END IF;\n" +
+                "  IF isnull(next_id) THEN\n" +
+                "    select t1.id into next_id from (select id, max(validToDate) as validToDate from host where id not in (select id from host where validToDate is NULL or NEW.validFromDate < validToDate) group by id order by validToDate, id limit 0, 1) as t1;\n" +
+                "  END IF;\n" +
+                "  IF isnull(next_id) THEN\n" +
+                "    set error_msg = concat('no free ids in range [1, ', cast(max_id as char), ']');\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = error_msg;\n" +
+                "  END IF;\n" +
+                "  IF next_id > max_id THEN\n" +
+                "    set error_msg = concat('next id too high to insert: next_id=', cast(next_id as char), ' max_id=', cast(max_id as char));\n" +
+                "    signal sqlstate '45000' set MESSAGE_TEXT = error_msg;\n" +
+                "  END IF;\n" +
+                "  set NEW.id = next_id;\n" +
+                "END\n" +
+                "/*!*/;";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        // Just validates that the debezium parsor does not throw an error
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
+    }
+    @Test
     public void testCreateTableWithPartitionByRange() {
 
         String sql2 = "CREATE TABLE `clearing_position_incomplete_detail` (\n" +
