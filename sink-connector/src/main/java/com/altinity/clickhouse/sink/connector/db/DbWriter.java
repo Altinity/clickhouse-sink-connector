@@ -2,10 +2,10 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
-import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -13,55 +13,96 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX;
+
 /**
- * Class that abstracts all functionality
- * related to interacting with Clickhouse DB.
+ * Class that abstracts all functionality related to interacting
+ * with a ClickHouse database. It provides methods to create
+ * a destination database, retrieve table metadata, and auto-create
+ * tables if needed.
  */
 public class DbWriter extends BaseDbWriter {
-    //ClickHouseNode server;
-    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
 
+    /**
+     * Logger for this class, handling logs and error messages.
+     */
+    private static final Logger log = LogManager.getLogger(
+            ClickHouseSinkConnectorConfig.class
+    );
+
+    /**
+     * The target table name in ClickHouse.
+     */
     private final String tableName;
 
-    // Map of column names to data types.
+    /**
+     * A map holding column names and their respective data types.
+     */
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 
+    /**
+     * The engine type of the target table in ClickHouse (e.g., MergeTree,
+     * ReplacingMergeTree, CollapsingMergeTree).
+     */
     @Getter
     @Setter
     private DBMetadata.TABLE_ENGINE engine;
 
+    /**
+     * The connector configuration.
+     */
     private final ClickHouseSinkConnectorConfig config;
 
-    // CollapsingMergeTree
+    /**
+     * Sign column used if the engine is CollapsingMergeTree.
+     */
     @Getter
     @Setter
     private String signColumn = null;
 
+    /**
+     * Version column used if the engine is ReplacingMergeTree.
+     */
     @Getter
     @Setter
-    // ReplacingMergeTree
     private String versionColumn = null;
 
+    /**
+     * Delete column for ReplacingMergeTree (if engine is ReplacingMergeTree).
+     */
     @Getter
     @Setter
-    // Delete column for ReplacingMergeTree
     private String replacingMergeTreeDeleteColumn = null;
 
     /**
-     * IMPORTANT: The logic to identify the new replacing mergetree
-     * table which lets you specify the is_deleted column in
-     * the CREATE TABLE DEFINITION and ClickHouse
-     * will delete the rows where the is_deleted column is set to 1.
+     * Indicates whether the ReplacingMergeTree engine supports
+     * the is_deleted column (i.e., new ReplacingMergeTree).
      */
     @Getter
     @Setter
     private boolean replacingMergeTreeWithIsDeletedColumn = false;
 
-
+    /**
+     * Constructor that sets up the DbWriter by initializing the database
+     * connection, retrieving or creating tables, and determining the
+     * engine type of the target table.
+     *
+     * @param hostName   The hostname of the ClickHouse server.
+     * @param port       The port number of the ClickHouse server.
+     * @param database   The name of the ClickHouse database.
+     * @param tableName  The target table name.
+     * @param userName   The username for authentication.
+     * @param password   The password for authentication.
+     * @param config     The sink connector configuration.
+     * @param record     A {@link ClickHouseStruct} record object containing
+     *                   schema information.
+     * @param connection An existing connection to the ClickHouse server.
+     */
     public DbWriter(
             String hostName,
             Integer port,
@@ -71,169 +112,250 @@ public class DbWriter extends BaseDbWriter {
             String password,
             ClickHouseSinkConnectorConfig config,
             ClickHouseStruct record,
-            ClickHouseConnection connection
-    )  {
-        // Base class initiates connection using JDBC.
+            Connection connection
+    ) {
         super(hostName, port, database, userName, password, config, connection);
         this.tableName = tableName;
-
         this.config = config;
 
         try {
             if (this.conn != null) {
-                // Order of the column names and the data type has to match.
-                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn,
-                        database, config);
+                // Retrieve column name to data type mapping for the table.
+                this.columnNameToDataTypeMap =
+                        new DBMetadata().getColumnsDataTypesForTable(
+                                tableName,
+                                this.conn,
+                                database,
+                                config
+                        );
             }
+
             DBMetadata metadata = new DBMetadata();
 
-            createOffsetSchemaHistoryDatabase();
+            // For DBs that are not Kafka, create offset storage database if needed.
+            if (ConnectorType.getConnectorType(config, log)
+                    != ConnectorType.KAFKA) {
+                String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
+                if (offsetStorageDatabaseName != null) {
+                    createDestinationDatabase(offsetStorageDatabaseName);
+                }
+            }
+            // Create destination database if it doesn't exist
+            createDestinationDatabase(database);
 
-            MutablePair<DBMetadata.TABLE_ENGINE, String> response = metadata.getTableEngine(this.conn, database, tableName);
+            // Retrieve table engine details
+            MutablePair<DBMetadata.TABLE_ENGINE, String> response =
+                    metadata.getTableEngine(this.conn, database, tableName);
             this.engine = response.getLeft();
 
-            long taskId = this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+            long taskId = this.config.getLong(
+                    ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+
             boolean isNewReplacingMergeTreeEngine = false;
             try {
-                String clickHouseVersion = this.getClickHouseVersion();
-                isNewReplacingMergeTreeEngine = new com.altinity.clickhouse.sink.connector.db.DBMetadata()
+                DBMetadata dbMetadata = new DBMetadata();
+                String clickHouseVersion = dbMetadata.getClickHouseVersion(
+                        this.conn);
+                isNewReplacingMergeTreeEngine = dbMetadata
                         .checkIfNewReplacingMergeTree(clickHouseVersion);
             } catch (Exception e) {
                 log.error("Error retrieving ClickHouse version");
             }
-            //ToDO: Is this a reliable way of checking if the table exists already.
+
+            // If engine is null, the table does not exist yet
             if (this.engine == null) {
-                if (this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString())) {
-                    log.info(String.format("**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) *** ",taskId, tableName,
-                            database));
+                if (this.config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES
+                                .toString())) {
+                    log.info(String.format(
+                            "**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) *** ",
+                            taskId, tableName, database));
+
                     ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
                     try {
                         Field[] fields = null;
-                        if(record.getAfterStruct() != null) {
-                            fields = record.getAfterStruct().schema().fields().toArray(new Field[0]);
-                        } else if(record.getBeforeStruct() != null) {
-                            fields = record.getBeforeStruct().schema().fields().toArray(new Field[0]);
+                        if (record.getAfterStruct() != null) {
+                            fields = record.getAfterStruct().schema().fields()
+                                    .toArray(new Field[0]);
+                        } else if (record.getBeforeStruct() != null) {
+                            fields = record.getBeforeStruct().schema().fields()
+                                    .toArray(new Field[0]);
                         }
-                        boolean useReplicatedReplacingMergeTree = this.config.getBoolean(
-                                ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-                        String rmtDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
-                        act.createNewTable(record.getPrimaryKey(), tableName, database, fields, this.conn,
-                                isNewReplacingMergeTreeEngine, useReplicatedReplacingMergeTree, rmtDeleteColumn);
+
+                        boolean useReplicatedReplacingMergeTree = this.config
+                                .getBoolean(
+                                        ClickHouseSinkConnectorConfigVariables
+                                                .AUTO_CREATE_TABLES_REPLICATED
+                                                .toString());
+
+                        String rmtDeleteColumn = this.config.getString(
+                                ClickHouseSinkConnectorConfigVariables
+                                        .REPLACING_MERGE_TREE_DELETE_COLUMN
+                                        .toString());
+
+                        // Create a new table using the schema from record
+                        act.createNewTable(
+                                record.getPrimaryKey(),
+                                tableName,
+                                database,
+                                fields,
+                                this.conn,
+                                isNewReplacingMergeTreeEngine,
+                                useReplicatedReplacingMergeTree,
+                                rmtDeleteColumn
+                        );
                     } catch (Exception e) {
-                        log.error(String.format("**** Error creating table(%s), database(%s) ***",tableName, database), e);
+                        log.error(String.format(
+                                        "**** Error creating table(%s), database(%s) ***",
+                                        tableName, database),
+                                e
+                        );
                     }
                 } else {
-                    log.error("********* AUTO CREATE DISABLED, Table does not exist, please enable it by setting auto.create.tables=true");
+                    log.error("********* AUTO CREATE DISABLED, Table does not "
+                            + "exist, please enable it by setting "
+                            + "auto.create.tables=true");
                 }
 
-                this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database, config);
-                response = metadata.getTableEngine(this.conn, database, tableName);
+                // Update local metadata
+                this.columnNameToDataTypeMap = new DBMetadata()
+                        .getColumnsDataTypesForTable(tableName, this.conn,
+                                database, config);
+                response = metadata.getTableEngine(this.conn, database,
+                        tableName);
                 this.engine = response.getLeft();
             }
 
-            if (this.engine != null &&
-                    (this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()) ||
-                            this.engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()))) {
+            // If it's ReplacingMergeTree or ReplicatedReplacingMergeTree,
+            // handle version columns
+            if (this.engine != null
+                    && (this.engine.getEngine().equalsIgnoreCase(
+                    DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())
+                    || this.engine.getEngine().equalsIgnoreCase(
+                    DBMetadata.TABLE_ENGINE
+                            .REPLICATED_REPLACING_MERGE_TREE.getEngine()))) {
+
                 String rmtColumns = response.getRight();
-                if(rmtColumns != null && rmtColumns.contains(",")) {
-                    // New RMT, with version and deleted column.
+                if (rmtColumns != null && rmtColumns.contains(",")) {
+                    // The table uses the new RMT with version and deleted column
                     String[] rmtColumnArray = rmtColumns.split(",");
                     this.versionColumn = rmtColumnArray[0].trim();
                     this.replacingMergeTreeDeleteColumn = rmtColumnArray[1].trim();
                     replacingMergeTreeWithIsDeletedColumn = true;
                 } else {
                     this.versionColumn = response.getRight();
-                    this.replacingMergeTreeDeleteColumn = this.config.getString(ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
+                    this.replacingMergeTreeDeleteColumn = this.config
+                            .getString(
+                                    ClickHouseSinkConnectorConfigVariables
+                                            .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()
+                            );
                 }
 
-            } else if (this.engine != null && this.engine.getEngine().equalsIgnoreCase(com.altinity.clickhouse.sink.connector.db.DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+            } else if (this.engine != null
+                    && this.engine.getEngine().equalsIgnoreCase(
+                    DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE
+                            .getEngine())) {
                 this.signColumn = response.getRight();
             }
-        } catch(Exception e) {
+
+        } catch (Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
     }
 
-    // Create offset/schema history storage database.
-    public void createOffsetSchemaHistoryDatabase() {
-        DBMetadata metadata = new DBMetadata();
+    /**
+     * Retrieves the offset storage database name from the connector
+     * configuration, if it exists.
+     *
+     * @return The offset storage database name, or null if none is found.
+     */
+    public String getOffsetStorageDatabaseName() {
+        String offsetSchemaHistoryTable = null;
         try {
-            if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
-            }
-        } catch(Exception e) {
-
-            int maxRetries = 0;
-            final int MAX_RETRIES = 5;
-            log.error("Error creating Database: " + database);
-
-            // Keep retrying to createNewDatabase until Max number of retries is reached.
-            boolean createDatabaseFailed = false;
-            while(maxRetries++ > MAX_RETRIES) {
-                try {
-                    Thread.sleep(maxRetries * 5000);
-                    if (false == metadata.checkIfDatabaseExists(this.conn, database)) {
-                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, database);
-                        createDatabaseFailed = true;
-                        break;
-                    }
-                } catch (Exception ex) {
-                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + database);
-                }
-            }
-            // if maxRetries exceeded, throw runtime exception.
-            if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + database);
-            }
+            offsetSchemaHistoryTable = config.getString(
+                    OFFSET_STORAGE_PREFIX
+                            + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name()
+            );
+        } catch (Exception e) {
+            log.error("***** Error retrieving offset store configuration ****",
+                    e);
         }
+        if (offsetSchemaHistoryTable == null
+                || offsetSchemaHistoryTable.isEmpty()) {
+            log.warn("Skipping creating offset schema history table as the "
+                    + "query was not provided in configuration");
+            return null;
+        }
+        String[] offsetStorageDatabaseNameArray = offsetSchemaHistoryTable.split(
+                "\\.");
+        if (offsetStorageDatabaseNameArray.length <= 2) {
+            log.warn("Skipping creating offset schema history table as the "
+                    + "query was not provided in configuration");
+            return null;
+        }
+        String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];
+        String offsetStorageTableName = offsetStorageDatabaseNameArray[1];
+
+        return offsetStorageDatabaseName;
     }
 
+    /**
+     * Updates the column name to data type map for the table,
+     * typically after the schema has changed or the table was
+     * newly created. Also updates the table engine details.
+     *
+     * @throws SQLException If a database access error occurs.
+     */
     public void updateColumnNameToDataTypeMap() throws SQLException {
-        this.columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(tableName, this.conn, database, config);
-        MutablePair<DBMetadata.TABLE_ENGINE, String> response = new DBMetadata().getTableEngine(this.conn, database, tableName);
+        this.columnNameToDataTypeMap = new DBMetadata()
+                .getColumnsDataTypesForTable(
+                        tableName, this.conn, database, config
+                );
+        MutablePair<DBMetadata.TABLE_ENGINE, String> response =
+                new DBMetadata().getTableEngine(this.conn, database, tableName);
         this.engine = response.getLeft();
     }
 
+    /**
+     * Checks if table metadata (engine type and columns) was properly retrieved.
+     *
+     * @return true if metadata is retrieved; false otherwise.
+     */
     public boolean wasTableMetaDataRetrieved() {
         boolean result = true;
 
-        if(this.engine == null || this.columnNameToDataTypeMap == null || this.columnNameToDataTypeMap.isEmpty()) {
+        if (this.engine == null
+                || this.columnNameToDataTypeMap == null
+                || this.columnNameToDataTypeMap.isEmpty()) {
             result = false;
         }
-
         return result;
     }
-
-
 
     /**
-     * Function to check if the column is of DateTime64
-     * from the column type(string name)
+     * Returns the map of column names to their data types.
      *
-     * @param columnType
-     * @return true if its DateTime64, false otherwise.
+     * @return A map of column name to data type.
      */
-    public static boolean isColumnDateTime64(String columnType) {
-        //ClickHouseDataType dt = ClickHouseDataType.of(columnType);
-        //ToDo: Figure out a way to get the ClickHouseDataType
-        // from column name.
-        boolean result = false;
-        if (columnType.contains("DateTime64")) {
-            result = true;
-        }
-        return result;
-    }
-
     public Map<String, String> getColumnNameToDataTypeMap() {
         return this.columnNameToDataTypeMap;
     }
 
+    /**
+     * Gets the table name used by this writer.
+     *
+     * @return The table name as a String.
+     */
     public String getTableName() {
         return this.tableName;
     }
 
+    /**
+     * Gets the database name used by this writer.
+     *
+     * @return The database name as a String.
+     */
     public String getDatabaseName() {
         return this.database;
     }
-
 }

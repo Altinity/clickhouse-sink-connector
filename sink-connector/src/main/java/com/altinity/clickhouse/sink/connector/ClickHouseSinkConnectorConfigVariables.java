@@ -63,6 +63,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     PERSIST_RAW_BYTES("persist.raw.bytes"),
 
+    SOURCE_DATETIME_TIMEZONE("database.connectionTimeZone"),
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
     SKIP_REPLICA_START("skip_replica_start"),
@@ -71,11 +72,28 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
-
+    JDBC_SETTINGS("clickhouse.jdbc.settings"),
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
     SINGLE_THREADED("single.threaded"),
+
+
+    CONNECTION_POOL_MAX_SIZE("connection.pool.max.size"),
+    CONNECTION_POOL_TIMEOUT("connection.pool.timeout"),
+    CONNECTION_POOL_MIN_IDLE("connection.pool.min.idle"),
+    CONNECTION_POOL_MAX_LIFETIME("connection.pool.max.lifetime"),
+
+    CONNECTION_POOL_DISABLE("connection.pool.disable"),
+
+    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
+
+    ERRORS_MAX_RETRIES("errors.max.retries"),
+
+    CONNECTOR_CLASS("connector.class"),
+
+    NON_DEFAULT_VALUE("non.default.value");
+
 
     CONNECTOR_CLASS("connector.class");
     private String label;
