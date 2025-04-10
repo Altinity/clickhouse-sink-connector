@@ -9,85 +9,142 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Class to store all the information about the block
- * for metrics and logging purposes.
+ * BlockMetaData stores all information about a block for metrics
+ * and logging purposes.
+ *
+ * <p>This class contains details such as partition offsets, lag times,
+ * binlog information, and other metadata collected during the processing
+ * of records.
  */
 public class BlockMetaData {
 
-    // Map of partitions to offsets.
+    /**
+     * A map that tracks the offset for each partition.
+     * The key is typically a topic name or partition identifier,
+     * and the value is a pair where the left element is the partition
+     * number and the right element is the offset.
+     */
     @Getter
     @Setter
-    HashMap<String, MutablePair<Integer, Long>> partitionToOffsetMap = new HashMap<>();
+    HashMap<String, MutablePair<Integer, Long>> partitionToOffsetMap =
+            new HashMap<>();
 
+    /**
+     * A set that maps server IDs to thread information.
+     */
     @Getter
     @Setter
     Set<String> serverIdToThreadMap;
 
-    // List of binlog file, binlog position, binlog row, gtid
+    /**
+     * A set of strings containing binlog file, binlog position, binlog row,
+     * and GTID.
+     */
     @Getter
     @Setter
     Set<String> bingLogList;
 
-    // Lag between the source timestamp and the time the records
-    // were inserted to ClickHouse.(Min value of Block).
+    /**
+     * The minimum lag (in milliseconds) between the source timestamp and the
+     * time the records were inserted into ClickHouse for this block.
+     */
     @Getter
     @Setter
     long minSourceLag;
 
-    // Lag between the source timestamp and the time the records
-    // were inserted to ClickHouse.(Max value of Block).
+    /**
+     * The maximum lag (in milliseconds) between the source timestamp and the
+     * time the records were inserted into ClickHouse for this block.
+     */
     @Getter
     @Setter
     long maxSourceLag;
 
-    // Lag between the Kafka consumer and the time the records
-    // were inserted to ClickHouse.(Min value of Block).
+    /**
+     * The minimum lag (in milliseconds) between the Kafka consumer timestamp
+     * and the time the records were inserted into ClickHouse.
+     */
     @Getter
     @Setter
     long minConsumerLag;
 
-    // Lag between the Kafka consumer and the time the records
-    // were inserted to ClickHouse.(Max value of Block).
+    /**
+     * The maximum lag (in milliseconds) between the Kafka consumer timestamp
+     * and the time the records were inserted into ClickHouse.
+     */
     @Getter
     @Setter
     long maxConsumerLag;
 
+    /**
+     * The current binlog position.
+     */
     @Getter
     @Setter
     long binLogPosition = 0;
 
+    /**
+     * The name of the binlog file.
+     */
     @Getter
     @Setter
     String binLogFile = "";
 
-
+    /**
+     * The transaction ID (GTID) associated with the block.
+     * A value of -1 indicates that no transaction ID has been recorded.
+     */
     @Getter
     @Setter
     long transactionId = -1;
 
+    /**
+     * The Kafka partition number associated with the block.
+     * A value of -1 indicates that the partition has not been set.
+     */
     @Getter
     @Setter
     int partition = -1;
 
-
+    /**
+     * The name of the Kafka topic associated with the block.
+     */
     @Getter
     @Setter
     String topicName = null;
 
-    // The time when the block is persisted to clickhouse
-    // and binlog timestamp
+    /**
+     * A map that stores the lag between the source timestamp and the time
+     * the records were inserted into ClickHouse for each topic.
+     */
     @Getter
     @Setter
-    Map<String, Long> sourceToCHLag = new HashMap();
+    Map<String, Long> sourceToCHLag = new HashMap<>();
 
+    /**
+     * A map that stores the lag between the Debezium event timestamp and the
+     * time the records were inserted into ClickHouse for each topic.
+     */
     @Getter
     @Setter
-    Map<String, Long> debeziumToCHLag = new HashMap();
+    Map<String, Long> debeziumToCHLag = new HashMap<>();
 
-
-    // Timestamp recorded when the block was written;
+    /**
+     * The timestamp recorded when the block was inserted into ClickHouse.
+     */
     long blockInsertionTimestamp = System.currentTimeMillis();
 
+    /**
+     * Updates the block metadata using the data from the given
+     * {@code ClickHouseStruct} record.
+     *
+     * <p>This method updates the transaction ID, binlog position,
+     * binlog file, Kafka partition, topic name, and computes lag values
+     * based on the block insertion timestamp.
+     *
+     * @param record the {@code ClickHouseStruct} record containing
+     *               new metadata values.
+     */
     public void update(ClickHouseStruct record) {
 
         long gtId = record.getGtid();
@@ -105,18 +162,18 @@ public class BlockMetaData {
             this.binLogFile = record.getFile();
         }
 
-        if(record.getKafkaPartition() != null) {
+        if (record.getKafkaPartition() != null) {
             this.partition = record.getKafkaPartition();
         }
 
-        if(record.getTopic() != null) {
+        if (record.getTopic() != null) {
             this.topicName = record.getTopic();
         }
 
         long sourceDbLag = blockInsertionTimestamp - record.getTs_ms();
-        if(sourceToCHLag.containsKey(this.topicName)) {
+        if (sourceToCHLag.containsKey(this.topicName)) {
             long storedSourceLag = sourceToCHLag.get(this.topicName);
-            if(sourceDbLag > storedSourceLag) {
+            if (sourceDbLag > storedSourceLag) {
                 sourceToCHLag.put(this.topicName, sourceDbLag);
             }
         } else {
@@ -124,9 +181,9 @@ public class BlockMetaData {
         }
 
         long debeziumLag = blockInsertionTimestamp - record.getDebezium_ts_ms();
-        if(debeziumToCHLag.containsKey(this.topicName)) {
+        if (debeziumToCHLag.containsKey(this.topicName)) {
             long storedDebeziumLag = debeziumToCHLag.get(this.topicName);
-            if(debeziumLag > storedDebeziumLag) {
+            if (debeziumLag > storedDebeziumLag) {
                 debeziumToCHLag.put(this.topicName, debeziumLag);
             }
         } else {
@@ -138,7 +195,7 @@ public class BlockMetaData {
         if (partitionToOffsetMap.containsKey(this.topicName)) {
             MutablePair<Integer, Long> mp = partitionToOffsetMap.get(this.topicName);
             if (offset >= mp.right) {
-                // Update ap.
+                // Update the partition offset pair.
                 mp.right = offset;
                 mp.left = partition;
                 partitionToOffsetMap.put(topicName, mp);
@@ -150,5 +207,4 @@ public class BlockMetaData {
             partitionToOffsetMap.put(topicName, mp);
         }
     }
-
 }
