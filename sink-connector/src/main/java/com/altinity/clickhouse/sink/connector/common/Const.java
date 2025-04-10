@@ -14,6 +14,13 @@
  */
 package com.altinity.clickhouse.sink.connector.common;
 
+/**
+ * A constants class providing string keys for configuration fields.
+ */
 public class Const {
+
+    /**
+     * The name field used by the connector configuration.
+     */
     public static final String NAME = "name";
 }

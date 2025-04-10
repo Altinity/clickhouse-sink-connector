@@ -3,141 +3,232 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
-
 import java.sql.Connection;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Properties;
-
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+/**
+ * BaseDbWriter is a base class for writing data to a ClickHouse
+ * database. It provides methods for connection handling, creating
+ * destination databases, and utility functions such as splitting
+ * JDBC properties.
+ */
 public class BaseDbWriter {
 
+    /**
+     * Base delay in milliseconds used for retry attempts. The actual delay
+     * for a retry is computed as <code>maxRetries * RETRY_DELAY_MS</code>.
+     */
+    private static final int RETRY_DELAY_MS = 5000;
+
+    /**
+     * The name of the database client.
+     */
     public static final String DATABASE_CLIENT_NAME = "Sink_Connector";
+
+    /**
+     * The system database name.
+     */
     public static final String SYSTEM_DB = "system";
+
+    /**
+     * The active database connection.
+     */
     protected Connection conn;
 
+    /**
+     * The hostname of the database server.
+     */
     private String hostName;
+
+    /**
+     * The port number of the database server.
+     */
     private Integer port;
+
+    /**
+     * The name of the database.
+     */
     protected String database;
+
+    /**
+     * The username for the database connection.
+     */
     private String userName;
+
+    /**
+     * The password for the database connection.
+     */
     private String password;
 
+    /**
+     * The server time zone derived from the database.
+     */
     private ZoneId serverTimeZone;
 
+    /**
+     * The ClickHouse sink connector configuration.
+     */
     private ClickHouseSinkConnectorConfig config;
 
-    private static final Logger log = LogManager.getLogger(BaseDbWriter.class);
+    /**
+     * Logger instance for BaseDbWriter.
+     */
+    private static final Logger log =
+            LogManager.getLogger(BaseDbWriter.class);
 
-    public BaseDbWriter(
-            String hostName,
-            Integer port,
-            String database,
-            String userName,
-            String password,
-            ClickHouseSinkConnectorConfig config,
-            Connection conn
-    ) {
-
+    /**
+     * Constructs a BaseDbWriter instance with the provided parameters.
+     *
+     * @param hostName the host name of the database server
+     * @param port the port number of the database server
+     * @param database the name of the database
+     * @param userName the username for the database connection
+     * @param password the password for the database connection
+     * @param config the ClickHouse sink connector configuration
+     * @param conn an existing Connection object; if null, a new one may be
+     *             created later
+     */
+    public BaseDbWriter(String hostName, Integer port, String database,
+                        String userName, String password,
+                        ClickHouseSinkConnectorConfig config, Connection conn) {
         this.hostName = hostName;
         this.port = port;
         this.database = database;
         this.userName = userName;
         this.password = password;
-
         this.config = config;
         this.conn = conn;
-        //this.createConnection(connectionUrl, "Agent_1", userName, password);
+        // Initialize the server time zone from the database metadata.
         this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
     }
 
-    // Create offset/schema history storage database.
+    /**
+     * Creates the destination database if it does not already exist.
+     *
+     * @param databaseName the name of the destination database to create
+     * @throws RuntimeException if the database creation fails after the
+     *         maximum number of retries
+     */
     protected void createDestinationDatabase(String databaseName) {
-
         DBMetadata metadata = new DBMetadata();
         try {
-            if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
-                new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
+            if (!metadata.checkIfDatabaseExists(this.conn, databaseName)) {
+                new ClickHouseCreateDatabase()
+                        .createNewDatabase(this.conn, databaseName);
             }
-        } catch(Exception e) {
-
+        } catch (Exception e) {
             int maxRetries = 0;
             final int MAX_RETRIES = 5;
             log.error("Error creating Database: " + databaseName);
 
-            // Keep retrying to createNewDatabase until Max number of retries is reached.
+            // Retry creating the database until max retries is reached.
             boolean createDatabaseFailed = false;
-            while(maxRetries++ > MAX_RETRIES) {
+            while (maxRetries++ < MAX_RETRIES) {
                 try {
-                    Thread.sleep(maxRetries * 5000);
-                    if (false == metadata.checkIfDatabaseExists(this.conn, databaseName)) {
-                        new ClickHouseCreateDatabase().createNewDatabase(this.conn, databaseName);
+                    Thread.sleep(maxRetries * RETRY_DELAY_MS);
+                    if (!metadata.checkIfDatabaseExists(this.conn,
+                            databaseName)) {
+                        new ClickHouseCreateDatabase()
+                                .createNewDatabase(this.conn, databaseName);
                         createDatabaseFailed = true;
                         break;
                     }
                 } catch (Exception ex) {
-                    log.error("Retry Number: " + maxRetries + "of" + MAX_RETRIES + "  Error creating Database: " + databaseName);
+                    log.error("Retry Number: " + maxRetries + " of "
+                            + MAX_RETRIES + "  Error creating Database: "
+                            + databaseName);
                 }
             }
-            // if maxRetries exceeded, throw runtime exception.
-            if(createDatabaseFailed == false) {
-                throw new RuntimeException("Error creating Database: " + databaseName, e);
+            // If database creation still fails, throw a runtime exception.
+            if (!createDatabaseFailed) {
+                throw new RuntimeException("Error creating Database: "
+                        + databaseName, e);
             }
         }
     }
 
     /**
-     * Function to split JDBC properties string into Properties object.
-     * @param jdbcProperties
-     * @return
+     * Splits a JDBC properties string into a Properties object.
+     * The input string should be in the format:
+     * "key1=value1,key2=value2,..."
+     *
+     * @param jdbcProperties the JDBC properties string
+     * @return a Properties object populated with the key-value pairs from
+     *         the input string
      */
     public static Properties splitJdbcProperties(String jdbcProperties) {
-        // Split JDBC properties(delimited by equal sign) string delimited by comma.
         String[] splitProperties = jdbcProperties.split(",");
-
-        // Iterate through splitProperties and convert to Properties.
         Properties properties = new Properties();
         Arrays.stream(splitProperties).forEach(property -> {
             String[] keyValue = property.split("=");
             properties.setProperty(keyValue[0], keyValue[1]);
         });
-
         return properties;
     }
 
+    /**
+     * Retrieves the current database connection. If the connection is null,
+     * a new connection is initiated.
+     *
+     * @return a Connection object representing the current database
+     *         connection
+     */
     public Connection getConnection() {
         HikariDbSource.printConnectionInfo();
-        if(this.conn == null) {
+        if (this.conn == null) {
             try {
-                this.conn = HikariDbSource.initiateNewConnectionIfClosed(this.database);
+                this.conn = HikariDbSource
+                        .initiateNewConnectionIfClosed(this.database);
             } catch (Exception e) {
                 log.error("Error retrieving new connection in getConnection");
             }
         }
         return this.conn;
     }
-    public static String getConnectionString(String hostName, Integer port, String database) {
-        return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port, database);
+
+    /**
+     * Constructs a JDBC connection string using the provided host, port, and
+     * database.
+     *
+     * @param hostName the host or IP address of the database server
+     * @param port the port number of the database server
+     * @param database the name of the database
+     * @return a JDBC connection string in the format
+     *         "jdbc:clickhouse://host:port/database"
+     */
+    public static String getConnectionString(String hostName, Integer port,
+                                             String database) {
+        return String.format("jdbc:clickhouse://%s:%s/%s", hostName, port,
+                database);
     }
 
     /**
-     * Function to create Connection using the JDBC Driver
+     * Creates a new connection to ClickHouse using the given JDBC URL,
+     * client name, username, password, and database name. Additional JDBC
+     * parameters are merged from the configuration.
      *
-     * @param url        url with the JDBC format jdbc:ch://localhost/test
-     * @param clientName Client Name
-     * @param userName   UserName
-     * @param password   Password
+     * @param url the JDBC URL (e.g., jdbc:clickhouse://host/database)
+     * @param clientName the name of the client
+     * @param userName the username for the database connection
+     * @param password the password for the database connection
+     * @param databaseName the name of the database
+     * @param config the ClickHouse sink connector configuration
+     * @return a Connection object to ClickHouse, or null if an error occurs
      */
-    public static Connection createConnection(String url, String clientName, String userName,
-                                              String password, String databaseName
-            , ClickHouseSinkConnectorConfig config) {
-
+    public static Connection createConnection(String url, String clientName,
+                                              String userName, String password,
+                                              String databaseName,
+                                              ClickHouseSinkConnectorConfig config) {
         String jdbcParams = "";
         String jdbcSettings = "";
         
         Connection conn = null;
+
         if(config != null) {
             jdbcParams = config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString());
             jdbcSettings = config.getString(ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString());
@@ -155,34 +246,26 @@ public class BaseDbWriter {
             if(!connectionPoolDisable) {
                 properties.setProperty("http_connection_provider", "HTTP_URL_CONNECTION");
             }
-            if(!jdbcParams.isEmpty()) {
+            if (!jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            // Add username/password to the url.
+            // Append username and password to the URL.
             url = url + "?user=" + userName + "&password=" + password;
-
-            SinkConnectorDataSource dataSource = new SinkConnectorDataSource(url, properties);
-            // Get connection from the pool.
-            if(connectionPoolDisable) {
+            SinkConnectorDataSource dataSource =
+                    new SinkConnectorDataSource(url, properties);
+            if (connectionPoolDisable) {
                 log.info("Connection pool is disabled, creating a new connection");
                 conn = dataSource.getConnection();
             } else {
-                HikariDataSource hikariDbSource = HikariDbSource.getInstance(dataSource, databaseName, config);
-                // Create a new ClickHouseConnection object with the connection from the pool.
-                // Convert Connection to ClickHouseConnection.
+                HikariDataSource hikariDbSource = HikariDbSource.getInstance(
+                        dataSource, databaseName, config);
                 conn = hikariDbSource.getConnection();
             }
         } catch (Exception e) {
             log.error("Error creating ClickHouse connection" + e);
         }
-
         return conn;
     }
-
-
-
-
 }
-
