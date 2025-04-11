@@ -71,7 +71,7 @@ def create_default_sink_config_replicated(
     config = self.context.config
 
     if current_cpu() == "aarch64":
-        path = "env/auto_arm64/configs/replicated_config.yml"
+        path = "env/auto_replicated_arm64/configs/replicated_config.yml"
 
     with By(f"creating the default sink connector configuration file"):
         config.update(
