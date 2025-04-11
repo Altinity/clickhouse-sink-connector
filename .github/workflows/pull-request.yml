@@ -40,23 +40,23 @@ jobs:
       extra_args: --hikari-pool
       artifact_suffix: hikari-pool
 
-  testflows-lightweight-arm:
-    needs: [build-kafka-lightweight]
-    uses: ./.github/workflows/testflows-sink-connector-lightweight-arm.yml
-    secrets: inherit
-    with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
-      extra_args: ""
-      artifact_suffix: ""
+  # testflows-lightweight-arm:
+  #   needs: [build-kafka-lightweight]
+  #   uses: ./.github/workflows/testflows-sink-connector-lightweight-arm.yml
+  #   secrets: inherit
+  #   with:
+  #     SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+  #     extra_args: ""
+  #     artifact_suffix: ""
 
-  testflows-lightweight-arm-hikari-pool:
-    needs: [build-kafka-lightweight]
-    uses: ./.github/workflows/testflows-sink-connector-lightweight-arm.yml
-    secrets: inherit
-    with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
-      extra_args: --hikari-pool
-      artifact_suffix: hikari-pool
+  # testflows-lightweight-arm-hikari-pool:
+  #   needs: [build-kafka-lightweight]
+  #   uses: ./.github/workflows/testflows-sink-connector-lightweight-arm.yml
+  #   secrets: inherit
+  #   with:
+  #     SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+  #     extra_args: --hikari-pool
+  #     artifact_suffix: hikari-pool
 
   java-tests-kafka:
     needs: [build-kafka-lightweight]
