@@ -1,17 +1,20 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParserListener;
-import io.debezium.ddl.parser.mysql.generated.MySqlParserBaseListener;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ErrorNode;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
+/**
+ * A base listener for MySQL DDL (Data Definition Language) parsing.
+ * This class provides default implementations for the methods in the
+ * MySqlParserListener interface. It allows users to override only the
+ * relevant methods as needed.
+ */
 public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     @Override
-    public void enterRoot(MySqlParser.RootContext rootContext) {
-
-    }
+    public void enterRoot(MySqlParser.RootContext rootContext) {}
 
     @Override
     public void exitRoot(MySqlParser.RootContext rootContext) {
