@@ -93,7 +93,8 @@ public class MySQLDemoIT  {
             setupDebeziumEngine();
             mysqlConn = connectToMySQL();
             String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-            ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+            Connection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
+                    "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
             writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
             Thread.sleep(10000);
@@ -267,7 +268,7 @@ public class MySQLDemoIT  {
         Thread.sleep(50000);
         DBMetadata metadata = new DBMetadata();
         Map<String, String> columns =
-                writer.getColumnsDataTypesForTable(  "employees");
+                metadata.getColumnsDataTypesForTable( writer.getConnection(), "employees", "employees");
         Assert.assertTrue("jobTitle column should exist", columns.containsKey("jobTitle"));
 
         verifyTableCounts(mysqlConn, writer, "After adding jobTitle column");
@@ -293,7 +294,7 @@ public class MySQLDemoIT  {
             pstmt.executeUpdate();
             mysqlConn.commit();
         }
-        Thread.sleep(50000);
+        Thread.sleep(10000);
 
         // Verify the update
         try (PreparedStatement pstmt = writer.getConnection().prepareStatement(
@@ -305,7 +306,7 @@ public class MySQLDemoIT  {
         }
 
         mysqlConn.prepareStatement("ALTER TABLE employees DROP COLUMN jobTitle;").execute();
-        Thread.sleep(50000);
+        Thread.sleep(10000);
 
         verifyTableCounts(mysqlConn, writer, "After setting jobTitle to " + title);
     }
@@ -331,7 +332,7 @@ public class MySQLDemoIT  {
         if (lastName != null) {
             int before = getCount(mysqlConn, "SELECT COUNT(*) FROM employees");
             mysqlConn.prepareStatement("DELETE FROM employees WHERE last_name = '" + lastName + "'").execute();
-            Thread.sleep(60000);
+            Thread.sleep(10000);
             int after = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`employees` FINAL");
             Assert.assertTrue("Records should decrease", after < before);
         }
@@ -350,15 +351,15 @@ public class MySQLDemoIT  {
      */
     private void addAndDropHireDateColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN hireDate DATE DEFAULT (CURDATE());").execute();
-        Thread.sleep(30000);
+        Thread.sleep(10000);
         DBMetadata metadata = new DBMetadata();
-        Map<String, String> columns = writer.getColumnsDataTypesForTable("employees");
+        Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
         Assert.assertTrue("hireDate column should exist", columns.containsKey("hireDate"));
 
         mysqlConn.prepareStatement("ALTER TABLE employees DROP COLUMN hireDate;").execute();
         Thread.sleep(30000);
 
-        Map<String, String> columnsAfterDelete = writer.getColumnsDataTypesForTable("employees");
+        Map<String, String> columnsAfterDelete = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
         Assert.assertFalse("hireDate column should not exist", columnsAfterDelete.containsKey("hireDate"));
     }
 
@@ -416,17 +417,15 @@ public class MySQLDemoIT  {
      */
     private void modifyOfficeCodeColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN officeCode INT").execute();
-        Thread.sleep(10000);
 
         mysqlConn.prepareStatement("UPDATE employees SET officeCode = 1 WHERE officeCode IS NULL").execute();
-        Thread.sleep(10000);
 
         mysqlConn.prepareStatement("ALTER TABLE employees MODIFY COLUMN officeCode INT NOT NULL DEFAULT 1").execute();
-        Thread.sleep(50000); // Wait for Debezium replication
 
+        Thread.sleep(10000);
         // Validate in ClickHouse
         DBMetadata metadata = new DBMetadata();
-        Map<String, String> columns = writer.getColumnsDataTypesForTable("employees");
+        Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
         Assert.assertEquals("officeCode should be Int32", "Int32", columns.get("officeCode"));
     }
 
@@ -447,7 +446,7 @@ public class MySQLDemoIT  {
 
         conn.createStatement().execute(
                 "CREATE TABLE IF NOT EXISTS payments (" +
-                        "payment_number INT PRIMARY KEY, " +
+                        "payment_number INT PRIMARY KEY not null, " +
                         "customer_number INT, " +
                         "amount DECIMAL(10,2), " +
                         "FOREIGN KEY (customer_number) REFERENCES customers(customer_number));");
@@ -465,7 +464,7 @@ public class MySQLDemoIT  {
                 "(5003, 1002, 3000.00), " +
                 "(5004, 1003, 2500.00);").execute();
 
-        Thread.sleep(50000);
+        Thread.sleep(10000);
     }
 
     /**
@@ -498,7 +497,7 @@ public class MySQLDemoIT  {
                 "DELETE FROM customers WHERE sales_rep_employee_number = 1621"
         ).execute();
 
-        Thread.sleep(50000);
+        Thread.sleep(10000);
 
         int mysqlPaymentsAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM payments");
         int mysqlCustomersAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM customers");
@@ -528,7 +527,7 @@ public class MySQLDemoIT  {
      * @throws Exception if query execution fails
      */
     private int getCount(Connection conn, String query) throws Exception {
-        try (ResultSet rs = writer.executeQueryWithResultSet(query)) {
+        try (ResultSet rs = conn.createStatement().executeQuery(query)) {
             return rs.next() ? rs.getInt(1) : 0;
         }
     }
