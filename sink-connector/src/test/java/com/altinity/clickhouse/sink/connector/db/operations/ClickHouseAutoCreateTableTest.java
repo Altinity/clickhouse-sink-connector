@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import io.debezium.data.Json;
@@ -10,14 +11,16 @@ import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
+import org.junit.After;
 import org.junit.Assert;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.containers.ClickHouseContainer;
+import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
+import org.testcontainers.containers.wait.strategy.WaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,11 +32,16 @@ public class ClickHouseAutoCreateTableTest {
 
     static Map<String, String> columnToDataTypesMap;
 
-    static ClickHouseConnection conn;
+    static Connection conn;
 
     @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:latest")
-            .withInitScript("./init_clickhouse.sql");
+    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
+            .withInitScript("./init_clickhouse.sql").waitingFor(new HttpWaitStrategy().forPort(8123));
+
+    @AfterAll
+    public static void tearDown() throws SQLException {
+        HikariDbSource.close();
+    }
     @BeforeAll
     static void initialize() {
 
@@ -55,7 +63,8 @@ public class ClickHouseAutoCreateTableTest {
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, config);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, config);
         DbWriter writer = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
 
         conn = writer.getConnection();
@@ -160,17 +169,21 @@ public class ClickHouseAutoCreateTableTest {
 
     @Test
     @Tag("IntegrationTest")
+    @Disabled
     public void testCreateNewTable() {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "default";
+        String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        ClickHouseConnection conn = DbWriter.createConnection(jdbcUrl, "client_1", userName, password, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);

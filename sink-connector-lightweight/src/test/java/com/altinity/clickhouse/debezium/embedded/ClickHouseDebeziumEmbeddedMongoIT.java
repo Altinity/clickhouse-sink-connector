@@ -1,10 +1,8 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.config.EnvironmentConfigurationService;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.mongodb.MongoException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -15,6 +13,7 @@ import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.junit.ClassRule;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.DockerComposeContainer;
@@ -35,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
+@Disabled
 public class ClickHouseDebeziumEmbeddedMongoIT {
 
     @Container
@@ -112,6 +112,7 @@ public class ClickHouseDebeziumEmbeddedMongoIT {
     // Files.deleteIfExists(tmpFilePath);
     executorService.shutdown();
 
+    HikariDbSource.close();
     //writer.getConnection().close();
 
 

@@ -1,10 +1,11 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,7 +17,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -85,28 +85,24 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
 
         Thread.sleep(25000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
-
-        Map<String, String> shipClassColumns = writer.getColumnsDataTypesForTable("ship_class");
-        Map<String, String> addTestColumns = writer.getColumnsDataTypesForTable("add_test");
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata();
+        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
         // Validate all ship_class columns.
-        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("String"));
-        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Int32"));
+        Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
-        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
+        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
         // Validate all add_test columns.
-        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("String"));
+        Assert.assertTrue(addTestColumns.get("col8").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("String"));
-        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("String"));
+        Assert.assertTrue(addTestColumns.get("col5").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(addTestColumns.get("col6").equalsIgnoreCase("Nullable(String)"));
 
         if(engine.get() != null) {
             engine.get().stop();
@@ -115,6 +111,6 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         executorService.shutdown();
 
 
-
+        HikariDbSource.close();
     }
 }

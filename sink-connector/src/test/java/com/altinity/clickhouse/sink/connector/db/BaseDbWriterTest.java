@@ -9,6 +9,7 @@ import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.shaded.com.fasterxml.jackson.databind.annotation.JsonAppend;
 
+import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -21,8 +22,8 @@ public class BaseDbWriterTest {
         props.put(ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString(), jdbcProperties);
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
 
-        ClickHouseConnection conn = BaseDbWriter.createConnection(
-                "localhost", "client_1","default", "", config);
+        Connection conn = BaseDbWriter.createConnection(
+                "localhost", BaseDbWriter.DATABASE_CLIENT_NAME,"default", "",BaseDbWriter.SYSTEM_DB, config);
         Properties properties = new BaseDbWriter(
                 "localhost",
                 8123,

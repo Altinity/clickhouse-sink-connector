@@ -128,9 +128,12 @@ auto.create.tables: "true"
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "UTC"
 
+# number of retries in case of errors(mostly with clickhouse db connections)
+errors.max.retries: 20
+
 # Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
 # provided, the MySQL database name will be used as the ClickHouse database name.
-clickhouse.database.override.map: "test:ch_test"
+#clickhouse.database.override.map: "test:ch_test"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
 #clickhouse.datetime.timezone: "UTC"
@@ -168,7 +171,7 @@ ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
 #buffer.max.records: "10000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
-#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
 
 # Maximum number of threads in the thread pool for processing CDC records.
 #thread.pool.size: 10
@@ -178,6 +181,9 @@ ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
 
 #Metrics (Prometheus target), required for Grafana Dashboard
 metrics.enable: "true"
+
+#connection.pool.disable: "true"
+#connection.pool.max.size: 500
 
 # Skip schema history capturing, use the following configuration
 # to reduce slow startup when replicating dbs with large number of tables

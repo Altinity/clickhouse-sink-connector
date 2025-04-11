@@ -121,12 +121,6 @@
       <artifactId>javalin-testtools</artifactId>
       <version>5.5.0</version>
       <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <artifactId>okhttp</artifactId>
-          <groupId>com.squareup.okhttp3</groupId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>io.debezium</groupId>
@@ -163,20 +157,12 @@
           <groupId>org.testcontainers</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>junit-platform-launcher</artifactId>
-          <groupId>org.junit.platform</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>junit-jupiter</artifactId>
           <groupId>org.junit.jupiter</groupId>
         </exclusion>
         <exclusion>
           <artifactId>quarkus-test-common</artifactId>
           <groupId>io.quarkus</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>okhttp</artifactId>
-          <groupId>com.squareup.okhttp3</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -207,7 +193,7 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -231,7 +217,7 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>jdbc</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -243,37 +229,37 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>clickhouse</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mysql</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>postgresql</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mariadb</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>mongodb</artifactId>
-      <version>1.19.1</version>
+      <version>1.20.4</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -289,10 +275,6 @@
       <version>5.8.1</version>
       <scope>test</scope>
       <exclusions>
-        <exclusion>
-          <artifactId>junit-platform-engine</artifactId>
-          <groupId>org.junit.platform</groupId>
-        </exclusion>
         <exclusion>
           <artifactId>junit-jupiter-api</artifactId>
           <groupId>org.junit.jupiter</groupId>
@@ -317,9 +299,37 @@
           <artifactId>junit-jupiter-api</artifactId>
           <groupId>org.junit.jupiter</groupId>
         </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <version>1.8.2</version>
+      <scope>test</scope>
+      <exclusions>
         <exclusion>
-          <artifactId>junit-platform-launcher</artifactId>
+          <artifactId>apiguardian-api</artifactId>
+          <groupId>org.apiguardian</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-engine</artifactId>
+      <version>1.8.2</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>opentest4j</artifactId>
+          <groupId>org.opentest4j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>junit-platform-commons</artifactId>
           <groupId>org.junit.platform</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>apiguardian-api</artifactId>
+          <groupId>org.apiguardian</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -356,7 +366,7 @@
   <properties>
     <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
     <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-    <version.testcontainers>1.19.1</version.testcontainers>
+    <version.testcontainers>1.20.4</version.testcontainers>
     <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
     <version.kafka>3.8.0</version.kafka>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

@@ -62,7 +62,8 @@ if [[ $1 == "apicurio" ]]; then
 
         "auto.create.tables": true,
         "schema.evolution": false,
-        "auto.create.tables.replicated": "true"
+        "auto.create.tables.replicated": "true",
+        "connection.pool.disable": "true"
         }
     }
 EOF
@@ -107,7 +108,9 @@ else
 
       "deduplication.policy": "off",
 
-      "metadata.max.age.ms" : 10000
+      "metadata.max.age.ms" : 10000,
+      "connection.pool.disable": "true"
+
       }
   }
 EOF

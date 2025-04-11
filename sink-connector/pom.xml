@@ -274,6 +274,13 @@
             </exclusions>
         </dependency>
 
+        <!-- https://mvnrepository.com/artifact/com.squareup.okhttp3/okhttp -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.apache.avro</groupId>
             <artifactId>avro</artifactId>
@@ -313,7 +320,13 @@
             <artifactId>debezium-core</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-storage-jdbc</artifactId>
+            <version>${version.debezium}</version>
+            <!--    <scope>system</scope>
+               <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -332,6 +345,11 @@
             <groupId>org.apache.maven</groupId>
             <artifactId>maven-artifact</artifactId>
             <version>3.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>6.0.0</version>
         </dependency>
         <dependency>
             <groupId>com.clickhouse</groupId>

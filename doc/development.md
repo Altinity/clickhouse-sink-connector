@@ -34,3 +34,23 @@ mvn install -DskipTests=true
 ```
 
 The JAR file will be created in the  `target` directory.
+
+### Local Environment setup(IntelliJ)
+
+Run the following script to start MYSQL and Clickhouse docker containers.
+
+```
+clickhouse-sink-connector/sink-connector-lightweight/docker$ ./startMySQLCHLocalSinkDev.sh 
+```
+
+Setup run configuration and set the **main class** to
+
+```
+com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication
+```
+**Arguments:**
+```
+sink-connector-lightweight/docker/config_local.yml -Dlog4j.debug=true  -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG
+```
+
+![image](https://github.com/user-attachments/assets/00b0e9ff-f622-42d1-943d-568dd8706145)
