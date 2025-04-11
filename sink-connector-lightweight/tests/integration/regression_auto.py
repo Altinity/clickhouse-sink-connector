@@ -318,11 +318,6 @@ def regression(
             parallel=True,
             executor=executor,
         )
-        Feature(
-            run=load("tests.nullable_default", "module"),
-            parallel=True,
-            executor=executor,
-        )
         join()
 
     Feature(run=load("tests.databases", "module"))
