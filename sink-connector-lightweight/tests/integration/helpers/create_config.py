@@ -1,6 +1,6 @@
 import yaml
 
-from integration.helpers.common import current_cpu
+from integration.helpers.platform_utils import current_cpu
 from integration.helpers.default_config import default_config
 from testflows.core import *
 

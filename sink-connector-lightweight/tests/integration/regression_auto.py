@@ -194,9 +194,9 @@ def regression(
         self.context.collect_service_logs = collect_service_logs
 
     if current_cpu() == "aarch64":
-        env = f"auto_arm64"
+        env = f"env/auto_arm64"
     else:
-        env = "auto"
+        env = "env/auto"
 
     with Given("docker-compose cluster"):
         cluster = create_cluster(
