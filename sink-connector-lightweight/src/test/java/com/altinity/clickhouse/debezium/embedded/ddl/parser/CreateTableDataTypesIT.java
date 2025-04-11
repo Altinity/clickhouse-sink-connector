@@ -5,6 +5,8 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.log4j.BasicConfigurator;
@@ -17,6 +19,7 @@ import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.util.HashMap;
 import java.util.Map;
@@ -65,20 +68,15 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         Thread.sleep(40000);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null,
-                chConn);
+        DBMetadata metadata = new DBMetadata();
+        Connection conn = writer.getConnection();
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "datatypes");
+        Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "datatypes");
+        Map<String, String> dateTimeTable2 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME2", "datatypes");
 
-        Map<String, String> decimalTable = writer.getColumnsDataTypesForTable("numeric_types_DECIMAL_65_30");
-        Map<String, String> dateTimeTable6 = writer.getColumnsDataTypesForTable("temporal_types_DATETIME6");
-        Map<String, String> dateTimeTable2 = writer.getColumnsDataTypesForTable("temporal_types_DATETIME2");
-
-        Map<String, String> timestampTable = writer.getColumnsDataTypesForTable("temporal_types_TIMESTAMP6");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(conn, "temporal_types_TIMESTAMP6", "datatypes");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
@@ -110,13 +108,9 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
         //Thread.sleep(10000);
 
-        //String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-         writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        writer = ITCommon.getDBWriter(clickHouseContainer);
         // Validate temporal_types_DATE data.
-        ResultSet dateResult = writer.executeQueryWithResultSet("select * from temporal_types_DATE");
+        ResultSet dateResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATE", writer.getConnection());
 
         while(dateResult.next()) {
             Assert.assertTrue(dateResult.getDate("Minimum_Value").toString().equalsIgnoreCase("1900-01-01"));
@@ -124,7 +118,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().equalsIgnoreCase("2299-12-31"));
         }
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
 
         /**
         DATE TIME
@@ -173,7 +167,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
 
@@ -188,7 +182,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
 
@@ -203,7 +197,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -217,7 +211,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -233,7 +227,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -248,7 +242,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -275,7 +269,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO employees.point_table (id, c1, c2, c3a, c3b, f1, f2) values (1, 123, 456, POINT(1.0,2.0), POINT(3.0,4.0), 100.20, 100.20)");
 
         Thread.sleep(10000);
-        ResultSet rs = writer.executeQueryWithResultSet("select * from employees.point_table");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.point_table", writer.getConnection());
         boolean pointResultValidated = false;
         while(rs.next()) {
             pointResultValidated = true;
@@ -314,5 +308,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         executorService.shutdown();
 
         writer.getConnection().close();
+
+        HikariDbSource.close();
     }
 }
