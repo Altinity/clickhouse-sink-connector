@@ -7,31 +7,43 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 
 /**
- * The type PropertiesHelper is a class that represents the value stored
- * in the properties file named config.properties.
+ * The PropertiesHelper class is responsible for loading and handling the
+ * properties stored in a file named "config.properties".
+ * <p>
+ * This class provides utility methods to load the properties file from
+ * the classpath and convert the loaded properties into a HashMap for
+ * easier handling.
+ * </p>
  */
 public class PropertiesHelper {
+
     /**
-     * Gets a Properties object that contains the keys and values defined
-     * in the file src/main/resources/config.properties
+     * Retrieves a Properties object containing the key-value pairs
+     * defined in the specified properties file (e.g., config.properties).
+     * <p>
+     * The properties file should be located in the "src/main/resources"
+     * directory.
+     * </p>
      *
-     * @return a {@link java.util.Properties} object
-     * @throws Exception Thrown if the file config.properties is not available
-     *                   in the directory src/main/resources
+     * @param fileName the name of the properties file to load.
+     * @return a {@link java.util.Properties} object containing the key-value
+     *         pairs from the specified file.
+     * @throws Exception thrown if the file is not found or cannot be loaded.
      */
     public static Properties getProperties(String fileName) throws Exception {
 
         Properties props = null;
-        //try to load the file config.properties
+        // Try to load the properties file
         try (InputStream input = PropertiesHelper.class.getClassLoader().getResourceAsStream(fileName)) {
 
             props = new Properties();
 
+            // If the input stream is null, the file was not found
             if (input == null) {
-                throw new Exception("Sorry, unable to find config.properties");
+                throw new Exception("Sorry, unable to find " + fileName);
             }
 
-            //load a properties file from class path, inside static method
+            // Load the properties file from the classpath
             props.load(input);
         } catch (IOException ex) {
             ex.printStackTrace();
@@ -40,6 +52,16 @@ public class PropertiesHelper {
         return props;
     }
 
+    /**
+     * Converts a Properties object into a HashMap.
+     * <p>
+     * This method iterates through the properties and converts them to a
+     * HashMap where the key-value pairs are stored as Strings.
+     * </p>
+     *
+     * @param prop the Properties object to be converted.
+     * @return a HashMap containing the key-value pairs of the properties.
+     */
     public static HashMap<String, String> toMap(Properties prop) {
         return prop.entrySet().stream().collect(
                 Collectors.toMap(
@@ -48,5 +70,4 @@ public class PropertiesHelper {
                         (prev, next) -> next, HashMap::new
                 ));
     }
-
 }

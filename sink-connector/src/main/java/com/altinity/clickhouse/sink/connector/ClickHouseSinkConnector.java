@@ -15,16 +15,40 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-
+/**
+ * The main connector class for the ClickHouse sink connector, which extends
+ * {@link SinkConnector} for integration with Kafka Connect. This connector
+ * is responsible for creating and configuring tasks that will write data
+ * to ClickHouse.
+ */
 public class ClickHouseSinkConnector extends SinkConnector {
 
-    // String configuration as properties
+    /**
+     * Interval (in milliseconds) to sleep when waiting for the connector to
+     * become ready.
+     */
+    private static final int THREAD_SLEEP_INTERVAL_MS = 5000;
+
+    /**
+     * Holds the configuration map for the connector, containing key-value
+     * pairs set by the user or the system.
+     */
     private Map<String, String> config;
-    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnector.class);
+
+    /**
+     * Logger for this class.
+     */
+    private static final Logger log = LogManager.getLogger(
+            ClickHouseSinkConnector.class);
+
+    /**
+     * Flag indicating if the connector is ready to accept data.
+     */
     private boolean ready;
 
     /**
-     *
+     * Default constructor. Initializes the ClickHouseSinkConnector and sets
+     * the {@code ready} flag to false.
      */
     public ClickHouseSinkConnector() {
         log.info("ClickHouseSinkConnector()");
@@ -33,7 +57,11 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     * @param conf
+     * Starts the connector by reading the given configuration, storing it,
+     * and initializing the metrics subsystem. Once this method completes,
+     * the connector is considered ready to accept data.
+     *
+     * @param conf the configuration map containing all necessary settings
      */
     @Override
     public void start(final Map<String, String> conf) {
@@ -44,12 +72,17 @@ public class ClickHouseSinkConnector extends SinkConnector {
         this.ready = true;
 
         // Initialize Metrics
-        Metrics.initialize(this.config.get(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
-                this.config.get(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
+        Metrics.initialize(
+                this.config.get(ClickHouseSinkConnectorConfigVariables
+                        .ENABLE_METRICS.toString()),
+                this.config.get(ClickHouseSinkConnectorConfigVariables
+                        .METRICS_ENDPOINT_PORT.toString())
+        );
     }
 
     /**
-     *
+     * Stops the connector, marking it as no longer ready to accept data,
+     * and stops the metrics subsystem.
      */
     @Override
     public void stop() {
@@ -60,7 +93,9 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     * @return
+     * Returns the {@link Task} implementation class for this connector.
+     *
+     * @return the task class that this connector uses
      */
     @Override
     public Class<? extends Task> taskClass() {
@@ -68,14 +103,17 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     * @param maxTasks
-     * @return
+     * Provides each of the {@code maxTasks} with its own configuration map.
+     * This method blocks until the connector is ready.
+     *
+     * @param maxTasks The maximum number of tasks to create
+     * @return A list of configuration maps, one per task
      */
     @Override
     public List<Map<String, String>> taskConfigs(final int maxTasks) {
         while (!this.ready) {
             try {
-                Thread.sleep(5000);
+                Thread.sleep(THREAD_SLEEP_INTERVAL_MS);
             } catch (InterruptedException ex) {
                 // Action may be interrupted
             }
@@ -84,16 +122,21 @@ public class ClickHouseSinkConnector extends SinkConnector {
         // Create personal configuration for each task
         List<Map<String, String>> configs = new ArrayList<>(maxTasks);
         for (int i = 0; i < maxTasks; i++) {
-            // Instantiate config from the main connector's config and personalize with additional params
+            // Instantiate config from the main connector's config
+            // and personalize with additional params
             Map<String, String> conf = new HashMap<>(this.config);
-            conf.put(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString(), Integer.toString(i));
+            conf.put(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString(),
+                    Integer.toString(i));
             configs.add(conf);
         }
         return configs;
     }
 
     /**
-     * @return
+     * Defines the configuration for this connector, including validation.
+     *
+     * @return The {@link ConfigDef} describing the connector's configuration
+     *         properties
      */
     @Override
     public ConfigDef config() {
@@ -101,30 +144,32 @@ public class ClickHouseSinkConnector extends SinkConnector {
     }
 
     /**
-     * @param conf
-     * @return
+     * Validates the given connector configuration. Logs the validation
+     * process and can be extended to verify connectivity to a ClickHouse
+     * server and the validity of the target database and schema.
+     *
+     * @param conf The configuration map to validate
+     * @return The validated {@link Config} object
      */
     @Override
     public Config validate(Map<String, String> conf) {
         log.debug("validate()");
-        // Insert name of the connector.
-        // TODO - should it be a parameter?
-        //conf.put(Const.NAME, "TEST_CONNECTOR");
         Config result = super.validate(conf);
         log.info("Config validated");
 
-        //ToDo: Also validate connection to clickhouse server
+        // ToDo: Also validate connection to clickhouse server
         // and check if database and schema is valid.
 
         return result;
     }
 
     /**
-     * @return
+     * Returns the version of the connector.
+     *
+     * @return The current version string of the connector
      */
     @Override
     public String version() {
         return Version.VERSION;
     }
-
 }

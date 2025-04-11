@@ -28,7 +28,7 @@ INSERT INTO public.tm VALUES (
 '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71',
 '9cb52b2a-8ef2-4987-8856-c79a1b2c2f72',
 '9cb52b2a-8ef2-4987-8856-c79a1b2c2f72',
-'IDR',
+'IDR 888884444524 (BK:BK_MTN_MOMO_PULL)',
 't',
 200000.00000,
 '2022-10-16 16:53:15.01957',
@@ -168,3 +168,12 @@ INSERT INTO protocol_test VALUES ('1778432', '21481203', 'Edward V  prisoners Pe
 create schema public2;
 set schema 'public2';
 CREATE TABLE "tm2" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);
+
+CREATE TABLE public2.table_time_with_timezone (
+    id SERIAL PRIMARY KEY,
+    event_name TEXT NOT NULL,
+    event_time TIME WITH TIME ZONE NOT NULL
+);
+INSERT INTO public2.table_time_with_timezone (event_name, event_time)
+VALUES
+('Meeting', '14:30:00-05:00');
