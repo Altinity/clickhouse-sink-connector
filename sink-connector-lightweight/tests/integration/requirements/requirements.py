@@ -545,6 +545,32 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes = Require
     num="12.8.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_SET = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'SET'\n"
+        "data types as they supported by [MySQL].\n"
+        "\n"
+        "Data types connection table:\n"
+        "\n"
+        "| MySQL | ClickHouse |\n"
+        "|:------|:----------:|\n"
+        "| SET   |   String   |\n"
+        "\n"
+        "The SET values SHALL be replicated as comma-separated strings in ClickHouse.\n"
+        "\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="12.9.1",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable",
     version="1.0",
@@ -562,7 +588,43 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirem
     ),
     link=None,
     level=3,
-    num="12.9.1",
+    num="12.10.1",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_True = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `true` for MySQL columns that have a `DEFAULT` constraint.\n"
+        "\n"
+        "When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="12.10.2",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.\n"
+        "\n"
+        "When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="12.10.3",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requirement(
@@ -585,7 +647,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requir
     ),
     link=None,
     level=3,
-    num="12.10.1",
+    num="12.11.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requirement(
@@ -608,7 +670,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString = Requ
     ),
     link=None,
     level=3,
-    num="12.10.2",
+    num="12.11.2",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
@@ -631,7 +693,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON = Requirement(
     ),
     link=None,
     level=3,
-    num="12.11.1",
+    num="12.12.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
@@ -654,7 +716,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Year = Requirement(
     ),
     link=None,
     level=3,
-    num="12.12.1",
+    num="12.13.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement(
@@ -678,7 +740,7 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Bytes = Requirement
     ),
     link=None,
     level=3,
-    num="12.13.1",
+    num="12.14.1",
 )
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Queries_Inserts = Requirement(
@@ -2818,40 +2880,56 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=3,
             num="12.8.1",
         ),
-        Heading(name="Nullable", level=2, num="12.9"),
+        Heading(name="SET", level=2, num="12.9"),
         Heading(
-            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable",
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET",
             level=3,
             num="12.9.1",
         ),
-        Heading(name="Enum", level=2, num="12.10"),
+        Heading(name="Nullable", level=2, num="12.10"),
         Heading(
-            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable",
             level=3,
             num="12.10.1",
         ),
         Heading(
-            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString",
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True",
             level=3,
             num="12.10.2",
         ),
-        Heading(name="JSON", level=2, num="12.11"),
         Heading(
-            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON",
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
+            level=3,
+            num="12.10.3",
+        ),
+        Heading(name="Enum", level=2, num="12.11"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
             level=3,
             num="12.11.1",
         ),
-        Heading(name="Year", level=2, num="12.12"),
         Heading(
-            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year",
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString",
+            level=3,
+            num="12.11.2",
+        ),
+        Heading(name="JSON", level=2, num="12.12"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON",
             level=3,
             num="12.12.1",
         ),
-        Heading(name="Bytes", level=2, num="12.13"),
+        Heading(name="Year", level=2, num="12.13"),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year",
+            level=3,
+            num="12.13.1",
+        ),
+        Heading(name="Bytes", level=2, num="12.14"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes",
             level=3,
-            num="12.13.1",
+            num="12.14.1",
         ),
         Heading(name="Queries", level=1, num="13"),
         Heading(name="Inserts", level=2, num="13.1"),
@@ -3596,7 +3674,10 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Binary,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_String,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_SET,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_True,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON,
@@ -3776,17 +3857,21 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         * 12.7.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.String](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesstring)
     * 12.8 [Blob Types](#blob-types)
         * 12.8.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.BlobTypes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesblobtypes)
-    * 12.9 [Nullable](#nullable)
-        * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
-    * 12.10 [Enum](#enum)
-        * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
-        * 12.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
-    * 12.11 [JSON](#json)
-        * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
-    * 12.12 [Year](#year)
-        * 12.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
-    * 12.13 [Bytes](#bytes)
-        * 12.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
+    * 12.9 [SET](#set)
+        * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesset)
+    * 12.10 [Nullable](#nullable)
+        * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+        * 12.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaulttrue)
+        * 12.10.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaultfalse)
+    * 12.11 [Enum](#enum)
+        * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
+        * 12.11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
+    * 12.12 [JSON](#json)
+        * 12.12.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.JSON](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesjson)
+    * 12.13 [Year](#year)
+        * 12.13.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Year](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesyear)
+    * 12.14 [Bytes](#bytes)
+        * 12.14.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Bytes](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesbytes)
 * 13 [Queries](#queries)
     * 13.1 [Inserts](#inserts)
         * 13.1.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.Queries.Inserts](#rqsrs-030clickhousemysqltoclickhousereplicationqueriesinserts)
@@ -4614,6 +4699,23 @@ Data types connection table:
 | Longblob     |          String + hex           |
 | Mediumblob   |          String + hex           |
 
+### SET
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET
+version: 1.0
+
+[Altinity Sink Connector] SHALL support data replication to [ClickHouse] of tables that contain columns with 'SET'
+data types as they supported by [MySQL].
+
+Data types connection table:
+
+| MySQL | ClickHouse |
+|:------|:----------:|
+| SET   |   String   |
+
+The SET values SHALL be replicated as comma-separated strings in ClickHouse.
+
+
 ### Nullable
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable
@@ -4624,6 +4726,20 @@ data types if this expected `Nullable(DataType)` construction should be used.
 
 For example, [MySQL] `VARCHAR(*)` maps to [ClickHouse] `Nullable(String)` and MySQL
 `VARCHAR(*) NOT NULL` maps to [ClickHouse] `String`
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `true` for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.
 
 ### Enum
 

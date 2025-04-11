@@ -9,14 +9,31 @@ import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserServic
 import com.google.inject.AbstractModule;
 
 /**
- * Google guice injection module.
+ * Google Guice injection module.
+ *
+ * <p>This module binds service interfaces to their respective
+ * implementations:
+ * <ul>
+ *   <li>{@link ConfigurationService} is bound to
+ *       {@link EnvironmentConfigurationService}</li>
+ *   <li>{@link DebeziumRecordParserService} is bound to
+ *       {@link SourceRecordParserService}</li>
+ *   <li>{@link DDLParserService} is bound to
+ *       {@link MySQLDDLParserService}</li>
+ * </ul>
  */
 public class AppInjector extends AbstractModule {
 
+    /**
+     * Configures the dependency injection bindings.
+     */
     @Override
     protected void configure() {
-        bind(ConfigurationService.class).to(EnvironmentConfigurationService.class);
-        bind(DebeziumRecordParserService.class).to(SourceRecordParserService.class);
-        bind(DDLParserService.class).to(MySQLDDLParserService.class);
+        bind(ConfigurationService.class)
+                .to(EnvironmentConfigurationService.class);
+        bind(DebeziumRecordParserService.class)
+                .to(SourceRecordParserService.class);
+        bind(DDLParserService.class)
+                .to(MySQLDDLParserService.class);
     }
 }

@@ -1,18 +1,3 @@
-/*
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -22,24 +7,46 @@ import org.apache.logging.log4j.Logger;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * The Utils class provides utility methods for handling configuration,
+ * parsing mappings, and validating table and database names. This includes
+ * functions to parse mappings between topics and tables, as well as to validate
+ * database names.
+ */
 public class Utils {
+
+    /**
+     * Logger instance for logging messages and errors.
+     */
     private static final Logger LOGGER = LogManager.getLogger(Utils.class);
 
+    /**
+     * Task ID constant for task identification.
+     */
     public static final String TASK_ID = "task_id";
-    // Connector version, change every release
+
+    /**
+     * Connector version, updated with each release.
+     */
     public static final String VERSION = "1.0.0";
 
     /**
-     * Function to parse the topic to table configuration parameter
+     * Parses the topic-to-destination database configuration and returns it as a map.
+     * <p>
+     * This method processes the input string in the format: <topic1>:<db1>,<topic2>:<db2>,...
+     * It splits the input string by commas and colons to form key-value pairs, validating
+     * each entry along the way. If any invalid format is found, an exception is thrown.
+     * </p>
      *
-     * @param input Delimiter separated list.
-     * @return key/value pair of configuration.
+     * @param input a comma-separated list of topic-to-destination database mappings.
+     * @return a map where the keys are topics and the values are corresponding databases.
+     * @throws Exception if the format of the input is invalid.
      */
     public static Map<String, String> parseSourceToDestinationDatabaseMap(String input) throws Exception {
         Map<String, String> srcToDestinationMap = new HashMap<>();
         boolean isInvalid = false;
 
-        if(input == null || input.isEmpty()) {
+        if (input == null || input.isEmpty()) {
             return srcToDestinationMap;
         }
 
@@ -57,17 +64,6 @@ public class Utils {
 
             String srcDatabase = tt[0].trim();
             String dstDatabase = tt[1].trim();
-
-            // Disable validation of source database.
-//            if (!isValidDatabaseName(srcDatabase)) {
-//                LOGGER.error(
-//                        Logging.logMessage(
-//                                "database name{} should have at least 2 "
-//                                        + "characters, start with _a-zA-Z, and only contains "
-//                                        + "_$a-zA-z0-9",
-//                                srcDatabase));
-//                isInvalid = true;
-//            }
 
             if (!isValidDatabaseName(dstDatabase)) {
                 LOGGER.error(
@@ -93,10 +89,16 @@ public class Utils {
     }
 
     /**
-     * Function to parse the topic to table configuration parameter
+     * Parses the topic-to-table configuration and returns it as a map.
+     * <p>
+     * This method processes the input string in the format: <topic1>:<table1>,<topic2>:<table2>,...
+     * It splits the input string by commas and colons to form key-value pairs, validating
+     * each entry along the way. If any invalid format is found, an exception is thrown.
+     * </p>
      *
-     * @param input Delimiter separated list.
-     * @return key/value pair of configuration.
+     * @param input a comma-separated list of topic-to-table mappings.
+     * @return a map where the keys are topics and the values are corresponding tables.
+     * @throws Exception if the format of the input is invalid.
      */
     public static Map<String, String> parseTopicToTableMap(String input) throws Exception {
         Map<String, String> topic2Table = new HashMap<>();
@@ -144,33 +146,52 @@ public class Utils {
     }
 
     /**
-     * Function to get Table name from kafka connect topic
-     * @param topicName
-     * @return Table Name
+     * Extracts the table name from the given Kafka topic name.
+     * <p>
+     * The Kafka topic name is expected to be in the format:
+     * hostname.dbName.tableName or hostname.dbName.schemaName.tableName.
+     * The table name will be extracted from the last segment of the topic name.
+     * </p>
+     *
+     * @param topicName the Kafka topic name.
+     * @return the extracted table name.
      */
     public static String getTableNameFromTopic(String topicName) {
         String tableName = null;
 
-
-            // topic names is of the following format.
-            // hostname.dbName.tableName or hostname.dbName.schemaName.tableName
-            String[] splitName = topicName.split("\\.");
-            if(splitName.length >= 3) {
-                tableName = splitName[splitName.length - 1];
-            }
+        // topic name is expected in the form of: hostname.dbName.tableName
+        String[] splitName = topicName.split("\\.");
+        if (splitName.length >= 3) {
+            tableName = splitName[splitName.length - 1];
+        }
 
         return tableName;
     }
+
     /**
-     * Function to valid table name passed in settings
-     * //ToDO: Implement the function.
+     * Validates if the provided table name meets the required conditions.
+     * <p>
+     * This method is a placeholder for the validation logic.
+     * </p>
      *
-     * @return Boolean.
+     * @param tableName the table name to validate.
+     * @return true if the table name is valid, false otherwise.
      */
     public static boolean isValidTable(String tableName) {
         return true;
     }
 
+    /**
+     * Validates if the provided database name meets the required conditions.
+     * <p>
+     * The database name should be non-empty, less than or equal to 63 characters,
+     * and its first character should be a letter or an underscore. Subsequent characters
+     * can be letters, digits, or underscores.
+     * </p>
+     *
+     * @param dbName the database name to validate.
+     * @return true if the database name is valid, false otherwise.
+     */
     public static boolean isValidDatabaseName(String dbName) {
         // Check if the name is empty or longer than 63 characters
         if (dbName == null || dbName.isEmpty() || dbName.length() > 63) {
@@ -186,8 +207,8 @@ public class Utils {
         // Check the remaining characters
         for (int i = 1; i < dbName.length(); i++) {
             char ch = dbName.charAt(i);
-            // If character is a underscore, continue
-            if(ch == '_') {
+            // If character is an underscore, continue
+            if (ch == '_') {
                 continue;
             }
             if (!(Character.isLetterOrDigit(ch) || ch == '.')) {
@@ -197,6 +218,4 @@ public class Utils {
 
         return true;
     }
-
-
 }

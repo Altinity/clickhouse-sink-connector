@@ -1,4 +1,4 @@
-name: Lightweight - TestFlows Tests 
+name: Lightweight - TestFlows Tests | x86
 run-name: ${{ inputs.custom_run_name || 'Lightweight - TestFlows Tests' }}
 
 on:    
