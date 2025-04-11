@@ -96,6 +96,20 @@ The default username/password is `admin/admin`
 ![](img/Grafana_dashboard.png)
 ![](img/Grafana_dashboard_2.png)
 
+**Setup Alerts for Lag** \
+To setup alerts for lag, you can use the Lag(Seconds) widget in Grafana.
+This widget displays the lag in seconds between the last record received by the sink connector and the time the current time in ClickHouse.
+Click on the three dots on the right, click on More and then click on "Nw Alert Rule".
+![](img/grafana_alert_1.png)
+
+This will open a new window where you can define the alert rule. as shown below.
+
+![](img/grafana_alert_2.png)
+
+The alert threshold can be tested in the Expresions tab as shown below.
+![](img/grafana_alert_3.png)
+
+
 
 **Memory**
 

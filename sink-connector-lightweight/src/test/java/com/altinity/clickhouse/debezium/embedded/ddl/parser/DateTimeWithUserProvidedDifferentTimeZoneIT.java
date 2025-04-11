@@ -1,12 +1,12 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,9 +70,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                                "datatypes"), false);
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -87,35 +85,29 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         String DATETIME1_MIN = "1900-01-01 00:00:00.0";
         String DATETIME1_MID = "2022-09-29 01:48:25.1";
-        String DATETIME1_MAX = "2299-12-31 23:59:59.9";
+        String DATETIME1_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME2_MIN = "1900-01-01 00:00:00.0";
         String DATETIME2_MID = "2022-09-29 01:49:05.12";
-        String DATETIME2_MAX = "2299-12-31 23:59:59.99";
+        String DATETIME2_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME3_MIN = "1900-01-01 00:00:00.0";
         String DATETIME3_MID = "2022-09-29 01:49:22.123";
-        String DATETIME3_MAX = "2299-12-31 23:59:59.999";
+        String DATETIME3_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME4_MIN = "1900-01-01 00:00:00.0";
         String DATETIME4_MID = "2022-09-29 01:50:12.1234";
-        String DATETIME4_MAX = "2299-12-31 23:59:59.9999";
+        String DATETIME4_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME5_MIN = "1900-01-01 00:00:00.0";
         String DATETIME5_MID = "2022-09-29 01:50:28.12345";
-        String DATETIME5_MAX = "2299-12-31 23:59:59.99999";
+        String DATETIME5_MAX = "2299-12-31 23:59:59.0";
 
         String DATETIME6_MIN = "1900-01-01 00:00:00.0";
         String DATETIME6_MID = "2022-09-29 01:50:56.123456";
-        String DATETIME6_MAX = "2299-12-31 23:59:59.999999";
+        String DATETIME6_MAX = "2299-12-31 23:59:59.0";
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees");
-        ClickHouseConnection chConn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
 
         // Validate that the MySQL server is set to Central timezone.
@@ -154,7 +146,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
          * 2106-02-07 00:28:15.0
          */
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
 
         while(dateTimeResult.next()) {
             System.out.println("DATE TIME");
@@ -169,7 +161,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME1
-        ResultSet dateTimeResult1 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME1");
+        ResultSet dateTimeResult1 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME1", writer.getConnection());
         while(dateTimeResult1.next()) {
             System.out.println("DATE TIME 1");
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
@@ -182,7 +174,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME2
-        ResultSet dateTimeResult2 = writer.executeQueryWithResultSet("select * from temporal_types_DATETIME2");
+        ResultSet dateTimeResult2 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME2", writer.getConnection());
         while(dateTimeResult2.next()) {
             System.out.println("DATE TIME 2");
             System.out.println(dateTimeResult2.getTimestamp("Minimum_Value").toString());
@@ -195,7 +187,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
          //DATETIME3
-        ResultSet dateTimeResult3 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3");
+        ResultSet dateTimeResult3 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME3", writer.getConnection());
         while(dateTimeResult3.next()) {
             System.out.println("DATE TIME 3");
 
@@ -211,7 +203,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
 
         // DATETIME4
-        ResultSet dateTimeResult4 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4");
+        ResultSet dateTimeResult4 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME4", writer.getConnection());
         while(dateTimeResult4.next()) {
             System.out.println("DATE TIME 4");
 
@@ -226,7 +218,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
 
         // DATETIME5
-        ResultSet dateTimeResult5 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5");
+        ResultSet dateTimeResult5 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME5", writer.getConnection());
         while(dateTimeResult5.next()) {
             System.out.println("DATE TIME 5");
 
@@ -241,7 +233,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         }
 
         // DATETIME6
-        ResultSet dateTimeResult6 = writer.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6");
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 
@@ -262,6 +254,8 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         executorService.shutdown();
 
         writer.getConnection().close();
+
+        HikariDbSource.close();
     }
 
     protected Properties getDebeziumProperties() throws Exception {

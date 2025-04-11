@@ -869,10 +869,11 @@ def module(
     ):
         create_databases(databases=self.context.list_of_databases)
 
+
     if engine == "ReplacingMergeTree":
-        self.context.config_file = os.path.join("env", "auto", "configs")
+        self.context.config_file = os.path.join("env", f"auto{'_arm64' if current_cpu() == 'aarch64' else ''}", "configs")
     elif engine == "ReplicatedReplacingMergeTree":
-        self.context.config_file = os.path.join("env", "auto_replicated", "configs")
+        self.context.config_file = os.path.join("env", f"auto_replicated{'_arm64' if current_cpu() == 'aarch64' else ''}", "configs")
 
     with And(
         "I create a new ClickHouse Sink Connector configuration to monitor all of the databases"

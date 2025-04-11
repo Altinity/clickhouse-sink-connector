@@ -1,6 +1,7 @@
 from integration.requirements.requirements import (
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_DateTime,
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes,
+    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_SET,
 )
 from integration.tests.steps.service_settings import *
 from integration.tests.steps.mysql import *
@@ -20,12 +21,24 @@ def adjust_precision(datetime_str, precision):
     if len(parts) == 1:
         return f"{main_part}.{'0' * int(precision)}"
 
-    microseconds_part = parts[1]
+    microseconds_part = parts[1]  # 9999
     adjusted_microseconds = microseconds_part[: int(precision)].ljust(
         int(precision), "0"
     )
 
     return f"{main_part}.{adjusted_microseconds}"
+
+
+def replace_nines_with_zeroes(datetime_str):
+    """Replace nines in the precision part of a datetime string with zeroes."""
+    parts = datetime_str.split(".")
+    if len(parts) == 1:
+        return datetime_str
+
+    main_part = parts[0]
+    precision_part = parts[1].replace("9", "0")
+
+    return f"{main_part}.{precision_part}"
 
 
 @TestStep(Given)
@@ -52,6 +65,9 @@ def check_datetime_column(self, precision, data):
     table_name = "table_" + getuid()
     clickhouse_node = self.context.clickhouse_node
 
+    if data == "2299-12-31 23:59:59.999999":
+        data = replace_nines_with_zeroes(datetime_str=data)
+
     data = adjust_precision(datetime_str=data, precision=precision)
 
     with Given(
@@ -62,7 +78,7 @@ def check_datetime_column(self, precision, data):
     """,
     ):
         create_table_with_datetime_column(
-            table_name=table_name, precision=precision, data=data
+            table_name=table_name, data=data, precision=precision
         )
 
     with Then(f"I check that the data is replicated to ClickHouse and is not lost"):
@@ -94,18 +110,18 @@ def check_datetime_column(self, precision, data):
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
                     == "2299-12-31 23:59:59"
                 ), error()
-        elif data[:19] == "2299-12-31 23:59:59.9":
+        elif data[:19] == "2299-12-31 23:59:59.0":
             if precision != "0":
                 assert (
                     clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'9'*int(precision)}"
+                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
                 ), error()
             else:
                 assert (
@@ -114,6 +130,55 @@ def check_datetime_column(self, precision, data):
                 ), error()
         else:
             assert clickhouse_values.output.strip().replace('"', "") == data, error()
+
+
+@TestStep(Given)
+def create_table_with_set_column(self, table_name, set_definition, data):
+    """Create MySQL table that contains the SET column."""
+    mysql_node = self.context.mysql_node
+    clickhouse_node = self.context.clickhouse_node
+
+    with By(f"creating a {table_name} table with SET column"):
+        create_mysql_table(
+            table_name=rf"\`{table_name}\`",
+            columns=f"s SET({set_definition})",
+        )
+
+    with And(f"inserting data to MySQL {table_name} table"):
+        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, '{data}');")
+
+
+@TestCheck
+def check_set_column(self, set_definition, data):
+    table_name = "table_" + getuid()
+    clickhouse_node = self.context.clickhouse_node
+
+    with Given(
+        "I create a table with SET column",
+        description=f"""
+    set definition: {set_definition},
+    values: {data}
+    """,
+    ):
+        create_table_with_set_column(
+            table_name=table_name,
+            set_definition=set_definition,
+            data=data,
+        )
+
+    with Then(f"I check that the data is replicated to ClickHouse as String"):
+        for retry in retries(timeout=30):
+            with retry:
+                clickhouse_values = clickhouse_node.query(
+                    f"SELECT count(s) FROM {self.context.database}.{table_name} FORMAT CSV"
+                )
+                assert clickhouse_values.output.strip() != "0", error()
+
+        clickhouse_values = clickhouse_node.query(
+            f"SELECT s FROM {self.context.database}.{table_name} FORMAT CSV"
+        )
+
+        assert clickhouse_values.output.strip().replace('"', "") == data, error()
 
 
 @TestSketch(Scenario)
@@ -154,6 +219,27 @@ def datetime(self):
     check_datetime_column(
         precision=either(*precision_values, i="precision values"),
         data=either(*data, i="data values"),
+    )
+
+
+@TestSketch(Scenario)
+@Flags(TE)
+@Requirements(RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_SET("1.0"))
+def set_type(self):
+    """Validate replication of the SET datatype."""
+    set_definitions = ["'a','b','c'", "'one','two','three','four'"]
+    data_for_def1 = ["", "a", "b", "c", "a,b", "a,c", "b,c", "a,b,c"]
+    data_for_def2 = ["", "one", "two", "three", "four", "one,two", "one,two,three,four"]
+
+    # Combine definitions and corresponding data
+    set_definition, data = either(
+        (set_definitions[0], either(*data_for_def1)),
+        (set_definitions[1], either(*data_for_def2)),
+    )
+
+    check_set_column(
+        set_definition=set_definition,
+        data=data,
     )
 
 

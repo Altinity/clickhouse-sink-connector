@@ -2,6 +2,9 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
+
+
 import org.apache.log4j.BasicConfigurator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,8 +16,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
 import java.util.Properties;
 
 @Testcontainers
@@ -60,8 +61,11 @@ public class DDLBaseIT {
 
     protected Properties getDebeziumProperties() throws Exception {
 
-        return ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+        Properties props =  ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
+        props.put(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
+
+        return props;
     }
 
 }

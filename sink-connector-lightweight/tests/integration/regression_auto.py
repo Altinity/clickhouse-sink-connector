@@ -160,6 +160,7 @@ def regression(
     local,
     clickhouse_binary_path,
     clickhouse_version,
+    hikari_pool,
     env="env/auto",
     stress=None,
     thread_fuzzer=None,
@@ -173,6 +174,14 @@ def regression(
         "zookeeper": ("zookeeper",),
     }
 
+    if not hikari_pool:
+        default_config["connection.pool.disable"] = "true"
+        default_config["clickhouse.jdbc.params"] = (
+            "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+        )
+    else:
+        default_config["connection.pool.disable"] = "false"
+
     self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
     self.context.config = SinkConfig()
@@ -183,6 +192,11 @@ def regression(
 
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
+
+    if current_cpu() == "aarch64":
+        env = f"env/auto_arm64"
+    else:
+        env = "env/auto"
 
     with Given("docker-compose cluster"):
         cluster = create_cluster(

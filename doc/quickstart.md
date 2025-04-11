@@ -30,13 +30,17 @@ sudo apt install clickhouse-client
 
 Use Docker Compose to start containers.
 Set the `CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE` to the latest release from the Releases page.
-or run `./getLatestTag.sh` which will set the environment variable 
+or run `./getLatestTag.sh` which will print the environment variable 
+that need to be exported.
 
 ```
 cd sink-connector-lightweight/docker
 ./getLatestTag.sh
 ```
-
+Example:
+```
+ export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.5.0-lt
+```
 ```
 docker compose -f docker-compose-mysql.yml up --renew-anon-volumes
 ```

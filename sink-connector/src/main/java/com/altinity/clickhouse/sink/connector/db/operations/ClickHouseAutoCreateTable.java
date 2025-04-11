@@ -1,12 +1,13 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.data.ClickHouseDataType;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Map;
@@ -15,62 +16,119 @@ import java.util.stream.Collectors;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
 /**
- * Class that wraps all functionality
- * related to creating tables
- * from kafka sink record.
+ * Wraps all functionality related to creating tables from Kafka sink
+ * records.
+ *
+ * <p>This class auto-generates the SQL for table creation and executes
+ * the query to create a new table in ClickHouse.
  */
-public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
+public class ClickHouseAutoCreateTable
+        extends ClickHouseTableOperationsBase {
 
+    /**
+     * Logger instance for the ClickHouseAutoCreateTable class.
+     */
+    private static final Logger log = LogManager.getLogger(
+            ClickHouseAutoCreateTable.class.getName());
 
-    private static final Logger log = LogManager.getLogger(ClickHouseAutoCreateTable.class.getName());
-
-    public void createNewTable(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
-                               ClickHouseConnection connection, boolean isNewReplacingMergeTree,
-                               boolean useReplicatedReplacingMergeTree, String rmtDeleteColumn) throws SQLException {
-        Map<String, String> colNameToDataTypeMap = this.getColumnNameToCHDataTypeMapping(fields);
-        String createTableQuery = this.createTableSyntax(primaryKey, tableName, databaseName, fields, colNameToDataTypeMap,
-                isNewReplacingMergeTree, useReplicatedReplacingMergeTree, rmtDeleteColumn);
-        log.info(String.format("**** AUTO CREATE TABLE for database(%s), Query :%s)", databaseName, createTableQuery));
-        // ToDO: need to run it before a session is created.
-        this.runQuery(createTableQuery, connection);
+    /**
+     * Creates a new ClickHouse table using the provided fields and primary
+     * key.
+     *
+     * <p>This method builds the CREATE TABLE query based on the provided
+     * fields and configuration flags, logs the query, and executes it.
+     *
+     * @param primaryKey an ArrayList of primary key columns
+     * @param tableName the name of the table to create
+     * @param databaseName the name of the database in which the table is
+     *                     to be created
+     * @param fields an array of fields from the Kafka sink record
+     * @param connection a JDBC Connection to the ClickHouse database
+     * @param isNewReplacingMergeTree flag indicating the new engine type
+     * @param useReplicatedReplacingMergeTree flag indicating use of a
+     *                                        replicated engine
+     * @param rmtDeleteColumn the column name for the delete flag; if null,
+     *                        a default is used
+     * @throws SQLException if a SQL exception occurs during table creation
+     */
+    public void createNewTable(ArrayList<String> primaryKey, String tableName,
+                               String databaseName, Field[] fields,
+                               Connection connection,
+                               boolean isNewReplacingMergeTree,
+                               boolean useReplicatedReplacingMergeTree,
+                               String rmtDeleteColumn)
+            throws SQLException {
+        Map<String, String> colNameToDataTypeMap =
+                this.getColumnNameToCHDataTypeMapping(fields);
+        String createTableQuery = this.createTableSyntax(primaryKey, tableName,
+                databaseName, fields, colNameToDataTypeMap,
+                isNewReplacingMergeTree, useReplicatedReplacingMergeTree,
+                rmtDeleteColumn);
+        log.info(String.format("**** AUTO CREATE TABLE for database(%s), "
+                + "Query :%s)", databaseName, createTableQuery));
+        // TODO: Run this before a session is created.
+        DBMetadata metadata = new DBMetadata();
+        metadata.executeSystemQuery(connection, createTableQuery);
     }
 
     /**
-     * Function to generate CREATE TABLE for ClickHouse.
+     * Generates the CREATE TABLE SQL syntax for ClickHouse.
      *
-     * @param primaryKey
-     * @param columnToDataTypesMap
-     * @return CREATE TABLE query
+     * <p>The SQL is built based on the provided map of column names to data
+     * types, along with the specified engine flags.
+     *
+     * <pre>
+     * CREATE TABLE database.`table_name`
+     *   ( `col1` data_type1, `col2` data_type2, ... )
+     *   Engine=ReplacingMergeTree(version_column)
+     *   PRIMARY KEY(col1) ORDER BY(col1)
+     * </pre>
+     *
+     * @param primaryKey a list of primary key columns
+     * @param tableName the name of the table to create
+     * @param databaseName the name of the database
+     * @param fields an array of Kafka Connect fields
+     * @param columnToDataTypesMap a map of column names to ClickHouse
+     *                             data types
+     * @param isNewReplacingMergeTreeEngine flag for new engine type usage
+     * @param useReplicatedReplacingMergeTree flag for using replicated engine
+     * @param rmtDeleteColumn the deletion column name; if null or empty, a
+     *                        default is used
+     * @return a SQL string for creating the table
      */
-    public java.lang.String createTableSyntax(ArrayList<String> primaryKey, String tableName, String databaseName, Field[] fields,
-                                              Map<String, String> columnToDataTypesMap,
-                                              boolean isNewReplacingMergeTreeEngine,
-                                              boolean useReplicatedReplacingMergeTree,
-                                              String rmtDeleteColumn) {
+    public String createTableSyntax(ArrayList<String> primaryKey,
+                                    String tableName, String databaseName, Field[] fields,
+                                    Map<String, String> columnToDataTypesMap,
+                                    boolean isNewReplacingMergeTreeEngine,
+                                    boolean useReplicatedReplacingMergeTree,
+                                    String rmtDeleteColumn) {
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        createTableSyntax.append(CREATE_TABLE).append(" ").append(databaseName).append(".").append("`").append(tableName).append("`");
-        if(useReplicatedReplacingMergeTree == true) {
+        createTableSyntax.append(CREATE_TABLE).append(" ")
+                .append(databaseName).append(".")
+                .append("`").append(tableName).append("`");
+        if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");
         }
 
         createTableSyntax.append("(");
 
-        for(Field f: fields) {
+        for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
             boolean isNull = false;
-            if(f.schema().isOptional() == true) {
+            if (f.schema().isOptional() == true) {
                 isNull = true;
             }
-            createTableSyntax.append("`").append(colName).append("`").append(" ").append(dataType);
+            createTableSyntax.append("`").append(colName).append("`")
+                    .append(" ").append(dataType);
 
-            // Ignore setting NULL OR not NULL for JSON and Array
-            if(dataType != null &&
-                    (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name()) ||
-                            dataType.contains(ClickHouseDataType.Array.name()))) {
-                // ignore adding nulls;
+            // Ignore setting NULL/NOT NULL for JSON and Array types.
+            if (dataType != null
+                    && (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name())
+                    || dataType.contains(ClickHouseDataType.Array.name()))) {
+                // Do not append null constraints.
             } else {
                 if (isNull) {
                     createTableSyntax.append(" ").append(NULL);
@@ -79,59 +137,84 @@ public class ClickHouseAutoCreateTable extends ClickHouseTableOperationsBase{
                 }
             }
             createTableSyntax.append(",");
-
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
-
-        if(rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
+        if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
         }
 
-        if(isNewReplacingMergeTreeEngine == true) {
-            createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
-            createTableSyntax.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+        if (isNewReplacingMergeTreeEngine == true) {
+            createTableSyntax.append("`").append(VERSION_COLUMN)
+                    .append("` ").append(VERSION_COLUMN_DATA_TYPE)
+                    .append(",");
+            createTableSyntax.append("`").append(isDeletedColumn)
+                    .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
         } else {
-            // Append sign and version columns
-            createTableSyntax.append("`").append(SIGN_COLUMN).append("` ").append(SIGN_COLUMN_DATA_TYPE).append(",");
-            createTableSyntax.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE);
+            // Append sign and version columns.
+            createTableSyntax.append("`").append(SIGN_COLUMN)
+                    .append("` ").append(SIGN_COLUMN_DATA_TYPE)
+                    .append(",");
+            createTableSyntax.append("`").append(VERSION_COLUMN)
+                    .append("` ").append(VERSION_COLUMN_DATA_TYPE);
         }
         createTableSyntax.append(")");
         createTableSyntax.append(" ");
 
-        if(isNewReplacingMergeTreeEngine == true ){
-            if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
-            } else
-                createTableSyntax.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
+        if (isNewReplacingMergeTreeEngine == true) {
+            if (useReplicatedReplacingMergeTree == true) {
+                createTableSyntax.append(String.format(
+                        "Engine=ReplicatedReplacingMergeTree(%s, %s)",
+                        VERSION_COLUMN, isDeletedColumn));
+            } else {
+                createTableSyntax.append(" Engine=ReplacingMergeTree(")
+                        .append(VERSION_COLUMN).append(",")
+                        .append(isDeletedColumn).append(")");
+            }
         } else {
-            if(useReplicatedReplacingMergeTree == true) {
-                createTableSyntax.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
-            } else
-                createTableSyntax.append("ENGINE = ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
+            if (useReplicatedReplacingMergeTree == true) {
+                createTableSyntax.append(String.format(
+                        "Engine=ReplicatedReplacingMergeTree(%s)",
+                        VERSION_COLUMN));
+            } else {
+                createTableSyntax.append("ENGINE = ReplacingMergeTree(")
+                        .append(VERSION_COLUMN).append(")");
+            }
         }
         createTableSyntax.append(" ");
 
-        if(primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+        if (primaryKey != null
+                && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
-            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(primaryKey.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining(",")));
             createTableSyntax.append(") ");
-
             createTableSyntax.append(ORDER_BY).append("(");
-            createTableSyntax.append(primaryKey.stream().map(Object::toString).collect(Collectors.joining(",")));
+            createTableSyntax.append(primaryKey.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining(",")));
             createTableSyntax.append(")");
         } else {
-            // ToDO:
+            // TODO: Define a default ORDER BY clause.
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
-       return createTableSyntax.toString();
+        return createTableSyntax.toString();
     }
 
+    /**
+     * Checks if all primary key columns are present in the column-to-data
+     * type map.
+     *
+     * @param primaryKeys a list of primary key column names
+     * @param columnToDataTypesMap a map of column names to data types
+     * @return true if all primary key columns are present; false otherwise
+     */
     @VisibleForTesting
-    boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys, Map<String, String> columnToDataTypesMap) {
-
-        for(String primaryKey: primaryKeys) {
-            if(!columnToDataTypesMap.containsKey(primaryKey)) {
+    boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,
+                                      Map<String, String> columnToDataTypesMap) {
+        for (String primaryKey : primaryKeys) {
+            if (!columnToDataTypesMap.containsKey(primaryKey)) {
                 return false;
             }
         }
