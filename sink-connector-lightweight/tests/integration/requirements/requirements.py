@@ -591,6 +591,42 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable = Requirem
     num="12.10.1",
 )
 
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_True = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `true` for MySQL columns that have a `DEFAULT` constraint.\n"
+        "\n"
+        "When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="12.10.2",
+)
+
+RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False = Requirement(
+    name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
+    version="1.0",
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.\n"
+        "\n"
+        "When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.\n"
+        "\n"
+    ),
+    link=None,
+    level=3,
+    num="12.10.3",
+)
+
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
     version="1.0",
@@ -2856,6 +2892,16 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
             level=3,
             num="12.10.1",
         ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True",
+            level=3,
+            num="12.10.2",
+        ),
+        Heading(
+            name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
+            level=3,
+            num="12.10.3",
+        ),
         Heading(name="Enum", level=2, num="12.11"),
         Heading(
             name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum",
@@ -3630,6 +3676,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_BlobTypes,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_SET,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_Nullable,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_True,
+        RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToEnum,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_EnumToString,
         RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_JSON,
@@ -3813,6 +3861,8 @@ SRS030_MySQL_to_ClickHouse_Replication = Specification(
         * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesset)
     * 12.10 [Nullable](#nullable)
         * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+        * 12.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaulttrue)
+        * 12.10.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaultfalse)
     * 12.11 [Enum](#enum)
         * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
         * 12.11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
@@ -4676,6 +4726,20 @@ data types if this expected `Nullable(DataType)` construction should be used.
 
 For example, [MySQL] `VARCHAR(*)` maps to [ClickHouse] `Nullable(String)` and MySQL
 `VARCHAR(*) NOT NULL` maps to [ClickHouse] `String`
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `true` for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.
 
 ### Enum
 

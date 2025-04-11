@@ -1,5 +1,6 @@
 import yaml
 
+from integration.helpers.common import current_cpu
 from integration.helpers.default_config import default_config
 from testflows.core import *
 
@@ -52,6 +53,10 @@ class SinkConfig:
 @TestStep(Given)
 def create_default_sink_config(self, path="env/auto/configs/config.yml"):
     """Create the default sink connector configuration."""
+
+    if current_cpu() == "aarch64":
+        path = "env/auto_arm64/configs/config.yml"
+
     config = self.context.config
 
     with By(f"creating the default sink connector configuration file"):
@@ -65,6 +70,9 @@ def create_default_sink_config_replicated(
     """Create the default sink connector configuration."""
     config = self.context.config
 
+    if current_cpu() == "aarch64":
+        path = "env/auto_arm64/configs/replicated_config.yml"
+
     with By(f"creating the default sink connector configuration file"):
         config.update(
             {"auto.create.tables.replicated": "true", "auto.create.tables": "true"}
@@ -76,6 +84,9 @@ def create_default_sink_config_replicated(
 def update_sink_config(self, new_data: dict, path="env/auto/configs/config.yml"):
     """Update the sink connector configuration."""
     config = self.context.config
+
+    if current_cpu() == "aarch64":
+        path = "env/auto_arm64/configs/config.yml"
 
     with By(f"updating the sink connector configuration file"):
         config.update(new_data)

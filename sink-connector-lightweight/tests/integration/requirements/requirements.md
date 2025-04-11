@@ -68,6 +68,8 @@
         * 12.9.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.SET](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesset)
     * 12.10 [Nullable](#nullable)
         * 12.10.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.Nullable](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullable)
+        * 12.10.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaulttrue)
+        * 12.10.3 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesnullabledefaultfalse)
     * 12.11 [Enum](#enum)
         * 12.11.1 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToEnum](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtoenum)
         * 12.11.2 [RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.EnumToString](#rqsrs-030clickhousemysqltoclickhousereplicationdatatypesenumtostring)
@@ -931,6 +933,20 @@ data types if this expected `Nullable(DataType)` construction should be used.
 
 For example, [MySQL] `VARCHAR(*)` maps to [ClickHouse] `Nullable(String)` and MySQL
 `VARCHAR(*) NOT NULL` maps to [ClickHouse] `String`
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.True
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `true` for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.
+
+#### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False
+version: 1.0
+
+[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.
+
+When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.
 
 ### Enum
 

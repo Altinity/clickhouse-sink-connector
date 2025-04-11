@@ -174,7 +174,9 @@ def regression(
 
     if not hikari_pool:
         default_config["connection.pool.disable"] = "true"
-        default_config["clickhouse.jdbc.params"] = "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+        default_config["clickhouse.jdbc.params"] = (
+            "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+        )
     else:
         default_config["connection.pool.disable"] = "false"
 
@@ -189,6 +191,11 @@ def regression(
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
 
+    if current_cpu() == "aarch64":
+        env = f"auto_replicated_arm64"
+    else:
+        env = "auto_replicated"
+
     with Given("docker-compose cluster"):
         cluster = create_cluster(
             local=local,
@@ -202,7 +209,7 @@ def regression(
         )
 
     self.context.cluster = cluster
-
+    
     self.context.env = env
 
     self.context.clickhouse_table_engine = "ReplicatedReplacingMergeTree"
@@ -220,9 +227,9 @@ def regression(
 
     with And("I start sink-connector-lightweight"):
         self.context.sink_node = cluster.node("clickhouse-sink-connector-lt")
-
+        
         self.context.sink_node.start_sink_connector(
-            config_file="env/auto_replicated/configs/replicated_config.yml"
+            config_file=os.path.join(current_dir(), self.context.env, "configs", "replicated_config.yml")
         )
 
     with Pool(1) as executor:

@@ -176,10 +176,11 @@ def regression(
 
     if not hikari_pool:
         default_config["connection.pool.disable"] = "true"
-        default_config["clickhouse.jdbc.params"] = "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+        default_config["clickhouse.jdbc.params"] = (
+            "max_open_connections=100,keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+        )
     else:
         default_config["connection.pool.disable"] = "false"
-
 
     self.context.nodes = nodes
     self.context.clickhouse_version = clickhouse_version
@@ -191,6 +192,11 @@ def regression(
 
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
+
+    if current_cpu() == "aarch64":
+        env = f"auto_arm64"
+    else:
+        env = "auto"
 
     with Given("docker-compose cluster"):
         cluster = create_cluster(
@@ -309,6 +315,11 @@ def regression(
         )
         Feature(
             run=load("tests.retry_on_fail", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.nullable_default", "module"),
             parallel=True,
             executor=executor,
         )
