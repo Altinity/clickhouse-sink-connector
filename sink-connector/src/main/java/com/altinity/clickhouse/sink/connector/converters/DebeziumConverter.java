@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.TimeZone;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -71,18 +72,31 @@ public class DebeziumConverter {
          * @param value
          * @return
          */
-        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
-            // Input is a long.
-            Instant i = ofEpochMilli((long) value);
+            Long epochMillis = (Long) value;
+            // Step 1: Convert from incorrect timezone to LocalDateTime
+            //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
-            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
+            // Get the milliseconds value of the timezone.
+            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
+            int sourceOffset = sourceTZ.getRawOffset();
+
+            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillis)))) {
+                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            }
+
+            // Add this offset to wrongly calculated epoch.
+            Long epochMillisWithOffset = epochMillis - sourceOffset;
+            Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
+
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
 
@@ -195,48 +209,70 @@ public class DebeziumConverter {
             boolean parsingSuccesful = false;
             for (String formatString : date_formats) {
                 try {
-                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString).withZone(serverTimezone);
-                    ZonedDateTime zd = ZonedDateTime.parse((String) value, formatter.withZone(serverTimezone));
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString)
+                            .withZone(serverTimezone);
+                    ZonedDateTime zd = ZonedDateTime.parse((String) value,
+                            formatter.withZone(serverTimezone));
 
                     long dateTimeInMs = zd.toInstant().toEpochMilli();
-                    if(dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX * 1000) {
-                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX), serverTimezone);
-                    } else if(dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN * 1000) {
-                        zd = ZonedDateTime.ofInstant(Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN), serverTimezone);
+                    if (dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX * 1000) {
+                        zd = ZonedDateTime.ofInstant(
+                                Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX),
+                                serverTimezone);
+                    } else if (dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN * 1000) {
+                        zd = ZonedDateTime.ofInstant(
+                                Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN),
+                                serverTimezone);
                     }
                     result = zd.format(destFormatter);
                     parsingSuccesful = true;
                     break;
-                } catch(Exception e) {
-                    // Continue
+                } catch (Exception e) {
+                    // Continue to next format
                 }
             }
-            if(parsingSuccesful == false) {
+            if (parsingSuccesful == false) {
                 log.error("Error parsing zonedtimestamp " + (String) value);
             }
-
             return result;
         }
     }
 
+    /**
+     * Removes trailing zeros and an optional trailing dot from the input string.
+     *
+     * @param data The string to be processed.
+     * @return the string without trailing zeros and dot.
+     */
     static public String removeTrailingZeros(String data) {
         String result = "";
-
-        if(data != null) {
+        if (data != null) {
             result = StringUtils.stripEnd(StringUtils.stripEnd(data, "0"), ".");
         }
-
         return result;
     }
 
+    /**
+     * BigDecimalConverter provides a method to truncate a BigDecimal
+     * value based on supported limits.
+     */
     public static class BigDecimalConverter {
 
+        /**
+         * Truncates the provided BigDecimal value to the maximum or minimum
+         * supported value if it exceeds the ClickHouse limits.
+         *
+         * @param value the BigDecimal value to be truncated.
+         * @return the truncated BigDecimal value.
+         */
         public BigDecimal truncate(BigDecimal value) {
-            if(value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
-                log.warn("Decimal value {} is greater than max value {}", value, BinaryStreamUtils.DECIMAL128_MAX);
+            if (value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
+                log.warn("Decimal value {} is greater than max value {}",
+                        value, BinaryStreamUtils.DECIMAL128_MAX);
                 return BinaryStreamUtils.DECIMAL128_MAX;
-            } else if(value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
-                log.warn("Decimal value {} is less than min value {}", value, BinaryStreamUtils.DECIMAL128_MIN);
+            } else if (value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
+                log.warn("Decimal value {} is less than min value {}",
+                        value, BinaryStreamUtils.DECIMAL128_MIN);
                 return BinaryStreamUtils.DECIMAL128_MIN;
             } else {
                 return value;

@@ -121,13 +121,23 @@
       <artifactId>javalin-testtools</artifactId>
       <version>5.5.0</version>
       <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>okhttp</artifactId>
+          <groupId>com.squareup.okhttp3</groupId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-connector-mongodb</artifactId>
-      <version>3.0.0.Final</version>
+      <version>3.1.0.Alpha2</version>
       <scope>test</scope>
       <exclusions>
+        <exclusion>
+          <artifactId>debezium-sink</artifactId>
+          <groupId>io.debezium</groupId>
+        </exclusion>
         <exclusion>
           <artifactId>mongodb-driver-sync</artifactId>
           <groupId>org.mongodb</groupId>
@@ -137,7 +147,7 @@
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-testing-testcontainers</artifactId>
-      <version>3.0.0.Final</version>
+      <version>3.1.0.Alpha2</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -163,6 +173,10 @@
         <exclusion>
           <artifactId>quarkus-test-common</artifactId>
           <groupId>io.quarkus</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>okhttp</artifactId>
+          <groupId>com.squareup.okhttp3</groupId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -377,7 +391,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
     <maven.compiler.target>17</maven.compiler.target>
-    <version.debezium>3.0.0.Final</version.debezium>
+    <version.debezium>3.1.0.Alpha2</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>
 </project>

@@ -13,7 +13,6 @@ import org.apache.kafka.common.config.ConfigDef.Type;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-
 import java.util.Map;
 
 /**
@@ -23,63 +22,176 @@ import java.util.Map;
  */
 public class ClickHouseSinkConnectorConfig extends AbstractConfig {
 
-    public static long BUFFER_COUNT_DEFAULT = 100;
+    /**
+     * Default buffer count value.
+     */
+    public static final long BUFFER_COUNT_DEFAULT = 100L;
 
-    private static final Logger log = LogManager.getLogger(ClickHouseSinkConnectorConfig.class);
+    /**
+     * Default port for ClickHouse.
+     */
+    private static final int DEFAULT_CLICKHOUSE_PORT = 8123;
+
+    /**
+     * Default endpoint port for metrics.
+     */
+    private static final int DEFAULT_METRICS_ENDPOINT_PORT = 8084;
+
+    /**
+     * Default buffer flush time (seconds).
+     */
+    private static final long DEFAULT_BUFFER_FLUSH_TIME = 30L;
+
+    /**
+     * Default buffer flush timeout (milliseconds).
+     */
+    private static final long DEFAULT_BUFFER_FLUSH_TIMEOUT = 1000L;
+
+    /**
+     * Default maximum records in the buffer before flush.
+     */
+    private static final long DEFAULT_BUFFER_MAX_RECORDS = 100000L;
+
+    /**
+     * Default thread pool size.
+     */
+    private static final int DEFAULT_THREAD_POOL_SIZE = 10;
+
+    /**
+     * Default maximum size of the queue.
+     */
+    private static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
+
+    /**
+     * Default timeout period for restarting the event loop (milliseconds).
+     */
+    private static final long DEFAULT_RESTART_EVENT_LOOP_TIMEOUT_PERIOD = 3000L;
+
+    /**
+     * Default maximum size for the connection pool.
+     */
+    private static final int DEFAULT_CONNECTION_POOL_MAX_SIZE = 500;
+
+    /**
+     * Default connection pool timeout (milliseconds).
+     */
+    private static final long DEFAULT_CONNECTION_POOL_TIMEOUT = 50000L;
+
+    /**
+     * Default minimum idle connections in the pool.
+     */
+    private static final int DEFAULT_CONNECTION_POOL_MIN_IDLE = 10;
+
+    /**
+     * Default maximum lifetime for connections in the pool (milliseconds).
+     */
+    private static final long DEFAULT_CONNECTION_POOL_MAX_LIFETIME = 300000L;
+
+    /**
+     * Default maximum number of retries for errors.
+     */
+    private static final int DEFAULT_ERRORS_MAX_RETRIES = 3;
+
+    /**
+     * Order index for config definitions, used for grouping/ordering.
+     */
+    private static final int ORDER_0 = 0;
+    private static final int ORDER_1 = 1;
+    private static final int ORDER_2 = 2;
+    private static final int ORDER_3 = 3;
+    private static final int ORDER_5 = 5;
+    private static final int ORDER_6 = 6;
+    private static final int ORDER_7 = 7;
+    private static final int ORDER_15 = 15;
+
+    /**
+     * Logger for this class.
+     */
+    private static final Logger log = LogManager.getLogger(
+            ClickHouseSinkConnectorConfig.class);
 
     // Configuration groups
+    /**
+     * Configuration group for ClickHouse login info.
+     */
+    private static final String CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO =
+            "ClickHouse Login Info";
 
-    // Configuration group "clickhouse login info"
-    private static final String CONFIG_GROUP_CLICKHOUSE_LOGIN_INFO = "ClickHouse Login Info";
-    // Configuration group "connector config"
-    private static final String CONFIG_GROUP_CONNECTOR_CONFIG = "Connector Config";
-    // Configuration group "de-duplicator config"
-    private static final String CONFIG_GROUP_DE_DUPLICATOR_CONFIG = "DeDuplicator Config";
-    // Configuration group "task config"
+    /**
+     * Configuration group for connector config.
+     */
+    private static final String CONFIG_GROUP_CONNECTOR_CONFIG =
+            "Connector Config";
+
+    /**
+     * Configuration group for de-duplicator config.
+     */
+    private static final String CONFIG_GROUP_DE_DUPLICATOR_CONFIG =
+            "DeDuplicator Config";
+
+    /**
+     * Configuration group for task config.
+     */
     private static final String CONFIG_GROUP_TASK_CONFIG = "Task Config";
 
-
+    /**
+     * Constructor with properties map.
+     *
+     * @param properties The map of config properties.
+     */
     public ClickHouseSinkConnectorConfig(Map<String, String> properties) {
         this(newConfigDef(), properties);
     }
 
-    public ClickHouseSinkConnectorConfig(ConfigDef config, Map<String, String> properties) {
+    /**
+     * Constructor that takes a ConfigDef and properties map.
+     *
+     * @param config     The ConfigDef used by this configuration.
+     * @param properties The map of config properties.
+     */
+    public ClickHouseSinkConnectorConfig(ConfigDef config,
+                                         Map<String, String> properties) {
         super(config, properties, false);
     }
 
     /**
-     * Set default values for config
+     * Sets default values for the config if they are not already specified.
      *
-     * @param config
+     * @param config The configuration map.
      */
     public static void setDefaultValues(Map<String, String> config) {
-        setFieldToDefaultValue(config, ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(), BUFFER_COUNT_DEFAULT);
+        setFieldToDefaultValue(config,
+                ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
+                BUFFER_COUNT_DEFAULT);
     }
 
     /**
-     * Set one default value
+     * Sets one default value if it is not already in the config.
      *
-     * @param config
-     * @param key
-     * @param value
+     * @param config The configuration map.
+     * @param key    The key to set.
+     * @param value  The default value if key is not present.
      */
-    static void setFieldToDefaultValue(Map<String, String> config, String key, Long value) {
+    static void setFieldToDefaultValue(Map<String, String> config, String key,
+                                       Long value) {
         if (config.containsKey(key)) {
             // Value already specified
             return;
         }
-
         // No value specified, set default one
         config.put(key, "" + value);
         log.info("setFieldToDefaultValues(){}={}", key, value);
     }
 
     /**
-     * @param config
-     * @param key
-     * @return
+     * Retrieves a property from the config map.
+     *
+     * @param config The configuration map.
+     * @param key    The key to look up.
+     * @return The value if present and not empty; null otherwise.
      */
-    public static String getProperty(final Map<String, String> config, final String key) {
+    public static String getProperty(final Map<String, String> config,
+                                     final String key) {
         if (config.containsKey(key) && !config.get(key).isEmpty()) {
             return config.get(key);
         } else {
@@ -88,13 +200,18 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     }
 
     /**
-     * @return
+     * Builds a new {@link ConfigDef} object, defining various connector
+     * parameters.
+     *
+     * @return A new ConfigDef with all connector configuration definitions.
      */
     static ConfigDef newConfigDef() {
         return new ConfigDef()
+
                 // Config Group "Connector config"
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS
+                                .toString(),
                         Type.STRING,
                         "",
                         null,
@@ -102,52 +219,70 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         "Connector class"
                 )
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TOPICS_TABLES_MAP.toString(),
                         Type.STRING,
                         "",
                         new TopicToTableValidator(),
                         Importance.LOW,
-                        "Map of topics to tables (optional). Format : comma-separated tuples, e.g."
-                                + " <topic-1>:<table-1>,<topic-2>:<table-2>,... ",
+                        "Map of topics to tables (optional). Format : comma-separated "
+                                + "tuples, e.g. <topic-1>:<table-1>,<topic-2>:<table-2>,...",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
-                        0,
+                        ORDER_0,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TOPICS_TABLES_MAP.toString())
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TOPICS_TABLES_MAP.toString()
+                )
                 // Define overrides map for ClickHouse Database
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(),
                         Type.STRING,
                         "",
                         new DatabaseOverrideValidator(),
                         Importance.LOW,
-                        "Map of source to destination database(override) (optional). Format : comma-separated tuples, e.g."
-                                + " <src_database-1>:<destination_database-1>,<src_database-2>:<destination_database-2>,... ",
+                        "Map of source to destination database(override) (optional). "
+                                + "Format : comma-separated tuples, e.g. "
+                                + "<src_database-1>:<dest_database-1>,"
+                                + "<src_database-2>:<dest_database-2>,...",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
-                        0,
+                        ORDER_0,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString())
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()
+                )
+
+                // Config Group "DeDuplicator Config"
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(),
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT
+                                .toString(),
                         Type.LONG,
                         BUFFER_COUNT_DEFAULT,
                         ConfigDef.Range.atLeast(1),
                         Importance.LOW,
                         "BufCount",
                         CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
-                        1,
+                        ORDER_1,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString())
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT
+                                .toString()
+                )
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString(),
+                        ClickHouseSinkConnectorConfigVariables
+                                .DEDUPLICATION_POLICY.toString(),
                         Type.STRING,
                         DeDuplicationPolicy.OFF.name(),
                         new DeDuplicationPolicyValidator(),
                         Importance.LOW,
                         "What de-duplication policy to use",
                         CONFIG_GROUP_DE_DUPLICATOR_CONFIG,
-                        2,
+                        ORDER_2,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString())
+                        ClickHouseSinkConnectorConfigVariables
+                                .DEDUPLICATION_POLICY.toString()
+                )
+
+                // Config Group "Task Config"
                 .define(
                         ClickHouseSinkConnectorConfigVariables.TASK_ID.toString(),
                         Type.LONG,
@@ -412,15 +547,15 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Type.STRING,
                         "",
                         Importance.HIGH,
-                        "Override timezone for DateTime columns in MySQL server",
+                        "Override timezone for DateTime columns in Source(MySQL/Postgres) server",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(),
-                        Type.STRING,
-                        "",
+                        Type.BOOLEAN,
+                        false,
                         Importance.HIGH,
                         "If set to true, replication is not started, the user is expected to start replication with the sink-connector-client program",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -457,6 +592,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_PARAMETERS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "JDBC clickhouse settings, the settings should be in this format input_format_null_as_default=1,input_format_orc_allow_missing_columns=1, delimited by comma",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString())
                 // Define the max queue size.
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
@@ -553,7 +698,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         7,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString())
-                // Define errors.max.retries
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "Non default value, if value is NULL, a default value will not be returned, NULL be used instead",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        7,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString())
+                        // Define errors.max.retries
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
                         Type.INT,
