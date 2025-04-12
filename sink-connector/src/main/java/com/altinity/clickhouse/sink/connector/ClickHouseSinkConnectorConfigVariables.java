@@ -93,9 +93,6 @@ public enum ClickHouseSinkConnectorConfigVariables {
     CONNECTOR_CLASS("connector.class"),
 
     NON_DEFAULT_VALUE("non.default.value");
-
-
-    CONNECTOR_CLASS("connector.class");
     private String label;
 
     ClickHouseSinkConnectorConfigVariables(String s) {
