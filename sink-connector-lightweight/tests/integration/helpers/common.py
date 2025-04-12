@@ -10,12 +10,8 @@ from testflows.asserts import error
 from testflows.core import *
 from testflows.core.name import basename, parentname
 
+from integration.helpers.platform_utils import current_cpu
 from integration.helpers.create_config import update_sink_config, remove_configuration
-
-
-def current_cpu():
-    """Return current cpu architecture."""
-    return platform.processor()
 
 
 def check_clickhouse_version(version):
