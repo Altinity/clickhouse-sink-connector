@@ -266,7 +266,7 @@ public class MySQLDemoIT  {
     private void addJobTitleColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN jobTitle" +
                 " VARCHAR(50) NOT NULL DEFAULT 'Engineer';").execute();
-       // Thread.sleep(50000);
+       Thread.sleep(10000);
         DBMetadata metadata = new DBMetadata();
         Map<String, String> columns =
                 metadata.getColumnsDataTypesForTable( writer.getConnection(), "employees", "employees");
