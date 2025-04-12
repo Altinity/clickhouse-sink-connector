@@ -161,6 +161,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if(!databaseName.isEmpty()) {
                     String overrideDatabaseName = overrideDatabaseName(tree.getText());
                     this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
+
+                    boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                            .AUTO_CREATE_TABLES_REPLICATED.toString());
+                    if(isReplicatedReplacingMergeTree) {
+                        this.query.append(" ON CLUSTER `{cluster}`");
+                    }
                 }
             }
         }
