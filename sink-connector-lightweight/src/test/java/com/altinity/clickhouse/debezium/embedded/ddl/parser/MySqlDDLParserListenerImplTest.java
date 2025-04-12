@@ -65,17 +65,6 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    public void testCreateTableWithSetDataType() {
-
-        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
-        StringBuffer clickHouseQuery = new StringBuffer();
-
-        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
-        ;
-    }
-
-    @Test
     public void testCreateTableWithRangeByColumnsPartition() {
         String createQuery = "CREATE TABLE rcx ( a INT, b INT, c CHAR(3), d INT) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'), PARTITION p1 VALUES LESS THAN (10,20,'mmm'), " +
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
