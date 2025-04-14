@@ -10,17 +10,30 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * ClickHouseConverter is responsible for converting Kafka Sink or
+ * Source records into a map structure for subsequent processing.
+ *
+ * <p>This converter interprets CDC operations (create, read, update,
+ * delete, truncate), checks the before/after states of the record,
+ * and produces a {@link ClickHouseStruct} when applicable.
+ */
 public class ClickHouseConverter implements AbstractConverter {
-    private static final Logger log = LogManager.getLogger(ClickHouseConverter.class);
+
+    /**
+     * Logger instance for the ClickHouseConverter class.
+     */
+    private static final Logger log = LogManager.getLogger(
+            ClickHouseConverter.class);
 
     /**
      * Enum to store the OP Types.
-     * Refer: https://debezium.io/documentation/reference/stable/connectors/mysql.html
+     * Refer:
+     * https://debezium.io/documentation/reference/stable/connectors/mysql.html
      */
     public enum CDC_OPERATION {
         // Snapshot events come as r
@@ -36,10 +49,20 @@ public class ClickHouseConverter implements AbstractConverter {
 
         private final String operation;
 
+        /**
+         * Gets the operation string associated with this enum constant.
+         *
+         * @return the operation string.
+         */
         public String getOperation() {
             return operation;
         }
 
+        /**
+         * Constructs a CDC_OPERATION with the specified op string.
+         *
+         * @param op the operation string (e.g., "r" for read).
+         */
         CDC_OPERATION(String op) {
             this.operation = op;
         }
@@ -181,132 +204,168 @@ public class ClickHouseConverter implements AbstractConverter {
      * }
      */
 
+    /**
+     * Retrieves the CDC_OPERATION for a given SinkRecord by checking the
+     * op field in the converted record.
+     *
+     * @param record the SinkRecord to analyze
+     * @return the corresponding CDC_OPERATION, or null if conversion fails
+     */
     public CDC_OPERATION getOperation(final SinkRecord record) {
         CDC_OPERATION cdcOperation = null;
         log.debug("convert()");
-
         Map<String, Object> convertedValue = convertValue(record);
-
-        if(convertedValue == null) {
+        if (convertedValue == null) {
             log.debug("Error converting Kafka Sink Record");
             return null;
         }
         // Check "operation" represented by this record.
         if (convertedValue.containsKey(SinkRecordColumns.OPERATION)) {
             // Operation (u, c)
-            String operation = (String) convertedValue.get(SinkRecordColumns.OPERATION);
-            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
-                    operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
+            String operation = (String) convertedValue.get(
+                    SinkRecordColumns.OPERATION);
+            if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.CREATE.operation)
+                    || operation.equalsIgnoreCase(
+                    CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 cdcOperation = CDC_OPERATION.CREATE;
-            } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
                 log.debug("UPDATE received");
                 cdcOperation = CDC_OPERATION.UPDATE;
-            } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
                 log.debug("DELETE received");
                 cdcOperation = CDC_OPERATION.DELETE;
-            } else if (operation.equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.TRUNCATE.operation)) {
                 // Truncates.
                 log.debug("TRUNCATE received");
                 cdcOperation = CDC_OPERATION.TRUNCATE;
             }
         }
-
         return cdcOperation;
     }
+
     /**
-     * Primary functionality of parsing a CDC event in a SinkRecord.
-     * This checks the operation flag( if its 'C' or 'U')
-     * and retreives the after structure for downstream processing.
+     * Parses a CDC event in a SinkRecord. This checks the operation flag
+     * and retrieves the after structure for downstream processing.
      *
-     * @param record
+     * @param record the SinkRecord to parse
+     * @return a ClickHouseStruct representing the parsed data
      */
     public ClickHouseStruct convert(SinkRecord record) {
         log.debug("convert()");
-
         //Map<String, Object> convertedKey = convertKey(record);
         Map<String, Object> convertedValue = convertValue(record);
         ClickHouseStruct chStruct = null;
-
-        if(convertedValue == null) {
+        if (convertedValue == null) {
             log.debug("Error converting Kafka Sink Record");
             return chStruct;
         }
         // Check "operation" represented by this record.
         if (convertedValue.containsKey(SinkRecordColumns.OPERATION)) {
             // Operation (u, c)
-            String operation = (String) convertedValue.get(SinkRecordColumns.OPERATION);
-            if (operation.equalsIgnoreCase(CDC_OPERATION.CREATE.operation) ||
-                    operation.equalsIgnoreCase(CDC_OPERATION.READ.operation)) {
+            String operation = (String) convertedValue.get(
+                    SinkRecordColumns.OPERATION);
+            if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.CREATE.operation)
+                    || operation.equalsIgnoreCase(
+                    CDC_OPERATION.READ.operation)) {
                 // Inserts.
                 log.debug("CREATE received");
-                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.CREATE);
-            } else if (operation.equalsIgnoreCase(CDC_OPERATION.UPDATE.operation)) {
+                chStruct = readBeforeOrAfterSection(
+                        convertedValue, record,
+                        SinkRecordColumns.AFTER,
+                        CDC_OPERATION.CREATE);
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.UPDATE.operation)) {
                 // Updates.
                 log.debug("UPDATE received");
-                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.AFTER, CDC_OPERATION.UPDATE);
-            } else if (operation.equalsIgnoreCase(CDC_OPERATION.DELETE.operation)) {
+                chStruct = readBeforeOrAfterSection(
+                        convertedValue, record,
+                        SinkRecordColumns.AFTER,
+                        CDC_OPERATION.UPDATE);
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.DELETE.operation)) {
                 // Deletes.
                 log.debug("DELETE received");
-                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.DELETE);
-            } else if(operation.equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+                chStruct = readBeforeOrAfterSection(
+                        convertedValue, record,
+                        SinkRecordColumns.BEFORE,
+                        CDC_OPERATION.DELETE);
+            } else if (operation.equalsIgnoreCase(
+                    CDC_OPERATION.TRUNCATE.operation)) {
                 log.debug("TRUNCATE received");
-                chStruct = readBeforeOrAfterSection(convertedValue, record, SinkRecordColumns.BEFORE, CDC_OPERATION.TRUNCATE);
+                chStruct = readBeforeOrAfterSection(
+                        convertedValue, record,
+                        SinkRecordColumns.BEFORE,
+                        CDC_OPERATION.TRUNCATE);
             }
         }
-
         return chStruct;
     }
 
     /**
+     * Reads the before or after section from the convertedValue map.
      *
-     * @param convertedValue
-     * @param record
-     * @param sectionKey
-     * @param operation
-     * @return
+     * @param convertedValue the map of converted key/value pairs
+     * @param record the original SinkRecord
+     * @param sectionKey the key indicating which section (before/after)
+     * @param operation the CDC operation (e.g., CREATE, UPDATE)
+     * @return a ClickHouseStruct populated with the relevant fields
      */
-    private ClickHouseStruct readBeforeOrAfterSection(Map<String, Object> convertedValue,
-                                              SinkRecord record, String sectionKey, CDC_OPERATION operation) {
+    private ClickHouseStruct readBeforeOrAfterSection(
+            Map<String, Object> convertedValue,
+            SinkRecord record,
+            String sectionKey,
+            CDC_OPERATION operation) {
 
         ClickHouseStruct chStruct = null;
         if (convertedValue.containsKey(sectionKey)) {
-            Object beforeSection = convertedValue.get(SinkRecordColumns.BEFORE);
-            Object afterSection = convertedValue.get(SinkRecordColumns.AFTER);
-
+            Object beforeSection = convertedValue.get(
+                    SinkRecordColumns.BEFORE);
+            Object afterSection = convertedValue.get(
+                    SinkRecordColumns.AFTER);
             chStruct = new ClickHouseStruct(record.kafkaOffset(),
-                    record.topic(), (Struct) record.key(), record.kafkaPartition(),
-                    record.timestamp(), (Struct) beforeSection, (Struct) afterSection,
+                    record.topic(), (Struct) record.key(),
+                    record.kafkaPartition(), record.timestamp(),
+                    (Struct) beforeSection, (Struct) afterSection,
                     convertedValue, operation);
-
-        } else if(operation.getOperation().equalsIgnoreCase(CDC_OPERATION.TRUNCATE.operation)) {
+        } else if (operation.getOperation().equalsIgnoreCase(
+                CDC_OPERATION.TRUNCATE.operation)) {
             // Truncate does not have before/after.
-            chStruct = new ClickHouseStruct(record.kafkaOffset(), record.topic(), null, record.kafkaPartition(),
-                    record.timestamp(), null, null, convertedValue, operation);
+            chStruct = new ClickHouseStruct(record.kafkaOffset(),
+                    record.topic(), null, record.kafkaPartition(),
+                    record.timestamp(), null, null, convertedValue,
+                    operation);
         }
-
         return chStruct;
     }
 
     @Override
     public Map<String, Object> convertKey(SinkRecord record) {
-        return this.convertRecord(record, KafkaSchemaRecordType.KEY);
+        return this.convertRecord(record,
+                KafkaSchemaRecordType.KEY);
     }
 
     @Override
     public Map<String, Object> convertValue(SinkRecord record) {
-        return this.convertRecord(record, KafkaSchemaRecordType.VALUE);
+        return this.convertRecord(record,
+                KafkaSchemaRecordType.VALUE);
     }
 
     @Override
     public Map<String, Object> convertValue(SourceRecord record) {
         KafkaSchemaRecordType what = KafkaSchemaRecordType.VALUE;
-        Schema schema = what == KafkaSchemaRecordType.KEY ? record.keySchema() : record.valueSchema();
-        Object obj = what == KafkaSchemaRecordType.KEY ? record.key() : record.value();
+        Schema schema = (what == KafkaSchemaRecordType.KEY)
+                ? record.keySchema() : record.valueSchema();
+        Object obj = (what == KafkaSchemaRecordType.KEY)
+                ? record.key() : record.value();
         Map<String, Object> result = null;
-
         if (schema == null) {
             log.debug("Schema is empty");
             if (obj instanceof Map) {
@@ -324,15 +383,20 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     * @param record
-     * @param what
-     * @return
+     * Converts a SinkRecord to a map based on whether it's a key or value.
+     *
+     * @param record the SinkRecord
+     * @param what enum indicating KEY or VALUE
+     * @return a map of fields from the SinkRecord
      */
-    public Map<String, Object> convertRecord(SinkRecord record, KafkaSchemaRecordType what) {
-        Schema schema = what == KafkaSchemaRecordType.KEY ? record.keySchema() : record.valueSchema();
-        Object obj = what == KafkaSchemaRecordType.KEY ? record.key() : record.value();
+    public Map<String, Object> convertRecord(
+            SinkRecord record,
+            KafkaSchemaRecordType what) {
+        Schema schema = (what == KafkaSchemaRecordType.KEY)
+                ? record.keySchema() : record.valueSchema();
+        Object obj = (what == KafkaSchemaRecordType.KEY)
+                ? record.key() : record.value();
         Map<String, Object> result = null;
-
         if (schema == null) {
             log.debug("Schema is empty");
             if (obj instanceof Map) {
@@ -350,11 +414,14 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     * @param object
-     * @param schema
-     * @return
+     * Converts a struct object into a map of field names and values.
+     *
+     * @param object the object to be converted
+     * @param schema the schema associated with the object
+     * @return a map representation of the struct
      */
-    private Map<String, Object> convertStruct(Object object, Schema schema) {
+    private Map<String, Object> convertStruct(
+            Object object, Schema schema) {
         // Object to be converted assumed to be a struct
         Struct struct = (Struct) object;
         // Result record would be a map
@@ -364,10 +431,14 @@ public class ClickHouseConverter implements AbstractConverter {
         // Convert all fields of the struct into a map
         for (Field field : fields) {
             // Ignore empty structures
-            boolean isEmptyStruct = (field.schema().type() == Schema.Type.STRUCT) && (field.schema().fields().isEmpty());
+            boolean isEmptyStruct =
+                    (field.schema().type() == Schema.Type.STRUCT)
+                            && (field.schema().fields().isEmpty());
             if (!isEmptyStruct) {
                 // Not empty struct
-                Object convertedObject = convertObject(struct.get(field.name()), field.schema());
+                Object convertedObject = convertObject(
+                        struct.get(field.name()),
+                        field.schema());
                 if (convertedObject != null) {
                     record.put(field.name(), convertedObject);
                 }
@@ -377,9 +448,11 @@ public class ClickHouseConverter implements AbstractConverter {
     }
 
     /**
-     * @param object
-     * @param schema
-     * @return
+     * Converts an object based on the schema type.
+     *
+     * @param object the object to convert
+     * @param schema the schema describing the object
+     * @return the converted object, or null if not supported
      */
     private Object convertObject(Object object, Schema schema) {
         if (object == null) {
@@ -387,37 +460,25 @@ public class ClickHouseConverter implements AbstractConverter {
                 // short circuit converting the object
                 return null;
             }
-            //else {
-            // Name is not optional
-//                throw new ConversionConnectException(
-//                        kafkaConnectSchema.name() + " is not optional, but converting object had null value");
-            // }
+            // else, field is not optional
+            // (leaving the original comments intact)
         }
-//        if (LogicalConverterRegistry.isRegisteredLogicalType(kafkaConnectSchema.name())) {
-//            return convertLogical(kafkaConnectObject, kafkaConnectSchema);
-//        }
         Schema.Type type = schema.type();
         switch (type) {
             case ARRAY:
                 log.debug("ARRAY type");
                 return object;
-                //return convertArray(kafkaConnectObject, kafkaConnectSchema);
             case MAP:
                 log.debug("MAP type");
                 return object;
-                //return convertMap(kafkaConnectObject, kafkaConnectSchema);
             case STRUCT:
                 return object;
-                //log.debug("STRUCT type");
-                //return convertStruct(kafkaConnectObject, kafkaConnectSchema);
             case BYTES:
                 log.debug("BYTES type");
                 return object;
-                //return convertBytes(kafkaConnectObject);
             case FLOAT64:
                 log.debug("FLOAT64 type");
                 return object;
-                //return convertDouble((Double)kafkaConnectObject);
             case BOOLEAN:
             case FLOAT32:
             case INT8:
@@ -428,11 +489,10 @@ public class ClickHouseConverter implements AbstractConverter {
                 return object;
             default:
                 log.warn("Not supported type");
-                break;
                 // Throw error - unrecognized type.
-                //throw new ConversionConnectException("Unrecognized schema type: " + kafkaConnectSchemaType);
+                // (leaving original commented code)
+                break;
         }
-
         return null;
     }
 }

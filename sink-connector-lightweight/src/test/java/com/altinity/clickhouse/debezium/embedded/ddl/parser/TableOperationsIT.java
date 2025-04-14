@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
 @DisplayName("Integration Test that validates DDL(Create, ALTER, RENAME) on Clickhouse 22.3 and latest docker tags")
-@Disabled
 public class TableOperationsIT {
     protected MySQLContainer mySqlContainer;
     static ClickHouseContainer clickHouseContainer;
@@ -137,7 +136,7 @@ public class TableOperationsIT {
             Assert.assertTrue(copied_table.size() == 5);
 
             // Validate table created with partitions.
-            String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table members");
+            String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
             Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
@@ -153,7 +152,7 @@ public class TableOperationsIT {
                         "ORDER BY tuple()\n" +
                         "SETTINGS index_granularity = 8192"));
 
-            String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table rcx");
+            String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
             Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
                         "(\n" +
