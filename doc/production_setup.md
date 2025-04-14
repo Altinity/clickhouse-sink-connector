@@ -7,6 +7,7 @@
 [MySQL Setup](#mysql-production-setup) \
 [PostgreSQL Setup](#postgresql-production-setup) \
 [ClickHouse Setup](#clickhouse-setup)
+[Sink Connector Monitoring(#sink-connector-monitoring)]
 
 ### Improving throughput and/or Memory usage.
 ![](img/production_setup.jpg)
@@ -141,3 +142,30 @@ grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_d
 
 One of the common problems with PostgreSQL is the WAL size increasing.
 [Handling PostgreSQL WAL Growth with Debezium Connectors](postgres_wal_growth.md)
+
+## Sink Connector Monitoring
+
+The sink connector provides monitoring capabilities through health checks. You can configure health checks in your deployment to ensure the connector is functioning properly.
+
+### Health Check Configuration
+
+Add the following health check configuration to your deployment:
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "if [ \"$$(/sink-connector-client show_replica_status)\" == \"\" ]; then exit 1; fi; exit 0"]
+  interval: 60s
+  timeout: 20s
+  retries: 10
+  start_period: 600s
+```
+
+This configuration:
+- Runs the health check every 60 seconds
+- Times out after 20 seconds
+- Retries up to 10 times before marking the container as unhealthy
+- Allows a 600-second grace period during startup before beginning health checks
+
+The health check uses the `show_replica_status` command to verify the connector is operational. If the command returns an empty result, the container is considered unhealthy.
+
+##
