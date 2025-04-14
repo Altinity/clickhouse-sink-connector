@@ -1,13 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +22,6 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -66,8 +62,8 @@ public class ReplicatedRMTDDLClickHouse22TIT {
                 .withPassword("password")
                 .withClasspathResourceMapping("config_replicated.xml", "/etc/clickhouse-server/config.d/config.xml", BindMode.READ_ONLY)
                 .withClasspathResourceMapping("macros.xml", "/etc/clickhouse-server/config.d/macros.xml", BindMode.READ_ONLY)
-                .withExposedPorts(8123)
-                        .waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
+                .withExposedPorts(8123);
+                        //.waitingFor(new HttpWaitStrategy().forPort(zookeeperContainer.getFirstMappedPort()));
         clickHouseContainer.withNetwork(network).withNetworkAliases("clickhouse");
         clickHouseContainer.start();
     }
@@ -93,8 +89,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),
-                        new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees"), false);
+                engine.get().setup(props, new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -104,12 +99,9 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Thread.sleep(30000);
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), "employees");
-        ClickHouseConnection connection = BaseDbWriter.createConnection(jdbcUrl, "client_1", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        ResultSet rs = writer.executeQueryWithResultSet("show create table string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
         // Validate that all the tables are created.
         boolean resultValidated = false;
         while(rs.next()) {
@@ -123,7 +115,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
 
         boolean dataValidated = false;
         // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = writer.executeQueryWithResultSet("select * from string_types_MEDIUMTEXT_utf8mb4");
+        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
 
         while(dateTimeResult.next()) {
             dataValidated = true;
@@ -151,7 +143,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         Thread.sleep(10000);
 
         // Verify on ClickHouse if the table is created.
-        rs = writer.executeQueryWithResultSet("show create table l1");
+        rs = ITCommon.executeQueryWithResultSet("show create table employees.l1", writer.getConnection());
         // Validate that all the tables are created.
         resultValidated = false;
         while(rs.next()) {
@@ -168,6 +160,8 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
+
+        HikariDbSource.close();
    }
 
 }

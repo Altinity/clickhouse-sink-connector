@@ -42,6 +42,9 @@
         <maven.compiler.target>11</maven.compiler.target>
         <version.testcontainers>1.19.1</version.testcontainers>
         <apache.httpclient.version>5.2.1</apache.httpclient.version>
+        <clickhouse.jdbc.version>0.6.0</clickhouse.jdbc.version>
+        <version.kafka>3.8.0</version.kafka>
+        <version.debezium>3.1.0.Alpha2</version.debezium>
     </properties>
 
 
@@ -245,7 +248,7 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-api</artifactId>
-            <version>2.8.1</version>
+            <version>${version.kafka}</version>
             <scope>provided</scope>
             <exclusions>
                 <exclusion>
@@ -308,7 +311,14 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-core</artifactId>
-            <version>2.7.0.Beta2</version>
+            <version>${version.debezium}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-storage-jdbc</artifactId>
+            <version>${version.debezium}</version>
+            <!--    <scope>system</scope>
+               <systemPath>${pom.basedir}/jar/debezium-storage-jdbc-2.4.0-SNAPSHOT.jar</systemPath> -->
         </dependency>
 
         <dependency>
@@ -331,10 +341,15 @@
             <version>3.9.1</version>
         </dependency>
         <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>6.0.0</version>
+        </dependency>
+        <dependency>
             <groupId>com.clickhouse</groupId>
             <!-- or clickhouse-grpc-client if you prefer gRPC -->
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <!-- below is only needed when all you want is a shaded jar -->
             <classifier>http</classifier>
             <exclusions>
@@ -411,13 +426,13 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
-            <version>3.1.0</version>
+            <version>${version.kafka}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
-            <version>3.1.0</version>
+            <version>${version.kafka}</version>
             <scope>compile</scope>
         </dependency>
 
@@ -454,7 +469,7 @@
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
-            <version>0.6.0</version>
+            <version>${clickhouse.jdbc.version}</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

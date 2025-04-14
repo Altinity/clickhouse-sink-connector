@@ -4,6 +4,11 @@
 # Unique name for the connector. Attempting to register again with the same name will fail.
 name: "company-1"
 
+# Primary key used for state storage. Refer to State Storage documentation.
+# If multiple connectors are writing to the same ClickHouse instance, this 
+# value needs to be unique for a connector.
+topic.prefix: "sink-connector-1"
+
 # IP address or hostname of the MySQL database server.
 database.hostname: "mysql-master"
 
@@ -24,7 +29,7 @@ database.server.name: "ER54"
 
 # database.include.list An optional list of regular expressions that match database names to be monitored;
 # any database name not included in the whitelist will be excluded from monitoring. By default all databases will be monitored.
-database.include.list: test
+database.include.list: sbtest
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
 table.include.list: ""
@@ -103,7 +108,7 @@ schema.history.internal.jdbc.password: "root"
 
 # schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
 schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
-(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+(`id` VARCHAR(36) NOT NULL, `history_data` String, `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 # schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
 schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
@@ -121,14 +126,17 @@ auto.create.tables: "true"
 #"auto.create.tables.replicated: "true"
 
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
-database.connectionTimeZone: "UTC"
+database.connectionTimeZone: "America/Chicago"
+
+# number of retries in case of errors(mostly with clickhouse db connections)
+errors.max.retries: 20
 
 # Configuration to override the clickhouse database name for a given MySQL database name. If this configuration is not
 # provided, the MySQL database name will be used as the ClickHouse database name.
-#clickhouse.database.override.map: "employees:employees2, products:productsnew
+#clickhouse.database.override.map: "test:ch_test"
 
 # clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
-#clickhouse.datetime.timezone: "UTC"
+clickhouse.datetime.timezone: "America/Chicago"
 
 # skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
 #skip_replica_start: "false"
@@ -141,6 +149,9 @@ database.connectionTimeZone: "UTC"
 
 #disable.ddl: If set to true, the connector will ignore DDL events. The default is false.
 #disable.ddl: "false"
+
+#ignore.ddl.regex: If set, the connector will ignore DDL events that match the regex.
+ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
 
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
@@ -160,7 +171,10 @@ database.connectionTimeZone: "UTC"
 #buffer.max.records: "10000"
 
 # ClickHouse JDBC configuration parameters, as a list of key-value pairs separated by commas.
-#clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000"
+clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+
+# ClickHouse JDBC configuration settings, as a list of key-value pairs separated by commas.
+clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1"
 
 # Maximum number of threads in the thread pool for processing CDC records.
 #thread.pool.size: 10
@@ -171,7 +185,19 @@ database.connectionTimeZone: "UTC"
 #Metrics (Prometheus target), required for Grafana Dashboard
 metrics.enable: "true"
 
+#connection.pool.disable: "true"
+#connection.pool.max.size: 500
+
 # Skip schema history capturing, use the following configuration
 # to reduce slow startup when replicating dbs with large number of tables
 #schema.history.internal.store.only.captured.tables.ddl: "true"
 #schema.history.internal.store.only.captured.databases.ddl: "true"
+
+# Required for fixing bug with freeze in debezium loop.
+use.nongraceful.disconnect: "true"
+database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
+database.connection.reconnect.backoff.ms: "1000"
+database.connection.reconnect.backoff.max.ms: "10000"
+database.ssl.mode: "disabled"
+# If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
+non.default.value: "true"

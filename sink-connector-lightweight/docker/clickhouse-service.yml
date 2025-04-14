@@ -12,7 +12,7 @@ services:
       - CLICKHOUSE_USER=root
       - CLICKHOUSE_PASSWORD=root
       - CLICKHOUSE_DB=test
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     ulimits:
       nofile:
         soft: "262144"

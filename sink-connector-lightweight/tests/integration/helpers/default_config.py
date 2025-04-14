@@ -47,4 +47,6 @@ SETTINGS index_granularity = 8198""",
     "database.serverTimezone": "UTC",
     "clickhouse.datetime.timezone": "UTC",
     "auto.create.tables": "true",
+    "ddl.retry": "true",
+    "schema.history.internal.store.only.captured.databases.ddl": "true",
 }

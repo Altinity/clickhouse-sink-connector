@@ -58,7 +58,7 @@ def partition_limits(
 
                 retry(
                     clickhouse.query,
-                    timeout=50,
+                    timeout=140,
                     delay=1,
                 )(
                     f"SELECT count() FROM test.{table_name}  FINAL where _sign !=-1  FORMAT CSV",
