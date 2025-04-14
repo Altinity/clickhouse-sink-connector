@@ -81,7 +81,9 @@ public class HikariDbSource {
         }
         HikariDataSource dbSource = instance.get(databaseName);
         if (dbSource == null) {
-            // No pool exists for the database.
+            throw new SQLException("Database source is null for database: " + databaseName);
+    }
+
         }
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
