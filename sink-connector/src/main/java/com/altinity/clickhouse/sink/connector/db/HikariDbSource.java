@@ -14,6 +14,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Singleton class(one per database)
 /**
@@ -29,7 +30,7 @@ public class HikariDbSource {
     /**
      * Map of database name to HikariDataSource instance.
      */
-    private static final Map<String, HikariDataSource> instance = new HashMap<>();
+    private static final Map<String, HikariDataSource> instance = new ConcurrentHashMap<>();
 
     /**
      * Map of database name to Connection.
@@ -107,18 +108,13 @@ public class HikariDbSource {
                 ClickHouseSinkConnectorConfigVariables
                         .CONNECTION_POOL_DISABLE.toString());
 
-        HikariDataSource hikariDataSource = instance.computeIfAbsent(databaseName, dbName -> {
-            log.info("Creating new HikariDataSource for database: {}", dbName);
-            return createConnectionPool(
-                    dataSource, dbName, config);
+        return instance.compute(databaseName, (dbName, existingDataSource) -> {
+            if (existingDataSource == null || existingDataSource.isClosed()) {
+                log.info("Creating new HikariDataSource for database: {}", dbName);
+                return createConnectionPool(dataSource, dbName, config);
+            }
+            return existingDataSource;
         });
-
-        if (hikariDataSource.isClosed()) {
-            instance.remove(databaseName);
-            log.info("Removed closed HikariDataSource for database: {}", databaseName);
-            instance.put(databaseName, createConnectionPool(dataSource, databaseName, config));
-        }
-        return instance.get(databaseName);
     }
 
     /**
