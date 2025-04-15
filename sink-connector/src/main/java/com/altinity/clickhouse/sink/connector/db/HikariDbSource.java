@@ -29,7 +29,7 @@ public class HikariDbSource {
     /**
      * Map of database name to HikariDataSource instance.
      */
-    private static Map<String, HikariDataSource> instance = new HashMap<>();
+    private static final Map<String, HikariDataSource> instance = new HashMap<>();
 
     /**
      * Map of database name to Connection.
@@ -82,9 +82,8 @@ public class HikariDbSource {
         HikariDataSource dbSource = instance.get(databaseName);
         if (dbSource == null) {
             throw new SQLException("Database source is null for database: " + databaseName);
-    }
-
         }
+
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
     }
@@ -107,12 +106,17 @@ public class HikariDbSource {
         disabled = config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables
                         .CONNECTION_POOL_DISABLE.toString());
-        if (instance.containsKey(databaseName)) {
-            return instance.get(databaseName);
-        } else {
-            HikariDataSource hikariDataSource = createConnectionPool(
-                    dataSource, databaseName, config);
-            instance.put(databaseName, hikariDataSource);
+
+        HikariDataSource hikariDataSource = instance.computeIfAbsent(databaseName, dbName -> {
+            log.info("Creating new HikariDataSource for database: {}", dbName);
+            return createConnectionPool(
+                    dataSource, dbName, config);
+        });
+
+        if (hikariDataSource.isClosed()) {
+            instance.remove(databaseName);
+            log.info("Removed closed HikariDataSource for database: {}", databaseName);
+            instance.put(databaseName, createConnectionPool(dataSource, databaseName, config));
         }
         return instance.get(databaseName);
     }
