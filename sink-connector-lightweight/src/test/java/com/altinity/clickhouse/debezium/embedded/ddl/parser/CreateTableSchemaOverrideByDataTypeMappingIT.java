@@ -115,7 +115,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
             insertCheck = true;
             String gmtTime = resultSet.getString("gmt_time");
             System.out.println(gmtTime);
-            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 07:34:56.000"));
+            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 12:34:56.000"));
         }
         Thread.sleep(10000);
 
