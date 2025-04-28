@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
@@ -417,6 +418,14 @@ public class DebeziumChangeEventCapture {
                 break;
             } catch (Exception e) {
                 log.error("Error executing DDL", e);
+                // insert data into the error table
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, e.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"));
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
                 if (retryDDLProperty == false) {
                     break;
                 }
