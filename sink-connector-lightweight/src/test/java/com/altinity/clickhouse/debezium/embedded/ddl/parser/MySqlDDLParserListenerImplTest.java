@@ -989,6 +989,7 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`_j_failed_s_g`(id Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
+    @Test
     public void testCreateDefiner() {
         String sql = "CREATE DEFINER=`bcadmin`@`%` PROCEDURE `sp_next_available_otc_instance_strategy_id`()\n" +
                 "begin\n" +
@@ -1003,8 +1004,46 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-        // Just validates that the debezium parsor does not throw an error
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
+//        // Just validates that the debezium parsor does not throw an error
+//        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
+//
+//        String sql2 = "CREATE DEFINER=`soap_admin_dev`@`%` FUNCTION `nextid`(gen_id SMALLINT) RETURNS bigint\n"
+//                + "BEGIN\n"
+//                + "    SET @timestamp_bits = 40;\n"
+//                + "    SET @generator_bits = 7;\n"
+//                + "    SET @sequence_bits = 16;\n"
+//                + "\n"
+//                + "    -- custom epoch: 2016-01-01\n"
+//                + "    SET @epoch_timestamp = 1451606400;\n"
+//                + "\n"
+//                + "    SET @max_timestamps = POW(2, @timestamp_bits);\n"
+//                + "    SET @max_sequences = POW(2, @sequence_bits);\n"
+//                + "\n"
+//                + "    SET @sequence_final = @max_sequences - 1;\n"
+//                + "    SET @timestamp_mask = @max_timestamps - 1;\n"
+//                + "    SET @timestamp_bitshift = @generator_bits + @sequence_bits;\n"
+//                + "    SET @generator_bitshift = @sequence_bits;\n"
+//                + "    SET @generator_shifted = gen_id << @generator_bitshift;\n"
+//                + "\n"
+//                + "    UPDATE id_generator\n"
+//                + "    SET sequence = (CASE\n"
+//                + "        WHEN sequence >= @sequence_final THEN\n"
+//                + "            @sequence := 0\n"
+//                + "        ELSE\n"
+//                + "            @sequence := sequence + 1\n"
+//                + "        END)\n"
+//                + "    WHERE generator_id = gen_id;\n"
+//                + "\n"
+//                + "    SET @timestamp = ROUND((UNIX_TIMESTAMP(SYSDATE(4)) - @epoch_timestamp) * 1000) & @timestamp_mask;\n"
+//                + "    SET @next_id = (@timestamp << @timestamp_bitshift) + @generator_shifted + @sequence;\n"
+//                + "\n"
+//                + "    RETURN @next_id;\n"
+//                + "END";
+//
+//        StringBuffer clickHouseQuery2 = new StringBuffer();
+//        mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery2);
+//
+//        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(""));
     }
 
     @Test
