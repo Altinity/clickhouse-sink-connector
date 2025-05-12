@@ -1004,46 +1004,44 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-//        // Just validates that the debezium parsor does not throw an error
-//        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
-//
-//        String sql2 = "CREATE DEFINER=`soap_admin_dev`@`%` FUNCTION `nextid`(gen_id SMALLINT) RETURNS bigint\n"
-//                + "BEGIN\n"
-//                + "    SET @timestamp_bits = 40;\n"
-//                + "    SET @generator_bits = 7;\n"
-//                + "    SET @sequence_bits = 16;\n"
-//                + "\n"
-//                + "    -- custom epoch: 2016-01-01\n"
-//                + "    SET @epoch_timestamp = 1451606400;\n"
-//                + "\n"
-//                + "    SET @max_timestamps = POW(2, @timestamp_bits);\n"
-//                + "    SET @max_sequences = POW(2, @sequence_bits);\n"
-//                + "\n"
-//                + "    SET @sequence_final = @max_sequences - 1;\n"
-//                + "    SET @timestamp_mask = @max_timestamps - 1;\n"
-//                + "    SET @timestamp_bitshift = @generator_bits + @sequence_bits;\n"
-//                + "    SET @generator_bitshift = @sequence_bits;\n"
-//                + "    SET @generator_shifted = gen_id << @generator_bitshift;\n"
-//                + "\n"
-//                + "    UPDATE id_generator\n"
-//                + "    SET sequence = (CASE\n"
-//                + "        WHEN sequence >= @sequence_final THEN\n"
-//                + "            @sequence := 0\n"
-//                + "        ELSE\n"
-//                + "            @sequence := sequence + 1\n"
-//                + "        END)\n"
-//                + "    WHERE generator_id = gen_id;\n"
-//                + "\n"
-//                + "    SET @timestamp = ROUND((UNIX_TIMESTAMP(SYSDATE(4)) - @epoch_timestamp) * 1000) & @timestamp_mask;\n"
-//                + "    SET @next_id = (@timestamp << @timestamp_bitshift) + @generator_shifted + @sequence;\n"
-//                + "\n"
-//                + "    RETURN @next_id;\n"
-//                + "END";
-//
-//        StringBuffer clickHouseQuery2 = new StringBuffer();
-//        mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery2);
-//
-//        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(""));
+        // Just validates that the debezium parsor does not throw an error
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
+
+        String sqlTrigger = "CREATE DEFINER=`bcadmin`@`%` TRIGGER `host_id_constraint` BEFORE INSERT ON `host` FOR EACH ROW\n"
+                + "BEGIN\n"
+                + "  DECLARE next_id INT;\n"
+                + "  DECLARE max_id INT;\n"
+                + "  DECLARE error_msg VARCHAR(100);\n"
+                + "\n"
+                + "  SET max_id = POWER(2, 9)-1;\n"
+                + "  SET next_id = NULL;\n"
+                + "\n"
+                + "  SELECT MIN(st.value) INTO next_id\n"
+                + "  FROM SEQUENCE_TABLE(max_id+1) st\n"
+                + "  LEFT JOIN host h ON h.id = st.value\n"
+                + "  WHERE st.value > 0\n"
+                + "  AND h.id IS NULL;\n"
+                + "\n"
+                + "  IF ISNULL(next_id)\n"
+                + "  THEN\n"
+                + "    SET error_msg = CONCAT('no free ids in range [1, ', CAST(max_id AS CHAR), ']');\n"
+                + "    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = error_msg;\n"
+                + "  END IF;\n"
+                + "\n"
+                + "  IF next_id > max_id\n"
+                + "  THEN\n"
+                + "    SET error_msg = CONCAT('next id too high to insert: next_id=', CAST(next_id AS CHAR), ' max_id=', CAST(max_id AS CHAR));\n"
+                + "    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = error_msg;\n"
+                + "  END IF;\n"
+                + "\n"
+                + "  SET NEW.id = next_id;\n"
+                + "END";
+
+
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(sqlTrigger, "employees", clickHouseQuery2);
+
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(""));
     }
 
     @Test
