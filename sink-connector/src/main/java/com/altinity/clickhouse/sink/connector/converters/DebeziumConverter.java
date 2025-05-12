@@ -45,7 +45,8 @@ public class DebeziumConverter {
         // DATETIME(4), DATETIME(5), DATETIME(6)
         // Represents the number of microseconds past the epoch and does not include time zone information.
         //ToDO: IF values exceed the ones supported by clickhouse
-        public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
+        public static String convert(Object value, ZoneId sourceTimezone,
+                                     ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
             Long epochMicroSeconds = (Long) value;
 
             //DateTime64 has a 8 digit precision.
@@ -55,9 +56,23 @@ public class DebeziumConverter {
             }
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
-            Instant receivedDT = Instant.ofEpochSecond( epochSeconds, nanoOffset );
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(receivedDT, clickHouseDataType);
+            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimezone);
+            int sourceOffset = sourceTZ.getRawOffset();
+
+            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochSecond(epochSeconds, nanoOffset)))) {
+                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            }
+
+            // Add this offset to wrongly calculated epoch.
+            Long epochMicrosWithOffset = epochMicroSeconds - sourceOffset;
+            // Convert microseconds to seconds and nanoseconds
+            long seconds = epochMicrosWithOffset / 1_000_000;
+            long nanos = (epochMicrosWithOffset % 1_000_000) * 1_000;
+
+            Instant i = Instant.ofEpochSecond(seconds, nanos);
+
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
