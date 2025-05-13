@@ -84,11 +84,11 @@ public class DebeziumConverterTest {
 
         // America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2021-12-31 18:01:00.22222200"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2022-01-01 00:01:00.22222200"));
 
         // America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2021-12-31 16:01:00.22222200"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2022-01-01 00:01:00.22222200"));
 
     }
 

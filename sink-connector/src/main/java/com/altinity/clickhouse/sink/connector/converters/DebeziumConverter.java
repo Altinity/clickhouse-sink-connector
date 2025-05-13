@@ -64,8 +64,10 @@ public class DebeziumConverter {
                 sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
             }
 
+            long sourceOffsetMicros = sourceOffset * 1000L;
+
             // Add this offset to wrongly calculated epoch.
-            Long epochMicrosWithOffset = epochMicroSeconds - sourceOffset;
+            Long epochMicrosWithOffset = epochMicroSeconds - sourceOffsetMicros;
             // Convert microseconds to seconds and nanoseconds
             long seconds = epochMicrosWithOffset / 1_000_000;
             long nanos = (epochMicrosWithOffset % 1_000_000) * 1_000;
