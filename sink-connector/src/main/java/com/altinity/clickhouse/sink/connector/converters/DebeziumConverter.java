@@ -74,7 +74,12 @@ public class DebeziumConverter {
 
             Instant i = Instant.ofEpochSecond(seconds, nanos);
 
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            if(rangeExceeded[0]) {
+                // return the modifiedDT as a string without timezone conversion
+                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+            }
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
@@ -112,30 +117,39 @@ public class DebeziumConverter {
             Long epochMillisWithOffset = epochMillis - sourceOffset;
             Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
 
-            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType);
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            if(rangeExceeded[0]) {
+                // return the modifiedDTWithLimits as a string without timezone conversion
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+            }
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
     }
 
-    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType) {
+    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
+        rangeExceeded[0] = false;
 
         if(clickHouseDataType == ClickHouseDataType.DateTime ||
                 clickHouseDataType == ClickHouseDataType.DateTime32) {
             if(providedDateTime.isBefore(Instant.from(ofEpochMilli(DataTypeRange.DATETIME32_MIN)))) {
+                rangeExceeded[0] = true;
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MIN);
             } else if(providedDateTime.isAfter(Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX))) {
+                rangeExceeded[0] = true;
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
             }
         } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {
             if (providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64)) {
+                rangeExceeded[0] = true;
                 return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
             } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64)) {
+                rangeExceeded[0] = true;
                 return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64;
             }
         }
 
         return providedDateTime;
-
     }
     public static class DateConverter {
 
