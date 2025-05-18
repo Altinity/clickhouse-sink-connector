@@ -36,6 +36,11 @@ public class ErrorLogger {
         if (config == null) {
             throw new SQLException("Config cannot be null");
         }
+        // Read error table name from config
+        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        if (errorTableName == null || errorTableName.isEmpty()) {
+            errorTableName = DEFAULT_ERROR_TABLE;
+        }
 
         String createTableQuery = String.format(
             "CREATE TABLE IF NOT EXISTS %s.%s (" +
@@ -51,7 +56,7 @@ public class ErrorLogger {
             ") ENGINE = MergeTree() " +
             "ORDER BY (error_timestamp, server)", 
             BaseDbWriter.SYSTEM_DB, 
-            DEFAULT_ERROR_TABLE
+            errorTableName
         );
 
         DBMetadata dbMetadata = new DBMetadata();
@@ -95,7 +100,7 @@ public class ErrorLogger {
                 "database_query" +
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
             BaseDbWriter.SYSTEM_DB, 
-            DEFAULT_ERROR_TABLE
+            errorTableName
         );
 
         try (var statement = connection.prepareStatement(insertQuery)) {

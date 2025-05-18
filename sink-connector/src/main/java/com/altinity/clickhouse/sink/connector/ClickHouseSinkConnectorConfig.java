@@ -93,6 +93,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_ERRORS_MAX_RETRIES = 3;
 
     /**
+     * Default error table name.
+     */
+    private static final String DEFAULT_ERROR_TABLE = "error_table";
+
+    /**
      * Order index for config definitions, used for grouping/ordering.
      */
     private static final int ORDER_0 = 0;
@@ -718,6 +723,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         15,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .DEFAULT_ERROR_TABLE.toString(),
+                        Type.STRING,
+                        DEFAULT_ERROR_TABLE,
+                        Importance.LOW,
+                        "Default table name for storing error records",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables
+                                .DEFAULT_ERROR_TABLE.toString()
+                );
     }
 }

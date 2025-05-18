@@ -38,6 +38,7 @@ const (
 	UPDATE_LSN_COMMAND            = "lsn"
 	DELETE_OFFSETS_COMMAND        = "delete_offsets"
 	DELETE_SCHEMA_HISTORY_COMMAND = "delete_schema_history"
+	SHOW_SLAVE_STATUS_COMMAND     = "show_slave_status"
 )
 
 const (
@@ -50,6 +51,7 @@ const (
 	DELETE_OFFSETS        = "offsets"
 	DELETE_SCHEMA_HISTORY = "schema-history"
 	DDL_TRANSLATE         = "ddl-translate"
+	SHOW_SLAVE_STATUS     = "show-slave-status"
 )
 
 // Fetches the repos for the given Github users
@@ -269,6 +271,14 @@ func main() {
 				return nil
 			},
 		},
+		{
+			Name:  SHOW_SLAVE_STATUS_COMMAND,
+			Usage: "Show slave status",
+			Action: func(c *cli.Context) error {
+				handleShowSlaveStatus(c)
+				return nil
+			},
+		},
 	}
 	app.Version = "1.0"
 	app.Run(os.Args)
@@ -471,5 +481,13 @@ func handleUpdateBinLogAction(c *cli.Context) bool {
 	//var startUrl = getServerUrl(START_REPLICATION, c)
 	//resp1 := getHTTPCall(startUrl)
 	//log.Println(resp1.String())
+	return true
+}
+
+func handleShowSlaveStatus(c *cli.Context) bool {
+	log.Println("***** Show slave status ******")
+	var serverUrl = getServerUrl(SHOW_SLAVE_STATUS, c)
+	resp := getHTTPCall(serverUrl)
+	log.Println(resp.String())
 	return true
 }

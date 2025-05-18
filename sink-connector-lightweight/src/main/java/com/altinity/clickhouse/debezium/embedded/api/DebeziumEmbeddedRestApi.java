@@ -193,6 +193,25 @@ public class DebeziumEmbeddedRestApi {
             ctx.result(response);
         });
 
+        app.get("/show-slave-status", ctx -> {
+            ClickHouseSinkConnectorConfig config =
+                    new ClickHouseSinkConnectorConfig(
+                            PropertiesHelper.toMap(finalProps1));
+            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
+                    new DebeziumJdbcStorageOperations();
+                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
+                Connection connection = ds.getConnection();
+                debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
+                connection.close();
+            } catch (Exception e) {
+                log.error("Client - Error getting error table status", e);      
+                ctx.result(e.toString());
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
+        });
+                    
         app.post("/lsn", ctx -> {
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);

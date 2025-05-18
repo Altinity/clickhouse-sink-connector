@@ -150,6 +150,21 @@ public class DebeziumJdbcStorageOperations {
     }
 
     /**
+     * Function to get the status of the error table.
+     *
+     * @param conn   The database connection.
+     * @param props  The connector properties.
+     * @throws SQLException If a database error occurs.
+     */
+    public void getErrorTableStatus(Connection conn, Properties props)
+            throws SQLException {
+        String errorTableName = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
+        new DBMetadata().executeSystemQuery(conn, errorTableStatusQuery);
+    }
+
+    /**
      * Function to get the status of Debezium storage.
      *
      * @param conn   The database connection.
