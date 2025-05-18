@@ -299,12 +299,19 @@ public class ClickHouseDataTypeMapper {
             ps.setObject(index, value);
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
+                String sourceTimeZone = "UTC";
+
+                if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+                    String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+                    if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                        sourceTimeZone = configSourceTimeZone;
+                    }
+                }
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // DATETIME(4), DATETIME(5), DATETIME(6)
 
-                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone, clickHouseDataType));
-//                    ps.setTimestamp(index, DebeziumConverter.MicroTimestampConverter.convert(value, serverTimeZone),
-//                            Calendar.getInstance(TimeZone.getTimeZone(serverTimeZone)));
+                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, ZoneId.of(sourceTimeZone),
+                            serverTimeZone, clickHouseDataType));
                 }
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
@@ -312,14 +319,6 @@ public class ClickHouseDataTypeMapper {
                     if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
-                    String sourceTimeZone = "UTC";
-                    if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-                        String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-                        if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                            sourceTimeZone = configSourceTimeZone;
-                        }
-                    }
-
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
                         ZoneId.of(sourceTimeZone), serverTimeZone));
                 }
