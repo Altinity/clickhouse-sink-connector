@@ -92,7 +92,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     NON_DEFAULT_VALUE("non.default.value"),
 
-    DEFAULT_ERROR_TABLE("default.error.table");
+    ERROR_TABLE_NAME("default.error.table");
 
 
 

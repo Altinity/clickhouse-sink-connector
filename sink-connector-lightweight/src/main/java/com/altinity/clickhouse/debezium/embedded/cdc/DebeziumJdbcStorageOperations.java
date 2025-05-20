@@ -152,16 +152,56 @@ public class DebeziumJdbcStorageOperations {
     /**
      * Function to get the status of the error table.
      *
-     * @param conn   The database connection.
-     * @param props  The connector properties.
+     * @param conn  The database connection.
+     * @param props The connector properties.
+     * @return
      * @throws SQLException If a database error occurs.
      */
-    public void getErrorTableStatus(Connection conn, Properties props)
+    public String getErrorTableStatus(Connection conn, Properties props)
             throws SQLException {
+        String response = "";
+
         String errorTableName = props.getProperty(
                 ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
-        new DBMetadata().executeSystemQuery(conn, errorTableStatusQuery);
+        DBMetadata metadata = new DBMetadata();
+        ResultSet resultSet = metadata.executeQueryWithResultSet(
+                errorTableStatusQuery, conn);
+        if (resultSet != null) {
+            ResultSetMetaData md = resultSet.getMetaData();
+            int numCols = md.getColumnCount();
+            List<String> colNames = IntStream.range(0, numCols)
+                    .mapToObj(i -> {
+                        try {
+                            return md.getColumnName(i + 1);
+                        } catch (SQLException e) {
+                            e.printStackTrace();
+                            return "?";
+                        }
+                    })
+                    .collect(Collectors.toList());
+            JSONArray result = new JSONArray();
+            // convert the result set to a json array.
+            while (resultSet.next()) {
+                JSONObject row = new JSONObject();
+                colNames.forEach(cn -> {
+                    try {
+                        Object v = resultSet.getObject(cn);
+                        row.put(cn, v);
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+                });
+                result.add(row);
+            }
+            response = result.toString();
+        }
+
+
+        return response;
+
+        // TODO: Return the status of the error table.
+
     }
 
     /**

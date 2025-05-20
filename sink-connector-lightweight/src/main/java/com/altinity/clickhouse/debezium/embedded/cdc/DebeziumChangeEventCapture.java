@@ -406,6 +406,7 @@ public class DebeziumChangeEventCapture {
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -422,7 +423,7 @@ public class DebeziumChangeEventCapture {
                 try {
                     ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
-                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"));
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
                 } catch (SQLException ex) {
                     log.error("Failed to log DDL error to ClickHouse", ex);
                 }

@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -79,7 +80,8 @@ public class ErrorLogger {
                               SourceRecord record,
                               String sourceDatabase,
                               String query, 
-                              String offsetKey) throws SQLException {
+                              String offsetKey,
+                              String errorTableName) throws SQLException {
         if (connection == null) {
             throw new SQLException("Connection cannot be null");
         }

@@ -194,6 +194,8 @@ public class DebeziumEmbeddedRestApi {
         });
 
         app.get("/show-slave-status", ctx -> {
+            String response = "";
+            try {
             ClickHouseSinkConnectorConfig config =
                     new ClickHouseSinkConnectorConfig(
                             PropertiesHelper.toMap(finalProps1));
@@ -201,7 +203,7 @@ public class DebeziumEmbeddedRestApi {
                     new DebeziumJdbcStorageOperations();
                 HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
                 Connection connection = ds.getConnection();
-                debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
+                response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
                 connection.close();
             } catch (Exception e) {
                 log.error("Client - Error getting error table status", e);      

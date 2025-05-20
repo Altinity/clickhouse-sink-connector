@@ -250,6 +250,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     public void run() {
         Long taskId = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         try {
             // Poll from Queue until its empty.
             while (records.size() > 0 || currentBatch != null) {
@@ -349,14 +350,15 @@ public class ClickHouseBatchRunnable implements Runnable {
                         sourceRecord,
                         databaseName,
                         "", // No query field available
-                        "");   // No offset key field available
+                        "", // No offset key field available
+                        errorTableName);
                 } else {
                     ErrorLogger.logError(dbCon, 
                         String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
                         null,
                         "",
-                        "",
-                        config.getString("name"));
+                        "", "",
+                        errorTableName);
                 }
                 
                 Thread.sleep(ERROR_SLEEP_TIME_MS);
