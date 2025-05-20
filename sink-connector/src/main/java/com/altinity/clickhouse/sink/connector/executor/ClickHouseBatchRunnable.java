@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.alibaba.fastjson.JSONObject;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -23,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -266,8 +269,16 @@ public class ClickHouseBatchRunnable implements Runnable {
                 // topic name syntax is server.database.table
                 for (Map.Entry<String, List<ClickHouseStruct>> entry :
                         topicToRecordsMap.entrySet()) {
+
                     result = processRecordsByTopic(entry.getKey(),
                             entry.getValue());
+
+                    // insert history data
+                    if(loadReplicationHistoryEnable()){
+                        processRecordsByTopic(entry.getKey()+"_history",
+                                entry.getValue());
+                    }
+
                     if (result == false) {
                         log.error("Error processing records for topic: " +
                                 entry.getKey());

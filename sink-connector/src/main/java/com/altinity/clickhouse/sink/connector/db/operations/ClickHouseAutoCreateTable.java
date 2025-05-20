@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
@@ -7,6 +8,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -103,22 +105,38 @@ public class ClickHouseAutoCreateTable
                                     boolean useReplicatedReplacingMergeTree,
                                     String rmtDeleteColumn) {
 
+        // Load the schema configuration from the YAML file
+        SchemaOverrideConfig config = new SchemaOverrideConfig();
+        String filePath = "config_schema_override.yml";  // File is inside src/main/resources
+        try {
+            config.loadTableConfigs(filePath);
+        } catch (IOException e) {
+            log.error("load schema override configs error:", e);
+        }
+
+        // Get the schema configuration for the table "tr_live" in database "dbo"
+        SchemaOverrideConfig.Table tableConfig = config.getTableConfig(databaseName, tableName);
+
+        // Use the primaryKey from the tableConfig if it is not empty
+        if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+            primaryKey = new ArrayList<>();
+            primaryKey.add(tableConfig.getPrimaryKey());  // Replace with the primary key from tableConfig
+        }
+
         StringBuilder createTableSyntax = new StringBuilder();
 
+        // Start creating the CREATE TABLE statement
         createTableSyntax.append(CREATE_TABLE).append(" ")
                 .append(databaseName).append(".")
                 .append("`").append(tableName).append("`");
-        if (useReplicatedReplacingMergeTree == true) {
-            createTableSyntax.append(" ON CLUSTER `{cluster}` ");
-        }
 
+        // Add columns to the SQL
         createTableSyntax.append("(");
-
         for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
             boolean isNull = false;
-            if (f.schema().isOptional() == true) {
+            if (f.schema().isOptional()) {
                 isNull = true;
             }
             createTableSyntax.append("`").append(colName).append("`")
@@ -139,6 +157,7 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(",");
         }
 
+        // Handle the deletion column logic
         String isDeletedColumn = IS_DELETED_COLUMN;
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
@@ -151,16 +170,17 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(isDeletedColumn)
                     .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
         } else {
-            // Append sign and version columns.
             createTableSyntax.append("`").append(SIGN_COLUMN)
                     .append("` ").append(SIGN_COLUMN_DATA_TYPE)
                     .append(",");
             createTableSyntax.append("`").append(VERSION_COLUMN)
                     .append("` ").append(VERSION_COLUMN_DATA_TYPE);
         }
-        createTableSyntax.append(")");
-        createTableSyntax.append(" ");
 
+        createTableSyntax.append(")");
+
+        // Add the engine type
+        createTableSyntax.append(" ");
         if (isNewReplacingMergeTreeEngine == true) {
             if (useReplicatedReplacingMergeTree == true) {
                 createTableSyntax.append(String.format(
@@ -181,35 +201,161 @@ public class ClickHouseAutoCreateTable
                         .append(VERSION_COLUMN).append(")");
             }
         }
-        createTableSyntax.append(" ");
 
-        if (primaryKey != null
-                && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
-            createTableSyntax.append(PRIMARY_KEY).append("(");
-            createTableSyntax.append(primaryKey.stream()
-                    .map(Object::toString)
-                    .collect(Collectors.joining(",")));
-            createTableSyntax.append(") ");
+        // Add PARTITION BY if it is present
+        if (tableConfig != null && tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+            createTableSyntax.append(" PARTITION BY `").append(tableConfig.getPartitionBy()).append("`");
+        }
+
+        // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
+        createTableSyntax.append(" ");
+        if (primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(ORDER_BY).append("(");
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
             createTableSyntax.append(")");
         } else {
-            // TODO: Define a default ORDER BY clause.
+            // Default ORDER BY clause
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
+
+        // Add SETTINGS if they are provided (SETTINGS should be placed last)
+        if (tableConfig != null && tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
+            createTableSyntax.append(" SETTINGS ").append(tableConfig.getSettings());
+        }
+
         return createTableSyntax.toString();
     }
 
     /**
-     * Checks if all primary key columns are present in the column-to-data
-     * type map.
+     * Creates a history table with MergeTree engine, including
+     * CDC metadata columns such as database, table, raw payload,
+     * event time, operation type, host, logfile, position, and primary host.
      *
-     * @param primaryKeys a list of primary key column names
-     * @param columnToDataTypesMap a map of column names to data types
-     * @return true if all primary key columns are present; false otherwise
+     * @param primaryKey list of primary key column names
+     * @param historyTableName name of the history table to create
+     * @param databaseName name of the database in which the history table is created
+     * @param fields array of Kafka Connect fields
+     * @param connection JDBC connection to the ClickHouse database
+     * @throws SQLException if a SQL exception occurs during table creation
      */
+    public void createHistoryTable(ArrayList<String> primaryKey,
+                                   String historyTableName,
+                                   String databaseName,
+                                   Field[] fields,
+                                   Connection connection)
+            throws SQLException {
+        Map<String, String> columnToDataTypesMap =
+                this.getColumnNameToCHDataTypeMapping(fields);
+        String sql = createHistoryTableSyntax(
+                primaryKey, historyTableName,
+                databaseName, fields, columnToDataTypesMap);
+        log.info(String.format(
+                "**** AUTO CREATE HISTORY TABLE for database(%s), Query :%s)",
+                databaseName, sql));
+        DBMetadata metadata = new DBMetadata();
+        metadata.executeSystemQuery(connection, sql);
+    }
+
+    /**
+     * Builds the CREATE TABLE SQL syntax for a history table,
+     * adding CDC metadata columns for database, table, raw payload,
+     * time, operation, host, logfile, position, and primary host.
+     *
+     * @param primaryKey list of primary key column names
+     * @param historyTableName name of the history table to create
+     * @param databaseName name of the database in which the history table is created
+     * @param fields array of Kafka Connect fields
+     * @param columnToDataTypesMap map of column names to ClickHouse data types
+     * @return SQL statement string for creating the history table
+     */
+    public String createHistoryTableSyntax(ArrayList<String> primaryKey,
+                                           String historyTableName,
+                                           String databaseName,
+                                           Field[] fields,
+                                           Map<String, String> columnToDataTypesMap) {
+        SchemaOverrideConfig config = new SchemaOverrideConfig();
+        try {
+            config.loadTableConfigs("config_schema_override.yml");
+        } catch (IOException e) {
+            log.error("load schema override configs error:", e);
+        }
+        SchemaOverrideConfig.Table tableConfig =
+                config.getTableConfig(databaseName, historyTableName.replaceAll("_history$", ""));
+
+        // Use the primaryKey from the tableConfig if it is not empty
+        if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+            primaryKey = new ArrayList<>();
+            primaryKey.add(tableConfig.getPrimaryKey());  // Replace with the primary key from tableConfig
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(CREATE_TABLE)
+                .append(' ').append(databaseName)
+                .append(".`").append(historyTableName).append("`(");
+
+        for (Field f : fields) {
+            String col = f.name();
+            String dt = columnToDataTypesMap.get(col);
+            sb.append('`').append(col).append("` ")
+                    .append(dt)
+                    .append(f.schema().isOptional() ? ' ' + NULL : ' ' + NOT_NULL)
+                    .append(',');
+        }
+        sb.append('`').append(DATABASE_COLUMN).append("` ")
+                .append(DATABASE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(TABLE_COLUMN).append("` ")
+                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(RAW_COLUMN).append("` ")
+                .append(RAW_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(TIME_COLUMN).append("` ")
+                .append(TIME_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(IS_DELETED_COLUMN).append("` ")
+                .append(IS_DELETED_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(OPERATION_COLUMN).append("` ")
+                .append(OPERATION_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(VERSION_COLUMN).append("` ")
+                .append(VERSION_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(HOST_COLUMN).append("` ")
+                .append(HOST_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(LOGFILE_COLUMN).append("` ")
+                .append(LOGFILE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(POSITION_COLUMN).append("` ")
+                .append(POSITION_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(PRIMARY_HOST_COLUMN).append("` ")
+                .append(PRIMARY_HOST_COLUMN_DATA_TYPE);
+        sb.append(") ENGINE = MergeTree()");
+
+        if (tableConfig != null &&
+                tableConfig.getPartitionBy() != null &&
+                !tableConfig.getPartitionBy().isEmpty()) {
+            sb.append(" PARTITION BY `")
+                    .append(tableConfig.getPartitionBy())
+                    .append("`");
+        }
+
+        sb.append(' ');
+        if (primaryKey != null &&
+                isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+            sb.append(ORDER_BY)
+                    .append("(")
+                    .append(primaryKey.stream()
+                            .collect(Collectors.joining(",")))
+                    .append(")");
+        } else {
+            sb.append(ORDER_BY_TUPLE);
+        }
+
+        if (tableConfig != null &&
+                tableConfig.getSettings() != null &&
+                !tableConfig.getSettings().isEmpty()) {
+            sb.append(" SETTINGS ")
+                    .append(tableConfig.getSettings());
+        }
+        return sb.toString();
+    }
+
     @VisibleForTesting
     boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,
                                       Map<String, String> columnToDataTypesMap) {

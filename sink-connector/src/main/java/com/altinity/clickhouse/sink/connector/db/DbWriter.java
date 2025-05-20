@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 import static io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX;
 
 /**
@@ -32,7 +33,7 @@ public class DbWriter extends BaseDbWriter {
      * Logger for this class, handling logs and error messages.
      */
     private static final Logger log = LogManager.getLogger(
-            ClickHouseSinkConnectorConfig.class
+            DbWriter.class
     );
 
     /**
@@ -204,6 +205,16 @@ public class DbWriter extends BaseDbWriter {
                                 useReplicatedReplacingMergeTree,
                                 rmtDeleteColumn
                         );
+
+                        if(loadReplicationHistoryEnable()){
+                            act.createHistoryTable(
+                                    record.getPrimaryKey(),
+                                    tableName+"_history",
+                                    database,
+                                    fields,
+                                    this.conn
+                            );
+                        }
                     } catch (Exception e) {
                         log.error(String.format(
                                         "**** Error creating table(%s), database(%s) ***",

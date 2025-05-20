@@ -14,6 +14,8 @@ import org.apache.logging.log4j.Logger;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
+
 /**
  * Provides base operations to handle ClickHouse table creation and data-type
  * mapping. This class contains logic to map Kafka Connect {@link Schema}
@@ -167,6 +169,21 @@ public class ClickHouseTableOperationsBase {
                         + type.getName() + "SCHEMA NAME:" + schemaName);
             }
         }
+
+        // Call the method to load the default column data type mapping.
+        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
+
+        // Iterate over columnToDataTypesMap using entrySet for efficient access to keys and values
+        for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
+            String key = entry.getKey();  // Get the current key from columnToDataTypesMap
+            // Check if defaultColumnDataTypeMap contains the key
+            if (defaultColumnDataTypeMap.containsKey(key)) {
+                // If defaultColumnDataTypeMap contains the key, update columnToDataTypesMap's value
+                // with the corresponding value from defaultColumnDataTypeMap
+                entry.setValue(defaultColumnDataTypeMap.get(key));
+            }
+        }
+
         return columnToDataTypesMap;
     }
 }

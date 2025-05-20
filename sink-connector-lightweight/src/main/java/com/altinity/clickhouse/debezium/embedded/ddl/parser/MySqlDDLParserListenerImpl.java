@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
+
+import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
@@ -297,6 +299,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
+
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -481,6 +484,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
 
+        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
+
+        // Use a single null check with optional.
+        if (defaultColumnDataTypeMap != null) {
+            chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
+        }
+
         return chDataType;
     }
 
@@ -650,6 +660,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.error("Error retrieving NULL column schema from ClickHouse", e);
             }
         }
+
+        // Call the method to load the default column data type mapping.
+        /*Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
+
+        // Use a single null check with optional.
+        if (defaultColumnDataTypeMap != null) {
+            columnType = defaultColumnDataTypeMap.getOrDefault(columnName, columnType);
+        }*/
 
         // If column name and column type are defined, append them to the query.
         if (columnName != null && columnType != null)

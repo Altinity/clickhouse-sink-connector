@@ -141,6 +141,19 @@ public class ClickHouseAutoCreateTableTest {
     }
 
     @Test
+    public void testCreateMergeTreeHistoryTableSyntax() {
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+
+        String query = act.createHistoryTableSyntax(primaryKeys, "auto_create_table_history", "employees",
+                createFields(), this.columnToDataTypesMap);
+        System.out.println("QUERY" + query);
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE employees.`auto_create_table_history`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON NOT NULL,`max_amount` Float64 NOT NULL,`database` String,`table` String,`_raw` String,`_time` UInt64,`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` String,`logfile` String,`position` UInt64,`primary_host` String) ENGINE = MergeTree() ORDER BY(customerName"));
+    }
+
+    @Test
     public void testCreateTableEmptyPrimaryKey() {
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
@@ -176,14 +189,11 @@ public class ClickHouseAutoCreateTableTest {
         String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
-        String tableName = "employees";
-
+        String tableName = "employees5";
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-
-
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
@@ -193,8 +203,37 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys.add("customerName");
 
         try {
-            act.createNewTable(primaryKeys, "auto_create_table", "default", this.createFields(), writer.getConnection(),
+            act.createNewTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(),
                     false, false, null);
+        } catch(SQLException se) {
+            Assert.assertTrue(false);
+        }
+    }
+
+    @Test
+    @Tag("IntegrationTest")
+    @Disabled
+    public void testCreateMergeTreeHistoryTable() {
+        String dbHostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
+        String database = "test";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
+        String tableName = "employees5_history";
+
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
+        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        ArrayList<String> primaryKeys = new ArrayList<>();
+        primaryKeys.add("customerName");
+
+        try {
+            act.createHistoryTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection());
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

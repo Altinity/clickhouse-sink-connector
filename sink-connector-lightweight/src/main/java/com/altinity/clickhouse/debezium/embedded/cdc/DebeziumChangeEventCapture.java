@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
@@ -38,6 +39,9 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
 /**
  * Sets up Debezium engine with the configuration passed by the user,
@@ -144,6 +148,8 @@ public class DebeziumChangeEventCapture {
                                           DebeziumRecordParserService debeziumRecordParserService,
                                           ClickHouseSinkConnectorConfig config)
             throws IOException, ClassNotFoundException {
+
+        // System.out.println("setupDebeziumEventCapture");
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
@@ -305,6 +311,7 @@ public class DebeziumChangeEventCapture {
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
         // Start Debezium event loop if it is requested from REST API.
+        // System.out.println("setupProcessingThread");
         if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
                 || forceStart) {
             this.setupProcessingThread(config);
@@ -413,6 +420,12 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
                 executeDDL(clickHouseQuery.toString(), writer);
+
+                if(loadReplicationHistoryEnable()){
+                    executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer);
+                    // executeDDL(transformTableName(clickHouseQuery.toString()), writer);
+                }
+
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
             } catch (Exception e) {
@@ -493,6 +506,105 @@ public class DebeziumChangeEventCapture {
                 log.info("ClickHouse DDL: " + query);
                 dbMetadata.executeSystemQuery(writer.getConnection(), query);
             }
+        }
+    }
+
+    /**
+     * Transforms the first occurrence of ALTER TABLE or CREATE TABLE in the
+     * original SQL by appending "_history" to the captured table name.
+     *
+     * @param original the original SQL statement
+     * @return the transformed SQL statement, or the original if no match was found
+     */
+    private static String transformTableName(String original) {
+        // Build a regex that matches 'ALTER TABLE ' or 'CREATE TABLE ',
+        // captures the schema.table identifier, and asserts that the next character
+        // is either a space or an opening parenthesis.
+        Pattern pattern = Pattern.compile(
+                "((?:ALTER TABLE|CREATE TABLE)\\s+)" +  // group(1): the clause + trailing whitespace
+                        "([\\w\\.]+)" +                         // group(2): schema.table
+                        "(?=\\s|\\()",                          // lookahead: ensure next char is space or '('
+                Pattern.CASE_INSENSITIVE                // allow case-insensitive matching
+        );
+
+        Matcher matcher = pattern.matcher(original);
+        if (matcher.find()) {
+            String clause   = matcher.group(1); // e.g. "ALTER TABLE " or "CREATE TABLE "
+            String table    = matcher.group(2); // e.g. "employees.contacts"
+            // Rebuild the prefix + table + "_history", then replace only the first occurrence
+            return matcher.replaceFirst(clause + table + "_history");
+        }
+
+        // No ALTER/CREATE TABLE match -> return unchanged
+        return original;
+    }
+
+    /**
+     * Modifies a dynamically generated CREATE TABLE statement when creating TM history table:
+     * 1. Modifies the ENGINE from ReplacingMergeTree to MergeTree.
+     * 2. Adds new columns before the ENGINE clause: operation, database, table, _raw, _time, host, logfile, position, primary_host.
+     * 3. Keeps the original ORDER BY clause intact.
+     * 4. Only performs the transformation if the SQL starts with CREATE TABLE.
+     *
+     * @param createTableSql The original CREATE TABLE SQL statement.
+     * @return The modified CREATE TABLE SQL statement.
+     */
+    private static String modifySqlStatement(String createTableSql) {
+        // 1. Only process if the SQL starts with CREATE TABLE
+        if (!createTableSql.trim().toUpperCase().startsWith("CREATE TABLE")) {
+            // If it's not CREATE TABLE, return the original SQL
+            return createTableSql;
+        }
+
+        // 2. Locate the ENGINE=ReplacingMergeTree part in the SQL
+        Pattern enginePattern = Pattern.compile("(?i)ENGINE\\s*=\\s*ReplacingMergeTree\\(.*\\)");
+        Matcher engineMatcher = enginePattern.matcher(createTableSql);
+
+        if (engineMatcher.find()) {
+            // 3. Extract the part before ENGINE (column definitions part)
+            String beforeEngine = createTableSql.substring(0, engineMatcher.start()).trim();
+
+            // Remove the last ')' from the column definitions (before the engine part)
+            if (beforeEngine.endsWith(")")) {
+                beforeEngine = beforeEngine.substring(0, beforeEngine.length() - 1).trim(); // Remove the last ')'
+            }
+
+            // 4. Locate the ORDER BY clause
+            Pattern orderByPattern = Pattern.compile("(?i)ORDER\\s+BY\\s+.*");
+            Matcher orderByMatcher = orderByPattern.matcher(createTableSql);
+            String orderByClause = "";
+            if (orderByMatcher.find()) {
+                orderByClause = createTableSql.substring(orderByMatcher.start()).trim(); // Get ORDER BY clause
+            }
+
+            // 5. Add the new columns before the ENGINE part, ensuring correct placement of parentheses
+            String extraColumns = ", "
+                    + OPERATION_COLUMN + " " + OPERATION_COLUMN_DATA_TYPE + ", "
+                    + DATABASE_COLUMN  + " " + DATABASE_COLUMN_DATA_TYPE  + ", "
+                    + TABLE_COLUMN     + " " + TABLE_COLUMN_DATA_TYPE     + ", "
+                    + RAW_COLUMN       + " " + RAW_COLUMN_DATA_TYPE       + ", "
+                    + TIME_COLUMN      + " " + TIME_COLUMN_DATA_TYPE      + ", "
+                    + HOST_COLUMN      + " " + HOST_COLUMN_DATA_TYPE      + ", "
+                    + LOGFILE_COLUMN   + " " + LOGFILE_COLUMN_DATA_TYPE   + ", "
+                    + POSITION_COLUMN  + " " + POSITION_COLUMN_DATA_TYPE  + ", "
+                    + PRIMARY_HOST_COLUMN + " " +PRIMARY_HOST_COLUMN_DATA_TYPE;
+
+            // 6. Replace ENGINE with "ENGINE = MergeTree()" and add a closing parenthesis before ENGINE
+            String modifiedEngine = ") ENGINE = MergeTree()";
+
+            // 7. Combine the modified SQL with the new columns and the original ORDER BY clause
+            // Ensure the parentheses are correctly closed and combine the modified SQL
+            String modifiedSql = beforeEngine + extraColumns + modifiedEngine;
+
+            // 8. Add the ORDER BY clause if it exists
+            if (!orderByClause.isEmpty()) {
+                modifiedSql += " " + orderByClause;
+            }
+
+            return modifiedSql;
+        } else {
+            // Throw an exception if ENGINE=ReplacingMergeTree is not found
+            throw new IllegalArgumentException("The original SQL does not contain ENGINE=ReplacingMergeTree part: " + createTableSql);
         }
     }
 

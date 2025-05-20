@@ -32,7 +32,7 @@ database.server.name: "ER54"
 database.include.list: sbtest
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
-table.include.list: ""
+#table.include.list: ""
 
 # Clickhouse Server URL, Specify only the hostname.
 clickhouse.server.url: "clickhouse"
@@ -185,7 +185,7 @@ clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_obj
 #Metrics (Prometheus target), required for Grafana Dashboard
 metrics.enable: "true"
 
-#connection.pool.disable: "true"
+connection.pool.disable: "true"
 #connection.pool.max.size: 500
 
 # Skip schema history capturing, use the following configuration

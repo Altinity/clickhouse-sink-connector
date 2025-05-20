@@ -31,6 +31,8 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -139,7 +141,6 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-
             if (false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
                     conn, tableName, columnToDataTypeMap, engine)) {
                 log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
@@ -334,9 +335,11 @@ public class PreparedStatementExecutor {
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
                 } else {
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                }
+                    if(!loadReplicationHistoryEnable()){
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
+                    }
+                                    }
                 ps.setNull(index, Types.OTHER);
                 continue;
             }
@@ -394,6 +397,7 @@ public class PreparedStatementExecutor {
         }
 
         // Handle Version column for REPLACING_MERGE_TREE and REPLICATED_REPLACING_MERGE_TREE engines.
+        Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
         if (engine != null &&
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
@@ -412,6 +416,96 @@ public class PreparedStatementExecutor {
                             ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
                         }
                 }
+            }
+        }
+
+        // Handle history table columns for the MERGE_TREE engine,
+        // using default values for all CDC metadata columns.
+        if (engine != null
+                && engine.getEngine() == DBMetadata.TABLE_ENGINE.MERGE_TREE.getEngine()
+                && loadReplicationHistoryEnable()) {
+            // prepare default values
+            Integer defaultIsDeleted  = 0;    // default isDeleted
+            // database
+            if (columnNameToDataTypeMap.containsKey(DATABASE_COLUMN)
+                    && columnNameToIndexMap.containsKey(DATABASE_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(DATABASE_COLUMN), databaseName);
+            }
+
+            // table
+            if (columnNameToDataTypeMap.containsKey(TABLE_COLUMN)
+                    && columnNameToIndexMap.containsKey(TABLE_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(TABLE_COLUMN), tableName);
+            }
+
+            // raw
+            if (columnNameToDataTypeMap.containsKey(RAW_COLUMN)
+                    && columnNameToIndexMap.containsKey(RAW_COLUMN)) {
+                TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(RAW_COLUMN), ps);
+            }
+
+            // time
+            if (columnNameToDataTypeMap.containsKey(TIME_COLUMN)
+                    && columnNameToIndexMap.containsKey(TIME_COLUMN)) {
+                ps.setLong(columnNameToIndexMap.get(TIME_COLUMN), record.getTs_ms());
+            }
+
+            // is deleted
+            if (columnNameToDataTypeMap.containsKey(IS_DELETED_COLUMN)
+                    && columnNameToIndexMap.containsKey(IS_DELETED_COLUMN)) {
+                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                    ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), -1);
+                } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                    if (beforeSection) {
+                        ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), -1);
+                    } else {
+                        ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), 1);
+                    }
+                } else {
+                    ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), defaultIsDeleted);
+                }
+            }
+
+            // operation type
+            if (columnNameToDataTypeMap.containsKey(OPERATION_COLUMN)
+                    && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
+            }
+
+            // version
+            if (columnNameToDataTypeMap.containsKey(VERSION_COLUMN)
+                    && columnNameToIndexMap.containsKey(VERSION_COLUMN)) {
+                ps.setLong(columnNameToIndexMap.get(VERSION_COLUMN), version);
+            }
+
+            // source host
+            if (columnNameToDataTypeMap.containsKey(HOST_COLUMN)
+                    && columnNameToIndexMap.containsKey(HOST_COLUMN)) {
+                ps.setString(
+                        columnNameToIndexMap.get(HOST_COLUMN),
+                        record.getServerId() != null ? record.getServerId().toString() : ""
+                );
+            }
+
+            // logfile
+            if (columnNameToDataTypeMap.containsKey(LOGFILE_COLUMN)
+                    && columnNameToIndexMap.containsKey(LOGFILE_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(LOGFILE_COLUMN), record.getFile());
+            }
+
+            // position
+            if (columnNameToDataTypeMap.containsKey(POSITION_COLUMN)
+                    && columnNameToIndexMap.containsKey(POSITION_COLUMN)) {
+                ps.setLong(columnNameToIndexMap.get(POSITION_COLUMN), record.getPos());
+            }
+
+            // primary host
+            if (columnNameToDataTypeMap.containsKey(PRIMARY_HOST_COLUMN)
+                    && columnNameToIndexMap.containsKey(PRIMARY_HOST_COLUMN)) {
+                ps.setString(
+                        columnNameToIndexMap.get(PRIMARY_HOST_COLUMN),
+                        record.getServerId() != null ? record.getServerId().toString() : ""
+                );
             }
         }
 
