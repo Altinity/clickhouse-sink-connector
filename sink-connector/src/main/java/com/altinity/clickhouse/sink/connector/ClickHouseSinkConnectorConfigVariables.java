@@ -78,6 +78,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     SINGLE_THREADED("single.threaded"),
 
+
     CONNECTION_POOL_MAX_SIZE("connection.pool.max.size"),
     CONNECTION_POOL_TIMEOUT("connection.pool.timeout"),
     CONNECTION_POOL_MIN_IDLE("connection.pool.min.idle"),
@@ -92,9 +93,6 @@ public enum ClickHouseSinkConnectorConfigVariables {
     CONNECTOR_CLASS("connector.class"),
 
     NON_DEFAULT_VALUE("non.default.value");
-
-
-
     private String label;
 
     ClickHouseSinkConnectorConfigVariables(String s) {

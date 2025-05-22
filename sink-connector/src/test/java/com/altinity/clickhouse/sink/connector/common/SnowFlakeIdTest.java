@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.common;
 
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 

@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -23,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.CONNECTOR_CLASS;
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -203,12 +206,31 @@ public class ClickHouseBatchRunnable implements Runnable {
         return dbCredentials;
     }
 
+    ConnectorType getConnectorType() {
+        ConnectorType connectorType = ConnectorType.MYSQL;
+
+        try {
+            String connectorClass = config.getString("connector.class");
+            // For Kafka. connector.class -> com.altinity.clickhouse.sink.connector.ClickHouseSinkConnector
+            if(connectorClass.contains("sink")) {
+                // Skip kafka check.
+                return connectorType;
+            }
+            connectorType = ConnectorType.fromString(config.getString("connector.class"));
+        } catch (Exception e) {
+            log.error("Error while getting connector type", e);
+        }
+        return connectorType;
+    }
     /**
      * Main run loop of the thread, called on a schedule.
      * Default: 100 msecs
      */
     @Override
     public void run() {
+
+        ConnectorType connectorType = getConnectorType();
+
         Long taskId = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
         try {
@@ -276,7 +298,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 }
                 if (result) {
                     // Step 2: Check if the batch can be committed.
-                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
+                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch, connectorType)) {
                         currentBatch = null;
                     }
                 }

@@ -111,6 +111,8 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
             ClickHouseSinkConnectorConfig.class);
 
     // Configuration groups
+    public static final String CONNECTOR_CLASS = "connector.class";
+
     /**
      * Configuration group for ClickHouse login info.
      */
@@ -208,6 +210,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     static ConfigDef newConfigDef() {
         return new ConfigDef()
 
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(),
+                        Type.STRING,
+                        "",
+                        null,
+                        Importance.HIGH,
+                        "Connector class"
+                )
                 // Config Group "Connector config"
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS
