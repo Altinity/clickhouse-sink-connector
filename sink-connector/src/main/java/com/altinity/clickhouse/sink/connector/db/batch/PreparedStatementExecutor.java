@@ -399,16 +399,18 @@ public class PreparedStatementExecutor {
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
                 && versionColumn != null) {
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
-                if (columnNameToIndexMap.containsKey(versionColumn)) {
-                    if (record.getGtid() != -1) {
-                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
+                    if(columnNameToIndexMap.containsKey(versionColumn)) {
+                        if (record.getGtid() != -1) {
+                            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
+                            } else {
+                                ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                            }
+                        } else if (record.getSequenceNumber() != -1) {
+                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
                         } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
+                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
                         }
-                    } else {
-                        ps.setLong(columnNameToIndexMap.get(versionColumn), record.getSequenceNumber());
-                    }
                 }
             }
         }

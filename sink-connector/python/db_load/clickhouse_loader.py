@@ -61,7 +61,7 @@ def run_quick_command(cmd):
 
 def get_connection(args, clickhouse_user, clickhouse_password, database='default'):
     conn = clickhouse_connection(args.clickhouse_host, database=database,
-                                 user=clickhouse_user, password=clickhouse_password, port=args.clickhouse_port)
+                                 user=clickhouse_user, password=clickhouse_password, port=args.clickhouse_port, secure=args.clickhouse_secure)
     return conn
 
 
@@ -411,6 +411,8 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
         load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=False)
 
     clickhouse_host = args.clickhouse_host
+    clickhouse_port = args.clickhouse_port
+    clickhouse_secure = args.clickhouse_secure
     ch_schema = args.clickhouse_database
     password = clickhouse_password
     password_option = ""
@@ -433,7 +435,8 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
             # double quote escape logic https://github.com/ClickHouse/ClickHouse/issues/10624
             structure = columns.replace(
                 ",", " Nullable(String),")+" Nullable(String)"
-            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client {config_file_option} --use_client_time_zone 1 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{clickhouse_user} {password_option} -mn """
+            secure_option = "--secure" if clickhouse_secure else ""
+            cmd = f"""export TZ={timezone}; gunzip --stdout {data_file}  | sed -e 's/\\\\"/""/g' | sed -e "s/\\\\\\'/'/g" | clickhouse-client {config_file_option} --use_client_time_zone 1 -h {clickhouse_host} --port {clickhouse_port} {secure_option} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT CSV" -u{clickhouse_user} {password_option} -mn """
             execute_load(cmd)
 
 
@@ -451,6 +454,8 @@ def execute_load(cmd):
 def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     clickhouse_host = args.clickhouse_host
+    clickhouse_port = args.clickhouse_port
+    clickhouse_secure = args.clickhouse_secure
     ch_schema = args.clickhouse_database
 
     schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
@@ -506,7 +511,8 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                         else:
                             structure += " String"
 
-                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  --max_partitions_per_insert_block=1000 -h {clickhouse_host} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
+                secure_option = "--secure" if clickhouse_secure else ""
+                cmd = f"""export TZ={timezone}; zstd -d --stdout {data_file}  | clickhouse-client {config_file_option} --use_client_time_zone 1 --throw_if_no_data_to_insert=0  --max_partitions_per_insert_block=1000 -h {clickhouse_host} --port {clickhouse_port} {secure_option} --query="INSERT INTO {ch_schema}.{table_name}({columns})  SELECT {transformed_columns} FROM input('{structure}') FORMAT TSV" -u{clickhouse_user} {password_option} -mn """
                 futures.append(executor.submit(execute_load, cmd))
 
         for future in concurrent.futures.as_completed(futures):
@@ -546,6 +552,8 @@ def main():
                         help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
     parser.add_argument('--clickhouse_port', type=int,
                         default=9000, help='ClickHouse port', required=False)
+    parser.add_argument('--clickhouse_secure',
+                        default=False, help='Use secure connection to ClickHouse', required=False)
     parser.add_argument('--clickhouse_database',
                         help='Clickhouse database name', required=True)
     parser.add_argument('--mysql_source_database',
