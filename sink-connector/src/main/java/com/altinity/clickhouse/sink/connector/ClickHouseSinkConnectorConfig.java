@@ -729,7 +729,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ERROR_TABLE_NAME.toString(),
                         Type.STRING,
-                        ERROR_TABLE_NAME,
+                        ERROR_TABLE_NAME.toString(),
                         Importance.LOW,
                         "Default table name for storing error records",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
