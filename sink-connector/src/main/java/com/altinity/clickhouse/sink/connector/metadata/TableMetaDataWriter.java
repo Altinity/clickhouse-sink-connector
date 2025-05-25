@@ -16,23 +16,31 @@ import java.util.HashMap;
 import java.util.List;
 
 /**
- * Class to perform all operations related
- * to adding metadata to Clickhouse tables.
+ * The TableMetaDataWriter class performs operations related to adding metadata
+ * to ClickHouse tables. This includes adding Kafka metadata columns and raw
+ * data to the prepared statements used for writing to ClickHouse.
  */
 public class TableMetaDataWriter {
 
     /**
-     * Function to add kafka metadata columns.
-     * @param colName
-     * @param record
-     * @param index
-     * @param ps
-     * @return
-     * @throws SQLException
+     * Adds Kafka metadata columns to the prepared statement.
+     * <p>
+     * This method checks the column name and adds the appropriate Kafka
+     * metadata to the prepared statement, including offset, topic, partition,
+     * timestamp, key, server ID, binlog file, and other related information.
+     * </p>
+     *
+     * @param colName the column name to add to the prepared statement.
+     * @param record the ClickHouseStruct containing the record data.
+     * @param index the index of the parameter to be set in the prepared statement.
+     * @param ps the PreparedStatement object to which the values will be set.
+     * @return true if the column was updated, false otherwise.
+     * @throws SQLException if an SQL error occurs while setting the value.
      */
     public static boolean addKafkaMetaData(String colName, ClickHouseStruct record, int index, PreparedStatement ps) throws SQLException {
         boolean columnUpdated = true;
 
+        // Set Kafka metadata columns
         if (colName.equalsIgnoreCase(KafkaMetaData.OFFSET.getColumn())) {
             ps.setLong(index, record.getKafkaOffset());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.TOPIC.getColumn())) {
@@ -54,7 +62,7 @@ public class TableMetaDataWriter {
         } else if (colName.equalsIgnoreCase(KafkaMetaData.TS_MS.getColumn())) {
             ps.setLong(index, record.getTs_ms());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_ID.getColumn())) {
-            ps.setLong(index, record.getServerId()) ;
+            ps.setLong(index, record.getServerId());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.GTID.getColumn())) {
             ps.setLong(index, record.getGtid());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.BINLOG_FILE.getColumn())) {
@@ -65,31 +73,48 @@ public class TableMetaDataWriter {
             ps.setInt(index, record.getRow());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.SERVER_THREAD.getColumn())) {
             ps.setInt(index, record.getThread());
-        }
-        else {
+        } else {
             columnUpdated = false;
         }
 
         return columnUpdated;
     }
 
+    /**
+     * Adds raw data to the prepared statement.
+     * <p>
+     * This method converts the given Struct into a JSON representation and
+     * adds it to the prepared statement at the specified index.
+     * </p>
+     *
+     * @param s the Struct containing the raw data to be added.
+     * @param index the index of the parameter to be set in the prepared statement.
+     * @param ps the PreparedStatement object to which the raw data will be added.
+     * @throws Exception if an error occurs during the conversion to JSON.
+     */
     public static void addRawData(Struct s, int index, PreparedStatement ps) throws Exception {
         String jsonRecord = convertRecordToJSON(s);
         ps.setString(index, jsonRecord);
     }
 
     /**
-     * Function to convert the kafka record to JSON.
-     * @param s
-     * @return
+     * Converts a Kafka record (Struct) to JSON.
+     * <p>
+     * This method iterates over the fields of the Struct and converts them
+     * into a JSON string, using the Jackson ObjectMapper.
+     * </p>
+     *
+     * @param s the Struct containing the Kafka record.
+     * @return the JSON representation of the record.
+     * @throws Exception if an error occurs during the conversion to JSON.
      */
     public static String convertRecordToJSON(Struct s) throws Exception {
 
         List<Field> fields = s.schema().fields();
 
         HashMap<String, Object> result = new HashMap<String, Object>();
-        for(Field f: fields) {
-            if(f != null && s.get(f) != null) {
+        for (Field f: fields) {
+            if (f != null && s.get(f) != null) {
                 result.put(f.name(), s.get(f));
             }
         }

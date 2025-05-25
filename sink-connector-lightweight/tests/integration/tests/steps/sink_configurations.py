@@ -40,3 +40,15 @@ def config_with_schema_only(self, config_file=default_config_path + "schema_only
     change_sink_configuration(
         values={"snapshot.mode": "schema_only"}, config_file=config_file
     )
+
+
+@TestStep(Given)
+def config_with_nullable_default_true(self, config_file=default_config_path + "nullable_default_true.yml"):
+    """Create the Sink Connector configuration with the nullable default true."""
+    change_sink_configuration(values={"non.default.value": "true"}, config_file=config_file)
+
+
+@TestStep(Given)
+def config_with_nullable_default_false(self, config_file=default_config_path + "nullable_default_false.yml"):
+    """Create the Sink Connector configuration with the nullable default false."""
+    change_sink_configuration(values={"non.default.value": "false"}, config_file=config_file)

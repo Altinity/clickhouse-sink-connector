@@ -31,6 +31,17 @@ public class MySqlDDLParserListenerImplTest {
                 "employees");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
+
+    @Test
+    public void testCreateTableWithSetDataType() {
+
+        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
+        ;
+    }
     @Test
     public void testCreateTableWithEnum() {
         String createQuery = "CREATE TABLE employees_predated (\n" +
@@ -51,17 +62,6 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (emp_no)"));
         log.info("Create table " + clickHouseQuery);
-    }
-
-    @Test
-    public void testCreateTableWithSetDataType() {
-
-        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
-        StringBuffer clickHouseQuery = new StringBuffer();
-
-        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
-        ;
     }
 
     @Test
@@ -741,6 +741,21 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists test_ddl"));
+    }
+
+    @Test
+    public void testCreateDatabaseReplicated() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> map = new HashMap<>();
+        map.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(map);
+
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "test");
+        String sql = "create database if not exists repl_test_ddl";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists repl_test_ddl on cluster `{cluster}`"));
     }
 
     @Test
