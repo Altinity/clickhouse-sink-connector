@@ -225,8 +225,14 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult7.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult7.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult7.getTimestamp("Minimum_Value").toString());
-1900-01-01
-            engine.get().stop();
+
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-28 20:50:56.123456"));
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 17:59:59.0"));
+            Assert.assertTrue(dateTimeResult7.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 18:00:00.0"));
+            break;
+        }
+
+        if(engine.get() != null) {
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
