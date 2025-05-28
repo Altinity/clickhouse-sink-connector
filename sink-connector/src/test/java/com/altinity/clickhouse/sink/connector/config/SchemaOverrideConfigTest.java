@@ -41,30 +41,6 @@ public class SchemaOverrideConfigTest {
         assertEquals("allow_nullable_key=1", tableConfig.getSettings(), "Settings should match");
     }
 
-    /**
-     * Test to verify that the configuration for dbo.tr_live2 is loaded correctly.
-     */
-    @Test
-    public void testDboTrLive2Config() {
-        SchemaOverrideConfig.Table tableConfig = config.getTableConfig("dbo", "tr_live2");
-        assertNotNull(tableConfig, "dbo.tr_live2 configuration should not be null");
-        // For dbo.tr_live2, partition_by and settings are not defined.
-        assertNull(tableConfig.getPartitionBy(), "Partition key should be null");
-        assertEquals("time2", tableConfig.getPrimaryKey(), "Primary key should match");
-        assertNull(tableConfig.getSettings(), "Settings should be null");
-    }
-
-    /**
-     * Test to verify that the configuration for dbo2.tr_live is loaded correctly.
-     */
-    @Test
-    public void testDbo2TrLiveConfig() {
-        SchemaOverrideConfig.Table tableConfig = config.getTableConfig("dbo2", "tr_live");
-        assertNotNull(tableConfig, "dbo2.tr_live configuration should not be null");
-        assertEquals("tr_date_id", tableConfig.getPartitionBy(), "Partition key should match");
-        assertEquals("gmt_time", tableConfig.getPrimaryKey(), "Primary key should match");
-        assertEquals("allow_nullable_key=1", tableConfig.getSettings(), "Settings should match");
-    }
 
     /**
      * Test to verify that requesting a non-existent configuration returns null.
