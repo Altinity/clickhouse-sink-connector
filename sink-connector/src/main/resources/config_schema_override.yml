@@ -1,0 +1,37 @@
+default_column_datatype_mapping:
+  # we are no longer turning Date/DateTime/Timestamp as a String
+  transaction_id: String
+  exchange_transaction_id: String
+  unique_transaction_id: String
+  account_ref: String
+  otm_identifier: String
+  tag_reserved_4: String
+  initiator: String
+  # quantity: String
+  # amount_1: String
+  # amount: String
+  gmt_time: String
+  gmt_time2: String
+  gmt_time3: String
+  gmt_time4: String
+databases:
+  dbo:
+    tables:
+      tr_live:
+        partition_by: tr_date_id
+        primary_key: gmt_time
+        settings: allow_nullable_key=1
+  test:
+    tables:
+      foo13:
+        partition_by: pid
+        primary_key: tr_date_id
+        settings: allow_nullable_key=1
+      employee3:
+        partition_by: tr_date_id
+        primary_key: gmt_time
+        settings: allow_nullable_key=1
+      employees9:
+        partition_by: customerName
+        primary_key: occupation
+        settings: allow_nullable_key=1
