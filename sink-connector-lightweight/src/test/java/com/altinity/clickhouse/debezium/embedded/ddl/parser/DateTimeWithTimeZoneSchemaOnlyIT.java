@@ -233,6 +233,8 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         }
 
         if(engine.get() != null) {
+            engine.get().stop();
+
         }
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
