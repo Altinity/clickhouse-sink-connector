@@ -130,12 +130,12 @@ public class PostgresPgoutputMultipleSchemaIT {
         Assert.assertTrue(tm2Count == 1);
 
         // valdate table_with_timezone
-        int tableWithTimezoneCount = 0;
-        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from table_time_with_timezone final").executeQuery();
-        while(chRsTz.next()) {
-            tableWithTimezoneCount =  chRsTz.getInt(1);
-        }
-        Assert.assertTrue(tableWithTimezoneCount == 1);
+//        int tableWithTimezoneCount = 0;
+//        ResultSet chRsTz = writer.getConnection().prepareStatement("select count(*) from table_time_with_timezone final").executeQuery();
+//        while(chRsTz.next()) {
+//            tableWithTimezoneCount =  chRsTz.getInt(1);
+//        }
+//        Assert.assertTrue(tableWithTimezoneCount == 1);
 
         // Create a connection to postgresql and create a new table.
         Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);

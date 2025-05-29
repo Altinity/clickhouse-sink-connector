@@ -31,6 +31,17 @@ public class MySqlDDLParserListenerImplTest {
                 "employees");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
+
+    @Test
+    public void testCreateTableWithSetDataType() {
+
+        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
+        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
+        ;
+    }
     @Test
     public void testCreateTableWithEnum() {
         String createQuery = "CREATE TABLE employees_predated (\n" +
@@ -54,17 +65,6 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    public void testCreateTableWithSetDataType() {
-
-        String createQuery = "CREATE TABLE example(options SET('a', 'b', 'c', 'd'))";
-        StringBuffer clickHouseQuery = new StringBuffer();
-
-        mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
-        ;
-    }
-
-    @Test
     public void testCreateTableWithRangeByColumnsPartition() {
         String createQuery = "CREATE TABLE rcx ( a INT, b INT, c CHAR(3), d INT) PARTITION BY RANGE COLUMNS(a,d,c) ( PARTITION p0 VALUES LESS THAN (5,10,'ggg'), PARTITION p1 VALUES LESS THAN (10,20,'mmm'), " +
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
@@ -74,15 +74,15 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
     }
 
-    // @Test
-    // public void testAlterTableWithAnalyzePartition() {
-
-    //     String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
-    //     StringBuffer clickHouseQuery = new StringBuffer();
-    //     mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
-    //     Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
-    //     log.info("Alter table " + clickHouseQuery);
-    // }
+//     @Test
+//     public void testAlterTableWithAnalyzePartition() {
+//
+//         String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
+//         StringBuffer clickHouseQuery = new StringBuffer();
+//         mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
+//         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+//         log.info("Alter table " + clickHouseQuery);
+//     }
 
     @Test
     public void testCreateTableWithParitionRange() {
@@ -741,6 +741,21 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists test_ddl"));
+    }
+
+    @Test
+    public void testCreateDatabaseReplicated() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        HashMap<String, String> map = new HashMap<>();
+        map.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(map);
+
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "test");
+        String sql = "create database if not exists repl_test_ddl";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists repl_test_ddl on cluster `{cluster}`"));
     }
 
     @Test

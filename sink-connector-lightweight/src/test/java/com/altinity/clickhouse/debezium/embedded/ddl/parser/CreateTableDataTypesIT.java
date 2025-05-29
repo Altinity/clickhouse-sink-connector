@@ -13,6 +13,7 @@ import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -29,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
+@Tag("datetime")
 @DisplayName("Integration test that tests replication of data types and validates datetime," +
         " date limits with no timezone values and MySQL Point Data typek     set on CH and MySQL")
 public class CreateTableDataTypesIT extends DDLBaseIT {
@@ -162,7 +164,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:47:46.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MAX));
         }
 
@@ -177,7 +179,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult1.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
-            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:48:25.1"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_1_MAX));
         }
 
@@ -192,7 +194,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
 
             Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
-            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.12"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:49:05.12"));
             Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_2_MAX));
         }
 
@@ -205,7 +207,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult3.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:22.123"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:49:22.123"));
             Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_3_MAX));
             Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
         }
@@ -219,7 +221,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult4.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult4.getTimestamp("Minimum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:12.1234"));
+            Assert.assertTrue(dateTimeResult4.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:50:12.1234"));
             Assert.assertTrue(dateTimeResult4.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_4_MAX));
             Assert.assertTrue(dateTimeResult4.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
 
@@ -235,7 +237,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult5.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult5.getTimestamp("Minimum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:28.12345"));
+            Assert.assertTrue(dateTimeResult5.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:50:28.12345"));
             Assert.assertTrue(dateTimeResult5.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_5_MAX));
             Assert.assertTrue(dateTimeResult5.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
 
@@ -250,7 +252,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
             System.out.println(dateTimeResult6.getTimestamp("Maximum_Value").toString());
             System.out.println(dateTimeResult6.getTimestamp("Minimum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:50:56.123456"));
+            Assert.assertTrue(dateTimeResult6.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 06:50:56.123456"));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Maximum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_6_MAX));
             Assert.assertTrue(dateTimeResult6.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
             break;

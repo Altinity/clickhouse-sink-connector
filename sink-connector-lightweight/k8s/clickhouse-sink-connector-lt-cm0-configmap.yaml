@@ -1,0 +1,10 @@
+apiVersion: v1
+data:
+  log4j2.xml: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Configuration status=\"INFO\">\n    <Appenders>\n        <Console name=\"console\" target=\"SYSTEM_OUT\">\n            <!-- <JSONLayout compact=\"true\" eventEol=\"true\" properties=\"true\" stacktraceAsString=\"true\" includeTimeMillis=\"true\" /> -->\n            <PatternLayout pattern=\"%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level - %msg%n\"/> \n        </Console>\n    </Appenders>\n    <Loggers>\n        <!-- <Logger name=\"org.slf4j\" level=\"DEBUG\"\n                additivity=\"false\">\n        <AppenderRef ref=\"console\"/>\n        </Logger>-->\n        <Logger name=\"io.debezium\" level=\"INFO\"\n                additivity=\"false\">\n            <AppenderRef ref=\"console\"/>\n        </Logger>\n            <Logger name=\"com.clickhouse\" level=\"ERROR\"\n                additivity=\"false\">\n            <AppenderRef ref=\"console\"/>\n        </Logger>\n    <Root level=\"info\" additivity=\"false\">\n            <AppenderRef ref=\"console\" />\n        </Root>\n    </Loggers>\n</Configuration>\n"
+kind: ConfigMap
+metadata:
+  annotations:
+    use-subpath: "true"
+  labels:
+    io.kompose.service: clickhouse-sink-connector-lt
+  name: clickhouse-sink-connector-lt-cm0
