@@ -91,7 +91,7 @@ public class GroupInsertQueryWithBatchRecords {
                     try {
                         new ClickHouseAlterTable().alterTable(
                                 record.getAfterStruct().schema().fields(),
-                                tableName, connection, columnNameToDataTypeMap);
+                                tableName, connection, columnNameToDataTypeMap,config);
                         columnNameToDataTypeMap = new DBMetadata()
                                 .getColumnsDataTypesForTable(tableName,
                                         connection, databaseName, config);

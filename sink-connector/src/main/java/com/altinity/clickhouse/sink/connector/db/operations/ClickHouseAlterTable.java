@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.kafka.connect.data.Field;
@@ -109,7 +110,8 @@ public class ClickHouseAlterTable
      */
     public void alterTable(List<Field> modifiedFields, String tableName,
                            Connection connection,
-                           Map<String, String> columnNameToDataTypeMap) {
+                           Map<String, String> columnNameToDataTypeMap,
+                           ClickHouseSinkConnectorConfig config) {
 
         List<Field> missingFieldsInCH = new ArrayList<>();
         // Identify columns that are missing in ClickHouse.
@@ -127,7 +129,7 @@ public class ClickHouseAlterTable
                     new Field[missingFieldsInCH.size()];
             missingFieldsInCH.toArray(missingFieldsArray);
             Map<String, String> colNameToDataTypeMap2 =
-                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
+                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray,config);
 
             if (!colNameToDataTypeMap2.isEmpty()) {
                 String alterTableQuery = cat.createAlterTableSyntax(

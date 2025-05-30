@@ -33,7 +33,7 @@ public class ClickHouseTableOperationsBaseTest {
         fields[3] = (new Field("date_micro", 4, SchemaBuilder.type(Schema.Type.INT64).
                 name(MicroTimestamp.SCHEMA_NAME).build()));
 
-        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields);
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,null);
 
         Assert.assertTrue(result.get("totalAmount").equalsIgnoreCase("Decimal(4,2)"));
         Assert.assertTrue(result.get("amount").equalsIgnoreCase("Decimal(10,2)"));

@@ -70,4 +70,5 @@ public class PropertiesHelper {
                         (prev, next) -> next, HashMap::new
                 ));
     }
+
 }
