@@ -629,16 +629,19 @@ public class DebeziumChangeEventCapture {
         return snapshotDDL;
     }
 
-    /**
-     * Function that checks if the DDL needs to be ignored.
-     *
-     * @param DDL              The DDL statement.
-     * @param props            The connector properties.
-     * @param sr               The source record.
-     * @param isDropOrTruncate An AtomicBoolean flag indicating if the DDL
-     *                         is DROP or TRUNCATE.
-     * @return true if the DDL should be ignored; false otherwise.
-     */
+    boolean checkDDLAgainstRegexPatterns(String DDL) {
+        IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
+        List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
+        for (String regex : ignoreDDLRegexList) {
+            Pattern p = Pattern.compile(regex);
+            Matcher m = p.matcher(DDL);
+            if (m.find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
@@ -670,6 +673,11 @@ public class DebeziumChangeEventCapture {
                     return true;
                 }
             }
+        }
+
+        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        if (checkDDLAgainstRegexPatterns(DDL)) {
+            return true;
         }
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
