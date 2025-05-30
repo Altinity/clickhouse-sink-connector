@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
@@ -10,6 +11,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.Map;
 
 public class ClickHouseTableOperationsBaseTest {
@@ -33,7 +35,7 @@ public class ClickHouseTableOperationsBaseTest {
         fields[3] = (new Field("date_micro", 4, SchemaBuilder.type(Schema.Type.INT64).
                 name(MicroTimestamp.SCHEMA_NAME).build()));
 
-        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,null);
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         Assert.assertTrue(result.get("totalAmount").equalsIgnoreCase("Decimal(4,2)"));
         Assert.assertTrue(result.get("amount").equalsIgnoreCase("Decimal(10,2)"));

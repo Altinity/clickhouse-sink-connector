@@ -126,6 +126,9 @@ public class ClickHouseAutoCreateTable
                 .append(databaseName).append(".")
                 .append("`").append(tableName).append("`");
 
+        if (useReplicatedReplacingMergeTree == true) {
+            createTableSyntax.append(" ON CLUSTER `{cluster}` ");
+        }
         // Add columns to the SQL
         createTableSyntax.append("(");
         for (Field f : fields) {
@@ -206,6 +209,12 @@ public class ClickHouseAutoCreateTable
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
         if (primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+            createTableSyntax.append(PRIMARY_KEY).append("(");
+            createTableSyntax.append(primaryKey.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining(",")));
+            createTableSyntax.append(") ");
+
             createTableSyntax.append(ORDER_BY).append("(");
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
