@@ -197,6 +197,9 @@ public class SinkConnectorClientRestAPITest {
                 "altinity_sink_connector.replica_source_info");
 
 
+    @Test
+    public void testRestClient() throws Exception {
+
         defaultProps.putIfAbsent("schema.history.internal.jdbc.schema.history.table.ddl",
                 "CREATE TABLE IF NOT EXISTS %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), " +
                         "`history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) " +
