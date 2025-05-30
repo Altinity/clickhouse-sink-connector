@@ -244,7 +244,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
      */
     public static void start(
             DebeziumRecordParserService recordParserService,
-            Properties properties,
+            Properties props,
             boolean forceStart
     ) throws Exception {
         if (forceStart) {
@@ -255,14 +255,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             ));
             loadPropertiesFile(configurationFile);
         }
-        if(props == null)
-        {
-            props = new Properties();
-        }
-        if(props.isEmpty())
-        {
-            props.putAll(props);
-        }
+
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(
                 props, recordParserService, forceStart
