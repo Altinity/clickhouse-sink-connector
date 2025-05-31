@@ -78,7 +78,7 @@ services:
 
   kafka:
     container_name: kafka
-    image: vectorized/redpanda:v22.1.3
+    image: docker.redpanda.com/redpandadata/redpanda
     restart: "no"
     ports:
       # Expose LOCALHOST_NETWORK listener on localhost
@@ -153,25 +153,25 @@ services:
 #   Bitnami bitnami/jmx-exporter vs sscaling images
 
   ## KAFKA UI #####
-  console:
-    image: docker.redpanda.com/vectorized/console:master-217260f
-    restart: on-failure
-    entrypoint: /bin/sh
-    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
-    environment:
-      CONFIG_FILEPATH: /tmp/config.yml
-      CONSOLE_CONFIG_FILE: |
-        kafka:
-          brokers: ["kafka:9092"]
-        connect:
-          enabled: true
-          clusters:
-            - name: datagen
-              url: http://debezium:8083
-    ports:
-      - "8089:8080"
-    depends_on:
-      - kafka
+#  console:
+#    image: docker.redpanda.com/vectorized/console:master-217260f
+#    restart: on-failure
+#    entrypoint: /bin/sh
+#    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+#    environment:
+#      CONFIG_FILEPATH: /tmp/config.yml
+#      CONSOLE_CONFIG_FILE: |
+#        kafka:
+#          brokers: ["kafka:9092"]
+#        connect:
+#          enabled: true
+#          clusters:
+#            - name: datagen
+#              url: http://debezium:8083
+#    ports:
+#      - "8089:8080"
+#    depends_on:
+#      - kafka
 
   jmx_exporter:
     container_name: jmx_exporter
