@@ -41,9 +41,7 @@ xfails = {
     "types/integer types/*": [(Fail, "requires investigation")],
 }
 
-ffails = {
-    "/regression/multiple databases": (Skip, "Work in progress")
-}
+ffails = {"/regression/multiple databases": (Skip, "Work in progress")}
 
 xflags = {}
 
@@ -71,6 +69,7 @@ def regression(
     stress=None,
     thread_fuzzer=None,
     collect_service_logs=None,
+    connection_pool_disable=False,
 ):
     """ClickHouse regression for MySql to ClickHouse replication."""
     nodes = {
@@ -90,6 +89,11 @@ def regression(
 
     if collect_service_logs is not None:
         self.context.collect_service_logs = collect_service_logs
+
+    if connection_pool_disable:
+        self.context.disable_hikari_connection = True
+    else:
+        self.context.disable_hikari_connection = False
 
     env = "env"
 
@@ -116,14 +120,14 @@ def regression(
         create_clickhouse_database(name="test")
 
     Feature(run=load("tests.autocreate", "feature"))
-    # Feature(run=load("tests.insert", "feature"))
-    # Feature(run=load("tests.delete", "feature"))
-    # Feature(run=load("tests.truncate", "feature"))
-    # Feature(run=load("tests.deduplication", "feature"))
-    # Feature(run=load("tests.primary_keys", "feature"))
-    # Feature(run=load("tests.columns_inconsistency", "feature"))
-    # Feature(run=load("tests.types", "feature"))
-    # Feature(run=load("tests.multiple_databases", "feature"))
+    Feature(run=load("tests.insert", "feature"))
+    Feature(run=load("tests.delete", "feature"))
+    Feature(run=load("tests.truncate", "feature"))
+    Feature(run=load("tests.deduplication", "feature"))
+    Feature(run=load("tests.primary_keys", "feature"))
+    Feature(run=load("tests.columns_inconsistency", "feature"))
+    Feature(run=load("tests.types", "feature"))
+    Feature(run=load("tests.multiple_databases", "feature"))
 
 
 if __name__ == "__main__":

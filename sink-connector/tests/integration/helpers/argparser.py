@@ -48,3 +48,11 @@ def argparser(parser):
         default=False,
         help="collect logs for each docker compose service",
     )
+
+    parser.add_argument(
+        "--disable-hikari-connection",
+        dest="connection_pool_disable",
+        action="store_true",
+        default=False,
+        help="disables Hikari connection pool in ClickHouse Sink Connector configuration",
+    )
