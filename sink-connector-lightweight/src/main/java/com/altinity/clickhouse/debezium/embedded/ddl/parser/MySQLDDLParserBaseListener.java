@@ -2564,6 +2564,16 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
     }
 
     @Override
+    public void enterAtomJsonTable(MySqlParser.AtomJsonTableContext atomJsonTableContext) {
+
+    }
+
+    @Override
+    public void exitAtomJsonTable(MySqlParser.AtomJsonTableContext atomJsonTableContext) {
+
+    }
+
+    @Override
     public void enterIndexHint(MySqlParser.IndexHintContext indexHintContext) {
 
     }
