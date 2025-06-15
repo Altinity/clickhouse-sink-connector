@@ -289,7 +289,7 @@ public class ClickHouseSinkTask extends SinkTask implements WriteConfirmationCal
             log.debug("preCommit({}) returning {} committed offsets out of {} requested", this.id, committedOffsets.size(), currentOffsets.size());
 
         } catch (Exception e) {
-            log.debug("preCommit({}):{}", this.id, e.getMessage());
+            log.error("preCommit({}):{}", this.id, e.getMessage());
             return new HashMap<>();
         }
 
