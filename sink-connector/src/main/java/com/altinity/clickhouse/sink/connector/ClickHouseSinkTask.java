@@ -6,6 +6,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
+import com.altinity.clickhouse.sink.connector.executor.WriteConfirmationCallback;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -21,16 +22,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * <p>Creates sink service instance, takes records loaded from those Kafka
  * partitions and ingests them into ClickHouse via the Sink service.</p>
  * <p>This class extends {@link SinkTask} and is managed by Kafka Connect.</p>
  */
-public class ClickHouseSinkTask extends SinkTask {
+public class ClickHouseSinkTask extends SinkTask implements WriteConfirmationCallback {
 
     /**
      * The logger for this class.
@@ -75,6 +78,12 @@ public class ClickHouseSinkTask extends SinkTask {
     private long totalRecords;
 
     /**
+     * Tracks successfully committed offsets for at-least-once delivery.
+     * Key: TopicPartition, Value: Highest successfully committed offset
+     */
+    private final Map<TopicPartition, Long> successfullyCommittedOffsets = new ConcurrentHashMap<>();
+
+    /**
      * Default constructor.
      */
     public ClickHouseSinkTask() {
@@ -115,7 +124,7 @@ public class ClickHouseSinkTask extends SinkTask {
         this.records = new LinkedBlockingQueue<>(maxQueueSize);
 
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(
-                this.records, this.config, topic2TableMap);
+                this.records, this.config, topic2TableMap, this::onWriteSuccess);
 
         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder()
                 .setNameFormat("Sink Connector thread-pool-%d")
@@ -184,7 +193,6 @@ public class ClickHouseSinkTask extends SinkTask {
     @Override
     public void put(Collection<SinkRecord> records) {
         totalRecords += records.size();
-
         long taskId = this.config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
 
@@ -204,10 +212,12 @@ public class ClickHouseSinkTask extends SinkTask {
             }
         }
 
-        try {
-            this.records.put(batch);
-        } catch (InterruptedException e) {
-            throw new RetriableException(e);
+        if (!batch.isEmpty()) {
+            try {
+                this.records.put(batch);
+            } catch (InterruptedException e) {
+                throw new RetriableException(e);
+            }
         }
     }
 
@@ -243,6 +253,8 @@ public class ClickHouseSinkTask extends SinkTask {
      * system and doesn't need Kafka Connect to record anything, then this
      * method should be overridden (instead of flush) and return an empty
      * set of offsets.</p>
+     * <p>For at-least-once delivery, this method only returns
+     * offsets for records that have been successfully written to ClickHouse.</p>
      *
      * @param currentOffsets A map of topic partition to current offset.
      * @return A map of committed offsets that Kafka Connect should record.
@@ -255,16 +267,29 @@ public class ClickHouseSinkTask extends SinkTask {
 
         log.info("preCommit({}) {}", this.id, currentOffsets.size());
 
-        Map<TopicPartition, OffsetAndMetadata> committedOffsets =
-                new HashMap<>();
+        Map<TopicPartition, OffsetAndMetadata> committedOffsets = new HashMap<>();
 
         try {
+            // For at-least-once delivery, only commit offsets for successfully written records
             currentOffsets.forEach((topicPartition, offsetAndMetadata) -> {
-                committedOffsets.put(topicPartition,
-                        new OffsetAndMetadata(offsetAndMetadata.offset()));
+                Long lastSuccessfulOffset = successfullyCommittedOffsets.get(topicPartition);
+
+                if (lastSuccessfulOffset != null) {
+                    Long offsetToCommit = lastSuccessfulOffset + 1;
+                    committedOffsets.put(topicPartition, new OffsetAndMetadata(offsetToCommit));
+
+                    // Log only when we're committing a different offset than requested
+                    if (!offsetToCommit.equals(offsetAndMetadata.offset())) {
+                        log.debug("preCommit: Holding back offset for {}: requested={}, committing={}",
+                                topicPartition, offsetAndMetadata.offset(), offsetToCommit);
+                    }
+                }
             });
+
+            log.debug("preCommit({}) returning {} committed offsets out of {} requested", this.id, committedOffsets.size(), currentOffsets.size());
+
         } catch (Exception e) {
-            log.error("preCommit({}):{}", this.id, e.getMessage());
+            log.debug("preCommit({}):{}", this.id, e.getMessage());
             return new HashMap<>();
         }
 
@@ -278,6 +303,32 @@ public class ClickHouseSinkTask extends SinkTask {
     //          return currentOffsets;
     //      }
     //  }
+
+    /**
+     * Callback method called when records have been successfully written to ClickHouse.
+     * Used for at-least-once delivery.
+     *
+     * @param successfulRecords List of ClickHouseStruct records that were successfully written
+     */
+    @Override
+    public void onWriteSuccess(List<ClickHouseStruct> successfulRecords) {
+        // Group records by partition and find max offset per partition
+        Map<TopicPartition, Long> partitionMaxOffsets = successfulRecords.stream()
+                .collect(Collectors.toMap(
+                        record -> new TopicPartition(record.getTopic(), record.getKafkaPartition()),
+                        ClickHouseStruct::getKafkaOffset,
+                        Math::max  // merge function for duplicate keys
+                ));
+
+        // Update successfully committed offsets for each partition
+        partitionMaxOffsets.forEach((topicPartition, maxOffset) -> {
+            successfullyCommittedOffsets.merge(topicPartition, maxOffset, Math::max);
+            log.debug("Updated max successful offset for {}: {}", topicPartition, maxOffset);
+        });
+
+        log.debug("onWriteSuccess: Processed {} successful records across {} partitions",
+                successfulRecords.size(), partitionMaxOffsets.size());
+    }
 
     /**
      * Returns the version of this task, typically the same as the connector

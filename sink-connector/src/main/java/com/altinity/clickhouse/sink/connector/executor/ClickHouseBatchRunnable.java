@@ -83,6 +83,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     private Map<String, String> databaseOverrideMap = new HashMap<>();
 
     /**
+     * Callback for notifying about successful writes to ClickHouse.
+     */
+    private final WriteConfirmationCallback writeCallback;
+
+    /**
      * Sleep time in milliseconds after an exception occurs.
      */
     private static final long ERROR_SLEEP_TIME_MS = 10000;
@@ -93,13 +98,16 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @param records        the queue of record batches
      * @param config         the connector configuration
      * @param topic2TableMap a map of topic names to table names
+     * @param writeCallback  the callback for write confirmations
      */
     public ClickHouseBatchRunnable(
             LinkedBlockingQueue<List<ClickHouseStruct>> records,
             ClickHouseSinkConnectorConfig config,
-            Map<String, String> topic2TableMap) {
+            Map<String, String> topic2TableMap,
+            WriteConfirmationCallback writeCallback) {
         this.records = records;
         this.config = config;
+        this.writeCallback = writeCallback;
         if (topic2TableMap == null) {
             this.topic2TableMap = new HashMap();
         } else {
@@ -275,6 +283,11 @@ public class ClickHouseBatchRunnable implements Runnable {
                     }
                 }
                 if (result) {
+                    // Notify about successfully written records for at-least-once delivery
+                    if (writeCallback != null) {
+                        writeCallback.onWriteSuccess(currentBatch);
+                    }
+                    
                     // Step 2: Check if the batch can be committed.
                     if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
                         currentBatch = null;

@@ -85,7 +85,7 @@ public class ClickHouseBatchRunnableTest {
     @Test
     public void testGetTableNameFromTopic() {
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<String, String>());
-        ClickHouseBatchRunnable run = new ClickHouseBatchRunnable(this.records, config, this.topic2TableMap);
+        ClickHouseBatchRunnable run = new ClickHouseBatchRunnable(this.records, config, this.topic2TableMap, null);
 
         String tableName = run.getTableFromTopic("SERVER5432.test.customers");
 
