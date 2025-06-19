@@ -3,6 +3,8 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
+
+import java.net.URLEncoder;
 import java.sql.Connection;
 import java.time.ZoneId;
 import java.util.Arrays;
@@ -251,10 +253,15 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            // Append username and password to the URL.
-            url = url + "?user=" + userName + "&password=" + password;
+            // URL encode the username and password
+            String encodedUserName = URLEncoder.encode(userName, "UTF-8");
+            String encodedPassword = URLEncoder.encode(password, "UTF-8");
+
+            // Append username and password to the URL
+            url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
             SinkConnectorDataSource dataSource =
                     new SinkConnectorDataSource(url, properties);
+
             if (connectionPoolDisable) {
                 log.info("Connection pool is disabled, creating a new connection");
                 conn = dataSource.getConnection();
