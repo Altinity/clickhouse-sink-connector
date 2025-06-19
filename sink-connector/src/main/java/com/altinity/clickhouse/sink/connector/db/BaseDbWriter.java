@@ -111,15 +111,16 @@ public class BaseDbWriter {
      * Creates the destination database if it does not already exist.
      *
      * @param databaseName the name of the destination database to create
+     * @param useOnCluster whether to execute the operation on the cluster
      * @throws RuntimeException if the database creation fails after the
      *         maximum number of retries
      */
-    protected void createDestinationDatabase(String databaseName) {
+    protected void createDestinationDatabase(String databaseName, Boolean useOnCluster) {
         DBMetadata metadata = new DBMetadata();
         try {
             if (!metadata.checkIfDatabaseExists(this.conn, databaseName)) {
                 new ClickHouseCreateDatabase()
-                        .createNewDatabase(this.conn, databaseName);
+                        .createNewDatabase(this.conn, databaseName, useOnCluster);
             }
         } catch (Exception e) {
             int maxRetries = 0;
@@ -134,7 +135,7 @@ public class BaseDbWriter {
                     if (!metadata.checkIfDatabaseExists(this.conn,
                             databaseName)) {
                         new ClickHouseCreateDatabase()
-                                .createNewDatabase(this.conn, databaseName);
+                                .createNewDatabase(this.conn, databaseName, useOnCluster);
                         createDatabaseFailed = true;
                         break;
                     }

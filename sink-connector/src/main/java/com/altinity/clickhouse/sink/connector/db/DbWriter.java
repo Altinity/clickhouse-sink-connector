@@ -132,16 +132,19 @@ public class DbWriter extends BaseDbWriter {
 
             DBMetadata metadata = new DBMetadata();
 
+            boolean useOnCluster = this.config.
+                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+
             // For DBs that are not Kafka, create offset storage database if needed.
             if (ConnectorType.getConnectorType(config, log)
                     != ConnectorType.KAFKA) {
                 String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
                 if (offsetStorageDatabaseName != null) {
-                    createDestinationDatabase(offsetStorageDatabaseName);
+                    createDestinationDatabase(offsetStorageDatabaseName, useOnCluster);
                 }
             }
             // Create destination database if it doesn't exist
-            createDestinationDatabase(database);
+            createDestinationDatabase(database, useOnCluster);
 
             // Retrieve table engine details
             MutablePair<DBMetadata.TABLE_ENGINE, String> response =
@@ -182,12 +185,6 @@ public class DbWriter extends BaseDbWriter {
                                     .toArray(new Field[0]);
                         }
 
-                        boolean useReplicatedReplacingMergeTree = this.config
-                                .getBoolean(
-                                        ClickHouseSinkConnectorConfigVariables
-                                                .AUTO_CREATE_TABLES_REPLICATED
-                                                .toString());
-
                         String rmtDeleteColumn = this.config.getString(
                                 ClickHouseSinkConnectorConfigVariables
                                         .REPLACING_MERGE_TREE_DELETE_COLUMN
@@ -201,7 +198,7 @@ public class DbWriter extends BaseDbWriter {
                                 fields,
                                 this.conn,
                                 isNewReplacingMergeTreeEngine,
-                                useReplicatedReplacingMergeTree,
+                                useOnCluster,
                                 rmtDeleteColumn
                         );
                     } catch (Exception e) {

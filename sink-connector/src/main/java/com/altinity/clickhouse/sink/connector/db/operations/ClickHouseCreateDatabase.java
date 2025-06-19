@@ -18,11 +18,13 @@ public class ClickHouseCreateDatabase extends ClickHouseTableOperationsBase {
      *
      * @param conn   the active {@link Connection} to the ClickHouse server
      * @param dbName the name of the database to create
+     * @param useOnCluster whether to execute the operation on the cluster
      * @throws SQLException if an SQL error occurs during database creation
      */
-    public void createNewDatabase(Connection conn, String dbName)
+    public void createNewDatabase(Connection conn, String dbName, Boolean useOnCluster)
             throws SQLException {
-        String query = String.format("CREATE DATABASE IF NOT EXISTS %s", dbName);
+        String onCluster = useOnCluster ? " ON CLUSTER `{cluster}`" : "";
+        String query = String.format("CREATE DATABASE IF NOT EXISTS %s%s", dbName, onCluster);
         DBMetadata metadata = new DBMetadata();
         metadata.executeSystemQuery(conn, query);
     }
