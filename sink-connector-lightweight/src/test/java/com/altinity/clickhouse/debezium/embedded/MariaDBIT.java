@@ -27,7 +27,6 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Integration test to validate support for replication of multiple databases.
  */
-@Disabled
 @Testcontainers
 @DisplayName("Integration Test that validates basic replication of MariaDB databases in single threaded mode")
 public class MariaDBIT
