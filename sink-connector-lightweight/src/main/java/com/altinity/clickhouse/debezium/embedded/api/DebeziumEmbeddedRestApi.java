@@ -8,9 +8,8 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
-import com.zaxxer.hikari.HikariDataSource;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.apache.logging.log4j.LogManager;
@@ -26,8 +25,6 @@ import java.util.concurrent.CompletableFuture;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.LSN;
 import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
-import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.getConnectionString;
-import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.createConnection;
 
 /**
  * DebeziumEmbeddedRestApi provides a REST API for managing
@@ -58,7 +55,7 @@ public class DebeziumEmbeddedRestApi {
         String clickhouseUser = props.getProperty("clickhouse.server.user");
         String clickhousePassword = props.getProperty("clickhouse.server.password");
         
-        String jdbcUrl = BaseDbWriter.getConnectionString(clickhouseUrl, clickhousePort, SYSTEM_DB);
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickhouseUrl, Integer.parseInt(clickhousePort), SYSTEM_DB);
         return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, 
                 clickhouseUser, clickhousePassword, SYSTEM_DB, 
                 new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
