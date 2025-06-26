@@ -65,7 +65,6 @@ public class SinkConnectorClientRestAPITest {
     }
 
     @Test
-    @Disabled
     public void testRestClient() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
