@@ -26,6 +26,8 @@ import java.util.concurrent.CompletableFuture;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.*;
 import static com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage.LSN;
 import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.getConnectionString;
+import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.createConnection;
 
 /**
  * DebeziumEmbeddedRestApi provides a REST API for managing
@@ -42,6 +44,25 @@ public class DebeziumEmbeddedRestApi {
             DebeziumEmbeddedRestApi.class);
 
     static Javalin app;
+
+    /**
+     * Gets a database connection using BaseDbWriter.createConnection.
+     * 
+     * @param props The connector properties containing ClickHouse connection details
+     * @return Connection to the database
+     * @throws Exception if connection cannot be established
+     */
+    private static Connection getDatabaseConnection(Properties props) throws Exception {
+        String clickhouseUrl = props.getProperty("clickhouse.server.url");
+        String clickhousePort = props.getProperty("clickhouse.server.port");
+        String clickhouseUser = props.getProperty("clickhouse.server.user");
+        String clickhousePassword = props.getProperty("clickhouse.server.password");
+        
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickhouseUrl, clickhousePort, SYSTEM_DB);
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, 
+                clickhouseUser, clickhousePassword, SYSTEM_DB, 
+                new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+    }
 
     /**
      * Starts the REST API server with the given properties and injector,
@@ -82,8 +103,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
                         connection, config, finalProps1);
                 connection.close();
@@ -111,8 +131,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
                 connection.close();
             } catch (Exception e) {
@@ -162,8 +181,7 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
+            Connection connection = getDatabaseConnection(finalProps1);
             debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
                     finalProps1, binlogFile, binlogPosition, gtid);
             connection.close();
@@ -180,8 +198,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
                 connection.close();
             } catch (Exception e) {
@@ -201,8 +218,7 @@ public class DebeziumEmbeddedRestApi {
                             PropertiesHelper.toMap(finalProps1));
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
                 connection.close();
             } catch (Exception e) {
@@ -225,8 +241,7 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
+            Connection connection = getDatabaseConnection(finalProps1);
             debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
                     finalProps1, lsn);
             connection.close();

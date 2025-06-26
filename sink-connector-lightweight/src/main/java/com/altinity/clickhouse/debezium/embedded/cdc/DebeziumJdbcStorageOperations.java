@@ -163,6 +163,11 @@ public class DebeziumJdbcStorageOperations {
 
         String errorTableName = props.getProperty(
                 ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        if (errorTableName == null || errorTableName.isEmpty() == true) {
+            log.warn("Skipping getting error table status as the query " +
+                    "was not provided in configuration");
+            return response;
+        }
         String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
         DBMetadata metadata = new DBMetadata();
         ResultSet resultSet = metadata.executeQueryWithResultSet(
