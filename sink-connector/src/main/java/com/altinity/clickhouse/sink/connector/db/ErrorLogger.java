@@ -60,7 +60,7 @@ public class ErrorLogger {
             errorTableName
         );
 
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(config);
         dbMetadata.executeSystemQuery(connection, createTableQuery);
     }
 

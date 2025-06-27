@@ -67,7 +67,7 @@ public class DebeziumJdbcStorageOperations {
         String createDbQuery = String.format("create database if not exists %s",
                 databaseName);
         log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-        new DBMetadata().executeSystemQuery(conn, createDbQuery);
+        new DBMetadata(props).executeSystemQuery(conn, createDbQuery);
     }
 
     /**
@@ -85,7 +85,7 @@ public class DebeziumJdbcStorageOperations {
             return;
         }
         try {
-            new DBMetadata().executeSystemQuery(conn, createSchemaHistoryTable);
+            new DBMetadata(props).executeSystemQuery(conn, createSchemaHistoryTable);
         } catch (Exception e) {
             log.error("Error creating schema history table", e);
         }
@@ -116,7 +116,7 @@ public class DebeziumJdbcStorageOperations {
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
         try {
-            new DBMetadata().executeSystemQuery(conn, formattedView);
+            new DBMetadata(props).executeSystemQuery(conn, formattedView);
         } catch (Exception e) {
             log.error("**** Error creating VIEW **** " + formattedView);
         }
@@ -169,9 +169,9 @@ public class DebeziumJdbcStorageOperations {
             return response;
         }
         String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(props);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
-                errorTableStatusQuery, conn, null);
+                errorTableStatusQuery, conn);
         if (resultSet != null) {
             ResultSetMetaData md = resultSet.getMetaData();
             int numCols = md.getColumnCount();
@@ -230,9 +230,9 @@ public class DebeziumJdbcStorageOperations {
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format(
                 "select * from %s limit 1", databaseName + "." + tableName);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
-                debeziumStorageStatusQuery, conn, config);
+                debeziumStorageStatusQuery, conn);
         if (resultSet != null) {
             ResultSetMetaData md = resultSet.getMetaData();
             int numCols = md.getColumnCount();
@@ -354,7 +354,7 @@ public class DebeziumJdbcStorageOperations {
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
         String topicPrefix = props.getProperty(CommonConnectorConfig.TOPIC_PREFIX.name());
-        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, conn);
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, conn, props);
     }
 
     /**

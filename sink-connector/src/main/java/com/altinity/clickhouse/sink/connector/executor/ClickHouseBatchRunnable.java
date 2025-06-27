@@ -159,7 +159,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), "system", config);
         try {
-            DBMetadata metadata = new DBMetadata();
+            DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
                     "CREATE DATABASE IF NOT EXISTS " + databaseName);
         } catch (Exception e) {
@@ -441,7 +441,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata().getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
     }
 
     /**

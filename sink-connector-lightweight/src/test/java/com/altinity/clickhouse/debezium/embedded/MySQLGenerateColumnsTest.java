@@ -67,12 +67,12 @@ public class MySQLGenerateColumnsTest {
     @Test
     public void testMySQLGeneratedColumns() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
@@ -98,7 +98,7 @@ public class MySQLGenerateColumnsTest {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));

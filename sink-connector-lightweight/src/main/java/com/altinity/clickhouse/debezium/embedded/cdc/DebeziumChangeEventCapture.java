@@ -155,9 +155,9 @@ public class DebeziumChangeEventCapture {
             log.error("Error creating Debezium storage database", e);
         }
         try {
-            DBMetadata dbMetadata = new DBMetadata();
+            DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
-            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+            isNewReplacingMergeTreeEngine = new DBMetadata(config).checkIfNewReplacingMergeTree(clickHouseVersion);
         } catch (Exception e) {
             log.error("Error retrieving version", e);
         }
@@ -414,7 +414,7 @@ public class DebeziumChangeEventCapture {
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
-                executeDDL(clickHouseQuery.toString(), writer);
+                executeDDL(clickHouseQuery.toString(), writer, config);
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
             } catch (Exception e) {
@@ -494,9 +494,9 @@ public class DebeziumChangeEventCapture {
      * @param writer          The {@link BaseDbWriter} used to execute the query.
      * @throws SQLException If a database access error occurs.
      */
-    private void executeDDL(String clickHouseQuery, BaseDbWriter writer) throws SQLException {
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(config);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {

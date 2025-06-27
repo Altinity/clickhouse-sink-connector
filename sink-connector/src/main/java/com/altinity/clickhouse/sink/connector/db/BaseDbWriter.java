@@ -104,7 +104,7 @@ public class BaseDbWriter {
         this.config = config;
         this.conn = conn;
         // Initialize the server time zone from the database metadata.
-        this.serverTimeZone = new DBMetadata().getServerTimeZone(this.conn);
+        this.serverTimeZone = new DBMetadata(config).getServerTimeZone(this.conn);
     }
 
     /**
@@ -115,11 +115,11 @@ public class BaseDbWriter {
      *         maximum number of retries
      */
     protected void createDestinationDatabase(String databaseName) {
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(this.config);
         try {
             if (!metadata.checkIfDatabaseExists(this.conn, databaseName)) {
                 new ClickHouseCreateDatabase()
-                        .createNewDatabase(this.conn, databaseName);
+                        .createNewDatabase(this.conn, databaseName, this.config);
             }
         } catch (Exception e) {
             int maxRetries = 0;
@@ -134,7 +134,7 @@ public class BaseDbWriter {
                     if (!metadata.checkIfDatabaseExists(this.conn,
                             databaseName)) {
                         new ClickHouseCreateDatabase()
-                                .createNewDatabase(this.conn, databaseName);
+                                .createNewDatabase(this.conn, databaseName, this.config);
                         createDatabaseFailed = true;
                         break;
                     }

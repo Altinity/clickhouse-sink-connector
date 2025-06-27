@@ -320,7 +320,7 @@ public class ClickHouseBatchWriter {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata().getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
     }
 
     /**
