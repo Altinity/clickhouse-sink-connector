@@ -33,6 +33,29 @@ public class DBMetadata {
     static int MAX_RETRIES = 2;
 
     /**
+     * Configuration for the ClickHouse sink connector.
+     */
+    private final ClickHouseSinkConnectorConfig config;
+
+    /**
+     * Constructor for DBMetadata.
+     *
+     * @param config The configuration for the ClickHouse sink connector.
+     */
+    public DBMetadata(ClickHouseSinkConnectorConfig config) {
+        this.config = config;
+    }
+
+    /**
+     * Gets the configuration for the ClickHouse sink connector.
+     *
+     * @return The configuration object.
+     */
+    public ClickHouseSinkConnectorConfig getConfig() {
+        return config;
+    }
+
+    /**
      * Sets the maximum number of retries for database operations.
      *
      * @param maxRetries The maximum number of retries to attempt for database operations.

@@ -171,7 +171,7 @@ public class DebeziumJdbcStorageOperations {
         String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
         DBMetadata metadata = new DBMetadata();
         ResultSet resultSet = metadata.executeQueryWithResultSet(
-                errorTableStatusQuery, conn);
+                errorTableStatusQuery, conn, null);
         if (resultSet != null) {
             ResultSetMetaData md = resultSet.getMetaData();
             int numCols = md.getColumnCount();
@@ -232,7 +232,7 @@ public class DebeziumJdbcStorageOperations {
                 "select * from %s limit 1", databaseName + "." + tableName);
         DBMetadata metadata = new DBMetadata();
         ResultSet resultSet = metadata.executeQueryWithResultSet(
-                debeziumStorageStatusQuery, conn);
+                debeziumStorageStatusQuery, conn, config);
         if (resultSet != null) {
             ResultSetMetaData md = resultSet.getMetaData();
             int numCols = md.getColumnCount();
