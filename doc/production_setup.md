@@ -6,8 +6,8 @@
 [Initial Load](#initial-load) \
 [MySQL Setup](#mysql-production-setup) \
 [PostgreSQL Setup](#postgresql-production-setup) \
-[ClickHouse Setup](#clickhouse-setup)
-[Sink Connector Monitoring(#sink-connector-monitoring)]
+[ClickHouse Setup](#clickhouse-setup) \
+[Sink Connector Monitoring](#sink-connector-monitoring)
 
 ### Improving throughput and/or Memory usage.
 ![](img/production_setup.jpg)
@@ -109,8 +109,8 @@ CREATE TABLE pt_heartbeat_db.heartbeat (
   id int NOT NULL PRIMARY KEY,
   ts datetime NOT NULL
 );
-=======
-**Single Threaded (Low Memory/Slow replication)**:
+```
+**Single Threaded (Low Memory/Slow replication)**:  
 By setting the `single.threaded: true` configuration variable in `config.yml`, the replication will skip the sink connector queue and threadpool
 and will insert batches directly from the debezium queue.
 This mode will work on lower memory setup but will increase the replication speed.
@@ -122,7 +122,7 @@ and the database that is replicated(database provided in `database.include.list`
 
 The following example creates user `sink` with necessary GRANTS
 to the offset storage/schema history database and replicated databases.
-```
+```sql
 ALTER SETTINGS PROFILE 'ingest' SETTINGS
     deduplicate_blocks_in_dependent_materialized_views=1,
     min_insert_block_size_rows_for_materialized_views=10000,
@@ -131,11 +131,11 @@ ALTER SETTINGS PROFILE 'ingest' SETTINGS
     date_time_input_format='best_effort';
 
 CREATE USER OR REPLACE 'sink' IDENTIFIED WITH sha256_hash BY '' HOST IP '::/8' SETTINGS PROFILE 'ingest';
-grant SELECT, INSERT, CREATE TABLE, CREATE DATABASE on altinity.*              to sink;
-grant CLUSTER ON *.* to sink;
-grant SELECT, INSERT, CREATE TABLE, TRUNCATE                     on replicated_db.* to sink;
+GRANT SELECT, INSERT, CREATE TABLE, CREATE DATABASE ON altinity.* TO sink;
+GRANT CLUSTER ON *.* to sink;
+GRANT SELECT, INSERT, CREATE TABLE, TRUNCATE ON replicated_db.* TO sink;
 ```
-**User Profile**
+**User Profile**  
 `max_partitions_per_insert_block` - The default value is 100, its recommended to set this value **1000**
 
 ## PostgreSQL Production Setup
