@@ -77,7 +77,7 @@ public class DebeziumJdbcStorageOperations {
     void createSchemaHistoryTable(Connection conn, Properties props) {
         String createSchemaHistoryTable = props.getProperty(
                 JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                        JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+                        JdbcSchemaHistoryConfig.PROP_TABLE_DDL.name());
         if (createSchemaHistoryTable == null ||
                 createSchemaHistoryTable.isEmpty() == true) {
             log.warn("Skipping creating schema history table as the query " +
