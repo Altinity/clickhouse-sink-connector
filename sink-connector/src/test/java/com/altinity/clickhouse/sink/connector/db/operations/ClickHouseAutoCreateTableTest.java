@@ -194,7 +194,7 @@ public class ClickHouseAutoCreateTableTest {
 
         try {
             act.createNewTable(primaryKeys, "auto_create_table", "default", this.createFields(), writer.getConnection(),
-                    false, false, null);
+                    false, false, null, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

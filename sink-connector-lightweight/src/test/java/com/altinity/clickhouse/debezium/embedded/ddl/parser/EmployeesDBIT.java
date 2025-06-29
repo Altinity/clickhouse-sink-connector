@@ -78,7 +78,7 @@ public class EmployeesDBIT extends DDLBaseIT {
 
             BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-            DBMetadata dbMetadata = new DBMetadata();
+            DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
             // Validate that all the tables are created.
             Map<String, String> departmentsColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "departments", "employees");
             Assert.assertTrue(departmentsColumns.get("dept_no").equalsIgnoreCase("String"));

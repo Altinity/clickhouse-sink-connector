@@ -114,7 +114,7 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
         Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
@@ -148,19 +148,19 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result.getRight().equalsIgnoreCase("_version22"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result_test.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result_test.getRight().equalsIgnoreCase("_version22"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_employees = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "employees", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_employees = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "employees", "employees");
         Assert.assertTrue(result_employees.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result_employees.getRight().equalsIgnoreCase("_version_employees"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata().getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
         Assert.assertTrue(resultProducts.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
         Assert.assertTrue(resultProducts.getRight().equalsIgnoreCase("sign"));
     }
@@ -180,20 +180,20 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
                 database, "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
                 "default", "products");
         Assert.assertTrue(result_products.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_registration = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
                 database, "registration");
         Assert.assertNull(result_registration.getLeft());
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> ma_users_registration = new DBMetadata().getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> ma_users_registration = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
                 "employees2", "ma_users");
         Assert.assertTrue(ma_users_registration.getLeft() == DBMetadata.TABLE_ENGINE.MERGE_TREE);
 
@@ -255,7 +255,7 @@ public class DbWriterTest {
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
                 , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));

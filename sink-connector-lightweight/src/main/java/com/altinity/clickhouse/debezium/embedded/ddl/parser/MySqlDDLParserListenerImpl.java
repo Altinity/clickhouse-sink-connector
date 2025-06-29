@@ -104,7 +104,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.tableName = tableName;
 
         this.config = config;
-        this.dbMetadata = new DBMetadata();
+        this.dbMetadata = new DBMetadata(config);
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
     }
