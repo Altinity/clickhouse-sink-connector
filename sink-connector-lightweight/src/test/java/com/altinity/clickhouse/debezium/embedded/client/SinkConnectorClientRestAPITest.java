@@ -189,7 +189,7 @@ public class SinkConnectorClientRestAPITest {
         defaultProps.putIfAbsent("schema.history.internal.jdbc.schema.history.table.name",
                 "altinity_sink_connector.replicate_schema_history");
 
-        defaultProps.putIfAbsent("offset.storage.jdbc.offset.table.name",
+        defaultProps.putIfAbsent("offset.storage.jdbc.table.name",
                 "altinity_sink_connector.replica_source_info");
 
 
