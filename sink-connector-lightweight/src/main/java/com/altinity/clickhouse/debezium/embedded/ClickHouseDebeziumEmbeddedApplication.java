@@ -274,6 +274,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             ));
             loadPropertiesFile(configurationFile);
         }
+
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(
                 props, recordParserService, forceStart
