@@ -93,7 +93,7 @@ The maximum number of rows that the connector fetches and reads into memory when
 3. Monitor the lag:
 
     ```sql
-    select * from altinity_sink_connector.show_replica_status\G
+    SELECT * FROM altinity_sink_connector.show_replica_status\G
     ```
 
 4. The lag increases if this table does not get written and the binary log position does not move. It should be synced periodically to show the binary log progress.
@@ -123,6 +123,7 @@ and the database that is replicated(database provided in `database.include.list`
 The following example creates user `sink` with necessary GRANTS
 to the offset storage/schema history database and replicated databases.
 ```sql
+CREATE PROFILE 'ingest';
 ALTER SETTINGS PROFILE 'ingest' SETTINGS
     deduplicate_blocks_in_dependent_materialized_views=1,
     min_insert_block_size_rows_for_materialized_views=10000,
@@ -131,7 +132,7 @@ ALTER SETTINGS PROFILE 'ingest' SETTINGS
     date_time_input_format='best_effort';
 
 CREATE USER OR REPLACE 'sink' IDENTIFIED WITH sha256_hash BY '' HOST IP '::/8' SETTINGS PROFILE 'ingest';
-GRANT SELECT, INSERT, CREATE TABLE, CREATE DATABASE ON altinity.* TO sink;
+GRANT SELECT, INSERT, CREATE TABLE, CREATE DATABASE ON altinity_sink_connector.* TO sink;
 GRANT CLUSTER ON *.* to sink;
 GRANT SELECT, INSERT, CREATE TABLE, TRUNCATE ON replicated_db.* TO sink;
 ```
