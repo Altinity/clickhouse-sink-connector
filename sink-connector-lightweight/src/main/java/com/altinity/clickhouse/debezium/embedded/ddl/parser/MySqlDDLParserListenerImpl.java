@@ -401,6 +401,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         }
                     } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
                         for (ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
+                            isNullColumn = false;
                             orderByColumns.append(columnName);
                             break;
                         }
