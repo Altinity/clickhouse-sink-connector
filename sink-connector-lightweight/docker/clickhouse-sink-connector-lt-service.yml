@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   clickhouse-sink-connector-lt:
     image: ${CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE}
