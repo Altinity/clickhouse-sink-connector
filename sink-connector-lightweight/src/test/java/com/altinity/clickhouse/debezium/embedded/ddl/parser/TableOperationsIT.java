@@ -126,7 +126,7 @@ public class TableOperationsIT {
 
             conn.prepareStatement("create table new_table_copy like new_table").execute();
 
-            DBMetadata dbMetadata = new DBMetadata();
+            DBMetadata dbMetadata = new DBMetadata(props);
             Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class_new3", "employees"    );
             Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
             Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");

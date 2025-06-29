@@ -104,7 +104,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.tableName = tableName;
 
         this.config = config;
-        this.dbMetadata = new DBMetadata();
+        this.dbMetadata = new DBMetadata(config);
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
     }
@@ -401,6 +401,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         }
                     } else if (colDefinitionChildTree instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
                         for (ParseTree primaryKeyTree: ((MySqlParser.PrimaryKeyColumnConstraintContext) colDefinitionChildTree).children) {
+                            isNullColumn = false;
                             orderByColumns.append(columnName);
                             break;
                         }
