@@ -70,12 +70,12 @@ public class ClickHouseConnectionSpecialCharacterIT {
     @Test
     public void testClickHousePasswordWithSpecialCharacter() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // props.setProperty("replication.history.enable", "true");
                 props.setProperty("offset.storage.jdbc.password", "abcd%t");
                 props.setProperty("schema.history.internal.jdbc.password", "abcd%t");
@@ -104,7 +104,7 @@ public class ClickHouseConnectionSpecialCharacterIT {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));

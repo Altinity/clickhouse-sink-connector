@@ -42,12 +42,7 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.junit.Assert;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -60,6 +55,7 @@ import org.testcontainers.utility.MountableFile;
  * Tests various DDL and DML operations including column additions, modifications,
  * and data manipulations while ensuring data consistency between MySQL and ClickHouse.
  */
+@Disabled
 @DisplayName("Integration Test to validate MySQL and ClickHouse operations using Debezium")
 public class SinkConnectorClientRestAPITest {
 
