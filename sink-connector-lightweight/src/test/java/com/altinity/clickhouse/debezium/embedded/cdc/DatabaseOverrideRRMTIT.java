@@ -82,14 +82,6 @@ public class DatabaseOverrideRRMTIT {
     public void testDatabaseOverride() throws Exception {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-
-        DBMetadata dbMetadata = new DBMetadata();
-        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
-        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
-
-        Thread.sleep(10000);
-        Injector injector = Guice.createInjector(new AppInjector());
-
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty("snapshot.mode", "schema_only");
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
@@ -99,6 +91,14 @@ public class DatabaseOverrideRRMTIT {
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
         props.setProperty("ddl.retry", "true");
+        DBMetadata dbMetadata = new DBMetadata(props);
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
+        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
+
+        Thread.sleep(10000);
+        Injector injector = Guice.createInjector(new AppInjector());
+
+
         // Override clickhouse server timezone.
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 

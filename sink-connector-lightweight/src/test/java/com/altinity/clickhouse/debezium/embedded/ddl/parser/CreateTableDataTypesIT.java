@@ -55,10 +55,11 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+
+        Properties props = getDebeziumProperties();
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties();
                 props.setProperty("database.include.list", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
@@ -72,7 +73,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(props);
         Connection conn = writer.getConnection();
         Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "datatypes");
         Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "datatypes");

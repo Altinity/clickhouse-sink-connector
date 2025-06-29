@@ -63,12 +63,12 @@ public class CreateTableDataTypesTimeZoneIT {
     @Test
     public void testCreateTable() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
+        Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
-                Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+
                 props.setProperty("database.include.list", "datatypes");
 
                 engine.set(new DebeziumChangeEventCapture());
@@ -83,7 +83,7 @@ public class CreateTableDataTypesTimeZoneIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(props);
         Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "datatypes");
         Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "datatypes");
         Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "datatypes");

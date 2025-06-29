@@ -67,7 +67,7 @@ public class DebeziumJdbcStorageOperations {
         String createDbQuery = String.format("create database if not exists %s",
                 databaseName);
         log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-        new DBMetadata().executeSystemQuery(conn, createDbQuery);
+        new DBMetadata(props).executeSystemQuery(conn, createDbQuery);
     }
 
     /**
@@ -85,7 +85,7 @@ public class DebeziumJdbcStorageOperations {
             return;
         }
         try {
-            new DBMetadata().executeSystemQuery(conn, createSchemaHistoryTable);
+            new DBMetadata(props).executeSystemQuery(conn, createSchemaHistoryTable);
         } catch (Exception e) {
             log.error("Error creating schema history table", e);
         }
@@ -116,7 +116,7 @@ public class DebeziumJdbcStorageOperations {
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
         try {
-            new DBMetadata().executeSystemQuery(conn, formattedView);
+            new DBMetadata(props).executeSystemQuery(conn, formattedView);
         } catch (Exception e) {
             log.error("**** Error creating VIEW **** " + formattedView);
         }
@@ -150,6 +150,66 @@ public class DebeziumJdbcStorageOperations {
     }
 
     /**
+     * Function to get the status of the error table.
+     *
+     * @param conn  The database connection.
+     * @param props The connector properties.
+     * @return
+     * @throws SQLException If a database error occurs.
+     */
+    public String getErrorTableStatus(Connection conn, Properties props)
+            throws SQLException {
+        String response = "";
+
+        String errorTableName = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        if (errorTableName == null || errorTableName.isEmpty() == true) {
+            log.warn("Skipping getting error table status as the query " +
+                    "was not provided in configuration");
+            return response;
+        }
+        String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
+        DBMetadata metadata = new DBMetadata(props);
+        ResultSet resultSet = metadata.executeQueryWithResultSet(
+                errorTableStatusQuery, conn);
+        if (resultSet != null) {
+            ResultSetMetaData md = resultSet.getMetaData();
+            int numCols = md.getColumnCount();
+            List<String> colNames = IntStream.range(0, numCols)
+                    .mapToObj(i -> {
+                        try {
+                            return md.getColumnName(i + 1);
+                        } catch (SQLException e) {
+                            e.printStackTrace();
+                            return "?";
+                        }
+                    })
+                    .collect(Collectors.toList());
+            JSONArray result = new JSONArray();
+            // convert the result set to a json array.
+            while (resultSet.next()) {
+                JSONObject row = new JSONObject();
+                colNames.forEach(cn -> {
+                    try {
+                        Object v = resultSet.getObject(cn);
+                        row.put(cn, v);
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+                });
+                result.add(row);
+            }
+            response = result.toString();
+        }
+
+
+        return response;
+
+        // TODO: Return the status of the error table.
+
+    }
+
+    /**
      * Function to get the status of Debezium storage.
      *
      * @param conn   The database connection.
@@ -170,7 +230,7 @@ public class DebeziumJdbcStorageOperations {
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format(
                 "select * from %s limit 1", databaseName + "." + tableName);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
                 debeziumStorageStatusQuery, conn);
         if (resultSet != null) {
@@ -294,7 +354,7 @@ public class DebeziumJdbcStorageOperations {
         String tableName = tableNameDatabaseName.getLeft();
         String databaseName = tableNameDatabaseName.getRight();
         String topicPrefix = props.getProperty(CommonConnectorConfig.TOPIC_PREFIX.name());
-        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, conn);
+        new DebeziumOffsetStorage().deleteSchemaHistoryTable(topicPrefix, tableName, conn, props);
     }
 
     /**

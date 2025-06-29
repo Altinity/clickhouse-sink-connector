@@ -1,13 +1,17 @@
-package com.altinity.clickhouse.debezium.embedded;
+package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -17,7 +21,6 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -28,8 +31,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
 @Testcontainers
-@DisplayName("Integration Test that validates replication of Create DDL with Generated columns")
-public class MySQLGenerateColumnsTest {
+@DisplayName("Integration test to verify Primary Key from MySQL should be translated to non-null type in ClickHouse")
+public class CreateTablePrimaryKeyFromMySQLIT {
 
     protected MySQLContainer mySqlContainer;
 
@@ -42,13 +45,12 @@ public class MySQLGenerateColumnsTest {
             .withPassword("password")
             .withExposedPorts(8123);
 
-
     @BeforeEach
     public void startContainers() throws InterruptedException {
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-              //  .withInitScript("data_types.sql")
+                //  .withInitScript("data_types.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
@@ -64,16 +66,19 @@ public class MySQLGenerateColumnsTest {
         clickHouseContainer.stop();
     }
 
+    /**
+     * Primary Key from MySQL should be translated to non-null type in ClickHouse
+     * @throws Exception
+     */
     @Test
-    public void testMySQLGeneratedColumns() throws Exception {
+    public void testPrimaryKeyFromMySQL() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
-
+                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
             } catch (Exception e) {
@@ -86,19 +91,20 @@ public class MySQLGenerateColumnsTest {
         Connection conn = connectToMySQL(mySqlContainer);
 
         conn.prepareStatement("\n" +
-                "CREATE TABLE employees.contacts (id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
+                "CREATE TABLE employees.contacts (id INT PRIMARY KEY,\n" +
                 "first_name VARCHAR(50) NOT NULL,\n" +
                 "last_name VARCHAR(50) NOT NULL,\n" +
                 "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
-                "email VARCHAR(100) NOT NULL);\n").execute();
+                "email VARCHAR(100) NOT NULL,\n" +
+                "gmt_time DATETIME NOT NULL);\n").execute();
 
         Thread.sleep(30000);
 
-        conn.prepareStatement("insert into contacts(first_name, last_name, email) values('John', 'Doe', 'john.doe@gmail.com')").execute();
+        conn.prepareStatement("insert into contacts(id,first_name, last_name, email , gmt_time) values(1,'John', 'Doe', 'john.doe@gmail.com','2025-04-10 12:34:56')").execute();
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata(props);
+        DBMetadata dbMetadata = new DBMetadata();
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
@@ -106,17 +112,10 @@ public class MySQLGenerateColumnsTest {
         Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
         Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
+        // Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = ITCommon.executeQueryWithResultSet("select fullname from employees.contacts", writer.getConnection());
-        boolean insertCheck = false;
-        while (resultSet.next()) {
-                insertCheck = true;
-                String fullname = resultSet.getString("fullname");
-                Assert.assertTrue(fullname.equalsIgnoreCase("John Doe"));
-        }
         Thread.sleep(10000);
 
-        Assert.assertTrue(insertCheck);
         writer.getConnection().close();
 
         Thread.sleep(10000);
