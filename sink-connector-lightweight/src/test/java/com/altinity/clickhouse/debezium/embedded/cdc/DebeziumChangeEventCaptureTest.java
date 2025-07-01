@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 
 public class DebeziumChangeEventCaptureTest {
 
@@ -125,5 +126,112 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("Should reset sequence number when a second has passed")
     public void shouldResetSequenceNumberWhenSecondHasPassed() {
 
+    }
+
+    @Test
+    @DisplayName("Should ignore DDL statements matching regex patterns")
+    public void shouldIgnoreDDLMatchingRegexPatterns() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail analyze PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        String ddlNotToIgnore = "ALTER TABLE trade_prod.bundle_detail ADD COLUMN new_column INT";
+        assertFalse(capture.checkDDLAgainstRegexPatterns(ddlNotToIgnore));
+    }
+
+    @Test
+    @DisplayName("Should ignore ADD PARTITION DDL statements")
+    public void shouldIgnoreAddPartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail ADD PARTITION (p20230106)";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail add partition (p20230106)";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore DROP PARTITION DDL statements")
+    public void shouldIgnoreDropPartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail DROP PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail drop partition p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore REORGANIZE PARTITION DDL statements")
+    public void shouldIgnoreReorganizePartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail REORGANIZE PARTITION p20230106 INTO (p20230106_1, p20230106_2)";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail reorganize partition p20230106 into (p20230106_1, p20230106_2)";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore REMOVE PARTITIONING DDL statements")
+    public void shouldIgnoreRemovePartitioningDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail REMOVE PARTITIONING";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail remove partitioning";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore TRUNCATE PARTITION DDL statements")
+    public void shouldIgnoreTruncatePartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail TRUNCATE PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail truncate partition p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore ANALYZE PARTITION DDL statements")
+    public void shouldIgnoreAnalyzePartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail ANALYZE PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail analyze partition p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore CHECK PARTITION DDL statements")
+    public void shouldIgnoreCheckPartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail CHECK PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail check partition p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    @Test
+    @DisplayName("Should ignore OPTIMIZE PARTITION DDL statements")
+    public void shouldIgnoreOptimizePartitionDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        String ddlToIgnore = "ALTER TABLE trade_prod.bundle_detail OPTIMIZE PARTITION p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnore));
+
+        // Test case insensitivity
+        String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail optimize partition p20230106";
+        assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
     }
 }

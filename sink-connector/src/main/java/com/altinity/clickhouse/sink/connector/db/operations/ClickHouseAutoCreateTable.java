@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
@@ -56,7 +57,7 @@ public class ClickHouseAutoCreateTable
                                Connection connection,
                                boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree,
-                               String rmtDeleteColumn)
+                               String rmtDeleteColumn, ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> colNameToDataTypeMap =
                 this.getColumnNameToCHDataTypeMapping(fields);
@@ -67,7 +68,7 @@ public class ClickHouseAutoCreateTable
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), "
                 + "Query :%s)", databaseName, createTableQuery));
         // TODO: Run this before a session is created.
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, createTableQuery);
     }
 

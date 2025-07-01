@@ -74,15 +74,15 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table " + clickHouseQuery);
     }
 
-    // @Test
-    // public void testAlterTableWithAnalyzePartition() {
-
-    //     String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
-    //     StringBuffer clickHouseQuery = new StringBuffer();
-    //     mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
-    //     Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
-    //     log.info("Alter table " + clickHouseQuery);
-    // }
+//     @Test
+//     public void testAlterTableWithAnalyzePartition() {
+//
+//         String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
+//         StringBuffer clickHouseQuery = new StringBuffer();
+//         mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
+//         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+//         log.info("Alter table " + clickHouseQuery);
+//     }
 
     @Test
     public void testCreateTableWithParitionRange() {
@@ -101,7 +101,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Int32 NOT NULL ,dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
         log.info("Create table " + clickHouseQuery);
 
         String createQueryWithoutPrimaryKey =  "create table t(\n" +
@@ -986,9 +986,10 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createTableQuery, "employees", clickHouseQuery2);
 
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`_j_failed_s_g`(id Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE employees.`_j_failed_s_g`(id Int32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
+    @Test
     public void testCreateDefiner() {
         String sql = "CREATE DEFINER=`bcadmin`@`%` PROCEDURE `sp_next_available_otc_instance_strategy_id`()\n" +
                 "begin\n" +
@@ -1005,6 +1006,42 @@ public class MySqlDDLParserListenerImplTest {
 
         // Just validates that the debezium parsor does not throw an error
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(""));
+
+        String sqlTrigger = "CREATE DEFINER=`bcadmin`@`%` TRIGGER `host_id_constraint` BEFORE INSERT ON `host` FOR EACH ROW\n"
+                + "BEGIN\n"
+                + "  DECLARE next_id INT;\n"
+                + "  DECLARE max_id INT;\n"
+                + "  DECLARE error_msg VARCHAR(100);\n"
+                + "\n"
+                + "  SET max_id = POWER(2, 9)-1;\n"
+                + "  SET next_id = NULL;\n"
+                + "\n"
+                + "  SELECT MIN(st.value) INTO next_id\n"
+                + "  FROM SEQUENCE_TABLE(max_id+1) st\n"
+                + "  LEFT JOIN host h ON h.id = st.value\n"
+                + "  WHERE st.value > 0\n"
+                + "  AND h.id IS NULL;\n"
+                + "\n"
+                + "  IF ISNULL(next_id)\n"
+                + "  THEN\n"
+                + "    SET error_msg = CONCAT('no free ids in range [1, ', CAST(max_id AS CHAR), ']');\n"
+                + "    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = error_msg;\n"
+                + "  END IF;\n"
+                + "\n"
+                + "  IF next_id > max_id\n"
+                + "  THEN\n"
+                + "    SET error_msg = CONCAT('next id too high to insert: next_id=', CAST(next_id AS CHAR), ' max_id=', CAST(max_id AS CHAR));\n"
+                + "    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = error_msg;\n"
+                + "  END IF;\n"
+                + "\n"
+                + "  SET NEW.id = next_id;\n"
+                + "END";
+
+
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(sqlTrigger, "employees", clickHouseQuery2);
+
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(""));
     }
 
     @Test

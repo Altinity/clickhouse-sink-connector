@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
@@ -154,9 +155,9 @@ public class DebeziumChangeEventCapture {
             log.error("Error creating Debezium storage database", e);
         }
         try {
-            DBMetadata dbMetadata = new DBMetadata();
+            DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
-            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+            isNewReplacingMergeTreeEngine = new DBMetadata(config).checkIfNewReplacingMergeTree(clickHouseVersion);
         } catch (Exception e) {
             log.error("Error retrieving version", e);
         }
@@ -405,6 +406,7 @@ public class DebeziumChangeEventCapture {
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -412,11 +414,19 @@ public class DebeziumChangeEventCapture {
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
-                executeDDL(clickHouseQuery.toString(), writer);
+                executeDDL(clickHouseQuery.toString(), writer, config);
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
             } catch (Exception e) {
                 log.error("Error executing DDL", e);
+                // insert data into the error table
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, e.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
                 if (retryDDLProperty == false) {
                     break;
                 }
@@ -484,9 +494,9 @@ public class DebeziumChangeEventCapture {
      * @param writer          The {@link BaseDbWriter} used to execute the query.
      * @throws SQLException If a database access error occurs.
      */
-    private void executeDDL(String clickHouseQuery, BaseDbWriter writer) throws SQLException {
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(config);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {
@@ -619,16 +629,19 @@ public class DebeziumChangeEventCapture {
         return snapshotDDL;
     }
 
-    /**
-     * Function that checks if the DDL needs to be ignored.
-     *
-     * @param DDL              The DDL statement.
-     * @param props            The connector properties.
-     * @param sr               The source record.
-     * @param isDropOrTruncate An AtomicBoolean flag indicating if the DDL
-     *                         is DROP or TRUNCATE.
-     * @return true if the DDL should be ignored; false otherwise.
-     */
+    boolean checkDDLAgainstRegexPatterns(String DDL) {
+        IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
+        List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
+        for (String regex : ignoreDDLRegexList) {
+            Pattern p = Pattern.compile(regex);
+            Matcher m = p.matcher(DDL);
+            if (m.find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
@@ -660,6 +673,11 @@ public class DebeziumChangeEventCapture {
                     return true;
                 }
             }
+        }
+
+        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        if (checkDDLAgainstRegexPatterns(DDL)) {
+            return true;
         }
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);

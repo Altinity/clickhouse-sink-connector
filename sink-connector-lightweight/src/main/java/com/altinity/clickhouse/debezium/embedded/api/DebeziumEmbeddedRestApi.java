@@ -8,9 +8,8 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
-import com.zaxxer.hikari.HikariDataSource;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
 import org.apache.logging.log4j.LogManager;
@@ -42,6 +41,25 @@ public class DebeziumEmbeddedRestApi {
             DebeziumEmbeddedRestApi.class);
 
     static Javalin app;
+
+    /**
+     * Gets a database connection using BaseDbWriter.createConnection.
+     * 
+     * @param props The connector properties containing ClickHouse connection details
+     * @return Connection to the database
+     * @throws Exception if connection cannot be established
+     */
+    private static Connection getDatabaseConnection(Properties props) throws Exception {
+        String clickhouseUrl = props.getProperty("clickhouse.server.url");
+        String clickhousePort = props.getProperty("clickhouse.server.port");
+        String clickhouseUser = props.getProperty("clickhouse.server.user");
+        String clickhousePassword = props.getProperty("clickhouse.server.password");
+        
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickhouseUrl, Integer.parseInt(clickhousePort), SYSTEM_DB);
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, 
+                clickhouseUser, clickhousePassword, SYSTEM_DB, 
+                new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+    }
 
     /**
      * Starts the REST API server with the given properties and injector,
@@ -82,8 +100,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
                         connection, config, finalProps1);
                 connection.close();
@@ -111,8 +128,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
                 connection.close();
             } catch (Exception e) {
@@ -162,8 +178,7 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
+            Connection connection = getDatabaseConnection(finalProps1);
             debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
                     finalProps1, binlogFile, binlogPosition, gtid);
             connection.close();
@@ -180,8 +195,7 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-                Connection connection = ds.getConnection();
+                Connection connection = getDatabaseConnection(finalProps1);
                 debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
                 connection.close();
             } catch (Exception e) {
@@ -193,6 +207,26 @@ public class DebeziumEmbeddedRestApi {
             ctx.result(response);
         });
 
+        app.get("/show-slave-status", ctx -> {
+            String response = "";
+            try {
+            ClickHouseSinkConnectorConfig config =
+                    new ClickHouseSinkConnectorConfig(
+                            PropertiesHelper.toMap(finalProps1));
+            DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
+                    new DebeziumJdbcStorageOperations();
+                Connection connection = getDatabaseConnection(finalProps1);
+                response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
+                connection.close();
+            } catch (Exception e) {
+                log.error("Client - Error getting error table status", e);      
+                ctx.result(e.toString());
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+            ctx.result(response);
+        });
+                    
         app.post("/lsn", ctx -> {
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
@@ -204,8 +238,7 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            HikariDataSource ds = HikariDbSource.getInstance(SYSTEM_DB);
-            Connection connection = ds.getConnection();
+            Connection connection = getDatabaseConnection(finalProps1);
             debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
                     finalProps1, lsn);
             connection.close();
