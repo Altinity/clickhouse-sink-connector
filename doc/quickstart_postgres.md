@@ -26,7 +26,7 @@ Install Docker and Docker Compose.
 
 ## Start the stack 
 
-Use Docker Compose to start containers. Set the CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE to the latest release from the Releases page. or run ./getLatestTag.sh which will set the environment variable
+Use Docker Compose to start containers. Set the CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE to the latest release from the Releases page. or run ./getLatestRelease.sh which will set the environment variable
 
 ```
 export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.3.0-lt
@@ -35,7 +35,7 @@ export CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE=altinity/clickhouse-sink-connector:2.3
 or
 ```
 cd sink-connector-lightweight/docker
-./getLatestTag.sh
+./getLatestRelease.sh
 ```
 
 ```
