@@ -282,7 +282,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (orderByColumns.length() == 0) {
             this.query.append(Constants.ORDER_BY_TUPLE);
         } else {
-            this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+
+            // Convert the orderByColumns object to a string
+            String orderByStr = orderByColumns.toString();
+
+            // Regex pattern to detect invalid column suffix like id_registro(10)
+            String regex = "\\b(\\w+)\\(\\d+\\)";
+
+            if (orderByStr.matches(".*" + regex + ".*")) {
+                // If pattern is matched: clean up suffix and append ORDER BY
+                String fixedOrderBy = orderByStr.replaceAll(regex, "$1");
+
+                // Append the sanitized ORDER BY clause to the query
+                this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
+            } else {
+                // If no prefix match found, use ReplacingMergeTree engine clause instead
+                this.query.append(Constants.ORDER_BY).append(orderByStr);
+            }
         }
     }
 
