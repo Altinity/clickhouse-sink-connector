@@ -122,15 +122,14 @@ public class DbWriter extends BaseDbWriter {
             if (this.conn != null) {
                 // Retrieve column name to data type mapping for the table.
                 this.columnNameToDataTypeMap =
-                        new DBMetadata().getColumnsDataTypesForTable(
+                        new DBMetadata(config).getColumnsDataTypesForTable(
                                 tableName,
                                 this.conn,
-                                database,
-                                config
+                                database
                         );
             }
 
-            DBMetadata metadata = new DBMetadata();
+            DBMetadata metadata = new DBMetadata(config);
 
             // For DBs that are not Kafka, create offset storage database if needed.
             if (ConnectorType.getConnectorType(config, log)
@@ -153,7 +152,7 @@ public class DbWriter extends BaseDbWriter {
 
             boolean isNewReplacingMergeTreeEngine = false;
             try {
-                DBMetadata dbMetadata = new DBMetadata();
+                DBMetadata dbMetadata = new DBMetadata(config);
                 String clickHouseVersion = dbMetadata.getClickHouseVersion(
                         this.conn);
                 isNewReplacingMergeTreeEngine = dbMetadata
@@ -202,7 +201,7 @@ public class DbWriter extends BaseDbWriter {
                                 this.conn,
                                 isNewReplacingMergeTreeEngine,
                                 useReplicatedReplacingMergeTree,
-                                rmtDeleteColumn
+                                rmtDeleteColumn, config
                         );
                     } catch (Exception e) {
                         log.error(String.format(
@@ -218,9 +217,9 @@ public class DbWriter extends BaseDbWriter {
                 }
 
                 // Update local metadata
-                this.columnNameToDataTypeMap = new DBMetadata()
+                this.columnNameToDataTypeMap = new DBMetadata(config)
                         .getColumnsDataTypesForTable(tableName, this.conn,
-                                database, config);
+                                database);
                 response = metadata.getTableEngine(this.conn, database,
                         tableName);
                 this.engine = response.getLeft();
@@ -307,12 +306,12 @@ public class DbWriter extends BaseDbWriter {
      * @throws SQLException If a database access error occurs.
      */
     public void updateColumnNameToDataTypeMap() throws SQLException {
-        this.columnNameToDataTypeMap = new DBMetadata()
+        this.columnNameToDataTypeMap = new DBMetadata(config)
                 .getColumnsDataTypesForTable(
-                        tableName, this.conn, database, config
+                        tableName, this.conn, database
                 );
         MutablePair<DBMetadata.TABLE_ENGINE, String> response =
-                new DBMetadata().getTableEngine(this.conn, database, tableName);
+                new DBMetadata(config).getTableEngine(this.conn, database, tableName);
         this.engine = response.getLeft();
     }
 
