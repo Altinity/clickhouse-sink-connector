@@ -1,4 +1,3 @@
-
 package com.altinity.clickhouse.sink.connector;
 
 public enum ClickHouseSinkConnectorConfigVariables {
@@ -91,7 +90,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     CONNECTOR_CLASS("connector.class"),
 
-    NON_DEFAULT_VALUE("non.default.value");
+    NON_DEFAULT_VALUE("non.default.value"),
+
+    ERROR_TABLE_NAME("default.error.table");
 
 
 

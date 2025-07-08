@@ -176,11 +176,14 @@ public class ClickHouseAutoCreateTableTest {
         String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
-        String tableName = "employees5";
+        String tableName = "employees";
+
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
@@ -190,8 +193,8 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys.add("customerName");
 
         try {
-            act.createNewTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(),
-                    false, false, null);
+            act.createNewTable(primaryKeys, "auto_create_table", "default", this.createFields(), writer.getConnection(),
+                    false, false, null, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

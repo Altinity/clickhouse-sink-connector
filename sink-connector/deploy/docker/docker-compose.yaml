@@ -5,6 +5,9 @@ version: "3.4"
 
 # Clickhouse Table Schema
 # create table test(id int, message String) ENGINE=MergeTree() PRIMARY KEY id;
+x-default-resources: &default-resources
+  mem_limit: 4096m
+  cpus: 5
 
 services:
   mysql-master:
@@ -43,6 +46,7 @@ services:
 
     depends_on:
       - kafka
+    <<: *default-resources
 
   debezium:
     container_name: debezium
@@ -75,10 +79,11 @@ services:
       - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
     depends_on:
       - kafka
+    <<: *default-resources
 
   kafka:
     container_name: kafka
-    image: vectorized/redpanda:v22.1.3
+    image: docker.redpanda.com/redpandadata/redpanda
     restart: "no"
     ports:
       # Expose LOCALHOST_NETWORK listener on localhost
@@ -92,6 +97,7 @@ services:
       - DOCKER_NETWORK://0.0.0.0:9092,LOCALHOST_NETWORK://0.0.0.0:19092
       - --advertise-kafka-addr
       - DOCKER_NETWORK://kafka:9092,LOCALHOST_NETWORK://127.0.0.1:19092
+    <<: *default-resources
 
   sink:
     container_name: sink
@@ -111,13 +117,14 @@ services:
       - LOG_LEVEL=INFO
       - JAVA_DEBUG_PORT=*:5005
       - DEFAULT_JAVA_DEBUG_PORT=*:5005
-      - KAFKA_DEBUG=true
+      #- KAFKA_DEBUG=true
       - JMX_PORT=39999
       - KAFKA_HEAP_OPTS=-Xms1G -Xmx5G
       - log4j2.configurationFile=log4j2.xml
       #- log4j2Debug=true 
     depends_on:
       - kafka
+    <<: *default-resources
 
   clickhouse:
     # clickhouse-client --host=127.0.0.1 --port=9000 --user=root --password=root --database=test
@@ -147,31 +154,33 @@ services:
     extends:
       file: zookeeper-service.yml
       service: zookeeper
+    <<: *default-resources
+
 
   #### MONITORING #####
 #  https://stackoverflow.com/questions/55473562/configuring-a-jmx-prometheus-exporter-docker-container-to-read-jmx-local-applica
 #   Bitnami bitnami/jmx-exporter vs sscaling images
 
   ## KAFKA UI #####
-  console:
-    image: docker.redpanda.com/vectorized/console:master-217260f
-    restart: on-failure
-    entrypoint: /bin/sh
-    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
-    environment:
-      CONFIG_FILEPATH: /tmp/config.yml
-      CONSOLE_CONFIG_FILE: |
-        kafka:
-          brokers: ["kafka:9092"]
-        connect:
-          enabled: true
-          clusters:
-            - name: datagen
-              url: http://debezium:8083
-    ports:
-      - "8089:8080"
-    depends_on:
-      - kafka
+#  console:
+#    image: docker.redpanda.com/vectorized/console:master-217260f
+#    restart: on-failure
+#    entrypoint: /bin/sh
+#    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+#    environment:
+#      CONFIG_FILEPATH: /tmp/config.yml
+#      CONSOLE_CONFIG_FILE: |
+#        kafka:
+#          brokers: ["kafka:9092"]
+#        connect:
+#          enabled: true
+#          clusters:
+#            - name: datagen
+#              url: http://debezium:8083
+#    ports:
+#      - "8089:8080"
+#    depends_on:
+#      - kafka
 
   jmx_exporter:
     container_name: jmx_exporter

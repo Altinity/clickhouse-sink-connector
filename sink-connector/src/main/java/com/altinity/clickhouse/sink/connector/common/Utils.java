@@ -6,6 +6,8 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
+import java.util.stream.Collectors;
 
 /**
  * The Utils class provides utility methods for handling configuration,
@@ -217,5 +219,28 @@ public class Utils {
         }
 
         return true;
+    }
+
+    /**
+     * Converts a Properties object into a HashMap.
+     * <p>
+     * This method iterates through the properties and converts them to a
+     * HashMap where the key-value pairs are stored as Strings.
+     * </p>
+     *
+     * @param properties the Properties object to be converted.
+     * @return a HashMap containing the key-value pairs of the properties.
+     */
+    public static HashMap<String, String> propertiesToMap(Properties properties) {
+        if (properties == null) {
+            return new HashMap<>();
+        }
+        
+        return properties.entrySet().stream().collect(
+                Collectors.toMap(
+                        e -> String.valueOf(e.getKey()),
+                        e -> String.valueOf(e.getValue()),
+                        (prev, next) -> next, HashMap::new
+                ));
     }
 }

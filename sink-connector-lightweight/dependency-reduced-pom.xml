@@ -131,7 +131,7 @@
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-connector-mongodb</artifactId>
-      <version>3.1.0.Alpha2</version>
+      <version>3.1.2.Final</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -147,7 +147,7 @@
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-testing-testcontainers</artifactId>
-      <version>3.1.0.Alpha2</version>
+      <version>3.1.2.Final</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -391,7 +391,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
     <maven.compiler.target>17</maven.compiler.target>
-    <version.debezium>3.1.0.Alpha2</version.debezium>
+    <version.debezium>3.1.2.Final</version.debezium>
     <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
   </properties>
 </project>

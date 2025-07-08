@@ -93,7 +93,7 @@ public class PostgresInitialDockerIT {
 
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 

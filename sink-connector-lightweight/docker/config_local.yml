@@ -55,7 +55,7 @@ connector.class: "io.debezium.connector.mysql.MySqlConnector"
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 
 # offset.storage.jdbc.offset.table.name: The name of the database table where connector offsets are to be stored.
-offset.storage.jdbc.offset.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.table.name: "altinity_sink_connector.replica_source_info"
 
 # offset.storage.jdbc.url: The JDBC URL for the database where connector offsets are to be stored.
 offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
@@ -69,7 +69,7 @@ offset.storage.jdbc.password: "root"
 clickhouse.database.override.map: "sbtest:chtest"
 
 # offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)
-offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (
     `id` String,
     `offset_key` String,
@@ -81,7 +81,7 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granularity = 8192"
 
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
-offset.storage.jdbc.offset.table.delete: "select * from %s"
+offset.storage.jdbc.table.delete: "select * from %s"
 
 offset.storage.jdbc.offset.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
 

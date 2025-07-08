@@ -82,8 +82,8 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         properties.put("slot.retry.delay.ms", "5000");
         properties.put("database.allowPublicKeyRetrieval", "true");
         properties.put("table.include.list", "public.tm,public.tm2,public.redata");
-        properties.put("offset.storage.jdbc.offset.table.ddl", "CREATE TABLE if not exists %s on cluster '{cluster}' (id String, offset_key String, offset_val String, record_insert_ts DateTime, record_insert_seq UInt64) ENGINE =  KeeperMap('/asc_offsets201',10) PRIMARY KEY offset_key");
-        properties.put("offset.storage.jdbc.offset.table.delete", "select 1");
+        properties.put("offset.storage.jdbc.table.ddl", "CREATE TABLE if not exists %s on cluster '{cluster}' (id String, offset_key String, offset_val String, record_insert_ts DateTime, record_insert_seq UInt64) ENGINE =  KeeperMap('/asc_offsets201',10) PRIMARY KEY offset_key");
+        properties.put("offset.storage.jdbc.table.delete", "select 1");
         properties.put("skipped.operations","none");
         properties.put("disable.drop.truncate", "false");
         return properties;
@@ -117,7 +117,7 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
 
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
 

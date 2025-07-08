@@ -17,11 +17,11 @@ default_config = {
     "snapshot.locking.mode": "none",
     "connector.class": "io.debezium.connector.mysql.MySqlConnector",
     "offset.storage": "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore",
-    "offset.storage.jdbc.offset.table.name": "altinity_sink_connector.replica_source_info",
+    "offset.storage.jdbc.table.name": "altinity_sink_connector.replica_source_info",
     "offset.storage.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "offset.storage.jdbc.user": "root",
     "offset.storage.jdbc.password": "root",
-    "offset.storage.jdbc.offset.table.ddl": """CREATE TABLE if not exists %s
+    "offset.storage.jdbc.table.ddl": """CREATE TABLE if not exists %s
 (
     `id` String,
     `offset_key` String,
@@ -33,7 +33,7 @@ default_config = {
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8198""",
-    "offset.storage.jdbc.offset.table.delete": "delete from %s where 1=1",
+    "offset.storage.jdbc.table.delete": "delete from %s where 1=1",
     "schema.history.internal": "io.debezium.storage.jdbc.history.JdbcSchemaHistory",
     "schema.history.internal.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "schema.history.internal.jdbc.user": "root",
