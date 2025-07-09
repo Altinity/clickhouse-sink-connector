@@ -69,10 +69,11 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
@@ -99,7 +100,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
