@@ -7,5 +7,5 @@ The sink connector supports the following ClickHouse Engine types:
     - `auto.create.tables` set to `true`.
 - **ReplicatedReplacingMergeTree**:
     - ReplicatedReplacingMergeTree is a variant of ReplicatedMergeTree that allows for updates and deletes.
-    - To enable this engine type, set the `"auto.create.tables.replicated` to `true`, sink connector will
+    - To enable this engine type, set the `auto.create.tables.replicated` to `true`, sink connector will
       create tables with this engine type.
