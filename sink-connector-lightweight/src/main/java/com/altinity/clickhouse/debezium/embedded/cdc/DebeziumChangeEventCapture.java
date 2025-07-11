@@ -723,7 +723,11 @@ public class DebeziumChangeEventCapture {
             singleThreadedWriter.persistRecords(convertedRecords);
         } else {
             synchronized (this.records) {
-                this.records.add(convertedRecords);
+                try {
+                    this.records.put(convertedRecords);
+                }catch(Exception e){
+                    log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
+                }
             }
         }
     }
