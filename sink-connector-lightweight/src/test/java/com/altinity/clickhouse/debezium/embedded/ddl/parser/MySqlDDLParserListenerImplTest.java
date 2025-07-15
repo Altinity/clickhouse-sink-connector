@@ -2227,6 +2227,32 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
     }
+
+    @Test
+    public void testTableNameWithSpace() {
+        String sql = "CREATE TABLE `test account` (\n" +
+                "    account_id mediumint unsigned NOT NULL AUTO_INCREMENT,\n" +
+                "    account_group_type_id smallint unsigned NOT NULL,\n" +
+                "    jump_lglent_id mediumint unsigned NOT NULL,\n" +
+                "    counterparty_id mediumint unsigned NOT NULL,\n" +
+                "    alternate_lglent_id mediumint unsigned DEFAULT NULL,\n" +
+                "    account varchar(32) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,\n" +
+                "    status_id tinyint unsigned NOT NULL DEFAULT '1',\n" +
+                "    valid_from date NOT NULL,\n" +
+                "    valid_to date NOT NULL DEFAULT '9999-12-31',\n" +
+                "    gates_from datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n" +
+                "    gates_to datetime(6) NOT NULL DEFAULT '9999-12-31 23:59:59.000000',\n" +
+                "    modify_user varchar(16) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL DEFAULT 'gates_dba',\n" +
+                "    notes varchar(128) CHARACTER SET latin1 COLLATE latin1_general_cs DEFAULT NULL,\n" +
+                "    PRIMARY KEY (account_id, gates_from, gates_to, valid_from, valid_to)\n" +
+                ") ENGINE=InnoDB AUTO_INCREMENT=6849 DEFAULT CHARSET=latin1 COLLATE=latin1_general_cs";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        String expectedQuery = "CREATE TABLE employees.`test account`(account_id Int32 NOT NULL ,account_group_type_id Int32 NOT NULL ,jump_lglent_id Int32 NOT NULL ,counterparty_id Int32 NOT NULL ,alternate_lglent_id Nullable(Int32),account String NOT NULL ,status_id Int16 NOT NULL ,valid_from Date32 NOT NULL ,valid_to Date32 NOT NULL ,gates_from DateTime64(6, 0) NOT NULL ,gates_to DateTime64(6, 0) NOT NULL ,modify_user String NOT NULL ,notes Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (account_id,gates_from,gates_to,valid_from,valid_to)";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
