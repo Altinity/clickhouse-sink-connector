@@ -8,7 +8,10 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -18,7 +21,6 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -29,8 +31,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
 @Testcontainers
-@DisplayName("Integration test validating table creation with schema overrides by YAML data‑type mappings")
-public class CreateTableSchemaOverrideByDataTypeMappingIT {
+@DisplayName("Integration test to verify Primary Key from MySQL should be translated to non-null type in ClickHouse")
+public class CreateTablePrimaryKeyFromMySQLIT {
 
     protected MySQLContainer mySqlContainer;
 
@@ -64,22 +66,18 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         clickHouseContainer.stop();
     }
 
+    /**
+     * Primary Key from MySQL should be translated to non-null type in ClickHouse
+     * @throws Exception
+     */
     @Test
-    public void testMySQLGeneratedColumnsByDataTypeMapping() throws Exception {
+    public void testPrimaryKeyFromMySQL() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-
-                // props.setProperty("replication.history.enable", "true");
-                props.setProperty("default_column_datatype_mapping.transaction_id", "String");
-                props.setProperty("default_column_datatype_mapping.gmt_time", "String");
-
-                props.setProperty("databases.employees.tables.contacts.partition_by", "id");
-                props.setProperty("databases.employees.tables.contacts.primary_key", "last_name");
-                props.setProperty("databases.employees.tables.contacts.settings", "allow_nullable_key=1");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
@@ -93,7 +91,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         Connection conn = connectToMySQL(mySqlContainer);
 
         conn.prepareStatement("\n" +
-                "CREATE TABLE employees.contacts (id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
+                "CREATE TABLE employees.contacts (id INT PRIMARY KEY,\n" +
                 "first_name VARCHAR(50) NOT NULL,\n" +
                 "last_name VARCHAR(50) NOT NULL,\n" +
                 "fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)),\n" +
@@ -102,7 +100,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
 
         Thread.sleep(30000);
 
-        conn.prepareStatement("insert into contacts(first_name, last_name, email , gmt_time) values('John', 'Doe', 'john.doe@gmail.com','2025-04-10 12:34:56')").execute();
+        conn.prepareStatement("insert into contacts(id,first_name, last_name, email , gmt_time) values(1,'John', 'Doe', 'john.doe@gmail.com','2025-04-10 12:34:56')").execute();
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
@@ -112,21 +110,12 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
         Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
-        // Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
-        Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
+        // Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = ITCommon.executeQueryWithResultSet("select gmt_time from employees.contacts", writer.getConnection());
-        boolean insertCheck = false;
-        while (resultSet.next()) {
-            insertCheck = true;
-            String gmtTime = resultSet.getString("gmt_time");
-            System.out.println(gmtTime);
-            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 07:34:56.000"));
-        }
         Thread.sleep(10000);
 
-        Assert.assertTrue(insertCheck);
         writer.getConnection().close();
 
         Thread.sleep(10000);

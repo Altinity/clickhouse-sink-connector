@@ -63,11 +63,10 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
 
         createOffsetTable();
         this.columnNamesToDataTypesMap =
-                new DBMetadata().getColumnsDataTypesForTable(
+                new DBMetadata(config).getColumnsDataTypesForTable(
                         tableName,
                         this.getConnection(),
-                        database,
-                        config
+                        database
                 );
         this.query = new QueryFormatter().getInsertQueryUsingInputFunction(
                 tableName, columnNamesToDataTypesMap

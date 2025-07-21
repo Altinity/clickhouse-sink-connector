@@ -71,7 +71,7 @@ public class ClickHouseAutoCreateTable
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), "
                 + "Query :%s)", databaseName, createTableQuery));
         // TODO: Run this before a session is created.
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, createTableQuery);
     }
 
@@ -121,16 +121,15 @@ public class ClickHouseAutoCreateTable
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        // Start creating the CREATE TABLE statement
         createTableSyntax.append(CREATE_TABLE).append(" ")
                 .append(databaseName).append(".")
                 .append("`").append(tableName).append("`");
-
         if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");
         }
-        // Add columns to the SQL
+
         createTableSyntax.append("(");
+
         for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
@@ -156,7 +155,6 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(",");
         }
 
-        // Handle the deletion column logic
         String isDeletedColumn = IS_DELETED_COLUMN;
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
@@ -169,17 +167,16 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(isDeletedColumn)
                     .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
         } else {
+            // Append sign and version columns.
             createTableSyntax.append("`").append(SIGN_COLUMN)
                     .append("` ").append(SIGN_COLUMN_DATA_TYPE)
                     .append(",");
             createTableSyntax.append("`").append(VERSION_COLUMN)
                     .append("` ").append(VERSION_COLUMN_DATA_TYPE);
         }
-
         createTableSyntax.append(")");
-
-        // Add the engine type
         createTableSyntax.append(" ");
+
         if (isNewReplacingMergeTreeEngine == true) {
             if (useReplicatedReplacingMergeTree == true) {
                 createTableSyntax.append(String.format(
@@ -208,20 +205,21 @@ public class ClickHouseAutoCreateTable
 
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
-        if (primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+
+        if (primaryKey != null
+                && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
             createTableSyntax.append(") ");
-
             createTableSyntax.append(ORDER_BY).append("(");
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
             createTableSyntax.append(")");
         } else {
-            // Default ORDER BY clause
+            // TODO: Define a default ORDER BY clause.
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
 

@@ -15,6 +15,8 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
 
+import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME;
+
 /**
  * Connector configuration definition.
  * <p>
@@ -91,6 +93,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      * Default maximum number of retries for errors.
      */
     private static final int DEFAULT_ERRORS_MAX_RETRIES = 3;
+
+    /**
+     * Default error table name.
+     */
+    private static final String DEFAULT_ERROR_TABLE = "error_table";
 
     /**
      * Order index for config definitions, used for grouping/ordering.
@@ -718,6 +725,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         15,
                         ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
+                        ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString())
+                .define(
+                        ERROR_TABLE_NAME.toString(),
+                        Type.STRING,
+                        ERROR_TABLE_NAME.toString(),
+                        Importance.LOW,
+                        "Default table name for storing error records",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ERROR_TABLE_NAME.toString()
+                );
     }
 }

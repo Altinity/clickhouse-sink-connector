@@ -8,7 +8,10 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -29,8 +32,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 
 @Testcontainers
-@DisplayName("Integration test validating table creation with schema overrides by YAML data‑type mappings")
-public class CreateTableSchemaOverrideByDataTypeMappingIT {
+@DisplayName("Integration test to concat clickhouse password with special character")
+public class ClickHouseConnectionSpecialCharacterIT {
 
     protected MySQLContainer mySqlContainer;
 
@@ -40,7 +43,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
             .withInitScript("init_clickhouse_it.sql")
             .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
             .withUsername("ch_user")
-            .withPassword("password")
+            .withPassword("abcd%t")
             .withExposedPorts(8123);
 
     @BeforeEach
@@ -65,7 +68,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
     }
 
     @Test
-    public void testMySQLGeneratedColumnsByDataTypeMapping() throws Exception {
+    public void testClickHousePasswordWithSpecialCharacter() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
@@ -74,13 +77,8 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
             try {
 
                 // props.setProperty("replication.history.enable", "true");
-                props.setProperty("default_column_datatype_mapping.transaction_id", "String");
-                props.setProperty("default_column_datatype_mapping.gmt_time", "String");
-
-                props.setProperty("databases.employees.tables.contacts.partition_by", "id");
-                props.setProperty("databases.employees.tables.contacts.primary_key", "last_name");
-                props.setProperty("databases.employees.tables.contacts.settings", "allow_nullable_key=1");
-
+                props.setProperty("offset.storage.jdbc.password", "abcd%t");
+                props.setProperty("schema.history.internal.jdbc.password", "abcd%t");
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
             } catch (Exception e) {
@@ -112,21 +110,12 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
         Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
-        // Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
-        Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
+        // Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
 
-        ResultSet resultSet = ITCommon.executeQueryWithResultSet("select gmt_time from employees.contacts", writer.getConnection());
-        boolean insertCheck = false;
-        while (resultSet.next()) {
-            insertCheck = true;
-            String gmtTime = resultSet.getString("gmt_time");
-            System.out.println(gmtTime);
-            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 07:34:56.000"));
-        }
         Thread.sleep(10000);
 
-        Assert.assertTrue(insertCheck);
         writer.getConnection().close();
 
         Thread.sleep(10000);

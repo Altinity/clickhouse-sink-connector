@@ -91,10 +91,10 @@ public class GroupInsertQueryWithBatchRecords {
                     try {
                         new ClickHouseAlterTable().alterTable(
                                 record.getAfterStruct().schema().fields(),
-                                tableName, connection, columnNameToDataTypeMap,config);
-                        columnNameToDataTypeMap = new DBMetadata()
+                                tableName, connection, columnNameToDataTypeMap, config);
+                        columnNameToDataTypeMap = new DBMetadata(config)
                                 .getColumnsDataTypesForTable(tableName,
-                                        connection, databaseName, config);
+                                        connection, databaseName);
                     } catch (Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }

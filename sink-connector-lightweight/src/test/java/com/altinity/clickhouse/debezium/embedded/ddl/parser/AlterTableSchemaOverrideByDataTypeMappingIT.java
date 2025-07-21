@@ -72,9 +72,10 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
         // Start Debezium Change Event Capture in a separate thread
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
         executorService.execute(() -> {
             try {
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
                 props.setProperty("default_column_datatype_mapping.gmt_time", "String");
                 props.setProperty("default_column_datatype_mapping.gmt_time3", "String");
@@ -133,7 +134,7 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
 
         // Obtain ClickHouse writer and metadata utility
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(
                 writer.getConnection(), "contacts", "employees"
         );

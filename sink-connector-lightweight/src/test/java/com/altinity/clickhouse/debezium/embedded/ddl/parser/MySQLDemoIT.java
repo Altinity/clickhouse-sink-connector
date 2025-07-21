@@ -267,7 +267,7 @@ public class MySQLDemoIT  {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN jobTitle" +
                 " VARCHAR(50) NOT NULL DEFAULT 'Engineer';").execute();
        Thread.sleep(10000);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> columns =
                 metadata.getColumnsDataTypesForTable( writer.getConnection(), "employees", "employees");
         Assert.assertTrue("jobTitle column should exist", columns.containsKey("jobTitle"));
@@ -347,7 +347,7 @@ public class MySQLDemoIT  {
     private void addAndDropHireDateColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN hireDate DATE DEFAULT (CURDATE());").execute();
         Thread.sleep(10000);
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
         Assert.assertTrue("hireDate column should exist", columns.containsKey("hireDate"));
 
@@ -419,7 +419,7 @@ public class MySQLDemoIT  {
 
         Thread.sleep(10000);
         // Validate in ClickHouse
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
         Assert.assertEquals("officeCode should be Int32", "Int32", columns.get("officeCode"));
     }
