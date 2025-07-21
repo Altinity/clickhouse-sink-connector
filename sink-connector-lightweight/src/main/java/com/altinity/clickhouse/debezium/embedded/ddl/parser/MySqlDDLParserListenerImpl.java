@@ -200,7 +200,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     @Override
     public void enterCopyCreateTable(MySqlParser.CopyCreateTableContext copyCreateTableContext) {
-        System.out.println("enterCopyCreateTable 1");
         ListIterator<ParseTree> it = copyCreateTableContext.children.listIterator();
         String originalTableName = "";
         String newTableName = "";
@@ -233,7 +232,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     @Override
     public void enterColumnCreateTable(MySqlParser.ColumnCreateTableContext columnCreateTableContext) {
-        System.out.println("enterColumnCreateTable 1");
         StringBuilder orderByColumns = new StringBuilder();
         StringBuilder partitionByColumn = new StringBuilder();
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
@@ -324,7 +322,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
 
-        System.out.println("parseCreateTable 2");
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
