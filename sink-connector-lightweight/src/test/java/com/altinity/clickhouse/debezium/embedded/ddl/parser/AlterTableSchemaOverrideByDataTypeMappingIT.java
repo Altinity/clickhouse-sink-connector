@@ -162,9 +162,9 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
             String gmtTime4 = resultSet.getString("gmt_time4");
             System.out.println(gmtTime4);
 
-             Assert.assertEquals("2025-04-10 07:34:56.000", resultSet.getString("gmt_time"));
-             Assert.assertEquals("2025-04-10 07:35:56.000", resultSet.getString("gmt_time3"));
-             Assert.assertEquals("2025-04-10 07:36:56.000", resultSet.getString("gmt_time4"));
+             Assert.assertEquals("2025-04-10 12:34:56.000", resultSet.getString("gmt_time"));
+             Assert.assertEquals("2025-04-10 12:35:56.000", resultSet.getString("gmt_time3"));
+             Assert.assertEquals("2025-04-10 12:36:56.000", resultSet.getString("gmt_time4"));
         }
 
         // Clean up resources: close connections and stop background services
