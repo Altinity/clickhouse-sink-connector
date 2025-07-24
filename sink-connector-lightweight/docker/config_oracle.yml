@@ -17,13 +17,17 @@ database.dbname: "ORCLCDB"
 #"database.dbname": "ORCLCDB",
 database.pdb.name: "ORCLPDB1"
 
+table.include.list: "C##DBZUSER.CUSTOMERS"
+
 #database.pdb.name: "ORCLPDB1"
 
 # database.user: Name of the PostgreSQL database user to be used when connecting to the database.
-database.user: "C##DBZ2"
-
+#database.user: "C##DBZ2"
+database.user: "c##dbzuser"
 # database.password: Password of the PostgreSQL database user to be used when connecting to the database.
-database.password: "dbzpass"
+#database.password: "dbzpass"
+
+database.password: "dbz"
 
 database.connection.url: "jdbc:oracle:thin:@//localhost:1521/ORCLCDB"
 
@@ -39,7 +43,7 @@ database.connection.adapter: "logminer"
 slot.name: connector2
 
 # table.include.list: An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
-#table.include.list: "public.tm,public.tm2"
+#table.include.list: "public.tm,public.https://kafka.apache.org/documentation/#consumerconfigs_max.poll.interval.mstm2"
 
 # clickhouse.server.url: Specify only the hostname of the Clickhouse Server.
 clickhouse.server.url: "localhost"
@@ -79,6 +83,8 @@ offset.storage.jdbc.user: "root"
 
 # offset.storage.jdbc.password: The password of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.password: "root"
+
+disable.ddl: "true"
 
 # offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.
 offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
