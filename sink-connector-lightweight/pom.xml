@@ -127,39 +127,37 @@
             <artifactId>debezium-connector-mysql</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-        <dependency>
+   <!--     <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
-        </dependency>
+        </dependency> -->
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-oracle</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-        <dependency>
+        <!-- <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>42.5.4</version>
-        </dependency>
+        </dependency> -->
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-mongodb</artifactId>
             <version>${version.debezium}</version>
             <scope>test</scope>
         </dependency>
-        <dependency>
+        <!-- <dependency>
     <groupId>com.oracle.database.jdbc</groupId>
     <artifactId>ojdbc11</artifactId>
 </dependency>
 
-<!-- Oracle NLS for Internationalization support -->
 <dependency>
     <groupId>com.oracle.database.nls</groupId>
     <artifactId>orai18n</artifactId>
 </dependency>
 
-<!-- Oracle XML support -->
 <dependency>
     <groupId>com.oracle.database.xml</groupId>
     <artifactId>xdb</artifactId>
@@ -169,7 +167,7 @@
     <groupId>com.oracle.database.xml</groupId>
     <artifactId>xmlparserv2</artifactId>
     <scope>provided</scope>
-</dependency>
+</dependency> -->
         <!-- https://mvnrepository.com/artifact/io.debezium/debezium-testing-testcontainers -->
         <dependency>
             <groupId>io.debezium</groupId>

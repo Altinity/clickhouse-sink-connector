@@ -12,6 +12,8 @@ services:
       - ORACLE_DATABASE=ORCLCDB
       - ORACLE_PASSWORD=dbz
       - ORACLE_PDB=ORCLPDB1
+      - APP_USER=debezium
+      - APP_USER_PASSWORD=dbz
     volumes:
       - ../sql/init_oracle.sql:/docker-entrypoint-initdb.d/init_oracle.sql
     # No need for a command override; the image entrypoint is sufficient

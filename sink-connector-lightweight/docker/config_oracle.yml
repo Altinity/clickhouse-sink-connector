@@ -13,13 +13,19 @@ database.port: "1521"
 
 
 database.dbname: "ORCLCDB"
+
+#"database.dbname": "ORCLCDB",
 database.pdb.name: "ORCLPDB1"
 
+#database.pdb.name: "ORCLPDB1"
+
 # database.user: Name of the PostgreSQL database user to be used when connecting to the database.
-database.user: "debezium"
+database.user: "C##DBZ2"
 
 # database.password: Password of the PostgreSQL database user to be used when connecting to the database.
-database.password: "dbz"
+database.password: "dbzpass"
+
+database.connection.url: "jdbc:oracle:thin:@//localhost:1521/ORCLCDB"
 
 # database.server.name: The name of the PostgreSQL database from which events are to be captured when not using snapshot mode.
 #database.server.name: "ER54"
@@ -28,12 +34,9 @@ database.server.name: "dbserver1"
 database.connection.adapter: "logminer"
 
 # schema.include.list: An optional list of regular expressions that match schema names to be monitored;
-schema.include.list: public,public2
+#schema.include.list: public,public2
 
 slot.name: connector2
-
-# plugin.name:  The name of the PostgreSQL logical decoding plug-in installed on the PostgreSQL server. Supported values are decoderbufs, and pgoutput.
-plugin.name: "pgoutput"
 
 # table.include.list: An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
 #table.include.list: "public.tm,public.tm2"
@@ -69,7 +72,7 @@ offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 offset.storage.jdbc.table.name: "altinity_sink_connector.replica_source_info"
 
 # offset.storage.jdbc.url: The JDBC URL for the database where connector offsets are to be stored.
-offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+offset.storage.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
 
 # offset.storage.jdbc.user: The name of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.user: "root"
@@ -91,6 +94,28 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
 offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+
+
+# schema.history.internal: The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+
+# schema.history.internal.jdbc.url: The JDBC URL for the database where connector schema history is to be stored.
+schema.history.internal.jdbc.url: "jdbc:clickhouse://localhost:8123/altinity_sink_connector"
+
+# schema.history.internal.jdbc.user: The name of the database user to be used when connecting to the database where connector schema history is to be stored.
+schema.history.internal.jdbc.user: "root"
+
+# schema.history.internal.jdbc.password: The password of the database user to be used when connecting to the database where connector schema history is to be stored.
+schema.history.internal.jdbc.password: "root"
+
+# schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+
+# schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
+schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+
+
 # enable.snapshot.ddl: If set to true, the connector wil parse the DDL statements as part of initial load.
 enable.snapshot.ddl: "true"
 

@@ -258,6 +258,8 @@ public class DebeziumChangeEventCapture {
             singleThreadDebeziumEventExecutor.submit(() -> {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
+                    Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+
                     engine.run();
                 } catch (Exception e) {
                     log.error("Debezium event capture starting Exception", e);
