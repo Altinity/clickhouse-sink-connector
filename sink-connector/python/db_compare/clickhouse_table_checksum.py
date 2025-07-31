@@ -1,10 +1,10 @@
 """
 #r/ -- ============================================================================
 # -- FileName     : clickhouse_table_checksum
-# -- Date         : 
-# -- Summary      : calculate a checksum for a clickhouse table 
-# -- Credits      : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/               
-# --                
+# -- Date         :
+# -- Summary      : calculate a checksum for a clickhouse table
+# -- Credits      : https://www.sisense.com/blog/hashing-tables-to-ensure-consistency-in-postgres-redshift-and-mysql/
+# --
 """
 import logging
 import argparse
@@ -32,9 +32,7 @@ def get_connection(clickhouse_user, clickhouse_password):
 
 
 def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
-
     conn = get_connection(clickhouse_user, clickhouse_password)
-
     debug_out = None
     if args.debug_output:
         out_file = f"out.{table}.ch.txt"
@@ -43,8 +41,7 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
     else:
         logging.info("Skipping writing to file")
     try:
-        for statement in statements:
-            sql = statement
+        for sql in statements:
             (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
@@ -103,7 +100,6 @@ def get_table_checksum_query(conn, table):
     logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' and name not in ("+ excluded_columns_str +") order by position"
-
     (rowset, rowcount) = execute_sql(conn, checksum_query)
     #logging.info(f"CHECKSUM QUERY: {checksum_query}")
 
@@ -204,12 +200,17 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     where = "1=1"
     if _where:
        where = _where
-
+    schema=args.clickhouse_database
     # skip deleted rows
     if args.sign_column != '':
       where+= f" and {args.sign_column} > 0 "
 
-    sql = """ select
+    memory_setting = ""
+    max_memory_usage = args.max_memory_usage
+    if max_memory_usage:
+        memory_setting = f", max_memory_usage = {max_memory_usage}"
+
+    sql = f"""select
       count(*) as "cnt",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 9, 8))))),0) as "b",
@@ -223,12 +224,10 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       )) as "hash"
 
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
-	  
-	  ) as t""".format(select_query=select_query, schema=args.clickhouse_database, table=table, where=where, order_by=order_by, limit=limit)
 
+	  ) as t settings do_not_merge_across_partitions_select_final=1 {memory_setting}"""
     if args.debug_output:
-        sql = """select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1""".format(
-            select_query=select_query, schema=args.clickhouse_database, table=table, where=where, order_by=order_by, limit=limit)
+        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1"""
     statements.append(sql)
     return statements
 
@@ -272,7 +271,6 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where):
         logging.info("Checksum for table {schema}.{table} = d41d8cd98f00b204e9800998ecf8427e count 0".format(
             schema=args.clickhouse_database, table=table))
         return
-
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
      external_table_types) = get_table_checksum_query(conn, table)
@@ -341,6 +339,9 @@ def main():
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
 
+    parser.add_argument('--max_memory_usage',
+                        help='increase  max_memory_usage', required=False)
+
     global args
     args = parser.parse_args()
 
@@ -396,3 +397,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
