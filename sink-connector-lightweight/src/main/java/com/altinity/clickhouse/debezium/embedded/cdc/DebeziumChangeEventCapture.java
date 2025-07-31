@@ -725,8 +725,13 @@ public class DebeziumChangeEventCapture {
             synchronized (this.records) {
                 try {
                     int remainingCapacity = this.records.remainingCapacity();
+                    int currentSize = this.records.size();
+                    int totalCapacity = remainingCapacity + currentSize;
+                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                        log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                    }
                     if (remainingCapacity == 0) {
-                        log.warn("Queue is full! Current size: {}", this.records.size());
+                        log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
                     }
                     this.records.put(convertedRecords);
                 }catch(Exception e){
