@@ -198,7 +198,7 @@ def get_table_checksum_query(conn, table):
 def fstr(template, partition_expression):
         return eval(f"f'{template}'")
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where, conn):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -286,7 +286,7 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where):
     (query, select_query, distributed_by,
      external_table_types) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where, conn)
+        table, query, select_query, distributed_by, external_table_types, where)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
