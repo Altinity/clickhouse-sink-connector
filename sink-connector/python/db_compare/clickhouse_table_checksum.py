@@ -190,6 +190,9 @@ def get_table_checksum_query(conn, table):
     logging.debug("order by columns "+order_by_columns)
     return (query, select, order_by_columns, external_column_types)
 
+@staticmethod
+def fstr(template, partition_expression):
+        return eval(f"f'{template}'")
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = []
@@ -258,13 +261,19 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where):
     statements = []
     #
     # Create new threads to execute the sync
-
+    conn = get_connection(clickhouse_user, clickhouse_password)
     # we need to count the values in CH first
     sql = "select count(*) cnt from "+args.clickhouse_database+"."+table
     if where:
+        if "{partition_expression}" in where:
+           partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
+           logging.info(partition_key)
+           if len(partition_key) > 0 :
+               partition_key = partition_key[0][0]
+           where = fstr(where, partition_key)
         sql = sql + " where " + where
 
-    conn = get_connection(clickhouse_user, clickhouse_password)
+
     (rowset, rowcount) = execute_sql(conn, sql)
     if rowcount == 0:
         logging.info("No rows in ClickHouse. Nothing to sync.")
