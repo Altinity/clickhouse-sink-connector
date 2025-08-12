@@ -99,7 +99,7 @@ schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
 # schema.history.internal.jdbc.url: The JDBC URL for the database where connector schema history is to be stored.
 schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
 
-# schema.history.internal.jdbc.user: The name of the database user to be used when connecting to the database where connector schema history is to be stored.
+# schema.history.internal.jdbc.user: The name of the database user to be used when connecting to the databupdatease where connector schema history is to be stored.
 schema.history.internal.jdbc.user: "root"
 
 # schema.history.internal.jdbc.password: The password of the database user to be used when connecting to the database where connector schema history is to be stored.
