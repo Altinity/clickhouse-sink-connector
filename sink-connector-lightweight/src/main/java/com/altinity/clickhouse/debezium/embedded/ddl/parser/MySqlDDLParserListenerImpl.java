@@ -408,8 +408,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         for (ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
                             if (generatedColumnTree instanceof MySqlParser.ExpressionContext) {
+                                for(ParseTree generatedColumnTreeChildren: ((MySqlParser.ExpressionContext) generatedColumnTree).children) {
+                                    //System.out.println(generatedColumnTreeChildren.getText().trim());
+                                    // iterate over the children of the generatedColumnTreeChildren
+                                    if(generatedColumnTreeChildren instanceof MySqlParser.IsNullPredicateContext) {
+                                        for (ParseTree generatedColumnTreeChildrenChildren : ((MySqlParser.IsNullPredicateContext) generatedColumnTreeChildren).children) {
+                                            if (generatedColumnTreeChildrenChildren instanceof MySqlParser.ExpressionAtomPredicateContext) {
+                                                //System.out.println(generatedColumnTreeChildrenChildren.getText().trim());
+                                                generatedColumn = generatedColumnTreeChildrenChildren.getText();
+                                            }
+                                        }
+                                    } else {
+                                        generatedColumn = generatedColumnTreeChildren.getText();
+                                    }
+                                }
                                 isGeneratedColumn = true;
-                                generatedColumn = generatedColumnTree.getText();
+
                             }
                         }
                     }
