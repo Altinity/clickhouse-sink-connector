@@ -380,6 +380,36 @@ public class MySqlDDLParserListenerImplTest {
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
     }
 
+    // Add column by data type mapping from 'config_schema_override' file
+    @Test
+    public void testAlterDatabaseAddColumnDataTypeMapping() {
+
+        String addColumnNullable = "ALTER TABLE foo_new9 ADD COLUMN gmt_time3 DATETIME";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN gmt_time3 Nullable(String)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(addColumnNullable, "foo_new9", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY" + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
+    // Add or rename column by data type mapping from 'config_schema_override' file
+    @Test
+    public void testAlterDatabaseRenameColumnDataTypeMapping() {
+
+        String addColumnNullable = "ALTER TABLE foo_new9 CHANGE COLUMN gmt_time3 gmt_time5 DATETIME;";
+        // String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN gmt_time3 Nullable(String)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(addColumnNullable, "employees", clickHouseQuery);
+
+        log.info("CLICKHOUSE QUERY" + clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery != null && clickHouseQuery.length() != 0);
+        // Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+    }
+
     // Before, After
     @Test
     public void testAlterDatabaseAddMultipleColumns1() {

@@ -2,12 +2,15 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
+
+import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -260,29 +263,50 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         this.query.append(")");
 
+        // Retrieve table from configuration setting
+        SchemaOverrideConfig.Table tableConfig = SchemaOverrideConfig.getTableConfig(this.databaseName, this.tableName, this.config.originalsStrings());
+
         // Add engine type based on table configuration.
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             if (isReplicatedReplacingMergeTree) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
+                this.query.append(String.format(" Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
             } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
             }
         } else {
             if (isReplicatedReplacingMergeTree) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
+                this.query.append(String.format(" Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
             } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
             }
         }
 
-        // Append partitioning and ordering clauses.
-        if (partitionByColumn.length() > 0) {
+        // Append partitioning and ordering clauses, using values from tableConfig if they exist
+        if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+            // Use the partition_by from tableConfig if it exists
+            this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
+        } else if (partitionByColumn.length() > 0) {
+            // Fallback to partitionByColumn if tableConfig does not provide a partition_by value
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
-        if (orderByColumns.length() == 0) {
-            this.query.append(Constants.ORDER_BY_TUPLE);
-        } else {
-            this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+
+        if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+            // Use the primary_key from tableConfig if it exists
+            this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
+        }else{
+            // Handle the ordering clause
+            if (orderByColumns.length() == 0) {
+                // Use a default tuple if no specific ordering is provided
+                this.query.append(Constants.ORDER_BY_TUPLE);
+            } else {
+                // Otherwise, use the orderByColumns for ordering
+                this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+            }
+        }
+
+        if (tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
+            // Use the settings from tableConfig if it exists
+            this.query.append(Constants.SETTINGS).append(tableConfig.getSettings());
         }
     }
 
@@ -297,6 +321,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
+
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -496,6 +521,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
 
+        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping(this.config.originalsStrings());
+
+        // Use a single null check with optional.
+        if (defaultColumnDataTypeMap != null) {
+            chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
+        }
+
         return chDataType;
     }
 
@@ -665,6 +697,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.error("Error retrieving NULL column schema from ClickHouse", e);
             }
         }
+
+        // Call the method to load the default column data type mapping.
+        /*Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
+
+        // Use a single null check with optional.
+        if (defaultColumnDataTypeMap != null) {
+            columnType = defaultColumnDataTypeMap.getOrDefault(columnName, columnType);
+        }*/
 
         // If column name and column type are defined, append them to the query.
         if (columnName != null && columnType != null)
