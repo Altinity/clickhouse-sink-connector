@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.config;
 
 import org.yaml.snakeyaml.Yaml;
 import java.io.InputStream;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -33,33 +34,33 @@ public class DefaultColumnDataTypeMappingConfig {
      * @return a {@code Map<String, String>} that contains the default column data type mapping.
      * @throws RuntimeException if the YAML file is not found or the mapping is in an unexpected format.
      */
-    public static Map<String, String> loadDefaultColumnDataTypeMapping() {
-        // Create an instance of SnakeYAML.
-        Yaml yaml = new Yaml();
+    /**
+     * Extracts a new map containing only entries with keys starting with
+     * "default_column_datatype_mapping." prefix. The prefix is removed from
+     * the keys in the new map.
+     *
+     * @param configMap the original configuration map
+     * @return a new map with cleaned keys and corresponding values
+     */
+    public static Map<String, String> loadDefaultColumnDataTypeMapping(Map<String, String> configMap) {
+        Map<String, String> extractedMap = new HashMap<>();
 
-        // Load the YAML file from the classpath.
-        // The file "config_schema_override.yml" should reside in the src/main/resources directory.
-        InputStream inputStream = DefaultColumnDataTypeMappingConfig.class.getClassLoader()
-                .getResourceAsStream("config_schema_override.yml");
-        if (inputStream == null) {
-            throw new RuntimeException("Unable to find config_schema_override.yml file. Please check the resource path!");
+        String prefix = "default_column_datatype_mapping.";
+
+        // Iterate through the entries of the original map
+        for (Map.Entry<String, String> entry : configMap.entrySet()) {
+            String key = entry.getKey();
+
+            // Check if the key starts with the desired prefix
+            if (key.startsWith(prefix)) {
+                // Remove the prefix to get the new key
+                String newKey = key.substring(prefix.length());
+                // Put the new key and original value into the new map
+                extractedMap.put(newKey, entry.getValue());
+            }
         }
 
-        // Parse the entire YAML file into a Map object.
-        // The resulting map (yamlData) contains keys corresponding to the top-level keys in the YAML file.
-        Map<String, Object> yamlData = yaml.load(inputStream);
-
-        // Retrieve the object corresponding to the "default_column_datatype_mapping" key.
-        // This object should be a Map that represents the mapping of column names to their respective data types.
-        Object mappingObj = yamlData.get("default_column_datatype_mapping");
-        if (mappingObj instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, String> mapping = (Map<String, String>) mappingObj;
-            return mapping;
-        } else {
-            // If the object is not a Map, throw an exception indicating an unexpected YAML structure.
-            throw new RuntimeException("The 'default_column_datatype_mapping' section is not in the expected format.");
-        }
+        return extractedMap;
     }
 }
 

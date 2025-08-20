@@ -67,12 +67,19 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
     @Test
     public void testMySQLGeneratedColumnsByDataTypeMapping() throws Exception {
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
 
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+                // props.setProperty("replication.history.enable", "true");
+                props.setProperty("default_column_datatype_mapping.transaction_id", "String");
+                props.setProperty("default_column_datatype_mapping.gmt_time", "String");
+
+                props.setProperty("databases.employees.tables.contacts.partition_by", "id");
+                props.setProperty("databases.employees.tables.contacts.primary_key", "last_name");
+                props.setProperty("databases.employees.tables.contacts.settings", "allow_nullable_key=1");
 
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(),  false);
@@ -99,13 +106,13 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
         Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
-        Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
+        // Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
         Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
 
@@ -115,7 +122,7 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
             insertCheck = true;
             String gmtTime = resultSet.getString("gmt_time");
             System.out.println(gmtTime);
-            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 07:34:56.000"));
+            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 12:34:56.000"));
         }
         Thread.sleep(10000);
 

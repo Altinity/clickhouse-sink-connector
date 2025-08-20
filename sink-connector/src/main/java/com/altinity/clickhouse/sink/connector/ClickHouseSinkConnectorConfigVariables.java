@@ -1,4 +1,3 @@
-
 package com.altinity.clickhouse.sink.connector;
 
 public enum ClickHouseSinkConnectorConfigVariables {
@@ -85,13 +84,15 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     CONNECTION_POOL_DISABLE("connection.pool.disable"),
 
-    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
+    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.table.name"),
 
     ERRORS_MAX_RETRIES("errors.max.retries"),
 
     CONNECTOR_CLASS("connector.class"),
 
-    NON_DEFAULT_VALUE("non.default.value");
+    NON_DEFAULT_VALUE("non.default.value"),
+
+    ERROR_TABLE_NAME("default.error.table");
 
 
 

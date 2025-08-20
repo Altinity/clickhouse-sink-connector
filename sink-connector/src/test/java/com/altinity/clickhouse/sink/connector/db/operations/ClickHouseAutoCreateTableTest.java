@@ -33,6 +33,8 @@ public class ClickHouseAutoCreateTableTest {
     static Map<String, String> columnToDataTypesMap;
 
     static Connection conn;
+    
+    ClickHouseSinkConnectorConfig config;
 
     @Container
     private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
@@ -41,6 +43,11 @@ public class ClickHouseAutoCreateTableTest {
     @AfterAll
     public static void tearDown() throws SQLException {
         HikariDbSource.close();
+    }
+    
+    @BeforeEach
+    public void setUp() {
+        config = new ClickHouseSinkConnectorConfig(new HashMap<>());
     }
     @BeforeAll
     static void initialize() {
@@ -118,7 +125,7 @@ public class ClickHouseAutoCreateTableTest {
     public void getColumnNameToCHDataTypeMappingTest() {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
         Field[] fields = createFields();
-        Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields);
+        Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         Map<String, String> expectedColNameToDataTypeMap = getExpectedColumnToDataTypesMap();
 
@@ -134,7 +141,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "employees",
-                createFields(), this.columnToDataTypesMap, false, false, null);
+                createFields(), this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
         System.out.println("QUERY" + query);
         Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
         //Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE auto_create_table(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY (customerName)"));
@@ -148,7 +155,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createHistoryTableSyntax(primaryKeys, "auto_create_table_history", "employees",
-                createFields(), this.columnToDataTypesMap);
+                createFields(), this.columnToDataTypesMap, this.config);
         System.out.println("QUERY" + query);
         Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE employees.`auto_create_table_history`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON NOT NULL,`max_amount` Float64 NOT NULL,`database` String,`table` String,`_raw` String,`_time` UInt64,`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` String,`logfile` String,`position` UInt64,`primary_host` String) ENGINE = MergeTree() ORDER BY(customerName"));
     }
@@ -159,7 +166,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(null, "auto_create_table", "employees", createFields(),
-                this.columnToDataTypesMap, false, false, null);
+                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         String expectedQuery = "CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
@@ -173,7 +180,7 @@ public class ClickHouseAutoCreateTableTest {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "customers", createFields(),
-                this.columnToDataTypesMap, false, false, null);
+                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         String expectedQuery = "CREATE TABLE customers.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
@@ -189,11 +196,14 @@ public class ClickHouseAutoCreateTableTest {
         String database = "test";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
-        String tableName = "employees5";
+        String tableName = "employees";
+
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
@@ -204,7 +214,7 @@ public class ClickHouseAutoCreateTableTest {
 
         try {
             act.createNewTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(),
-                    false, false, null);
+                    false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }
@@ -233,7 +243,7 @@ public class ClickHouseAutoCreateTableTest {
         primaryKeys.add("customerName");
 
         try {
-            act.createHistoryTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection());
+            act.createHistoryTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(), this.config);
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

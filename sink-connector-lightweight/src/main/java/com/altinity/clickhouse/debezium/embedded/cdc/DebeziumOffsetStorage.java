@@ -77,7 +77,7 @@ public class DebeziumOffsetStorage {
 
         String query = String.format(
                 "delete from %s where offset_key='%s'", tableName, offsetKey);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         dbMetadata.executeSystemQuery(connection, query);
     }
 
@@ -90,7 +90,7 @@ public class DebeziumOffsetStorage {
      * @throws SQLException If a database error occurs.
      */
     public void deleteSchemaHistoryTable(String offsetKey, String tableName,
-                                         Connection connection)
+                                         Connection connection, Properties props)
             throws SQLException {
 
         String query = String.format(
@@ -98,7 +98,7 @@ public class DebeziumOffsetStorage {
                         + "'source'), 'server')='%s'",
                 tableName, offsetKey);
         log.info("Deleting schema history table query: " + query);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         dbMetadata.executeSystemQuery(connection, query);
     }
 
@@ -120,7 +120,7 @@ public class DebeziumOffsetStorage {
 
         String query = String.format(
                 "select max(record_insert_ts) from %s", tableName);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         return dbMetadata.executeSystemQuery(connection, query);
     }
 
@@ -143,7 +143,7 @@ public class DebeziumOffsetStorage {
         String query = String.format(
                 "select offset_val from %s where offset_key='%s'",
                 tableName, offsetKey);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         return dbMetadata.executeSystemQuery(connection, query);
     }
 

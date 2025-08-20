@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
@@ -58,18 +60,19 @@ public class ClickHouseAutoCreateTable
                                Connection connection,
                                boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree,
-                               String rmtDeleteColumn)
+                               String rmtDeleteColumn,
+                               ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> colNameToDataTypeMap =
-                this.getColumnNameToCHDataTypeMapping(fields);
+                this.getColumnNameToCHDataTypeMapping(fields,config);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName,
                 databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree,
-                rmtDeleteColumn);
+                rmtDeleteColumn,config);
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), "
                 + "Query :%s)", databaseName, createTableQuery));
         // TODO: Run this before a session is created.
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, createTableQuery);
     }
 
@@ -103,19 +106,13 @@ public class ClickHouseAutoCreateTable
                                     Map<String, String> columnToDataTypesMap,
                                     boolean isNewReplacingMergeTreeEngine,
                                     boolean useReplicatedReplacingMergeTree,
-                                    String rmtDeleteColumn) {
+                                    String rmtDeleteColumn,
+                                    ClickHouseSinkConnectorConfig config) {
 
-        // Load the schema configuration from the YAML file
-        SchemaOverrideConfig config = new SchemaOverrideConfig();
-        String filePath = "config_schema_override.yml";  // File is inside src/main/resources
-        try {
-            config.loadTableConfigs(filePath);
-        } catch (IOException e) {
-            log.error("load schema override configs error:", e);
-        }
+        SchemaOverrideConfig schemaConfig = new SchemaOverrideConfig();
 
         // Get the schema configuration for the table "tr_live" in database "dbo"
-        SchemaOverrideConfig.Table tableConfig = config.getTableConfig(databaseName, tableName);
+        SchemaOverrideConfig.Table tableConfig = schemaConfig.getTableConfig(databaseName, tableName,config.originalsStrings());
 
         // Use the primaryKey from the tableConfig if it is not empty
         if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
@@ -125,18 +122,20 @@ public class ClickHouseAutoCreateTable
 
         StringBuilder createTableSyntax = new StringBuilder();
 
-        // Start creating the CREATE TABLE statement
         createTableSyntax.append(CREATE_TABLE).append(" ")
                 .append(databaseName).append(".")
                 .append("`").append(tableName).append("`");
+        if (useReplicatedReplacingMergeTree == true) {
+            createTableSyntax.append(" ON CLUSTER `{cluster}` ");
+        }
 
-        // Add columns to the SQL
         createTableSyntax.append("(");
+
         for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
             boolean isNull = false;
-            if (f.schema().isOptional()) {
+            if (f.schema().isOptional() == true) {
                 isNull = true;
             }
             createTableSyntax.append("`").append(colName).append("`")
@@ -157,7 +156,6 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(",");
         }
 
-        // Handle the deletion column logic
         String isDeletedColumn = IS_DELETED_COLUMN;
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
@@ -170,17 +168,16 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(isDeletedColumn)
                     .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
         } else {
+            // Append sign and version columns.
             createTableSyntax.append("`").append(SIGN_COLUMN)
                     .append("` ").append(SIGN_COLUMN_DATA_TYPE)
                     .append(",");
             createTableSyntax.append("`").append(VERSION_COLUMN)
                     .append("` ").append(VERSION_COLUMN_DATA_TYPE);
         }
-
         createTableSyntax.append(")");
-
-        // Add the engine type
         createTableSyntax.append(" ");
+
         if (isNewReplacingMergeTreeEngine == true) {
             if (useReplicatedReplacingMergeTree == true) {
                 createTableSyntax.append(String.format(
@@ -209,14 +206,21 @@ public class ClickHouseAutoCreateTable
 
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
-        if (primaryKey != null && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+
+        if (primaryKey != null
+                && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
+            createTableSyntax.append(PRIMARY_KEY).append("(");
+            createTableSyntax.append(primaryKey.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining(",")));
+            createTableSyntax.append(") ");
             createTableSyntax.append(ORDER_BY).append("(");
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
             createTableSyntax.append(")");
         } else {
-            // Default ORDER BY clause
+            // TODO: Define a default ORDER BY clause.
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
 
@@ -244,17 +248,18 @@ public class ClickHouseAutoCreateTable
                                    String historyTableName,
                                    String databaseName,
                                    Field[] fields,
-                                   Connection connection)
+                                   Connection connection,
+                                   ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> columnToDataTypesMap =
-                this.getColumnNameToCHDataTypeMapping(fields);
+                this.getColumnNameToCHDataTypeMapping(fields, config);
         String sql = createHistoryTableSyntax(
                 primaryKey, historyTableName,
-                databaseName, fields, columnToDataTypesMap);
+                databaseName, fields, columnToDataTypesMap, config);
         log.info(String.format(
                 "**** AUTO CREATE HISTORY TABLE for database(%s), Query :%s)",
                 databaseName, sql));
-        DBMetadata metadata = new DBMetadata();
+        DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, sql);
     }
 
@@ -274,15 +279,15 @@ public class ClickHouseAutoCreateTable
                                            String historyTableName,
                                            String databaseName,
                                            Field[] fields,
-                                           Map<String, String> columnToDataTypesMap) {
-        SchemaOverrideConfig config = new SchemaOverrideConfig();
-        try {
-            config.loadTableConfigs("config_schema_override.yml");
-        } catch (IOException e) {
-            log.error("load schema override configs error:", e);
-        }
-        SchemaOverrideConfig.Table tableConfig =
-                config.getTableConfig(databaseName, historyTableName.replaceAll("_history$", ""));
+                                           Map<String, String> columnToDataTypesMap,
+                                           ClickHouseSinkConnectorConfig config) {
+
+        SchemaOverrideConfig schemaConfig = new SchemaOverrideConfig();
+
+
+        SchemaOverrideConfig.Table tableConfig = schemaConfig.getTableConfig(databaseName, historyTableName,config.originalsStrings());
+
+
 
         // Use the primaryKey from the tableConfig if it is not empty
         if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {

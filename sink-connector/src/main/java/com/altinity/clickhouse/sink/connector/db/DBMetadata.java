@@ -4,6 +4,7 @@ import static com.altinity.clickhouse.sink.connector.db.BaseDbWriter.SYSTEM_DB;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CHECK_DB_EXISTS_SQL;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.logging.log4j.LogManager;
@@ -31,6 +32,38 @@ public class DBMetadata {
      * Defaults to 2 retries.
      */
     static int MAX_RETRIES = 2;
+
+    /**
+     * Configuration for the ClickHouse sink connector.
+     */
+    private final ClickHouseSinkConnectorConfig config;
+
+    /**
+     * Constructor for DBMetadata.
+     *
+     * @param config The configuration for the ClickHouse sink connector.
+     */
+    public DBMetadata(ClickHouseSinkConnectorConfig config) {
+        this.config = config;
+    }
+
+    public DBMetadata(Properties props) {
+        // Create HashMap from Properties
+        Map<String, String> propsMap = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : props.entrySet()) {
+            propsMap.put(entry.getKey().toString(), entry.getValue().toString());
+        }
+        this.config = new ClickHouseSinkConnectorConfig(propsMap);
+    }
+
+    /**
+     * Gets the configuration for the ClickHouse sink connector.
+     *
+     * @return The configuration object.
+     */
+    public ClickHouseSinkConnectorConfig getConfig() {
+        return config;
+    }
 
     /**
      * Sets the maximum number of retries for database operations.
@@ -143,7 +176,10 @@ public class DBMetadata {
                 }
             } catch (Exception retryException) {
                 log.error("Retry attempt ({}/{}) failed", retryCount,MAX_RETRIES, retryException);
-                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                // if config disable thread pool is false, then initiate new connection
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                }
             }
         }
 
@@ -194,7 +230,9 @@ public class DBMetadata {
             } catch (Exception e) {
                 try {
                     if (conn == null || conn.isClosed()) {
-                        conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                        if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                            conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                        }
                     }
                 } catch (SQLException sqlException) {
                     log.error("Retry attempt ({}/{}) failed", retryCount, MAX_RETRIES,sqlException);
@@ -425,8 +463,7 @@ public class DBMetadata {
      * @param config The configuration for the ClickHouse sink connector.
      * @return A map containing the column names as keys and their data types as values.
      */
-    public Map<String, String> getColumnsDataTypesForTable(String tableName, Connection conn, String database,
-                                                           ClickHouseSinkConnectorConfig config) {
+    public Map<String, String> getColumnsDataTypesForTable(String tableName, Connection conn, String database) {
         // Add retry logic.
         int retryCount = 0;
         Set<String> aliasColumns = new HashSet<>();
@@ -436,7 +473,9 @@ public class DBMetadata {
             log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
 
             try {
-                conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                }
             } catch (SQLException e1) {
                 log.error("Error initiating new connection retrying ({}/{})", retryCount,MAX_RETRIES,e1);
 
@@ -473,7 +512,9 @@ public class DBMetadata {
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}), use error.max.retries to configure",
                         retryCount,MAX_RETRIES, sq);
                 try {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                    if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                    }
                 } catch (SQLException e1) {
                     log.error("Error initiating new connection, retrying ({}/{})", retryCount,MAX_RETRIES,e1);
                 }
@@ -543,7 +584,9 @@ public class DBMetadata {
                 break;
             } catch (Exception e) {
                 log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
-                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                }
                 retryCount++;
             }
         }
@@ -568,7 +611,9 @@ public class DBMetadata {
                 break;
             } catch(Exception e) {
                 log.error("Error executing query, retrying ({}/{})", retryCount,MAX_RETRIES,e);
-                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                }
                 retryCount++;
             }
         }
@@ -597,7 +642,9 @@ public class DBMetadata {
                     log.error("Error executing query: Retrying ({}/{})" ,retryCount,MAX_RETRIES, sqle);
                     Thread.sleep(1000 * retryCount);
                     // Get a new connection from pool.
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                    if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                    }
                 } catch (Exception e) {
                     log.error("Error initiating DB connection, retrying ({}/{})",retryCount,MAX_RETRIES, e);
                 }
@@ -647,7 +694,9 @@ public class DBMetadata {
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}),use error.max.retries to configure",
                         retryCount,MAX_RETRIES,sq);
                 try {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                    if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                    }
                 } catch (SQLException e1) {
                     log.error("Error initiating new connection, retrying ({}/{})",retryCount,MAX_RETRIES,e1);
                 }
@@ -676,7 +725,9 @@ public class DBMetadata {
                 break;
             } catch (SQLException e) {
                 log.error("*** Error: Truncate table statement error, retry attempt ({}/{}) failed" ,retryCount,MAX_RETRIES, e);
-                conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                }
                 retryCount++;
             }
         }
@@ -699,7 +750,9 @@ public class DBMetadata {
                 break;
             } catch (SQLException e) {
                 log.error("Error getting prepared statement, retry attempt ({}/{}) failed",retryCount,MAX_RETRIES, e);
-                conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                }
                 retryCount++;
             }
         }

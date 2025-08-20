@@ -9,7 +9,6 @@ import java.io.InputStream;
 import java.util.Map;
 
 /**
- * SchemaOverrideConfig loads the schema configuration from a YAML file.
  * It allows querying the configuration based on database and table name.
  */
 public class SchemaOverrideConfig {
@@ -33,44 +32,39 @@ public class SchemaOverrideConfig {
         databases = mapper.readValue(inputStream, Map.class);
     }
 
-    /**
-     * Retrieves the schema configuration for a specific database and table.
-     * @param databaseName the name of the database
-     * @param tableName the name of the table
-     * @return the schema configuration for the table, or null if not found
-     */
-    public Table getTableConfig(String databaseName, String tableName) {
-        // Retrieve the configuration for the database
-        Map<String, Map<String, Table>> databaseAll = databases.get("databases");
+    public static Table getTableConfig(String databaseName, String tableName, Map<String, String> configMap) {
 
-        // Get the tables map for the specified database
-        Map<String, Table> tables = databaseAll.get(databaseName);
-        /*if(tables==null){
-            return null;
-        }*/
-
-        String jsonString=JSONObject.toJSONString(tables);
-
-        JSONObject jsonObject = JSONObject.parseObject(jsonString);
-        if(jsonObject==null){
-            return null;
-        }
-        JSONObject tablesObject  = jsonObject.getJSONObject("tables");
-        if(tablesObject==null){
-            return null;
+        // If the tableName contains a dot, remove everything before the first dot (including the dot itself)
+        if (tableName.contains(".")) {
+            tableName = tableName.substring(tableName.indexOf('.') + 1);
         }
 
-        // Convert the JSONObject to a Map with String as key and Table as value
-        Map<String, Map<String,Table>> tableMap = tablesObject.toJavaObject(Map.class);
-        Map<String,Table> subTableMap=tableMap.get(tableName);
-        JSONObject jsonObjectTable=(JSONObject) JSONObject.toJSON(subTableMap);
-        if(jsonObjectTable==null){
-            return null;
+        Table tableConfig = new Table();
+
+        // Construct the prefix for matching entries
+        String prefix = "databases." + databaseName + ".tables." + tableName + ".";
+
+        for (Map.Entry<String, String> entry : configMap.entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+
+            // Only process keys that start with the correct prefix
+            if (key.startsWith(prefix)) {
+                // Get the suffix after the prefix
+                String suffix = key.substring(prefix.length());
+
+                // Match specific suffixes and set corresponding fields
+                if (suffix.equals("partition_by")) {
+                    tableConfig.setPartitionBy(value);
+                } else if (suffix.equals("primary_key")) {
+                    tableConfig.setPrimaryKey(value);
+                } else if (suffix.equals("settings")) {
+                    tableConfig.setSettings(value);
+                }
+            }
         }
 
-        Table table=jsonObjectTable.toJavaObject(Table.class);
-
-        return table;
+        return tableConfig;
     }
 
     /**

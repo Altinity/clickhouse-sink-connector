@@ -10,6 +10,7 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
@@ -149,8 +150,6 @@ public class DebeziumChangeEventCapture {
                                           ClickHouseSinkConnectorConfig config)
             throws IOException, ClassNotFoundException {
 
-        // System.out.println("setupDebeziumEventCapture");
-
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
 
@@ -160,9 +159,9 @@ public class DebeziumChangeEventCapture {
             log.error("Error creating Debezium storage database", e);
         }
         try {
-            DBMetadata dbMetadata = new DBMetadata();
+            DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
-            isNewReplacingMergeTreeEngine = new DBMetadata().checkIfNewReplacingMergeTree(clickHouseVersion);
+            isNewReplacingMergeTreeEngine = new DBMetadata(config).checkIfNewReplacingMergeTree(clickHouseVersion);
         } catch (Exception e) {
             log.error("Error retrieving version", e);
         }
@@ -311,7 +310,6 @@ public class DebeziumChangeEventCapture {
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
         // Start Debezium event loop if it is requested from REST API.
-        // System.out.println("setupProcessingThread");
         if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
                 || forceStart) {
             this.setupProcessingThread(config);
@@ -412,6 +410,7 @@ public class DebeziumChangeEventCapture {
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -419,10 +418,10 @@ public class DebeziumChangeEventCapture {
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
-                executeDDL(clickHouseQuery.toString(), writer);
+                executeDDL(clickHouseQuery.toString(), writer, config);
 
                 if(loadReplicationHistoryEnable()){
-                    executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer);
+                    executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer, config);
                     // executeDDL(transformTableName(clickHouseQuery.toString()), writer);
                 }
 
@@ -430,6 +429,14 @@ public class DebeziumChangeEventCapture {
                 break;
             } catch (Exception e) {
                 log.error("Error executing DDL", e);
+                // insert data into the error table
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, e.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
                 if (retryDDLProperty == false) {
                     break;
                 }
@@ -497,9 +504,9 @@ public class DebeziumChangeEventCapture {
      * @param writer          The {@link BaseDbWriter} used to execute the query.
      * @throws SQLException If a database access error occurs.
      */
-    private void executeDDL(String clickHouseQuery, BaseDbWriter writer) throws SQLException {
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(config);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {

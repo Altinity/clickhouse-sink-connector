@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.config;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
@@ -11,11 +12,15 @@ public class DefaultColumnDataTypeMappingConfigTest {
     @Test
     public void testDefaultColumnDataTypeMapping(){
 
-        // Call the method to load the default column data type mapping.
-        Map<String, String> mapping = loadDefaultColumnDataTypeMapping();
+        Map<String, String> configMap = new HashMap<>();
+        configMap.put("default_column_datatype_mapping.transaction_id", "String");
+        configMap.put("default_column_datatype_mapping.gmt_time", "String");
+        configMap.put("replication.history.enable", "true");
 
-        // Print the contents of the mapping to the console.
-        System.out.println("Contents of default_column_datatype_mapping:");
-        mapping.forEach((key, value) -> System.out.println(key + ": " + value));
+        // Extract the relevant mapping
+        Map<String, String> resultMap = loadDefaultColumnDataTypeMapping(configMap);
+
+        // Print the result
+        System.out.println(resultMap); // Output: {transaction_id=String, gmt_time=String}
     }
 }

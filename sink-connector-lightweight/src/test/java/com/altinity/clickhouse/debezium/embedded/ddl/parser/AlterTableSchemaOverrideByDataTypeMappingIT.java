@@ -72,9 +72,19 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
         // Start Debezium Change Event Capture in a separate thread
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
+
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
         executorService.execute(() -> {
             try {
-                Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+
+                props.setProperty("default_column_datatype_mapping.gmt_time", "String");
+                props.setProperty("default_column_datatype_mapping.gmt_time3", "String");
+                props.setProperty("default_column_datatype_mapping.gmt_time4", "String");
+
+                props.setProperty("databases.employees.tables.contacts.partition_by", "id");
+                props.setProperty("databases.employees.tables.contacts.primary_key", "last_name");
+                props.setProperty("databases.employees.tables.contacts.settings", "allow_nullable_key=1");
+
                 engine.set(new DebeziumChangeEventCapture());
                 engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
@@ -124,7 +134,7 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
 
         // Obtain ClickHouse writer and metadata utility
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(
                 writer.getConnection(), "contacts", "employees"
         );
@@ -152,9 +162,9 @@ public class AlterTableSchemaOverrideByDataTypeMappingIT {
             String gmtTime4 = resultSet.getString("gmt_time4");
             System.out.println(gmtTime4);
 
-             Assert.assertEquals("2025-04-10 07:34:56.000", resultSet.getString("gmt_time"));
-             Assert.assertEquals("2025-04-10 07:35:56.000", resultSet.getString("gmt_time3"));
-             Assert.assertEquals("2025-04-10 07:36:56.000", resultSet.getString("gmt_time4"));
+             Assert.assertEquals("2025-04-10 12:34:56.000", resultSet.getString("gmt_time"));
+             Assert.assertEquals("2025-04-10 12:35:56.000", resultSet.getString("gmt_time3"));
+             Assert.assertEquals("2025-04-10 12:36:56.000", resultSet.getString("gmt_time4"));
         }
 
         // Clean up resources: close connections and stop background services

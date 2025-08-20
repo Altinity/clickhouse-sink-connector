@@ -1135,8 +1135,8 @@
           "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
           "hide": false,
           "intervalFactor": 1,
-          "query": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime($from) and  event_time < toDateTime($to)\nGROUP BY _time_dec, table",
-          "rawQuery": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime(1681314113) and  event_time < toDateTime(1681335713)\nGROUP BY _time_dec, table",
+          "query": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime($from) and  event_time < toDateTime($to)\nGROUP BY _time_dec, table\nORDER BY _time_dec",
+          "rawQuery": "SELECT  toStartOfInterval(event_time, toIntervalSecond(1)) AS _time_dec,\nsum(rows) as rows, table\nFROM system.part_log\nWHERE (event_type = 'NewPart') AND event_time >= toDateTime(1681314113) and  event_time < toDateTime(1681335713)\nGROUP BY _time_dec, table\nORDER BY _time_dec",
           "refId": "A",
           "round": "0s",
           "skip_comments": true

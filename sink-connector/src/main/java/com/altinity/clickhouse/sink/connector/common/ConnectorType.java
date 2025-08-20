@@ -120,6 +120,7 @@ public enum ConnectorType {
             );
         } catch (Exception e) {
             logger.error("Error getting connector type", e);
+            connectorType = ConnectorType.KAFKA;
             //log.error("Error while getting connector type", e);
         }
         return connectorType;

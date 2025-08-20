@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
@@ -86,7 +87,7 @@ public class ClickHouseTableOperationsBase {
      * @return A map where the key is the column name and the value is the
      *         corresponding ClickHouse data type as a String.
      */
-    public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields) {
+    public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields, ClickHouseSinkConnectorConfig config) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         Map<String, String> columnToDataTypesMap = new HashMap<>();
 
@@ -170,8 +171,14 @@ public class ClickHouseTableOperationsBase {
             }
         }
 
+        // Print the columnToDataTypesMap entries to verify the changes
+        /*log.info("No changes for columnToDataTypesMap:");
+        for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
+            log.info("Key: {}, Value: {}",entry.getKey(),entry.getValue());
+        }*/
+
         // Call the method to load the default column data type mapping.
-        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
+        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping(config.originalsStrings());
 
         // Iterate over columnToDataTypesMap using entrySet for efficient access to keys and values
         for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
@@ -183,6 +190,12 @@ public class ClickHouseTableOperationsBase {
                 entry.setValue(defaultColumnDataTypeMap.get(key));
             }
         }
+
+        // Print the columnToDataTypesMap entries to verify the changes
+        /*log.info("Updated columnToDataTypesMap:");
+        for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
+            log.info("Key: {}, Value: {}",entry.getKey(),entry.getValue());
+        }*/
 
         return columnToDataTypesMap;
     }
