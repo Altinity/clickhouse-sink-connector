@@ -18,7 +18,6 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 import static io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX;
 
 /**
@@ -206,7 +205,7 @@ public class DbWriter extends BaseDbWriter {
                                 config
                         );
 
-                        if(loadReplicationHistoryEnable()){
+                        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                             act.createHistoryTable(
                                     record.getPrimaryKey(),
                                     tableName+"_history",

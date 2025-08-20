@@ -26,7 +26,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
-import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -312,7 +311,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                             entry.getValue());
 
                     // insert history data
-                    if(loadReplicationHistoryEnable()){
+                    if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                         processRecordsByTopic(entry.getKey()+"_history",
                                 entry.getValue());
                     }

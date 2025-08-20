@@ -31,7 +31,6 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
@@ -335,7 +334,7 @@ public class PreparedStatementExecutor {
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
                 } else {
-                    if(!loadReplicationHistoryEnable()){
+                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                         log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
                         log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
                     }
@@ -423,7 +422,7 @@ public class PreparedStatementExecutor {
         // using default values for all CDC metadata columns.
         if (engine != null
                 && engine.getEngine() == DBMetadata.TABLE_ENGINE.MERGE_TREE.getEngine()
-                && loadReplicationHistoryEnable()) {
+                && config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
             // prepare default values
             Integer defaultIsDeleted  = 0;    // default isDeleted
             // database

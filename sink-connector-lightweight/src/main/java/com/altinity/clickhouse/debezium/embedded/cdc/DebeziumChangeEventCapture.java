@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.altinity.clickhouse.sink.connector.config.ReplicationHistoryConfig.loadReplicationHistoryEnable;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
 /**
@@ -420,7 +419,7 @@ public class DebeziumChangeEventCapture {
             try {
                 executeDDL(clickHouseQuery.toString(), writer, config);
 
-                if(loadReplicationHistoryEnable()){
+                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                     executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer, config);
                     // executeDDL(transformTableName(clickHouseQuery.toString()), writer);
                 }

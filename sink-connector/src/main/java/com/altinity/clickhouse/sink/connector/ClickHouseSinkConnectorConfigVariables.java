@@ -92,7 +92,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     NON_DEFAULT_VALUE("non.default.value"),
 
-    ERROR_TABLE_NAME("default.error.table");
+    ERROR_TABLE_NAME("default.error.table"),
+
+    REPLICATION_HISTORY_ENABLE("replication.history.enable");
 
 
 
