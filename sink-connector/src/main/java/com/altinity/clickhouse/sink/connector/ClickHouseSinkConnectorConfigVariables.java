@@ -84,6 +84,8 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     CONNECTION_POOL_DISABLE("connection.pool.disable"),
 
+    // If its not defined in the application, then it cannot be accessed.
+    // Even if its a duplicate
     OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.table.name"),
 
     ERRORS_MAX_RETRIES("errors.max.retries"),

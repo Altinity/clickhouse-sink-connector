@@ -16,9 +16,8 @@ database.user: "root"
 # Password of the MySQL database user to be used when connecting to the database.
 database.password: "root"
 
-database.dbname: "ORCLCDB"
+#database.dbname: "ORCLCDB"
 
-table.include.
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
 
