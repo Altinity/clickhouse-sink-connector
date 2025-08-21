@@ -13,24 +13,6 @@ import java.util.Map;
  */
 public class SchemaOverrideConfig {
 
-    private Map<String, Map<String, Map<String, Table>>> databases;
-    // private Map<String, Map<String, Table>> databases;
-    /**
-     * Loads the table configurations from the provided YAML file.
-     * @param filePath the path to the YAML file in the classpath (resources)
-     * @throws IOException if there is an error loading the YAML file
-     */
-    public void loadTableConfigs(String filePath) throws IOException {
-        // Load the file from the classpath
-        InputStream inputStream = getClass().getClassLoader().getResourceAsStream(filePath);
-        if (inputStream == null) {
-            throw new IOException("File not found in classpath: " + filePath);
-        }
-
-        ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-        // Load the entire structure of the YAML into the 'databases' map
-        databases = mapper.readValue(inputStream, Map.class);
-    }
 
     public static Table getTableConfig(String databaseName, String tableName, Map<String, String> configMap) {
 
