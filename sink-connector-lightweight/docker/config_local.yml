@@ -16,7 +16,7 @@ database.user: "root"
 # Password of the MySQL database user to be used when connecting to the database.
 database.password: "root"
 
-database.dbname: "ORCLCDB"
+#database.dbname: "ORCLCDB"
 
 # The name of the MySQL database from which events are to be captured when not using snapshot mode.
 database.server.name: "ER54"
@@ -162,3 +162,6 @@ schema.history.internal.store.only.captured.databases.ddl: "true"
 
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"
+
+# Enable replication mergetree history table.
+replication.history.enable: "true"
