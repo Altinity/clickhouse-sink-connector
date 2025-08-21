@@ -187,7 +187,6 @@ public class ClickHouseBatchWriter {
      * @param records a list of ClickHouseStruct records to persist
      */
     public void persistRecords(List<ClickHouseStruct> records) {
-        // System.out.println("3 persistRecords");
         log.info("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + records.size() +

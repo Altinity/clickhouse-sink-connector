@@ -307,13 +307,16 @@ public class ClickHouseBatchRunnable implements Runnable {
                 for (Map.Entry<String, List<ClickHouseStruct>> entry :
                         topicToRecordsMap.entrySet()) {
 
-                    result = processRecordsByTopic(entry.getKey(),
-                            entry.getValue());
 
                     // insert history data
                     if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                         processRecordsByTopic(entry.getKey()+"_history",
                                 entry.getValue());
+                    } else {
+
+                        result = processRecordsByTopic(entry.getKey(),
+                                entry.getValue());
+
                     }
 
                     if (result == false) {
