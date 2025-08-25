@@ -479,6 +479,16 @@ public class ClickHouseBatchRunnable implements Runnable {
         // for all records.
         ClickHouseStruct firstRecord = records.get(0);
         String databaseName = firstRecord.getDatabase();
+
+
+        return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
+    }
+
+    private boolean processBatchRecords(List<ClickHouseStruct> records, String topicName, 
+                                      String tableName, String databaseName, 
+                                      ClickHouseStruct firstRecord) throws Exception {
+        boolean result = false;
+        
         // Check if user has overridden the database name.
         if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
             databaseName = this.databaseOverrideMap.get(

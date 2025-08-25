@@ -747,6 +747,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(),
+                        Type.STRING,
+                        "replication_history",
+                        Importance.MEDIUM,
+                        "Database name for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_2,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()
                 );
     }
 }

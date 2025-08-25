@@ -305,6 +305,13 @@ public class DebeziumChangeEventCapture {
             log.error("Error retrieving max retries", e);
         }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+        
+        // Log if replication history mode is enabled
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            log.info("************** HISTORY MODE ENABLED **************");
+            log.info("*************only history will be tracked ***************");
+        }
+        
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
@@ -417,11 +424,12 @@ public class DebeziumChangeEventCapture {
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
-                executeDDL(clickHouseQuery.toString(), writer, config);
 
                 if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                     executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer, config);
-                    // executeDDL(transformTableName(clickHouseQuery.toString()), writer);
+
+                } else {
+                    executeDDL(clickHouseQuery.toString(), writer, config);
                 }
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
