@@ -13,15 +13,15 @@ This doc describes how to set up CDC pipeline
 
 Sink connector image needs to be built locally.
 Use the following script to build the image
-`docker/package-build-sink-on-debezium-base.sh`
-[docker/package-build-sink-on-debezium-base.sh](../docker/package-build-sink-on-debezium-base.sh)
+`../sink-connector/docker/package-build-sink-on-debezium-base.sh`
+[../sink-connector/docker/package-build-sink-on-debezium-base.sh](../sink-connector/docker/package-build-sink-on-debezium-base.sh)
 Future: Github releases will push docker images to Docker hub.
 
 ## JAR file Setup
 Jar file setup instructions are available in the [Getting Started](getting_started_jar_kafka.md) guide.
 
 ## docker-compose
-Full pipeline can be launched via docker-compose with the help of [docker-compose.yaml][docker-compose.yaml]
+Full pipeline can be launched via docker-compose with the help of [docker-compose.yaml](../sink-connector/deploy/docker/docker-compose.yaml)
 It will start:
 1. MySQL
 2. Zookeeper
@@ -77,41 +77,41 @@ Make sure MySQL master/slave is up and running before executing the following sc
 
 ### MySQL:
 ```bash
-    ../deploy/debezium-connector-setup-schema-registry.sh
+    ../sink-connector/deploy/debezium-connector-setup-schema-registry.sh
 ```
-[debezium-connector-setup-schema-registry.sh](../deploy/debezium-connector-setup-schema-registry.sh)
+[debezium-connector-setup-schema-registry.sh](../sink-connector/deploy/debezium-connector-setup-schema-registry.sh)
 
 ### Postgres(Using Apicurio):
 ```bash
-../deploy/debezium-connector-setup-schema-registry.sh postgres apicurio
+../sink-connector/deploy/debezium-connector-setup-schema-registry.sh postgres apicurio
 ```
 
 # Sink Connector
 After the source connector is created, 
-execute the script [sink-connector-setup-schema-registry.sh](../deploy/sink-connector-setup-schema-registry.sh)
+execute the script [sink-connector-setup-schema-registry.sh](../sink-connector/deploy/sink-connector-setup-schema-registry.sh)
 to create the Clickhouse Sink connector using Kafka connect REST API
 
 ### MySQL:
 ```bash
-    ../deploy/sink-connector-setup-schema-registry.sh
+    ../sink-connector/deploy/sink-connector-setup-schema-registry.sh
 ```
 ### Postgres(Using Apicurio):
 ```bash
-../deploy/sink-connector-setup-schema-registry.sh postgres apicurio
+../sink-connector/deploy/sink-connector-setup-schema-registry.sh postgres apicurio
 ```
 
 # Deleting connectors
 The source connector can be deleted using the following script
-[debezium-delete.sh](../deploy/debezium-delete.sh)
+[debezium-delete.sh](../sink-connector/deploy/debezium-delete.sh)
 
 The sink connector can be deleted using the following script
-[sink-delete.sh](../deploy/sink-delete.sh)
+[sink-delete.sh](../sink-connector/deploy/sink-delete.sh)
 
 # References
 Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
-[docker-compose.yaml]: ../deploy/docker/docker-compose-apicurio-schema-registry.override.yaml
-[Dockerfile]: ../docker/Dockerfile-sink-on-debezium-base-image
+[docker-compose.yaml]: ../sink-connector/deploy/docker/docker-compose.yaml
+[Dockerfile]: ../sink-connector/docker/Dockerfile-sink-on-debezium-base-image
 
 ## Connecting to a different MySQL instance(Host)
 
