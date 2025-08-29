@@ -114,6 +114,17 @@ public class ClickHouseDbConstants {
     public static final String TABLE_COLUMN = "table";
 
     /**
+     * CDC payload for before
+     */
+    public static final String BEFORE_COLUMN = "before";
+
+    /**
+     * CDC payload for after
+     *
+     */
+    public static final String AFTER_COLUMN = "after";
+
+    /**
      * The data type of the table column.
      */
     public static final String TABLE_COLUMN_DATA_TYPE = "String";

@@ -287,8 +287,6 @@ public class ClickHouseAutoCreateTable
 
         SchemaOverrideConfig.Table tableConfig = schemaConfig.getTableConfig(databaseName, historyTableName,config.originalsStrings());
 
-
-
         // Use the primaryKey from the tableConfig if it is not empty
         if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
             primaryKey = new ArrayList<>();
@@ -312,6 +310,16 @@ public class ClickHouseAutoCreateTable
                 .append(DATABASE_COLUMN_DATA_TYPE).append(',');
         sb.append('`').append(TABLE_COLUMN).append("` ")
                 .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(TABLE_COLUMN).append("` ")
+                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(TABLE_COLUMN).append("` ")
+                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+
+        sb.append('`').append(BEFORE_COLUMN).append("` ")
+                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        sb.append('`').append(AFTER_COLUMN).append("` ")
+                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+
         sb.append('`').append(RAW_COLUMN).append("` ")
                 .append(RAW_COLUMN_DATA_TYPE).append(',');
         sb.append('`').append(TIME_COLUMN).append("` ")
