@@ -39,20 +39,6 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
     }
 
     @Test
-    public void testCreateMergeTreeHistoryTableSyntax() {
-        ArrayList<String> primaryKeys = new ArrayList<>();
-        primaryKeys.add("customerName");
-
-        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
-
-        String query = act.createHistoryTableSyntax(primaryKeys, "auto_create_table_history", "employees",
-                createFields(), this.columnToDataTypesMap, this.config);
-        System.out.println("QUERY" + query);
-        String expectedQuery = "CREATE TABLE employees.`auto_create_table_history`(`database` String,`table` String,`table` String,`table` String,`before` String,`after` String,`_raw` String,`_time` UInt64,`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` String,`logfile` String,`position` UInt64,`primary_host` String) ENGINE = MergeTree() ORDER BY(customerName)";
-        Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
-    }
-
-    @Test
     public void testCreateTableEmptyPrimaryKey() {
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();

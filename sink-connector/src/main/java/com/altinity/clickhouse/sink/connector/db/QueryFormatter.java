@@ -182,4 +182,17 @@ public class QueryFormatter {
         String tableWithBackTicks = "`" + tableName + "`";
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
     }
+
+    public String getInsertQueryForBinlogHistoryTable(String tableName) {
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
+
+//        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+//            String columnName = "`" + entry.getKey() + "`";
+//            colNamesDelimited.append(columnName).append(",");
+//            colNamesToDataTypes.append(columnName).append(" ").append(entry.getValue()).append(",");
+//        }
+
+        return "";
+    }
 }
