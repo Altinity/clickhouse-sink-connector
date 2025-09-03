@@ -8,10 +8,10 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
@@ -247,6 +247,15 @@ public class DebeziumChangeEventCapture {
                                 debeziumJdbcStorageOperations.createSchemaHistoryTable(systemDbConnection, props);
                             } catch (Exception e) {
                                 log.error("Error creating schema history table", e);
+                            }
+                            // If replication history is enabled, create the history table.
+                            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                                try {
+                                    ClickHouseAutoCreateTable clickHouseAutoCreateTable = new ClickHouseAutoCreateTable();
+                                    clickHouseAutoCreateTable.createHistoryTable(props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString()), props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()), systemDbConnection, config);
+                                } catch (Exception e) {
+                                    log.error("Error creating history table", e);
+                                }
                             }
                         }
 

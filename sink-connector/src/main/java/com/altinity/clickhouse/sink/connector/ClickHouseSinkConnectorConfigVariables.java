@@ -96,7 +96,12 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_ENABLE("replication.history.enable"),
 
-    REPLICATION_HISTORY_DATABASE_NAME("replication.history.database.name");
+    REPLICATION_HISTORY_TABLE_NAME("replication.history.table.name"),
+
+    REPLICATION_HISTORY_DATABASE_NAME("replication.history.database.name"),
+
+    REPLICATION_HISTORY_TTL("replication.history.ttl");
+
 
 
 

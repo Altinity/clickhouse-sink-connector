@@ -738,6 +738,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ERROR_TABLE_NAME.toString()
                 )
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(),
+                        Type.STRING,
+                        "replication_history",
+                        Importance.MEDIUM,
+                        "Table name for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString()
+                )
+                .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(),
                         Type.BOOLEAN,
                         false,
@@ -758,6 +769,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_2,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString(),
+                        Type.INT,
+                        30,
+                        Importance.MEDIUM,
+                        "TTL for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
                 );
     }
 }

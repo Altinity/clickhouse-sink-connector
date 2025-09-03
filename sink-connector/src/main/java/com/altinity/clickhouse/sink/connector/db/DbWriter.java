@@ -205,15 +205,7 @@ public class DbWriter extends BaseDbWriter {
                                 config
                         );
 
-                        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                            act.createHistoryTable(
-                                    record.getPrimaryKey(),
-                                    tableName+"_history",
-                                    database,
-                                    fields,
-                                    this.conn, config
-                            );
-                        }
+
                     } catch (Exception e) {
                         log.error(String.format(
                                         "**** Error creating table(%s), database(%s) ***",

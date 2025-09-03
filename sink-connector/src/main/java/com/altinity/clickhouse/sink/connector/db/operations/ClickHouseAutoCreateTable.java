@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
@@ -238,25 +239,21 @@ public class ClickHouseAutoCreateTable
      * CDC metadata columns such as database, table, raw payload,
      * event time, operation type, host, logfile, position, and primary host.
      *
-     * @param primaryKey list of primary key column names
      * @param historyTableName name of the history table to create
      * @param databaseName name of the database in which the history table is created
-     * @param fields array of Kafka Connect fields
      * @param connection JDBC connection to the ClickHouse database
      * @throws SQLException if a SQL exception occurs during table creation
      */
-    public void createHistoryTable(ArrayList<String> primaryKey,
+    public void createHistoryTable(
                                    String historyTableName,
                                    String databaseName,
-                                   Field[] fields,
                                    Connection connection,
                                    ClickHouseSinkConnectorConfig config)
             throws SQLException {
-        Map<String, String> columnToDataTypesMap =
-                this.getColumnNameToCHDataTypeMapping(fields, config);
         String sql = new BinLogHistory().createHistoryTableSyntax(
-                primaryKey, historyTableName,
-                databaseName, fields, columnToDataTypesMap, config);
+                 historyTableName,
+                databaseName,
+                config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()));
         log.info(String.format(
                 "**** AUTO CREATE HISTORY TABLE for database(%s), Query :%s)",
                 databaseName, sql));

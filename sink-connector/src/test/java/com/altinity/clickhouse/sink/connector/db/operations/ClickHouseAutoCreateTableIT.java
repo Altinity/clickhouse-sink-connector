@@ -107,7 +107,7 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
         primaryKeys.add("customerName");
 
         try {
-            act.createHistoryTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(), this.config);
+            act.createHistoryTable( tableName, "test",  conn, this.config);
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

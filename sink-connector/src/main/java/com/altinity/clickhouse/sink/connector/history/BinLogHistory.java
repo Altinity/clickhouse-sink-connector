@@ -1,12 +1,13 @@
 package com.altinity.clickhouse.sink.connector.history;
 
-import java.util.ArrayList;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import org.apache.kafka.connect.data.Field;
-import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 
 public class BinLogHistory {
 
@@ -15,7 +16,16 @@ public class BinLogHistory {
     public static final String NOT_NULL = "NOT NULL";
     public static final String ORDER_BY = "ORDER BY";
     public static final String ORDER_BY_TUPLE = "ORDER BY tuple()";
-    
+    public static final String ENGINE_MERGE_TREE = "ENGINE = MergeTree()";
+    public static final String PARTITION_BY = " PARTITION BY toDate(`";
+    public static final String TTL_PREFIX = " TTL toDate(`";
+    public static final String TO_INTERVAL_DAY = "`) + toIntervalDay(";
+
+    public static final String GTID_COLUMN = "gtid";
+    public static final String GTID_COLUMN_DATA_TYPE = "String";
+    public static final String DDL_COLUMN = "ddl";
+    public static final String DDL_COLUMN_DATA_TYPE = "String";
+
     public static final String DATABASE_COLUMN = "database";
     public static final String DATABASE_COLUMN_DATA_TYPE = "String";
     public static final String TABLE_COLUMN = "table";
@@ -41,108 +51,151 @@ public class BinLogHistory {
     public static final String PRIMARY_HOST_COLUMN = "primary_host";
     public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "String";
 
+    public static final Map<String, String> HISTORY_COLUMNS = new HashMap<String, String>() {{
+        put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
+        put(DATABASE_COLUMN, DATABASE_COLUMN_DATA_TYPE);
+        put(TABLE_COLUMN, TABLE_COLUMN_DATA_TYPE);
+        put(DDL_COLUMN, DDL_COLUMN_DATA_TYPE);
+        put(BEFORE_COLUMN, TABLE_COLUMN_DATA_TYPE);
+        put(AFTER_COLUMN, TABLE_COLUMN_DATA_TYPE);
+        put(RAW_COLUMN, RAW_COLUMN_DATA_TYPE);
+        put(TIME_COLUMN, TIME_COLUMN_DATA_TYPE);
+        put(IS_DELETED_COLUMN, IS_DELETED_COLUMN_DATA_TYPE);
+        put(OPERATION_COLUMN, OPERATION_COLUMN_DATA_TYPE);
+        put(VERSION_COLUMN, VERSION_COLUMN_DATA_TYPE);
+        put(HOST_COLUMN, HOST_COLUMN_DATA_TYPE);
+        put(LOGFILE_COLUMN, LOGFILE_COLUMN_DATA_TYPE);
+        put(POSITION_COLUMN, POSITION_COLUMN_DATA_TYPE);
+        put(PRIMARY_HOST_COLUMN, PRIMARY_HOST_COLUMN_DATA_TYPE);
+    }};
+
+    // get column to data type map
+    public Map<String, String> getColumnToDataTypeMap() {
+        return HISTORY_COLUMNS;
+    }
+
     /**
      * Builds the CREATE TABLE SQL syntax for a history table,
      * adding CDC metadata columns for database, table, raw payload,
      * time, operation, host, logfile, position, and primary host.
      *
-     * @param primaryKey list of primary key column names
      * @param historyTableName name of the history table to create
      * @param databaseName name of the database in which the history table is created
-     * @param fields array of Kafka Connect fields
-     * @param columnToDataTypesMap map of column names to ClickHouse data types
+     * @param ttlDays number of days for TTL retention
      * @return SQL statement string for creating the history table
      */
-    public String createHistoryTableSyntax(ArrayList<String> primaryKey,
+    public String createHistoryTableSyntax(
                                            String historyTableName,
                                            String databaseName,
-                                           Field[] fields,
-                                           Map<String, String> columnToDataTypesMap,
-                                           ClickHouseSinkConnectorConfig config) {
-
-        SchemaOverrideConfig schemaConfig = new SchemaOverrideConfig();
-
-
-        SchemaOverrideConfig.Table tableConfig = schemaConfig.getTableConfig(databaseName, historyTableName,config.originalsStrings());
-
-        // Use the primaryKey from the tableConfig if it is not empty
-        if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
-            primaryKey = new ArrayList<>();
-            primaryKey.add(tableConfig.getPrimaryKey());  // Replace with the primary key from tableConfig
-        }
+                                           int ttlDays) {
 
         StringBuilder sb = new StringBuilder();
         sb.append(CREATE_TABLE)
                 .append(' ').append(databaseName)
                 .append(".`").append(historyTableName).append("`(");
 
-        for (Field f : fields) {
-            String col = f.name();
-            String dt = columnToDataTypesMap.get(col);
-            sb.append('`').append(col).append("` ")
-                    .append(dt)
-                    .append(f.schema().isOptional() ? ' ' + NULL : ' ' + NOT_NULL)
-                    .append(',');
+        // Iterate through all history columns
+        int count = 0;
+        for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
+            if (count > 0) {
+                sb.append(',');
+            }
+            sb.append('`').append(entry.getKey()).append("` ")
+                    .append(entry.getValue());
+            count++;
         }
-        sb.append('`').append(DATABASE_COLUMN).append("` ")
-                .append(DATABASE_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(TABLE_COLUMN).append("` ")
-                .append(TABLE_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(TABLE_COLUMN).append("` ")
-                .append(TABLE_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(TABLE_COLUMN).append("` ")
-                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        
+        sb.append(") ").append(ENGINE_MERGE_TREE);
 
-        sb.append('`').append(BEFORE_COLUMN).append("` ")
-                .append(TABLE_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(AFTER_COLUMN).append("` ")
-                .append(TABLE_COLUMN_DATA_TYPE).append(',');
+        // ORDER BY gtid
+        sb.append(" ").append(ORDER_BY).append(" `").append(GTID_COLUMN).append("`");
+        // Add partition by toDate(_time)
+        sb.append(PARTITION_BY).append(TIME_COLUMN).append("`)");
+        // Add TTL toDate(_time) + toIntervalDay(ttlDays)
+        sb.append(TTL_PREFIX).append(TIME_COLUMN).append(TO_INTERVAL_DAY).append(ttlDays).append(")");
+        sb.append(";");
+        // Add tl_only_drop_parts=1
+        //sb.append(" ttl_only_drop_parts=1");
 
-        sb.append('`').append(RAW_COLUMN).append("` ")
-                .append(RAW_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(TIME_COLUMN).append("` ")
-                .append(TIME_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(IS_DELETED_COLUMN).append("` ")
-                .append(IS_DELETED_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(OPERATION_COLUMN).append("` ")
-                .append(OPERATION_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(VERSION_COLUMN).append("` ")
-                .append(VERSION_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(HOST_COLUMN).append("` ")
-                .append(HOST_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(LOGFILE_COLUMN).append("` ")
-                .append(LOGFILE_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(POSITION_COLUMN).append("` ")
-                .append(POSITION_COLUMN_DATA_TYPE).append(',');
-        sb.append('`').append(PRIMARY_HOST_COLUMN).append("` ")
-                .append(PRIMARY_HOST_COLUMN_DATA_TYPE);
-        sb.append(") ENGINE = MergeTree()");
-
-        if (tableConfig != null &&
-                tableConfig.getPartitionBy() != null &&
-                !tableConfig.getPartitionBy().isEmpty()) {
-            sb.append(" PARTITION BY `")
-                    .append(tableConfig.getPartitionBy())
-                    .append("`");
-        }
-
-        sb.append(' ');
-        if (primaryKey != null) {
-            sb.append(ORDER_BY)
-                    .append("(")
-                    .append(primaryKey.stream()
-                            .collect(Collectors.joining(",")))
-                    .append(")");
-        } else {
-            sb.append(ORDER_BY_TUPLE);
-        }
-
-        if (tableConfig != null &&
-                tableConfig.getSettings() != null &&
-                !tableConfig.getSettings().isEmpty()) {
-            sb.append(" SETTINGS ")
-                    .append(tableConfig.getSettings());
-        }
+        /**
+         * partition by toDate(_time)
+         * TTL toDate(_time) + toIntervalDay(30)
+         * tl_only_drop_parts=1
+         */
         return sb.toString();
+    }
+
+    /**
+     * Creates and executes a PreparedStatement for inserting ClickHouseStruct data
+     * into a history table using the input() function pattern.
+     *
+     * @param conn database connection
+     * @param insertSql the SQL insert query with input() function
+     * @param clickHouseStructs list of ClickHouseStruct objects to insert
+     * @throws SQLException if database operation fails
+     */
+    public void executeInsertWithStructs(Connection conn, String insertSql, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
+            int paramIndex = 1;
+            
+            for (ClickHouseStruct struct : clickHouseStructs) {
+                // Set values based on the HISTORY_COLUMNS mapping
+                for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
+                    String columnName = entry.getKey();
+                    Object value = getValueFromStruct(struct, columnName);
+                    ps.setObject(paramIndex++, value);
+                }
+            }
+            
+            ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Extracts the appropriate value from ClickHouseStruct based on column name.
+     *
+     * @param struct the ClickHouseStruct object
+     * @param columnName name of the column to extract
+     * @return the value for the specified column
+     */
+    private Object getValueFromStruct(ClickHouseStruct struct, String columnName) {
+        switch (columnName) {
+            case GTID_COLUMN:
+                return struct.getGtid();
+            case DATABASE_COLUMN:
+                return struct.getDatabase();
+            case TABLE_COLUMN:
+                return struct.getTopic() != null ?
+                    struct.getTopic() : null;
+            case DDL_COLUMN:
+                return null; // DDL might need special handling
+            case BEFORE_COLUMN:
+                return struct.getBeforeStruct() != null ?
+                    struct.getBeforeStruct().toString() : null;
+            case AFTER_COLUMN:
+                return struct.getAfterStruct() != null ?
+                    struct.getAfterStruct().toString() : null;
+            case RAW_COLUMN:
+                return struct.getSourceRecord() != null ?
+                    struct.getSourceRecord().value().toString() : null;
+            case TIME_COLUMN:
+                return struct.getTs_ms();
+            case IS_DELETED_COLUMN:
+                return struct.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ? 1 : 0;
+            case OPERATION_COLUMN:
+                return struct.getCdcOperation().toString();
+            case VERSION_COLUMN:
+                return struct.getKafkaOffset();
+            case HOST_COLUMN:
+                return null; // Host might need special handling
+            case LOGFILE_COLUMN:
+                return struct.getFile();
+            case POSITION_COLUMN:
+                return struct.getPos();
+            case PRIMARY_HOST_COLUMN:
+                return null; // Primary host might need special handling
+            default:
+                return null;
+        }
     }
 }
