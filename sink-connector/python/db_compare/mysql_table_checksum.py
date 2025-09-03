@@ -74,10 +74,10 @@ def get_table_checksum_query(table, conn, binary_encoding, where):
             nullables.append(column_name)
         if 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000' AS datetime(3)))) else TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM {column_name})) end end"
+            select += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(3)))) else {column_name} end end"
         elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
-            select += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{min_date_value} 00:00:00' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{min_date_value} 00:00:00.000000' AS datetime(6)))) else  {column_name} end end"
+            select += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(6)))) else  {column_name} end end"
         elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
             select += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
         elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
@@ -333,6 +333,8 @@ def main():
         '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
+    parser.add_argument(
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1970-01-01 00:00:00', required=False)
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
     parser.add_argument('--debug', dest='debug',

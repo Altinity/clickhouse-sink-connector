@@ -24,6 +24,9 @@ def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql
     conn = engine.connect()
     return conn
 
+def get_columns(conn, mysql_database, datetime_column):
+   sql = f"select column_name, table_name, table_schema from information_schema.columns where column_name = '{datetime_column}'"
+   return execute_mysql(conn, sql)
 
 def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False, include_partitions_regex=None):
     schema = mysql_database
