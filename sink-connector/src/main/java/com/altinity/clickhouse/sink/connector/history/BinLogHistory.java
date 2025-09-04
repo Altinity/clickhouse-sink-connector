@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class BinLogHistory {
 
@@ -96,16 +97,11 @@ public class BinLogHistory {
                 .append(' ').append(databaseName)
                 .append(".`").append(historyTableName).append("`(");
 
-        // Iterate through all history columns
-        int count = 0;
-        for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
-            if (count > 0) {
-                sb.append(',');
-            }
-            sb.append('`').append(entry.getKey()).append("` ")
-                    .append(entry.getValue());
-            count++;
-        }
+        // Iterate through all history columns (LinkedHashMap preserves insertion order)
+        String columnDefinitions = HISTORY_COLUMNS.entrySet().stream()
+                .map(entry -> "`" + entry.getKey() + "` " + entry.getValue())
+                .collect(Collectors.joining(","));
+        sb.append(columnDefinitions);
         
         sb.append(") ").append(ENGINE_MERGE_TREE);
 
@@ -159,6 +155,7 @@ public class BinLogHistory {
      * @throws SQLException if database operation fails
      */
     public void executeInsertWithStructs(Connection conn, String insertSql, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
+        System.out.println("DEBUG: Insert SQL: " + insertSql);
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
@@ -166,6 +163,7 @@ public class BinLogHistory {
                 for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
                     String columnName = entry.getKey();
                     Object value = getValueFromStruct(struct, columnName);
+                    System.out.println("DEBUG: Setting param " + paramIndex + " for column " + columnName + " to value: " + value);
                     ps.setObject(paramIndex++, value);
                 }
                 ps.addBatch();

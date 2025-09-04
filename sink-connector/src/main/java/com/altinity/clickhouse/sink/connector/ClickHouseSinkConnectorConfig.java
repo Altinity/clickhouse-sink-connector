@@ -752,7 +752,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(),
                         Type.STRING,
-                        "replication_history",
+                        "history",
                         Importance.MEDIUM,
                         "Table name for replication history tables",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -774,7 +774,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(),
                         Type.STRING,
-                        "replication_history",
+                        "binlog_history",
                         Importance.MEDIUM,
                         "Database name for replication history tables",
                         CONFIG_GROUP_CONNECTOR_CONFIG,

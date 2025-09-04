@@ -165,3 +165,6 @@ non.default.value: "true"
 
 # Enable replication mergetree history table.
 replication.history.enable: "true"
+
+connection.pool.disable: "true"
+thread.pool.size: "1"
