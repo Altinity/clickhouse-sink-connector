@@ -596,7 +596,7 @@ public class ClickHouseStruct {
      */
     public String beforeModifiedFieldsToJson() {
         if (beforeModifiedFields == null) {
-            return null;
+            return "";
         }
         
         try {
@@ -652,7 +652,7 @@ public class ClickHouseStruct {
      */
     public String afterModifiedFieldsToJson() {
         if (afterModifiedFields == null) {
-            return null;
+            return "";
         }
         
         try {

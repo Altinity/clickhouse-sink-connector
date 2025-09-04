@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
@@ -272,7 +273,24 @@ public class ClickHouseBatchRunnable implements Runnable {
                     log.debug("***** RETRYING the same batch again");
                 }
 
+                // If replication history is enabled, add the records to the history table.
+                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
 
+                    // Get Replication History Database Name
+
+                    String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+                    // Get Replication History Table Name
+                    String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+                    // Get Replication History Topic Name
+
+                    String historyTableName = databaseName + "." + tableName;
+
+                    ClickHouseStruct firstRecord = currentBatch.get(0);
+                    Connection databaseConn = getClickHouseConnection(databaseName);
+                    DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
+                            firstRecord, databaseConn);
+                    BinLogHistory.addRecordsToHistoryTable(tableName, writer.getConnection(), currentBatch);
+                }
 
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
@@ -307,17 +325,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                 for (Map.Entry<String, List<ClickHouseStruct>> entry :
                         topicToRecordsMap.entrySet()) {
 
-
-                    // insert history data
-                    if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                        processRecordsByTopic(entry.getKey()+"_history",
+                    result = processRecordsByTopic(entry.getKey(),
                                 entry.getValue());
-                    } else {
-
-                        result = processRecordsByTopic(entry.getKey(),
-                                entry.getValue());
-
-                    }
 
                     if (result == false) {
                         log.error("Error processing records for topic: " +
@@ -341,47 +350,8 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
-            try {
-                Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
-                // Create error table if it doesn't exist
-                ErrorLogger.createErrorTable(dbCon, config);
-                
-                // Log the error with the first record from current batch if available
-                if (currentBatch != null && !currentBatch.isEmpty()) {
-                    ClickHouseStruct firstRecord = currentBatch.get(0);
-                    SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
-                    String topicName = firstRecord.getTopic();
-                    String databaseName = firstRecord.getDatabase();
-                    String serverName = getServerNameFromTopic(topicName);
-                    
-                    // Get the failure entry index
-                    int failureIndex = currentBatch.indexOf(firstRecord);
-                    
-                    ErrorLogger.logError(dbCon, 
-                        String.format("Error processing batch. Task: %s, Server: %s, Database: %s, Failure Index: %d, Error: %s", 
-                            taskId, serverName, databaseName, failureIndex, e.getMessage()),
-                        sourceRecord,
-                        databaseName,
-                        "", // No query field available
-                        "", // No offset key field available
-                        errorTableName);
-                } else {
-                    ErrorLogger.logError(dbCon, 
-                        String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
-                        null,
-                        "",
-                        "", "",
-                        errorTableName);
-                }
-                
-                Thread.sleep(ERROR_SLEEP_TIME_MS);
-            } catch (InterruptedException ex) {
-                log.error("******* ERROR **** Thread interrupted *********",
-                        ex);
-                throw new RuntimeException(ex);
-            } catch (SQLException ex) {
-                log.error("******* ERROR **** Failed to log error to ClickHouse *********",
-                        ex);
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
+                logErrorToClickHouse(e, taskId, errorTableName);
             }
         }
     }
@@ -598,5 +568,57 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("****** Error updating Metrics ******");
         }
         return result;
+    }
+
+    /**
+     * Logs error information to ClickHouse error table.
+     *
+     * @param e exception that occurred
+     * @param taskId task identifier
+     * @param errorTableName name of the error table
+     */
+    private void logErrorToClickHouse(Exception e, Long taskId, String errorTableName) {
+        try {
+            Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
+            // Create error table if it doesn't exist
+            ErrorLogger.createErrorTable(dbCon, config);
+            
+            // Log the error with the first record from current batch if available
+            if (currentBatch != null && !currentBatch.isEmpty()) {
+                ClickHouseStruct firstRecord = currentBatch.get(0);
+                SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                String topicName = firstRecord.getTopic();
+                String databaseName = firstRecord.getDatabase();
+                String serverName = getServerNameFromTopic(topicName);
+                
+                // Get the failure entry index
+                int failureIndex = currentBatch.indexOf(firstRecord);
+                
+                ErrorLogger.logError(dbCon, 
+                    String.format("Error processing batch. Task: %s, Server: %s, Database: %s, Failure Index: %d, Error: %s", 
+                        taskId, serverName, databaseName, failureIndex, e.getMessage()),
+                    sourceRecord,
+                    databaseName,
+                    "", // No query field available
+                    "", // No offset key field available
+                    errorTableName);
+            } else {
+                ErrorLogger.logError(dbCon, 
+                    String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
+                    null,
+                    "",
+                    "", "",
+                    errorTableName);
+            }
+            
+            Thread.sleep(ERROR_SLEEP_TIME_MS);
+        } catch (InterruptedException ex) {
+            log.error("******* ERROR **** Thread interrupted *********",
+                    ex);
+            throw new RuntimeException(ex);
+        } catch (SQLException ex) {
+            log.error("******* ERROR **** Failed to log error to ClickHouse *********",
+                    ex);
+        }
     }
 }

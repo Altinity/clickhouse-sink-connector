@@ -737,6 +737,18 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ERROR_TABLE_NAME.toString()
                 )
+                // Add ERROR_LOGGING_ENABLE boolean (false by default)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, error logging is enabled",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString()
+                )
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(),
                         Type.STRING,

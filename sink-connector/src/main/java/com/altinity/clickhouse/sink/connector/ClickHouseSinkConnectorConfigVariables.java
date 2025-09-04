@@ -94,6 +94,8 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     ERROR_TABLE_NAME("default.error.table"),
 
+    ERROR_LOGGING_ENABLE("error.logging.enable"),
+
     REPLICATION_HISTORY_ENABLE("replication.history.enable"),
 
     REPLICATION_HISTORY_TABLE_NAME("replication.history.table.name"),
