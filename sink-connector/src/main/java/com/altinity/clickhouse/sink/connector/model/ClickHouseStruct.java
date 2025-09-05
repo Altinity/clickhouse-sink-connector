@@ -292,6 +292,10 @@ public class ClickHouseStruct {
         this.setLastRecordInBatch(lastRecordInBatch);
     }
 
+    public ClickHouseStruct(){
+
+    }
+
     /**
      * Constructs a ClickHouseStruct without commit info.
      *

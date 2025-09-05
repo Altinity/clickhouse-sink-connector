@@ -3,6 +3,8 @@ package com.altinity.clickhouse.sink.connector.history;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
+import org.apache.kafka.connect.source.SourceRecord;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -128,21 +130,20 @@ public class BinLogHistory {
      *
      * @param currentBatch list of ClickHouseStruct objects to insert into history table
      */
-    public static void addRecordsToHistoryTable(String historyTableName, Connection conn, List<ClickHouseStruct> currentBatch) throws SQLException {
+    public void addRecordsToHistoryTable(String historyTableName, Connection conn, String DDL, List<ClickHouseStruct> currentBatch) throws SQLException {
         if (currentBatch == null || currentBatch.isEmpty()) {
             return;
         }
 
-        BinLogHistory binLogHistory = new BinLogHistory();
         QueryFormatter queryFormatter = new QueryFormatter();
-        
+
         // Get the column to data type mapping
-        Map<String, String> columnToDataTypeMap = binLogHistory.getColumnToDataTypeMap();
-        
+        Map<String, String> columnToDataTypeMap = this.getColumnToDataTypeMap();
+
         // Generate insert query using QueryFormatter
         String insertQuery = queryFormatter.getInsertQueryUsingInputFunction(historyTableName, columnToDataTypeMap);
-        
-        binLogHistory.executeInsertWithStructs(conn, insertQuery, currentBatch);
+
+        this.executeInsertWithStructs(conn, insertQuery, DDL, currentBatch);
     }
 
     /**
@@ -154,15 +155,20 @@ public class BinLogHistory {
      * @param clickHouseStructs list of ClickHouseStruct objects to insert
      * @throws SQLException if database operation fails
      */
-    public void executeInsertWithStructs(Connection conn, String insertSql, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
+    public void executeInsertWithStructs(Connection conn, String insertSql, String DDL, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
                 // Set values based on the HISTORY_COLUMNS mapping
                 for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
                     String columnName = entry.getKey();
-                    Object value = getValueFromStruct(struct, columnName);
-                    ps.setObject(paramIndex++, value);
+                    // If the column name is DDL_COLUMN, set the value to the DDL
+                    if (columnName.equals(DDL_COLUMN)) {
+                        ps.setString(paramIndex++, DDL);
+                    } else {
+                        Object value = getValueFromStruct(struct, columnName);
+                        ps.setObject(paramIndex++, value);
+                    }
                 }
                 ps.addBatch();
             }
@@ -170,6 +176,7 @@ public class BinLogHistory {
             ps.executeBatch();
         }
     }
+
 
     /**
      * Extracts the appropriate value from ClickHouseStruct based on column name.
@@ -185,31 +192,55 @@ public class BinLogHistory {
             case DATABASE_COLUMN:
                 return struct.getDatabase();
             case TABLE_COLUMN:
+                if(struct.getTopic() == null) {
+                    return "";
+                }
                 return struct.getTopic() != "" ?
                     struct.getTopic() : "";
             case DDL_COLUMN:
                 return ""; // DDL might need special handling
             case BEFORE_COLUMN:
+                if(struct.beforeModifiedFieldsToJson() == null) {
+                    return "";
+                }
                 return struct.beforeModifiedFieldsToJson();
             case AFTER_COLUMN:
+                if(struct.afterModifiedFieldsToJson() == null) {
+                    return "";
+                }
                 return struct.afterModifiedFieldsToJson();
             case RAW_COLUMN:
+                if(struct.sourceRecordToJson() == null) {
+                    return "";
+                }
                 return struct.sourceRecordToJson();
             case TIME_COLUMN:
                 return struct.getTs_ms();
             case IS_DELETED_COLUMN:
+                if(struct.getCdcOperation() == null) {
+                    return 0;
+                }
                 return struct.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ? 1 : 0;
             case OPERATION_COLUMN:
+                if(struct.getCdcOperation() == null) {
+                    return "";
+                }
                 return struct.getCdcOperation().toString();
             case VERSION_COLUMN:
                 return struct.getKafkaOffset();
             case HOST_COLUMN:
                 return Long.toString(struct.getServerId()); // Host might need special handling
             case LOGFILE_COLUMN:
+                if(struct.getFile() == null) {
+                    return "";
+                }
                 return struct.getFile();
             case POSITION_COLUMN:
                 return struct.getPos();
             case PRIMARY_HOST_COLUMN:
+                if(struct.getServerId() == null) {
+                    return "";
+                }
                 return Long.toString(struct.getServerId()); // Primary host might need special handling
             default:
                 return null;

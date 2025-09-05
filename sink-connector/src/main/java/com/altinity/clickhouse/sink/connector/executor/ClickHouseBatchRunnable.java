@@ -289,7 +289,9 @@ public class ClickHouseBatchRunnable implements Runnable {
                     Connection databaseConn = getClickHouseConnection(databaseName);
                     DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                             firstRecord, databaseConn);
-                    BinLogHistory.addRecordsToHistoryTable(tableName, writer.getConnection(), currentBatch);
+    
+                    BinLogHistory binLogHistory = new BinLogHistory();
+                    binLogHistory.addRecordsToHistoryTable(tableName, writer.getConnection(), "", currentBatch);
                 }
 
                 ///// ***** START PROCESSING BATCH **************************
@@ -450,6 +452,10 @@ public class ClickHouseBatchRunnable implements Runnable {
         ClickHouseStruct firstRecord = records.get(0);
         String databaseName = firstRecord.getDatabase();
 
+        // If replication history is enabled, set database name to the replication history database name
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
 
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
@@ -458,12 +464,15 @@ public class ClickHouseBatchRunnable implements Runnable {
                                       String tableName, String databaseName, 
                                       ClickHouseStruct firstRecord) throws Exception {
         boolean result = false;
-        
+
+
         // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
+        if (this.databaseOverrideMap.containsKey(databaseName))
             databaseName = this.databaseOverrideMap.get(
-                    firstRecord.getDatabase());
+                    databaseName);
+
         Connection databaseConn = getClickHouseConnection(databaseName);
+
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
         PreparedStatementExecutor preparedStatementExecutor = new

@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserServ
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
@@ -16,6 +17,7 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
 import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.google.common.annotations.VisibleForTesting;
@@ -407,8 +409,13 @@ public class DebeziumChangeEventCapture {
                                      ClickHouseSinkConnectorConfig config,
                                      DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
                                      ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
-                                     boolean lastRecordInBatch) {
+                                     boolean lastRecordInBatch, ClickHouseStruct chStruct) {
         String databaseName = getDatabaseName(sr);
+
+        // If replication histry is enabled, set database name to the replication history database name
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
 
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
@@ -438,11 +445,21 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                    executeDDL(modifySqlStatement(transformTableName(clickHouseQuery.toString())), writer, config);
+                executeDDL(clickHouseQuery.toString(), writer, config);
 
-                } else {
-                    executeDDL(clickHouseQuery.toString(), writer, config);
+                try {
+                    // if replication history is enabled, add to the binlog history table.
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+                        BinLogHistory binLogHistory = new BinLogHistory();
+                        // Add the chStruct to the list
+                        List<ClickHouseStruct> currentBatch = new ArrayList<>();
+                        currentBatch.add(chStruct);
+                        
+                        binLogHistory.addRecordsToHistoryTable(historyTableName,  writer.getConnection(), DDL, currentBatch);
+                    }
+                } catch (Exception e) {
+                    log.error("Error adding DDL records to history table", e);
                 }
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
@@ -702,7 +719,13 @@ public class DebeziumChangeEventCapture {
                     log.info("***** DDL received, Flush all existing records");
                     this.executor.pause();
 
-                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch);
+//                    chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                    Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
+
+                    ClickHouseStruct ddlStruct = new ClickHouseStruct();
+                    ddlStruct.setAdditionalMetaData(sourceObjStruct);
+
+                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
                     this.executor.resume();
                 }
             } else {
