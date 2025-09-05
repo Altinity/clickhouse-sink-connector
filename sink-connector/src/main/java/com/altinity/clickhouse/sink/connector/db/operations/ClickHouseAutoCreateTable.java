@@ -3,7 +3,6 @@ package com.altinity.clickhouse.sink.connector.db.operations;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.clickhouse.data.ClickHouseDataType;
@@ -12,7 +11,6 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -162,6 +160,15 @@ public class ClickHouseAutoCreateTable
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
         }
+        
+
+        // If Replication history is enabled, add the 
+        // deleted_time DateTime DEFAULT '2149-06-06',
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
+                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append(",");
+        }
 
         if (isNewReplacingMergeTreeEngine == true) {
             createTableSyntax.append("`").append(VERSION_COLUMN)
@@ -201,9 +208,15 @@ public class ClickHouseAutoCreateTable
             }
         }
 
-        // Add PARTITION BY if it is present
-        if (tableConfig != null && tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
-            createTableSyntax.append(" PARTITION BY `").append(tableConfig.getPartitionBy()).append("`");
+        // If Replication history is enabled, add the PARTITION BY toDate(deleted_time)
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            createTableSyntax.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+        } else {
+
+            // Add PARTITION BY if it is present
+            if (tableConfig != null && tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+                createTableSyntax.append(" PARTITION BY `").append(tableConfig.getPartitionBy()).append("`");
+            }
         }
 
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
@@ -220,11 +233,21 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
+            }
             createTableSyntax.append(")");
         } else {
             // TODO: Define a default ORDER BY clause.
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
+
+        // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
+        // TTL deleted_time + toIntervalDay(30)
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+            }
+        
 
         // Add SETTINGS if they are provided (SETTINGS should be placed last)
         if (tableConfig != null && tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {

@@ -155,7 +155,6 @@ public class BinLogHistory {
      * @throws SQLException if database operation fails
      */
     public void executeInsertWithStructs(Connection conn, String insertSql, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
-        System.out.println("DEBUG: Insert SQL: " + insertSql);
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
@@ -163,7 +162,6 @@ public class BinLogHistory {
                 for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
                     String columnName = entry.getKey();
                     Object value = getValueFromStruct(struct, columnName);
-                    System.out.println("DEBUG: Setting param " + paramIndex + " for column " + columnName + " to value: " + value);
                     ps.setObject(paramIndex++, value);
                 }
                 ps.addBatch();

@@ -395,6 +395,25 @@ public class PreparedStatementExecutor {
             }
         }
 
+        // If Replication history is enabled, add the deleted_time column
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
+                //if the record is a DELETE or UPDATE, add the deleted_time column
+                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
+                        record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                    // Set the current time (truncate milliseconds for DateTime compatibility)
+                    long currentTimeMs = System.currentTimeMillis();
+                    long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
+                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
+
+                } else {
+                    // Set default value 2149-06-06
+                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(2149, 6, 6, 0, 0, 0, 0));
+                }
+            }
+        }
+
         // Handle Version column for REPLACING_MERGE_TREE and REPLICATED_REPLACING_MERGE_TREE engines.
         Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
         if (engine != null &&
@@ -415,96 +434,6 @@ public class PreparedStatementExecutor {
                             ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
                         }
                 }
-            }
-        }
-
-        // Handle history table columns for the MERGE_TREE engine,
-        // using default values for all CDC metadata columns.
-        if (engine != null
-                && engine.getEngine() == DBMetadata.TABLE_ENGINE.MERGE_TREE.getEngine()
-                && config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            // prepare default values
-            Integer defaultIsDeleted  = 0;    // default isDeleted
-            // database
-            if (columnNameToDataTypeMap.containsKey(DATABASE_COLUMN)
-                    && columnNameToIndexMap.containsKey(DATABASE_COLUMN)) {
-                ps.setString(columnNameToIndexMap.get(DATABASE_COLUMN), databaseName);
-            }
-
-            // table
-            if (columnNameToDataTypeMap.containsKey(TABLE_COLUMN)
-                    && columnNameToIndexMap.containsKey(TABLE_COLUMN)) {
-                ps.setString(columnNameToIndexMap.get(TABLE_COLUMN), tableName);
-            }
-
-            // raw
-            if (columnNameToDataTypeMap.containsKey(RAW_COLUMN)
-                    && columnNameToIndexMap.containsKey(RAW_COLUMN)) {
-                TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(RAW_COLUMN), ps);
-            }
-
-            // time
-            if (columnNameToDataTypeMap.containsKey(TIME_COLUMN)
-                    && columnNameToIndexMap.containsKey(TIME_COLUMN)) {
-                ps.setLong(columnNameToIndexMap.get(TIME_COLUMN), record.getTs_ms());
-            }
-
-            // is deleted
-            if (columnNameToDataTypeMap.containsKey(IS_DELETED_COLUMN)
-                    && columnNameToIndexMap.containsKey(IS_DELETED_COLUMN)) {
-                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), -1);
-                } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                    if (beforeSection) {
-                        ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), -1);
-                    } else {
-                        ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), 1);
-                    }
-                } else {
-                    ps.setInt(columnNameToIndexMap.get(IS_DELETED_COLUMN), defaultIsDeleted);
-                }
-            }
-
-            // operation type
-            if (columnNameToDataTypeMap.containsKey(OPERATION_COLUMN)
-                    && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
-                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
-            }
-
-            // version
-            if (columnNameToDataTypeMap.containsKey(VERSION_COLUMN)
-                    && columnNameToIndexMap.containsKey(VERSION_COLUMN)) {
-                ps.setLong(columnNameToIndexMap.get(VERSION_COLUMN), version);
-            }
-
-            // source host
-            if (columnNameToDataTypeMap.containsKey(HOST_COLUMN)
-                    && columnNameToIndexMap.containsKey(HOST_COLUMN)) {
-                ps.setString(
-                        columnNameToIndexMap.get(HOST_COLUMN),
-                        record.getServerId() != null ? record.getServerId().toString() : ""
-                );
-            }
-
-            // logfile
-            if (columnNameToDataTypeMap.containsKey(LOGFILE_COLUMN)
-                    && columnNameToIndexMap.containsKey(LOGFILE_COLUMN)) {
-                ps.setString(columnNameToIndexMap.get(LOGFILE_COLUMN), record.getFile());
-            }
-
-            // position
-            if (columnNameToDataTypeMap.containsKey(POSITION_COLUMN)
-                    && columnNameToIndexMap.containsKey(POSITION_COLUMN)) {
-                ps.setLong(columnNameToIndexMap.get(POSITION_COLUMN), record.getPos());
-            }
-
-            // primary host
-            if (columnNameToDataTypeMap.containsKey(PRIMARY_HOST_COLUMN)
-                    && columnNameToIndexMap.containsKey(PRIMARY_HOST_COLUMN)) {
-                ps.setString(
-                        columnNameToIndexMap.get(PRIMARY_HOST_COLUMN),
-                        record.getServerId() != null ? record.getServerId().toString() : ""
-                );
             }
         }
 
