@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 public class BinLogHistory {
 
     public static final String CREATE_TABLE = "CREATE TABLE";
+    public static final String IF_NOT_EXISTS = "IF NOT EXISTS";
     public static final String NULL = "NULL";
     public static final String NOT_NULL = "NOT NULL";
     public static final String ORDER_BY = "ORDER BY";
@@ -95,7 +96,7 @@ public class BinLogHistory {
                                            int ttlDays) {
 
         StringBuilder sb = new StringBuilder();
-        sb.append(CREATE_TABLE)
+        sb.append(CREATE_TABLE).append(" ").append(IF_NOT_EXISTS)
                 .append(' ').append(databaseName)
                 .append(".`").append(historyTableName).append("`(");
 

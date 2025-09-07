@@ -105,6 +105,11 @@ public class DebeziumChangeEventCapture {
     Connection systemDbConnection;
 
     /**
+     * Connection to the replication history database.
+     */
+    Connection replicationHistoryDbConnection;
+
+    /**
      * Last ignored DDL statement.
      */
     @Getter
@@ -153,6 +158,9 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
+        }
 
         try {
             this.debeziumJdbcStorageOperations.createDatabaseForDebeziumStorage(systemDbConnection, props);
@@ -258,6 +266,7 @@ public class DebeziumChangeEventCapture {
                                     // props.getPropertyOrDefault(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
                                     String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
+                                    clickHouseAutoCreateTable.createHistoryDatabase(binlogHistoryDatabase, systemDbConnection, config);
                                     clickHouseAutoCreateTable.createHistoryTable(binlogHistoryTable, binlogHistoryDatabase, systemDbConnection, config);
                                 } catch (Exception e) {
                                     log.error("Error creating history table", e);
@@ -451,12 +460,12 @@ public class DebeziumChangeEventCapture {
                     // if replication history is enabled, add to the binlog history table.
                     if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                         String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+                        String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
                         BinLogHistory binLogHistory = new BinLogHistory();
                         // Add the chStruct to the list
                         List<ClickHouseStruct> currentBatch = new ArrayList<>();
                         currentBatch.add(chStruct);
-                        
-                        binLogHistory.addRecordsToHistoryTable(historyTableName,  writer.getConnection(), DDL, currentBatch);
+                        binLogHistory.addRecordsToHistoryTable(historyTableName, replicationHistoryDbConnection, DDL, currentBatch);
                     }
                 } catch (Exception e) {
                     log.error("Error adding DDL records to history table", e);
@@ -509,6 +518,22 @@ public class DebeziumChangeEventCapture {
                 BaseDbWriter.SYSTEM_DB, dbCredentials.getUserName(), dbCredentials.getPassword(),
                 config, conn);
         return conn;
+    }
+
+    /**
+     * Sets up the replication history database connection using the provided database
+     * credentials and connector configuration.
+     *
+     * @param dbCredentials The database credentials.
+     * @param config        The ClickHouse sink connector configuration.
+     * @return The replication history database {@link Connection}.
+     */
+    private Connection setReplicationHistoryDbConnection(DBCredentials dbCredentials, ClickHouseSinkConnectorConfig config) {
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
+                dbCredentials.getPort(), config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()));
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), 
+                config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()), config);
     }
 
     /**

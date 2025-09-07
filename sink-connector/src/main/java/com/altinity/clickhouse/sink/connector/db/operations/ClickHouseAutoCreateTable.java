@@ -284,6 +284,14 @@ public class ClickHouseAutoCreateTable
         metadata.executeSystemQuery(connection, sql);
     }
 
+    public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
+        String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
+        log.info(String.format(
+                "**** AUTO CREATE HISTORY DATABASE for database(%s), Query :%s)",
+                databaseName, sql));
+        DBMetadata metadata = new DBMetadata(config);
+        metadata.executeSystemQuery(connection, sql);
+    }
 
 
     @VisibleForTesting
