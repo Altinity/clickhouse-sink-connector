@@ -253,6 +253,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
                 .AUTO_CREATE_TABLES_REPLICATED.toString());
 
+        // If Replication history is enabled, add the
+        // deleted_time DateTime DEFAULT '2149-06-06',
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append("`").append(DELETED_TIME_COLUMN)
+                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append(",");
+        }
+
+
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -282,7 +291,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
         // Append partitioning and ordering clauses, using values from tableConfig if they exist
-        if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+        } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
             // Use the partition_by from tableConfig if it exists
             this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
         } else if (partitionByColumn.length() > 0) {
@@ -300,9 +312,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.query.append(Constants.ORDER_BY_TUPLE);
             } else {
                 // Otherwise, use the orderByColumns for ordering
-                this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+                this.query.append(Constants.ORDER_BY);
+                this.query.append("(");
+                this.query.append(orderByColumns.toString());
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    this.query.append(",`").append(DELETED_TIME_COLUMN).append("`");
+                }
+                this.query.append(")");
             }
         }
+
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+        }
+        
 
         if (tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
             // Use the settings from tableConfig if it exists

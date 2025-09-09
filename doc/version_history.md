@@ -1,7 +1,9 @@
 # Version History
 
 To enable persistence of version history, the `replication.history.enable` configuration variable has to be set to true.
-
+When its enabled, the **history** table and the replicated tables are persisted to the database defined in this
+configuration variable `replication.history.database`
+The history table is defined by the `replication.history.table` config variable.
 
 **History table(Schema)**
 ```

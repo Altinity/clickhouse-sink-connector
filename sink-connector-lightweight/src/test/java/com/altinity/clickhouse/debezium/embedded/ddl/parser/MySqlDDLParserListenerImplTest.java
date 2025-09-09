@@ -2271,6 +2271,28 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
     }
+
+    @Test
+    public void testReplicationHistoryEnabledDDLTranslation() {
+        // Set up the configuration to enable replication history
+
+        HashMap<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        MySQLDDLParserService parserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+                "employees");
+        String sql = "CREATE TABLE `test_table` (\n" +
+                "  `id` INT PRIMARY KEY,\n" +
+                "  `name` VARCHAR(255) NOT NULL,\n" +
+                "  `created_at` DATETIME NOT NULL\n" +
+                ") ENGINE=InnoDB;";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        parserService.parseSql(sql, "test_db", clickHouseQuery);
+
+        String expectedQuery = "CREATE TABLE test_db.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id PARTITION BY `deleted_time_column` TTL `deleted_time_column` + toIntervalDay(30)";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
