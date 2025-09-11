@@ -201,7 +201,8 @@ public class DbWriter extends BaseDbWriter {
                                 this.conn,
                                 isNewReplacingMergeTreeEngine,
                                 useReplicatedReplacingMergeTree,
-                                rmtDeleteColumn, config
+                                rmtDeleteColumn,
+                                config
                         );
                     } catch (Exception e) {
                         log.error(String.format(

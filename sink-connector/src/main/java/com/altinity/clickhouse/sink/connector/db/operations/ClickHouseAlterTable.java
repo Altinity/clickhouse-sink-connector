@@ -130,7 +130,7 @@ public class ClickHouseAlterTable
                     new Field[missingFieldsInCH.size()];
             missingFieldsInCH.toArray(missingFieldsArray);
             Map<String, String> colNameToDataTypeMap2 =
-                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray);
+                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray,config);
 
             if (!colNameToDataTypeMap2.isEmpty()) {
                 String alterTableQuery = cat.createAlterTableSyntax(
