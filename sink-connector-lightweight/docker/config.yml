@@ -122,7 +122,7 @@ persist.raw.bytes: "false"
 auto.create.tables: "true"
 
 # auto.create.tables.replicated: If set to true, the connector will create table with Engine set to ReplicatedReplacingMergeTree
-#"auto.create.tables.replicated: "true"
+#auto.create.tables.replicated: "true"
 
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "America/Chicago"
