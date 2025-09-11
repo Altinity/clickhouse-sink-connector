@@ -22,6 +22,11 @@ public class Constants {
     public static final String PARTITION_BY = " PARTITION BY ";
 
     /**
+     * SETTINGS clause for ClickHouse DDL statements.
+     */
+    public static final String SETTINGS = " SETTINGS ";
+
+    /**
      * ORDER BY clause for ClickHouse DDL statements.
      */
     public static final String ORDER_BY = " ORDER BY ";

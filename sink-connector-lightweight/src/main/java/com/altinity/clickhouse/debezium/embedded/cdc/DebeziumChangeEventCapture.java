@@ -301,7 +301,10 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error retrieving max retries", e);
         }
+
+        // Create the original ClickHouseSinkConnectorConfig
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
