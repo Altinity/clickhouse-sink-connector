@@ -145,6 +145,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
                 "log4j.configurationFile", "resources/log4j2.xml"
         );
 
+        Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
         String loggingLevel = System.getenv("LOGGING_LEVEL");
         if (loggingLevel != null) {
