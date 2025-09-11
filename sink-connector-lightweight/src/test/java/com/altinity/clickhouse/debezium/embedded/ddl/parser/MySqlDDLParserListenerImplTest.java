@@ -2271,6 +2271,40 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
                 "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
     }
+
+    @Test
+    public void testTinyIntMapping() {
+        String sql = "CREATE TABLE test (" +
+                "id int unsigned NOT NULL AUTO_INCREMENT, " +
+                "report_name varchar(256) NOT NULL, " +
+                "enabled tinyint(1) NOT NULL DEFAULT '1', " +
+                "start_date tinyint(1) NOT NULL DEFAULT '0', " +
+                "end_date tinyint(1) NOT NULL DEFAULT '0', " +
+                "scenario_alias tinyint(1) NOT NULL DEFAULT '0', " +
+                "lglent_group tinyint(1) NOT NULL DEFAULT '0', " +
+                "coins tinyint(1) NOT NULL DEFAULT '0', " +
+                "PRIMARY KEY (id), " +
+                "UNIQUE KEY report_automation_config_uq1 (report_name), " +
+                "KEY report_automation_config_idx1 (report_name)" +
+                ") ENGINE=InnoDB AUTO_INCREMENT=170 DEFAULT CHARSET=latin1";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
+                "CREATE TABLE employees.test(" +
+                        "id Int32 NOT NULL ," +
+                        "report_name String NOT NULL ," +
+                        "enabled Int16 NOT NULL ," +
+                        "start_date Int16 NOT NULL ," +
+                        "end_date Int16 NOT NULL ," +
+                        "scenario_alias Int16 NOT NULL ," +
+                        "lglent_group Int16 NOT NULL ," +
+                        "coins Int16 NOT NULL ," +
+                        "_version UInt64," +
+                        "__is_deleted UInt8" +
+                        ") Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY id"));
+    }
 //    @Test
 //    public void deleteData() {
 //        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
