@@ -164,7 +164,7 @@ public class MultipleDatabaseIT
         BaseDbWriter testDb2Writer = ITCommon.getDBWriter(clickHouseContainer, "test_db2");
 
         // Validate the columns in Clickhouse for test_db.test_table
-        DBMetadata dbMetadata = new DBMetadata();
+        DBMetadata dbMetadata = new DBMetadata(props);
         Map<String, String> columnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
 
         assert columnMap.containsKey("id");

@@ -13,6 +13,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
@@ -162,6 +163,9 @@ public class ClickHouseBatchRunnable implements Runnable {
             boolean useOnCluster = this.config.
                     getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster);
+            DBMetadata metadata = new DBMetadata(config);
+            metadata.executeSystemQuery(systemConn,
+                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
         } catch (Exception e) {
             log.error("Error creating database " + e);
         } finally {
@@ -205,6 +209,44 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * Gets the database name from the topic name.
+     * Topic name format is expected to be: server.database.table
+     *
+     * @param topicName The topic name
+     * @return The database name, or null if n
+     */
+    private String getDatabaseNameFromTopic(String topicName) {
+        if (topicName == null || topicName.isEmpty()) {
+            return null;
+        }
+
+        String[] parts = topicName.split("\\.");
+        if (parts.length >= 3) {
+            return parts[parts.length - 2]; // Second to last part is database name
+        }
+        return null;
+    }
+
+    /**
+     * Gets the server name from the topic name.
+     * Topic name format is expected to be: server.database.table
+     *
+     * @param topicName The topic name
+     * @return The server name, or null if not found
+     */
+    private String getServerNameFromTopic(String topicName) {
+        if (topicName == null || topicName.isEmpty()) {
+            return null;
+        }
+
+        String[] parts = topicName.split("\\.");
+        if (parts.length >= 3) {
+            return parts[0]; // First part is server name
+        }
+        return null;
+    }
+
+    /**
      * Main run loop of the thread, called on a schedule.
      * Default: 100 msecs
      */
@@ -212,6 +254,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     public void run() {
         Long taskId = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         try {
             // Poll from Queue until its empty.
             while (records.size() > 0 || currentBatch != null) {
@@ -226,8 +269,6 @@ public class ClickHouseBatchRunnable implements Runnable {
                     if (currentBatch == null) {
                         // No records in the queue.
                         continue;
-                        //Thread.sleep(config.getLong(ClickHouseSinkConnectorConfigVariables.
-                        // BUFFER_FLUSH_TIME.toString()));
                     }
                 } else {
                     log.debug("***** RETRYING the same batch again");
@@ -287,15 +328,51 @@ public class ClickHouseBatchRunnable implements Runnable {
                 ///// ***** END PROCESSING BATCH **************************
             }
         } catch (Exception e) {
+            // insert data into error table
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             try {
+                Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
+                // Create error table if it doesn't exist
+                ErrorLogger.createErrorTable(dbCon, config);
+                
+                // Log the error with the first record from current batch if available
+                if (currentBatch != null && !currentBatch.isEmpty()) {
+                    ClickHouseStruct firstRecord = currentBatch.get(0);
+                    SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                    String topicName = firstRecord.getTopic();
+                    String databaseName = firstRecord.getDatabase();
+                    String serverName = getServerNameFromTopic(topicName);
+                    
+                    // Get the failure entry index
+                    int failureIndex = currentBatch.indexOf(firstRecord);
+                    
+                    ErrorLogger.logError(dbCon, 
+                        String.format("Error processing batch. Task: %s, Server: %s, Database: %s, Failure Index: %d, Error: %s", 
+                            taskId, serverName, databaseName, failureIndex, e.getMessage()),
+                        sourceRecord,
+                        databaseName,
+                        "", // No query field available
+                        "", // No offset key field available
+                        errorTableName);
+                } else {
+                    ErrorLogger.logError(dbCon, 
+                        String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
+                        null,
+                        "",
+                        "", "",
+                        errorTableName);
+                }
+                
                 Thread.sleep(ERROR_SLEEP_TIME_MS);
             } catch (InterruptedException ex) {
                 log.error("******* ERROR **** Thread interrupted *********",
                         ex);
                 throw new RuntimeException(ex);
+            } catch (SQLException ex) {
+                log.error("******* ERROR **** Failed to log error to ClickHouse *********",
+                        ex);
             }
         }
     }
@@ -368,7 +445,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata().getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
     }
 
     /**

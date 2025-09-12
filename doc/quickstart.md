@@ -30,12 +30,12 @@ sudo apt install clickhouse-client
 
 Use Docker Compose to start containers.
 Set the `CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE` to the latest release from the Releases page.
-or run `./getLatestTag.sh` which will print the environment variable 
+or run `./getLatestRelease.sh` which will print the environment variable 
 that need to be exported.
 
 ```
 cd sink-connector-lightweight/docker
-./getLatestTag.sh
+./getLatestRelease.sh
 ```
 Example:
 ```

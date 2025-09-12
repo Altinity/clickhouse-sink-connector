@@ -11,6 +11,7 @@ import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
@@ -31,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Testcontainers
+@Tag("datetime")
 @DisplayName("Integration Test that validates replication of DateTime columns when user overrides CH server timezone, also MySQL server runs on a different timezone.")
 public class DateTimeWithUserProvidedDifferentTimeZoneIT {
     protected MySQLContainer mySqlContainer;
@@ -70,7 +72,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
+                engine.get().setup(getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -258,16 +260,12 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         HikariDbSource.close();
     }
 
-    protected Properties getDebeziumProperties() throws Exception {
+    protected Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
 
         // Start the debezium embedded application.
 
-        Properties defaultProps = new Properties();
-        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+        Properties defaultProps =  ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
-        defaultProps.putAll(defaultProperties);
-        Properties fileProps = new ConfigLoader().load("config.yml");
-        defaultProps.putAll(fileProps);
 
         // **** OVERRIDE set to schema only
         defaultProps.setProperty("snapshot.mode", "initial");
@@ -275,31 +273,6 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         defaultProps.setProperty("auto.create.tables", "true");
         defaultProps.setProperty("enable.snapshot.ddl", "true");
 
-        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user", "root");
-        defaultProps.setProperty("database.password", "adminpass");
-
-        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
-        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-
-//        props.setProperty("database.include.list", "datatypes");
-//        props.setProperty("clickhouse.server.database", "datatypes");
         // Override clickhouse server timezone.
         defaultProps.setProperty("database.connectionTimeZone", "UTC");
         defaultProps.setProperty("clickhouse.datetime.timezone", "UTC");

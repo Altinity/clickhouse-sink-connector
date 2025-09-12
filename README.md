@@ -36,6 +36,7 @@ Refer [Feature Matrix](doc/feature_matrix.md) for detailed features.
 
 [QuickStart Guide: Lightweight (MySQL)](doc/quickstart.md)\
 [QuickStart Guide: Lightweight (PostgreSQL)](doc/quickstart_postgres.md)\
+[QuickStart Guide: Lightweight (Oracle)(Experimental)](doc/quickstart_oracle.md)\
 [QuickStart Guide: Kafka](doc/quickstart_kafka.md)
 
 ## Blog Articles

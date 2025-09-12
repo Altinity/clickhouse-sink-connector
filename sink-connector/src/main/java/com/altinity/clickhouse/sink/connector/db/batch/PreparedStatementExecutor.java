@@ -190,7 +190,7 @@ public class PreparedStatementExecutor {
             String databaseName = null;
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
 
-            DBMetadata metadata = new DBMetadata();
+            DBMetadata metadata = new DBMetadata(config);
             try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 for (ClickHouseStruct record : batch) {

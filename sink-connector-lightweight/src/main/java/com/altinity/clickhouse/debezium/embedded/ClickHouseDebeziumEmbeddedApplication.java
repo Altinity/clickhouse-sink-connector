@@ -10,7 +10,7 @@ import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.logging.log4j.Level;
@@ -111,6 +111,25 @@ public class ClickHouseDebeziumEmbeddedApplication {
     private static String configurationFile;
 
     /**
+     * Gets a database connection using BaseDbWriter.createConnection.
+     * 
+     * @param props The connector properties containing ClickHouse connection details
+     * @return Connection to the database
+     * @throws Exception if connection cannot be established
+     */
+    private static Connection getDatabaseConnection(Properties props) throws Exception {
+        String clickhouseUrl = props.getProperty("clickhouse.server.url");
+        String clickhousePort = props.getProperty("clickhouse.server.port");
+        String clickhouseUser = props.getProperty("clickhouse.server.user");
+        String clickhousePassword = props.getProperty("clickhouse.server.password");
+        
+        String jdbcUrl = BaseDbWriter.getConnectionString(clickhouseUrl, Integer.parseInt(clickhousePort), SYSTEM_DB);
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, 
+                clickhouseUser, clickhousePassword, SYSTEM_DB, 
+                new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)));
+    }
+
+    /**
      * Main entry method for the application.
      *
      * @param args command-line arguments (may include a config file path)
@@ -125,6 +144,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
         System.setProperty(
                 "log4j.configurationFile", "resources/log4j2.xml"
         );
+
+        Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
 
         embeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
         String loggingLevel = System.getenv("LOGGING_LEVEL");
@@ -255,6 +276,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
             ));
             loadPropertiesFile(configurationFile);
         }
+
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(
                 props, recordParserService, forceStart
@@ -316,9 +338,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                         if (lastRecordTimestamp == -1) {
                             DebeziumJdbcStorageOperations ops =
                                     new DebeziumJdbcStorageOperations();
-                            Connection conn = HikariDbSource
-                                    .getInstance(SYSTEM_DB)
-                                    .getConnection();
+                            Connection conn = getDatabaseConnection(props);
                             long storedOffsetsInTable =
                                     ops.getLatestRecordTimestamp(
                                             conn, props
