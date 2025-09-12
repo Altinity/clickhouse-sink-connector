@@ -306,10 +306,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // Use the primary_key from tableConfig if it exists
             this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
         }else{
-            // Handle the ordering clause
-            if (orderByColumns.length() == 0) {
-                // Use a default tuple if no specific ordering is provided
-                this.query.append(Constants.ORDER_BY_TUPLE);
+            // Convert the orderByColumns object to a string
+            String orderByStr = orderByColumns.toString();
+
+            // Regex pattern to detect invalid column suffix like id_registro(10)
+            String regex = "\\b(\\w+)\\(\\d+\\)";
+
+            if (orderByStr.matches(".*" + regex + ".*")) {
+                // If pattern is matched: clean up suffix and append ORDER BY
+                String fixedOrderBy = orderByStr.replaceAll(regex, "$1");
+
+                // Append the sanitized ORDER BY clause to the query
+                this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
             } else {
                 // Otherwise, use the orderByColumns for ordering
                 this.query.append(Constants.ORDER_BY);
@@ -719,14 +727,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.error("Error retrieving NULL column schema from ClickHouse", e);
             }
         }
-
-        // Call the method to load the default column data type mapping.
-        /*Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
-
-        // Use a single null check with optional.
-        if (defaultColumnDataTypeMap != null) {
-            columnType = defaultColumnDataTypeMap.getOrDefault(columnName, columnType);
-        }*/
 
         // If column name and column type are defined, append them to the query.
         if (columnName != null && columnType != null)

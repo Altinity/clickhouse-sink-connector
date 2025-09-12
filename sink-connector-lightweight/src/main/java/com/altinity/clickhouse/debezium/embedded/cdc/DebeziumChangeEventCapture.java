@@ -285,6 +285,8 @@ public class DebeziumChangeEventCapture {
             singleThreadDebeziumEventExecutor.submit(() -> {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
+                    Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+
                     engine.run();
                 } catch (Exception e) {
                     log.error("Debezium event capture starting Exception", e);
@@ -428,13 +430,15 @@ public class DebeziumChangeEventCapture {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
         if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
             log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
             return;
         }
+
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
+        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         // Add max retries of 10
