@@ -162,7 +162,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         try {
             boolean useOnCluster = this.config.
                     getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster);
+            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
                     "CREATE DATABASE IF NOT EXISTS " + databaseName);

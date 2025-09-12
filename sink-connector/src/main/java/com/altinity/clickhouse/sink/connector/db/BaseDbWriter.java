@@ -117,8 +117,8 @@ public class BaseDbWriter {
      * @throws RuntimeException if the database creation fails after the
      *         maximum number of retries
      */
-    protected void createDestinationDatabase(String databaseName, Boolean useOnCluster) {
-        DBMetadata metadata = new DBMetadata();
+    protected void createDestinationDatabase(String databaseName, Boolean useOnCluster, ClickHouseSinkConnectorConfig config) {
+        DBMetadata metadata = new DBMetadata(config);
         try {
             if (!metadata.checkIfDatabaseExists(this.conn, databaseName)) {
                 new ClickHouseCreateDatabase()

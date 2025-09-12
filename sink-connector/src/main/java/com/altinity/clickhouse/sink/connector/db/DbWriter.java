@@ -139,11 +139,11 @@ public class DbWriter extends BaseDbWriter {
                     != ConnectorType.KAFKA) {
                 String offsetStorageDatabaseName = getOffsetStorageDatabaseName();
                 if (offsetStorageDatabaseName != null) {
-                    createDestinationDatabase(offsetStorageDatabaseName, useOnCluster);
+                    createDestinationDatabase(offsetStorageDatabaseName, useOnCluster, this.config);
                 }
             }
             // Create destination database if it doesn't exist
-            createDestinationDatabase(database, useOnCluster);
+            createDestinationDatabase(database, useOnCluster, this.config);
 
             // Retrieve table engine details
             MutablePair<DBMetadata.TABLE_ENGINE, String> response =
@@ -198,7 +198,8 @@ public class DbWriter extends BaseDbWriter {
                                 this.conn,
                                 isNewReplacingMergeTreeEngine,
                                 useOnCluster,
-                                config
+                                rmtDeleteColumn,
+                                this.config
                         );
                     } catch (Exception e) {
                         log.error(String.format(
