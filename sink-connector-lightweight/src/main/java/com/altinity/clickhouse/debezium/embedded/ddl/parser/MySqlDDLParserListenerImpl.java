@@ -305,7 +305,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
             // Use the primary_key from tableConfig if it exists
             this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
-        }else{
+        }else if (orderByColumns.length() == 0) {
+            this.query.append(Constants.ORDER_BY_TUPLE);
+        } else{
             // Convert the orderByColumns object to a string
             String orderByStr = orderByColumns.toString();
 
@@ -320,13 +322,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
             } else {
                 // Otherwise, use the orderByColumns for ordering
-                this.query.append(Constants.ORDER_BY);
-                this.query.append("(");
-                this.query.append(orderByColumns.toString());
+
                 if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    this.query.append(Constants.ORDER_BY);
+                    this.query.append("(");
+                    this.query.append(orderByColumns.toString());
                     this.query.append(",`").append(DELETED_TIME_COLUMN).append("`");
+
+                    this.query.append(")");
                 }
-                this.query.append(")");
+                else {
+                    this.query.append(Constants.ORDER_BY).append(orderByStr);
+                }
             }
         }
 

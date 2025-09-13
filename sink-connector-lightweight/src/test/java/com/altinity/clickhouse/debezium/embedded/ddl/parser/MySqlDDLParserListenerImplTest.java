@@ -385,7 +385,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterDatabaseAddColumnDataTypeMapping() {
 
         String addColumnNullable = "ALTER TABLE foo_new9 ADD COLUMN gmt_time3 DATETIME";
-        String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN gmt_time3 Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN gmt_time3 Nullable(DateTime64)";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(addColumnNullable, "foo_new9", clickHouseQuery);
 
