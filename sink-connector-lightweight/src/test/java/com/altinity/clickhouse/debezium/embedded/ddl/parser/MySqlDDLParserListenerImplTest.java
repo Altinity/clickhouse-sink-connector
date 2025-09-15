@@ -2293,27 +2293,5 @@ public class MySqlDDLParserListenerImplTest {
         String expectedQuery = "CREATE TABLE test_db.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id PARTITION BY `deleted_time_column` TTL `deleted_time_column` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
-//    @Test
-//    public void deleteData() {
-//        String sql = "DELETE FROM Customers WHERE CustomerName='Alfreds Futterkiste'";
-//        StringBuffer clickHouseQuery = new StringBuffer();
-//
-//        AtomicBoolean isDropOrTruncate = new AtomicBoolean();
-//        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
-//        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery, isDropOrTruncate);
-//
-//        System.out.println("Clickhouse query" + clickHouseQuery);
-//
-//    }
 
-//    @Test
-//    public void testDropDatabase() {
-//        StringBuffer clickHouseQuery = new StringBuffer();
-//
-//        String sql = "drop database if exists employees";
-//        MySQLDDLParserService mySQLDDLParserService2 = new MySQLDDLParserService();
-//        mySQLDDLParserService2.parseSql(sql, "", clickHouseQuery);
-//
-//        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
-//    }
 }
