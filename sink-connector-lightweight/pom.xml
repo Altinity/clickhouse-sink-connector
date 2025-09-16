@@ -9,6 +9,7 @@
     <version>0.0.4</version>
 
     <properties>
+    <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -132,11 +133,11 @@
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
         </dependency> -->
-        <dependency>
+      <!--  <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-oracle</artifactId>
             <version>${version.debezium}</version>
-        </dependency>
+        </dependency> -->
         <!-- <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

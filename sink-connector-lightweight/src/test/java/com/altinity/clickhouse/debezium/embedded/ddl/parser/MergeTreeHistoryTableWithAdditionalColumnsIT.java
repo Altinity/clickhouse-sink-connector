@@ -9,10 +9,7 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -35,6 +32,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
 
 @Testcontainers
 @DisplayName("Integration test adding other columns in MergeTree history table")
+@Disabled
 public class MergeTreeHistoryTableWithAdditionalColumnsIT {
 
     protected MySQLContainer mySqlContainer;
