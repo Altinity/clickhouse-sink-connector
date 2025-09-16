@@ -93,22 +93,34 @@ def get_primary_key_columns(conn, table_schema, table_name):
 
 
 def get_table_checksum_query(conn, table):
-    #logging.info(f"Excluded columns before join, {args.exclude_columns}")
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
-    #excluded_columns = "'"+excluded_columns+"'"
     logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
-    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' and name not in ("+ excluded_columns_str +") order by position"
+    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
     (rowset, rowcount) = execute_sql(conn, checksum_query)
-    #logging.info(f"CHECKSUM QUERY: {checksum_query}")
 
     select = ""
     nullables = []
     columns = []
     data_types = {}
     first_column = True
-    for row in rowset:
+    columns_metadata  = []
+    for row in rowset:    
+        columns_metadata.append(row)
+    columns_metadata_map = { r[0]: r for r in columns_metadata }
+    # sometimes we have excluded columns like is_deleted and _is_deleted, we would exclude the one prefixed with _
+    filtered_columns_metadata = []
+    for row in columns_metadata:   
+        prefixed_column = "_"+row[0]
+        if row[0] in excluded_columns and prefixed_column in columns_metadata_map:
+            logging.info(f"Not excluding column {row[0]} as {prefixed_column} is also excluded")
+        elif row[0] in excluded_columns:
+            logging.info(f"Excluding column {row[0]}")
+            continue
+        filtered_columns_metadata.append(row)
+       
+    for row in filtered_columns_metadata:
         column_name = '"'+row[0]+'"'
         data_type = row[1]
         is_nullable = row[2]
@@ -124,9 +136,6 @@ def get_table_checksum_query(conn, table):
             if first_column:
                 select += " "
 
-        if not first_column:
-            select += "'#'||"
-
         if 'timestamp' in data_type:
             select += "replace(to_char("+column_name + \
                 ",'YYYY-MM-DD HH24:MI:SS.US'),'1900-01-01 ','')"
@@ -141,9 +150,9 @@ def get_table_checksum_query(conn, table):
                 select += "toDecimalString("+column_name + \
                     ","+str(numeric_scale)+")"
             elif "DateTime64(0" in data_type:
-                select += f"toString({column_name})"
+                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
             elif "DateTime64(6" in data_type:
-                select += f"if(toString({column_name}) > '{args.max_datetime_value}', '{args.max_datetime_value}', toString({column_name}))"
+                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
             elif "DateTime" in data_type:
                 select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
             else:
@@ -158,6 +167,9 @@ def get_table_checksum_query(conn, table):
 
         if is_nullable == 1:
             select += " end"
+
+        if not filtered_columns_metadata.index(row) == len(filtered_columns_metadata)-1:
+            select += "||'#'"
         first_column = False
         data_types[row[0]] = data_type
     logging.debug(str(nullables))
@@ -345,6 +357,8 @@ def main():
                         nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
+    parser.add_argument(
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
 
