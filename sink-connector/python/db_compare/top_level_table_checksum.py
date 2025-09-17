@@ -33,8 +33,7 @@ def validate_config(config):
         # Check source section
         source = config['source']
         mysql = source['mysql']
-        host = mysql['host']
-        
+        host = mysql['host'] 
         # Check replicas section
         replicas = config['replicas']
         if not isinstance(replicas, list):
@@ -89,8 +88,7 @@ def compute_checksum (database, table, mysql_user, mysql_password, mysql_host, r
     table_name = f"{database}.{table}"
     logging.info(f"Checksumming {table_name}")
     commands = []
-    cmd = get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)
-    
+    cmd = get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)   
     commands.append((mysql_host,cmd))
     
     for ch_host in replica_hosts:
@@ -145,6 +143,7 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
         where_argument += f" and {where} "
     if partition_date:
       where_argument += f""" and {{partition_expression}}="""+f"""toDate(\\\\'{partition_date:%Y-%m-%d}\\\\') """
+
     where_argument += '"'
     
     ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted"
@@ -173,7 +172,7 @@ def analyze_differences(results, mysql_host, replica_hosts):
                 is_difference = True
         if not is_difference:
             logging.info(f"No difference for {source_results[0][1]}")
-    
+   
     
 def lock_tables(conn, table):
     lock_stmt = f"FLUSH TABLE {table} WITH READ LOCK"
@@ -196,10 +195,9 @@ def run_config(config):
     replica_hosts = []
     for i, replica in enumerate(config['replicas']):
         replica_hosts.append(replica['clickhouse']['host'])
-    
+   
     logging.info(f"\nFound {len( config['replicas'])} ClickHouse replicas: {replica_hosts}")
-    
-    
+   
     mysql_user = args.mysql_user
     config_file = args.defaults_file
     (mysql_user, mysql_password) = resolve_credentials_from_config(config_file)
@@ -285,7 +283,7 @@ def run_config(config):
 
     logging.debug("Exiting Main Thread")
     sys.exit(0)
-
+    
 def run_quick_safe_command(cmd):
     logging.debug("cmd " + cmd)
     process = subprocess.Popen(cmd,
