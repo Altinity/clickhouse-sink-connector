@@ -141,9 +141,9 @@ def get_table_checksum_query(conn, table):
                 select += "toDecimalString("+column_name + \
                     ","+str(numeric_scale)+")"
             elif "DateTime64(0" in data_type:
-                select += f"toString({column_name})"
+                select += f"if(toString({column_name}) > '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', toString({column_name})))"
             elif "DateTime64(6" in data_type:
-                select += f"if(toString({column_name}) > '{args.max_datetime_value}', '{args.max_datetime_value}', toString({column_name}))"
+                select += f"if(toString({column_name}) > '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', toString({column_name})))"
             elif "DateTime" in data_type:
                 select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
             else:
@@ -345,6 +345,8 @@ def main():
                         nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int,
                         help='number of parallel threads', default=1)
+    parser.add_argument(
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
 
