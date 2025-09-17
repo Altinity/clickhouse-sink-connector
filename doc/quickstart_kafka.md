@@ -107,6 +107,9 @@ The source connector can be deleted using the following script
 The sink connector can be deleted using the following script
 [sink-delete.sh](../deploy/sink-delete.sh)
 
+# Running Connector(JsonConverter) without Schema Registry
+[kafka-connect-without-schema-registry.md](kafka-connect-without-schema-registry.md)
+
 # References
 Kafka Connect REST API - (https://docs.confluent.io/platform/current/connect/references/restapi.html)
 
