@@ -52,6 +52,7 @@ public class DataTypeConverter {
 
     static {
         overriddenDataTypesMap.put("tinyint", "Int8");
+        overriddenDataTypesMap.put("bigint unsigned", "UInt64");
     }
     /**
      * Converts the given MySQL parser context to a ClickHouse data type string.
