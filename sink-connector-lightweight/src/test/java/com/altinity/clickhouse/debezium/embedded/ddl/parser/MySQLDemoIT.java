@@ -345,7 +345,7 @@ public class MySQLDemoIT  {
      * @throws Exception if column operations fail
      */
     private void addAndDropHireDateColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
-        mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN hireDate DATE DEFAULT (CURDATE());").execute();
+        mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN hireDate DATE;").execute();
         Thread.sleep(10000);
         DBMetadata metadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
