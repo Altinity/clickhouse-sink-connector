@@ -485,7 +485,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     }
                                 }
                                 isGeneratedColumn = true;
-                                generatedColumn = generatedColumnTree.getText();
+                                //generatedColumn = generatedColumnTree.getText();
                             }
                         }
                     }
