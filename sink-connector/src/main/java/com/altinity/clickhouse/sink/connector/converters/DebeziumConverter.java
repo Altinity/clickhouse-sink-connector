@@ -108,13 +108,14 @@ public class DebeziumConverter {
             // Get the milliseconds value of the timezone.
             TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
             int sourceOffset = sourceTZ.getRawOffset();
+            Long epochMillisWithOffset = epochMillis - sourceOffset;
 
-            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillis)))) {
-                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillisWithOffset)))) {
+                Long dstOffset = (long) (sourceTZ.getRawOffset() + sourceTZ.getDSTSavings());
+                epochMillisWithOffset = epochMillis - dstOffset;
             }
 
             // Add this offset to wrongly calculated epoch.
-            Long epochMillisWithOffset = epochMillis - sourceOffset;
             Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
 
             boolean[] rangeExceeded = new boolean[1];
