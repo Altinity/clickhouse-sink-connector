@@ -124,7 +124,7 @@ public class DataTypeConverter {
         SchemaBuilder schemaBuilder = mysqlConverter.schemaBuilder(column);
 
         // if the data type is in the overriddenDataTypesMap, then return the overridden data type
-        if (overriddenDataTypesMap.containsKey(dataType.name())) {
+        if (overriddenDataTypesMap.containsKey(dataType.name().toLowerCase())) {
             return overriddenDataTypesMap.get(dataType.name());
         }
 

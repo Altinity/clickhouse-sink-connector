@@ -682,7 +682,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                            // if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN))
+                            {
                                 isNullColumn = false;
                             }
                         }

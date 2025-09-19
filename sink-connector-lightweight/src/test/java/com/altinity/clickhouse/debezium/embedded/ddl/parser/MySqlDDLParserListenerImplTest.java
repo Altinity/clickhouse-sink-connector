@@ -454,9 +454,13 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test ADD COLUMN customer_address Nullable(String), ADD COLUMN customer_name Nullable(String)";
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
-        log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
+        String mysqlQuery2 = "ALTER TABLE server_team_replicate.test ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT 0 AFTER lglent_group;";
+        StringBuffer clickHouseQuery2 = new StringBuffer();
+        mySQLDDLParserService.parseSql(mysqlQuery2, "server_team_replicate", clickHouseQuery2);
+        String expectedQuery = "ALTER TABLE employees.test ADD COLUMN coins TINYINT(1) DEFAULT 0 AFTER lglent_group";
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(expectedQuery));
+        log.info("CLICKHOUSE QUERY: " + clickHouseQuery2);
+
     }
 
     @Test
@@ -497,7 +501,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery2 = new StringBuffer();
         String alterTableModifyColumn2 = "alter table  test1 add  column `vendor_folder` varchar(128) COLLATE latin1_general_cs NOT NULL after expected_arrival_time";
         mySQLDDLParserService.parseSql(alterTableModifyColumn2, "add_test", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.test1 ADD COLUMN `vendor_folder` Nullable(String)  after expected_arrival_time"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.test1 ADD COLUMN `vendor_folder` String after expected_arrival_time"));
     }
 
     @Test
@@ -528,7 +532,7 @@ public class MySqlDDLParserListenerImplTest {
 
         mySQLDDLParserService.parseSql(sql, "products", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.products ADD COLUMN stocks Nullable(Int32)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.products ADD COLUMN stocks Int32"));
         StringBuffer clickHouseQuery2 = new StringBuffer();
 
         String defaultSql = "alter table add_test add column stocks bool null default 1;";
@@ -951,7 +955,7 @@ public class MySqlDDLParserListenerImplTest {
     }
     @Test
     public void testAlterDatabaseAddColumnEnum() {
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN gender Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN gender String";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees add column gender ENUM ('M','F') NOT NULL";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -964,7 +968,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAlterDatabaseAddColumnJson() {
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN data Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN data String";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees add column data JSON NOT NULL";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
