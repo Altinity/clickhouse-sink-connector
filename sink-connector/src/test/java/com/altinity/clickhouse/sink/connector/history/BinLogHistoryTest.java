@@ -4,6 +4,8 @@ import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.Assert.assertEquals;
+
 public class BinLogHistoryTest {
 
     private BinLogHistory binLogHistory;
@@ -20,23 +22,10 @@ public class BinLogHistoryTest {
             "test_db",
             30
         );
-        
-        Assert.assertTrue(result.contains("CREATE TABLE test_db.`test_history`"));
-        Assert.assertTrue(result.contains("ENGINE = MergeTree()"));
-        Assert.assertTrue(result.contains("`database` String"));
-        Assert.assertTrue(result.contains("`table` String"));
-        Assert.assertTrue(result.contains("`before` String"));
-        Assert.assertTrue(result.contains("`after` String"));
-        Assert.assertTrue(result.contains("`_raw` String"));
-        Assert.assertTrue(result.contains("`_time` UInt64"));
-        Assert.assertTrue(result.contains("`is_deleted` UInt8"));
-        Assert.assertTrue(result.contains("`operation` String"));
-        Assert.assertTrue(result.contains("`_version` UInt64"));
-        Assert.assertTrue(result.contains("`host` String"));
-        Assert.assertTrue(result.contains("`logfile` String"));
-        Assert.assertTrue(result.contains("`position` UInt64"));
-        Assert.assertTrue(result.contains("`primary_host` String"));
+        String expected = "CREATE TABLE IF NOT EXISTS test_db.`test_history`(`gtid` String,`database` String,`table` String,`ddl` String,`before` String,`after` String,`_raw` String,`_time` UInt64,`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` String,`logfile` String,`position` UInt64,`primary_host` String) ENGINE = MergeTree() ORDER BY `gtid` PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
+        assertEquals(expected, result);
     }
+
 
     @Test
     public void testCreateHistoryTableSyntaxWithDifferentNames() {
@@ -45,9 +34,10 @@ public class BinLogHistoryTest {
             "production_db",
             30
         );
-        
-        Assert.assertTrue(result.contains("CREATE TABLE production_db.`user_history`"));
-        Assert.assertTrue(result.contains("ENGINE = MergeTree()"));
+        String expected = "CREATE TABLE IF NOT EXISTS production_db.`user_history`(`gtid` String,`database` String,`table` String,`ddl` String,`before` String,`after` String,`_raw` String,`_time` UInt64,`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` String,`logfile` String,`position` UInt64,`primary_host` String) ENGINE = MergeTree() ORDER BY `gtid` PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
+        Assert.assertTrue(expected.equalsIgnoreCase(result));
+        //Assert.assertTrue(result.contains("CREATE TABLE production_db.`user_history`"));
+        //Assert.assertTrue(result.contains("ENGINE = MergeTree()"));
     }
 
 
