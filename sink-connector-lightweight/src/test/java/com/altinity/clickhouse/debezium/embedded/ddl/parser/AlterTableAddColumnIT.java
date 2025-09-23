@@ -94,7 +94,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
-        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
         // Validate all add_test columns.
