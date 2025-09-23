@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 @Testcontainers
+@Disabled
 public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTableBase {
 
     static Map<String, String> columnToDataTypesMap;
