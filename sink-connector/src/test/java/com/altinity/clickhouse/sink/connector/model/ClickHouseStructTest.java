@@ -227,7 +227,8 @@ public class ClickHouseStructTest {
         );
         
         String json = clickHouseStruct.beforeModifiedFieldsToJson();
-        assertNull(json);
+        // change it to empty string check.
+        assertEquals("", json);
     }
     
     @Test
@@ -327,7 +328,7 @@ public class ClickHouseStructTest {
         );
         
         String json = clickHouseStruct.afterModifiedFieldsToJson();
-        assertNull(json);
+        assertEquals("", json);
     }
     
     @Test
