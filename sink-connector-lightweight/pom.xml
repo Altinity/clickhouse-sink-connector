@@ -127,20 +127,21 @@
             <artifactId>debezium-connector-mysql</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-   <!--     <dependency>
+        <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
-        </dependency> -->
-        <dependency>
+        </dependency>
+      <!--  <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-oracle</artifactId>
             <version>${version.debezium}</version>
-        </dependency>
+        </dependency> -->
         <!-- <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>42.5.4</version>
+            <scope>test</scope>
         </dependency> -->
         <dependency>
             <groupId>io.debezium</groupId>

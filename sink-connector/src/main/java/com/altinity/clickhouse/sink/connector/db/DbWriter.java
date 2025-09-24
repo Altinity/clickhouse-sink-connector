@@ -32,7 +32,7 @@ public class DbWriter extends BaseDbWriter {
      * Logger for this class, handling logs and error messages.
      */
     private static final Logger log = LogManager.getLogger(
-            ClickHouseSinkConnectorConfig.class
+            DbWriter.class
     );
 
     /**
@@ -204,6 +204,8 @@ public class DbWriter extends BaseDbWriter {
                                 rmtDeleteColumn,
                                 config
                         );
+
+
                     } catch (Exception e) {
                         log.error(String.format(
                                         "**** Error creating table(%s), database(%s) ***",
