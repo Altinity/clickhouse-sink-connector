@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.debezium.embedded.cdc;
+package com.altinity.clickhouse.debezium.embedded.history;
 
 import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
@@ -41,7 +41,7 @@ public class BinLogHistoryIT {
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
             .asCompatibleSubstituteFor("clickhouse"))
-            .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
+            //.withInitScript("init_clickhouse_schema_only_column_timezone.sql")
             .withUsername("ch_user")
             .withPassword("password")
             .withExposedPorts(8123);
@@ -148,9 +148,6 @@ public class BinLogHistoryIT {
 
         Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
-
-
-        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
         conn.close();
         // Files.deleteIfExists(tmpFilePath);

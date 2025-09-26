@@ -164,7 +164,9 @@ schema.history.internal.store.only.captured.databases.ddl: "true"
 non.default.value: "true"
 
 # Enable replication mergetree history table.
-replication.history.enable: "true"
+#replication.history.enable: "true"
 
 connection.pool.disable: "true"
 thread.pool.size: "1"
+
+sink.connector.max.queue.size: 500
