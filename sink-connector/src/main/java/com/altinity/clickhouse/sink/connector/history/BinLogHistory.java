@@ -22,7 +22,7 @@ public class BinLogHistory {
     public static final String NOT_NULL = "NOT NULL";
     public static final String ORDER_BY = "ORDER BY";
     public static final String ORDER_BY_TUPLE = "ORDER BY tuple()";
-    public static final String ENGINE_MERGE_TREE = "ENGINE = MergeTree()";
+    public static final String ENGINE_REPLACING_MERGE_TREE = "ENGINE = ReplacingMergeTree(_version, is_deleted)";
     public static final String PARTITION_BY = " PARTITION BY toDate(`";
     public static final String TTL_PREFIX = " TTL toDate(`";
     public static final String TO_INTERVAL_DAY = "`) + toIntervalDay(";
@@ -33,15 +33,15 @@ public class BinLogHistory {
     public static final String DDL_COLUMN_DATA_TYPE = "String";
 
     public static final String DATABASE_COLUMN = "database";
-    public static final String DATABASE_COLUMN_DATA_TYPE = "String";
+    public static final String DATABASE_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String TABLE_COLUMN = "table";
-    public static final String TABLE_COLUMN_DATA_TYPE = "String";
+    public static final String TABLE_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String BEFORE_COLUMN = "before";
     public static final String AFTER_COLUMN = "after";
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "UInt64";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(3)";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "operation";
@@ -49,13 +49,13 @@ public class BinLogHistory {
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
     public static final String HOST_COLUMN = "host";
-    public static final String HOST_COLUMN_DATA_TYPE = "String";
+    public static final String HOST_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String LOGFILE_COLUMN = "logfile";
-    public static final String LOGFILE_COLUMN_DATA_TYPE = "String";
+    public static final String LOGFILE_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String POSITION_COLUMN = "position";
     public static final String POSITION_COLUMN_DATA_TYPE = "UInt64";
     public static final String PRIMARY_HOST_COLUMN = "primary_host";
-    public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "String";
+    public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "LowCardinality(String)";
 
     public static final Map<String, String> HISTORY_COLUMNS = new LinkedHashMap<String, String>() {{
         put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
@@ -106,10 +106,10 @@ public class BinLogHistory {
                 .collect(Collectors.joining(","));
         sb.append(columnDefinitions);
         
-        sb.append(") ").append(ENGINE_MERGE_TREE);
+        sb.append(") ").append(ENGINE_REPLACING_MERGE_TREE);
 
         // ORDER BY gtid
-        sb.append(" ").append(ORDER_BY).append(" `").append(GTID_COLUMN).append("`");
+        sb.append(" ").append(ORDER_BY).append(" `").append(TIME_COLUMN).append("`");
         // Add partition by toDate(_time)
         sb.append(PARTITION_BY).append(TIME_COLUMN).append("`)");
         // Add TTL toDate(_time) + toIntervalDay(ttlDays)
