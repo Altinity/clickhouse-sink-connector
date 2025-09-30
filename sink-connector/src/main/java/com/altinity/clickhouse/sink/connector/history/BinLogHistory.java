@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.history;
 
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
@@ -228,7 +229,8 @@ public class BinLogHistory {
                 }
                 return struct.getCdcOperation().toString();
             case VERSION_COLUMN:
-                return struct.getKafkaOffset();
+                Long version= SnowFlakeId.generate(struct.getTs_ms(), struct.getGtid(), false);
+                return version;
             case HOST_COLUMN:
                 return Long.toString(struct.getServerId()); // Host might need special handling
             case LOGFILE_COLUMN:
