@@ -85,7 +85,7 @@ ENGINE = ReplacingMergeTree(_version) ORDER BY offset_key SETTINGS index_granula
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.table.delete: "select * from %s"
 
-offset.storage.jdbc.offset.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
+offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
 
 # schema.history.internal: The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
@@ -100,11 +100,11 @@ schema.history.internal.jdbc.user: "root"
 schema.history.internal.jdbc.password: "root"
 
 # schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
 # schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_schema_history"
 
 # enable.snapshot.ddl: If set to true, the connector will parse the DDL statements from the initial load
 enable.snapshot.ddl: "true"

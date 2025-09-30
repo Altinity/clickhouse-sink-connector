@@ -905,6 +905,8 @@ public class DebeziumChangeEventCapture {
         } else {
             synchronized (this.records) {
                 this.records.add(convertedRecords);
+                //log.info("Size of queue: " + ObjectSizeFetcher.getObjectSize(this.records));
+                log.info("Length of queue: " + this.records.size());
             }
         }
     }
