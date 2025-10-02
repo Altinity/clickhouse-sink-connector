@@ -904,9 +904,20 @@ public class DebeziumChangeEventCapture {
             singleThreadedWriter.persistRecords(convertedRecords);
         } else {
             synchronized (this.records) {
-                this.records.add(convertedRecords);
-                //log.info("Size of queue: " + ObjectSizeFetcher.getObjectSize(this.records));
-                log.info("Length of queue: " + this.records.size());
+                try {
+                    int remainingCapacity = this.records.remainingCapacity();
+                    int currentSize = this.records.size();
+                    int totalCapacity = remainingCapacity + currentSize;
+                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                        log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                    }
+                    if (remainingCapacity == 0) {
+                        log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
+                    }
+                    this.records.put(convertedRecords);
+                }catch(Exception e){
+                    log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
+                }
             }
         }
     }
