@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -26,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
-
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -162,6 +162,9 @@ public class ClickHouseBatchRunnable implements Runnable {
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), "system", config);
         try {
+            boolean useOnCluster = this.config.
+                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
                     "CREATE DATABASE IF NOT EXISTS " + databaseName);
@@ -289,7 +292,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     Connection databaseConn = getClickHouseConnection(databaseName);
                     DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                             firstRecord, databaseConn);
-    
+
                     BinLogHistory binLogHistory = new BinLogHistory();
                     binLogHistory.addRecordsToHistoryTable(tableName, writer.getConnection(), "", currentBatch);
                 }
@@ -460,8 +463,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
 
-    private boolean processBatchRecords(List<ClickHouseStruct> records, String topicName, 
-                                      String tableName, String databaseName, 
+    private boolean processBatchRecords(List<ClickHouseStruct> records, String topicName,
+                                      String tableName, String databaseName,
                                       ClickHouseStruct firstRecord) throws Exception {
         boolean result = false;
 
@@ -591,7 +594,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
             // Create error table if it doesn't exist
             ErrorLogger.createErrorTable(dbCon, config);
-            
+
             // Log the error with the first record from current batch if available
             if (currentBatch != null && !currentBatch.isEmpty()) {
                 ClickHouseStruct firstRecord = currentBatch.get(0);
@@ -599,12 +602,12 @@ public class ClickHouseBatchRunnable implements Runnable {
                 String topicName = firstRecord.getTopic();
                 String databaseName = firstRecord.getDatabase();
                 String serverName = getServerNameFromTopic(topicName);
-                
+
                 // Get the failure entry index
                 int failureIndex = currentBatch.indexOf(firstRecord);
-                
-                ErrorLogger.logError(dbCon, 
-                    String.format("Error processing batch. Task: %s, Server: %s, Database: %s, Failure Index: %d, Error: %s", 
+
+                ErrorLogger.logError(dbCon,
+                    String.format("Error processing batch. Task: %s, Server: %s, Database: %s, Failure Index: %d, Error: %s",
                         taskId, serverName, databaseName, failureIndex, e.getMessage()),
                     sourceRecord,
                     databaseName,
@@ -612,14 +615,14 @@ public class ClickHouseBatchRunnable implements Runnable {
                     "", // No offset key field available
                     errorTableName);
             } else {
-                ErrorLogger.logError(dbCon, 
+                ErrorLogger.logError(dbCon,
                     String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
                     null,
                     "",
                     "", "",
                     errorTableName);
             }
-            
+
             Thread.sleep(ERROR_SLEEP_TIME_MS);
         } catch (InterruptedException ex) {
             log.error("******* ERROR **** Thread interrupted *********",
