@@ -1,6 +1,9 @@
 package com.altinity.clickhouse.sink.connector.model;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -289,6 +292,10 @@ public class ClickHouseStruct {
         this.setLastRecordInBatch(lastRecordInBatch);
     }
 
+    public ClickHouseStruct(){
+
+    }
+
     /**
      * Constructs a ClickHouseStruct without commit info.
      *
@@ -498,5 +505,203 @@ public class ClickHouseStruct {
                 .append(" row").append(row)
                 .append(" server_thread").append(thread)
                 .toString();
+    }
+
+    /**
+     * Converts a Kafka Connect Struct to a Map for JSON serialization.
+     *
+     * @param struct The Kafka Connect Struct to convert
+     * @return A Map representation of the Struct, or null if struct is null
+     */
+    private Map<String, Object> structToMap(Struct struct) {
+        if (struct == null) {
+            return null;
+        }
+        
+        Map<String, Object> map = new HashMap<>();
+        for (Field field : struct.schema().fields()) {
+            try {
+                Object value = struct.get(field);
+                if (value instanceof Struct) {
+                    map.put(field.name(), structToMap((Struct) value));
+                } else {
+                    map.put(field.name(), value);
+                }
+            } catch (Exception e) {
+                log.debug("Could not get value for field: " + field.name(), e);
+            }
+        }
+        return map;
+    }
+
+    /**
+     * Serializes the sourceRecord to JSON format.
+     *
+     * @return JSON string representation of the sourceRecord, or null if sourceRecord is null
+     */
+    public String sourceRecordToJson() {
+        if (sourceRecord == null) {
+            return null;
+        }
+        
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode jsonNode = mapper.createObjectNode();
+            
+            SourceRecord record = sourceRecord.value();
+            if (record != null) {
+                // Add key information
+                if (record.key() != null) {
+                    if (record.key() instanceof Struct) {
+                        jsonNode.set("key", mapper.valueToTree(structToMap((Struct) record.key())));
+                    } else {
+                        jsonNode.put("key", record.key().toString());
+                    }
+                }
+                
+                // Add value information
+                if (record.value() != null) {
+                    if (record.value() instanceof Struct) {
+                        jsonNode.set("value", mapper.valueToTree(structToMap((Struct) record.value())));
+                    } else {
+                        jsonNode.put("value", record.value().toString());
+                    }
+                }
+                
+                // Add topic, partition, and offset
+                jsonNode.put("topic", record.topic());
+                if (record.kafkaPartition() != null) {
+                    jsonNode.put("partition", record.kafkaPartition());
+                }
+                if (record.sourceOffset() != null) {
+                    jsonNode.set("sourceOffset", mapper.valueToTree(record.sourceOffset()));
+                }
+                if (record.sourcePartition() != null) {
+                    jsonNode.set("sourcePartition", mapper.valueToTree(record.sourcePartition()));
+                }
+                
+                // Add timestamp if available
+                if (record.timestamp() != null) {
+                    jsonNode.put("timestamp", record.timestamp());
+                }
+            }
+            
+            return mapper.writeValueAsString(jsonNode);
+        } catch (Exception e) {
+            log.error("Error serializing sourceRecord to JSON", e);
+            return null;
+        }
+    }
+
+    /**
+     * Serializes the beforeModifiedFields to JSON format.
+     *
+     * @return JSON string representation of the beforeModifiedFields, or null if beforeModifiedFields is null
+     */
+    public String beforeModifiedFieldsToJson() {
+        if (beforeModifiedFields == null) {
+            return "";
+        }
+        
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ArrayNode jsonArray = mapper.createArrayNode();
+            
+            for (Field field : beforeModifiedFields) {
+                ObjectNode fieldNode = mapper.createObjectNode();
+                fieldNode.put("name", field.name());
+                fieldNode.put("index", field.index());
+                
+                // Add schema information
+                if (field.schema() != null) {
+                    ObjectNode schemaNode = mapper.createObjectNode();
+                    schemaNode.put("type", field.schema().type().toString());
+                    if (field.schema().name() != null) {
+                        schemaNode.put("name", field.schema().name());
+                    }
+                    schemaNode.put("optional", field.schema().isOptional());
+                    fieldNode.set("schema", schemaNode);
+                }
+                
+                // Add field value from beforeStruct if available
+                if (beforeStruct != null) {
+                    try {
+                        Object value = beforeStruct.get(field);
+                        if (value != null) {
+                            if (value instanceof Struct) {
+                                fieldNode.set("value", mapper.valueToTree(structToMap((Struct) value)));
+                            } else {
+                                fieldNode.set("value", mapper.valueToTree(value));
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not get value for field: " + field.name(), e);
+                    }
+                }
+                
+                jsonArray.add(fieldNode);
+            }
+            
+            return mapper.writeValueAsString(jsonArray);
+        } catch (Exception e) {
+            log.error("Error serializing beforeModifiedFields to JSON", e);
+            return null;
+        }
+    }
+
+    /**
+     * Serializes the afterModifiedFields to JSON format.
+     *
+     * @return JSON string representation of the afterModifiedFields, or null if afterModifiedFields is null
+     */
+    public String afterModifiedFieldsToJson() {
+        if (afterModifiedFields == null) {
+            return "";
+        }
+        
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ArrayNode jsonArray = mapper.createArrayNode();
+            
+            for (Field field : afterModifiedFields) {
+                ObjectNode fieldNode = mapper.createObjectNode();
+                fieldNode.put("name", field.name());
+                fieldNode.put("index", field.index());
+                
+                // Add schema information
+                if (field.schema() != null) {
+                    ObjectNode schemaNode = mapper.createObjectNode();
+                    schemaNode.put("type", field.schema().type().toString());
+                    if (field.schema().name() != null) {
+                        schemaNode.put("name", field.schema().name());
+                    }
+                    schemaNode.put("optional", field.schema().isOptional());
+                    fieldNode.set("schema", schemaNode);
+                }
+                
+                // Add field value from afterStruct if available
+                if (afterStruct != null) {
+                    try {
+                        Object value = afterStruct.get(field);
+                        if (value != null) {
+                            if (value instanceof Struct) {
+                                fieldNode.set("value", mapper.valueToTree(structToMap((Struct) value)));
+                            } else {
+                                fieldNode.set("value", mapper.valueToTree(value));
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("Could not get value for field: " + field.name(), e);
+                    }
+                }
+                
+                jsonArray.add(fieldNode);
+            }
+            
+            return mapper.writeValueAsString(jsonArray);
+        } catch (Exception e) {
+            log.error("Error serializing afterModifiedFields to JSON", e);
+            return null;
+        }
     }
 }

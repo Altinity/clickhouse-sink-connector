@@ -23,14 +23,12 @@ import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Types;
+import java.sql.*;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -139,7 +137,6 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-
             if (false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
                     conn, tableName, columnToDataTypeMap, engine)) {
                 log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
@@ -334,9 +331,11 @@ public class PreparedStatementExecutor {
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
                 } else {
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                }
+                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
+                    }
+                                    }
                 ps.setNull(index, Types.OTHER);
                 continue;
             }
@@ -393,7 +392,27 @@ public class PreparedStatementExecutor {
             }
         }
 
+        // If Replication history is enabled, add the deleted_time column
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
+                //if the record is a DELETE or UPDATE, add the deleted_time column
+                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
+                        record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                    // Set the current time (truncate milliseconds for DateTime compatibility)
+                    long currentTimeMs = System.currentTimeMillis();
+                    long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
+                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
+
+                } else {
+                    // Set default value 2149-06-06
+                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(2149, 6, 6, 0, 0, 0, 0));
+                }
+            }
+        }
+
         // Handle Version column for REPLACING_MERGE_TREE and REPLICATED_REPLACING_MERGE_TREE engines.
+        Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
         if (engine != null &&
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())

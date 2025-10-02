@@ -24,6 +24,8 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import java.sql.Types;
 import java.time.ZoneId;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Class responsible for converting MySQL DDL data types to
@@ -45,6 +47,13 @@ public class DataTypeConverter {
         return initializeDataTypeResolver().resolveDataType(columnDefChild);
     }
 
+    // Create a static map of overridden data types
+    static Map<String, String> overriddenDataTypesMap = new HashMap<>();
+
+    static {
+        overriddenDataTypesMap.put("tinyint", "Int8");
+        overriddenDataTypesMap.put("bigint unsigned", "UInt64");
+    }
     /**
      * Converts the given MySQL parser context to a ClickHouse data type string.
      * <p>
@@ -114,10 +123,16 @@ public class DataTypeConverter {
         // Build the schema via the MySQL converter
         SchemaBuilder schemaBuilder = mysqlConverter.schemaBuilder(column);
 
+        // if the data type is in the overriddenDataTypesMap, then return the overridden data type
+        if (overriddenDataTypesMap.containsKey(dataType.name().toLowerCase())) {
+            return overriddenDataTypesMap.get(dataType.name());
+        }
+
         // Map the schema to the corresponding ClickHouse data type
         ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(
                 schemaBuilder.schema().type(), schemaBuilder.schema().name());
 
+                                                         
         // Check for DateTime and time zone
         if (userProvidedTimeZone != null
                 && (chDataType == ClickHouseDataType.DateTime

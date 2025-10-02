@@ -1,21 +1,19 @@
 package com.altinity.clickhouse.sink.connector.config;
 
+import com.alibaba.fastjson.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Map;
 
 /**
- * Schema Override By setting allows for overriding the default schema configuration for specific databases and tables.
  * It allows querying the configuration based on database and table name.
  */
 public class SchemaOverrideConfig {
 
-    /**
-     * Extracts a TableConfig object from the provided map.
-     *
-     * @param databaseName the database name (dynamic)
-     * @param tableName    the table name (dynamic)
-     * @param configMap    the map containing all configurations
-     * @return a TableConfig object filled with extracted values
-     */
+
     public static Table getTableConfig(String databaseName, String tableName, Map<String, String> configMap) {
 
         // If the tableName contains a dot, remove everything before the first dot (including the dot itself)

@@ -253,6 +253,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
                 .AUTO_CREATE_TABLES_REPLICATED.toString());
 
+        // If Replication history is enabled, add the
+        // deleted_time DateTime DEFAULT '2149-06-06',
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append("`").append(DELETED_TIME_COLUMN)
+                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append(",");
+        }
+
+
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -282,7 +291,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
         // Append partitioning and ordering clauses, using values from tableConfig if they exist
-        if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+        } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
             // Use the partition_by from tableConfig if it exists
             this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
         } else if (partitionByColumn.length() > 0) {
@@ -293,16 +305,42 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
             // Use the primary_key from tableConfig if it exists
             this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
-        }else{
-            // Handle the ordering clause
-            if (orderByColumns.length() == 0) {
-                // Use a default tuple if no specific ordering is provided
-                this.query.append(Constants.ORDER_BY_TUPLE);
+        }else if (orderByColumns.length() == 0) {
+            this.query.append(Constants.ORDER_BY_TUPLE);
+        } else{
+            // Convert the orderByColumns object to a string
+            String orderByStr = orderByColumns.toString();
+
+            // Regex pattern to detect invalid column suffix like id_registro(10)
+            String regex = "\\b(\\w+)\\(\\d+\\)";
+
+            if (orderByStr.matches(".*" + regex + ".*")) {
+                // If pattern is matched: clean up suffix and append ORDER BY
+                String fixedOrderBy = orderByStr.replaceAll(regex, "$1");
+
+                // Append the sanitized ORDER BY clause to the query
+                this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
             } else {
                 // Otherwise, use the orderByColumns for ordering
-                this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    this.query.append(Constants.ORDER_BY);
+                    this.query.append("(");
+                    this.query.append(orderByColumns.toString());
+                    this.query.append(",`").append(DELETED_TIME_COLUMN).append("`");
+
+                    this.query.append(")");
+                }
+                else {
+                    this.query.append(Constants.ORDER_BY).append(orderByStr);
+                }
             }
         }
+
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+        }
+        
 
         if (tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
             // Use the settings from tableConfig if it exists
@@ -321,7 +359,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
-
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -448,7 +485,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     }
                                 }
                                 isGeneratedColumn = true;
-
+                                //generatedColumn = generatedColumnTree.getText();
                             }
                         }
                     }
@@ -645,7 +682,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                            // if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN))
+                            {
                                 isNullColumn = false;
                             }
                         }
@@ -697,14 +735,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.error("Error retrieving NULL column schema from ClickHouse", e);
             }
         }
-
-        // Call the method to load the default column data type mapping.
-        /*Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping();
-
-        // Use a single null check with optional.
-        if (defaultColumnDataTypeMap != null) {
-            columnType = defaultColumnDataTypeMap.getOrDefault(columnName, columnType);
-        }*/
 
         // If column name and column type are defined, append them to the query.
         if (columnName != null && columnType != null)
