@@ -16,4 +16,14 @@ public class ConfigLoaderTest {
 
         Assertions.assertNotNull(props);
     }
+
+
+    @Test
+    @DisplayName("Unit test to validate config.yml from github repo")
+    public void testLoadFromGithub() {
+        ConfigLoader loader = new ConfigLoader();
+        Properties props = loader.load("https://raw.githubusercontent.com/altinity/clickhouse-debezium-connector/main/config.yml");
+
+        Assertions.assertNotNull(props);
+    }
 }
