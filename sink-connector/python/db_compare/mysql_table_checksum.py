@@ -50,7 +50,7 @@ def compute_checksum(table, statements, conn):
     return result
 
 
-def get_table_checksum_query(table, conn, binary_encoding):
+def get_table_checksum_query(table, conn, binary_encoding, where):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
@@ -118,8 +118,8 @@ def get_table_checksum_query(table, conn, binary_encoding):
         order_by_columns = ','.join(primary_key_columns)
 
     query = "select "+select+"  as query from "+args.mysql_database+"."+table
-    if args.where:
-        query += " where "+args.where
+    if where :
+        query += " where "+where
 
     if len(primary_key_columns) > 0:
         query += " order by " + order_by_columns
@@ -131,6 +131,10 @@ def get_table_checksum_query(table, conn, binary_encoding):
     logging.debug("order by columns "+order_by_columns)
     return (query, select, order_by_columns, external_column_types)
 
+
+@staticmethod
+def fstr(template, partition_expression):
+        return eval(f"f'{template}'")
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = ['set names utf8mb4']
@@ -187,7 +191,7 @@ def calculate_sql_checksum(conn, table, where):
         statements = []
 
         (query, select_query, distributed_by,
-         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding)
+         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types, where)
         result = compute_checksum(table, statements, conn)
@@ -231,7 +235,20 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password):
         threads_per_table = 1
     where = "1=1"
     if args.where:
-       where = args.where
+        where = args.where
+        if "{partition_expression}" in where:
+            partitions = get_partitions_from_regex(conn,
+                                            args.mysql_database,
+                                            '^'+mysql_table+'$')
+            partitions = partitions.fetchall()
+            if len(partitions) > 0:
+                for partition in partitions:
+                    partition_name = partition['partition_name']
+                    partition_expression = partition['partition_expression']
+                    partition_clause = ""
+                    if partition_name is not None:
+                        where = fstr(where, partition_expression)
+                        break
     md5_sum = ""
     cnt = -1
     result = []

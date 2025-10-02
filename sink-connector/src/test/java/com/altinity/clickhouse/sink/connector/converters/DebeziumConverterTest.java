@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
-import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
@@ -9,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 
-import static java.time.Instant.ofEpochMilli;
 
 
 public class DebeziumConverterTest {
@@ -40,6 +38,10 @@ public class DebeziumConverterTest {
         String timestampWithDSTStart = DebeziumConverter.TimestampConverter.convert(timestampDSTStart, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
         Assert.assertTrue(timestampWithDSTStart.equalsIgnoreCase("2022-03-09 02:01:00.000"));
 
+        //DST end time.
+        Object timestampDSTEnd = LocalDateTime.of(2022, 11, 6, 2, 1, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000;
+        String timestampWithDSTEnd = DebeziumConverter.TimestampConverter.convert(timestampDSTEnd, ClickHouseDataType.DateTime64, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"));
+        Assert.assertTrue(timestampWithDSTEnd.equalsIgnoreCase("2022-11-06 02:01:00.000"));
 
     }
 

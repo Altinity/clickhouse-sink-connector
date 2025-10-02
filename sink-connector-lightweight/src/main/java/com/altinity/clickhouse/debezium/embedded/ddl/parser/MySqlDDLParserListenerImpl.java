@@ -2,12 +2,15 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
+
+import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -250,6 +253,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
                 .AUTO_CREATE_TABLES_REPLICATED.toString());
 
+        // If Replication history is enabled, add the
+        // deleted_time DateTime DEFAULT '2149-06-06',
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append("`").append(DELETED_TIME_COLUMN)
+                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append(",");
+        }
+
+
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -260,29 +272,79 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         this.query.append(")");
 
+        // Retrieve table from configuration setting
+        SchemaOverrideConfig.Table tableConfig = SchemaOverrideConfig.getTableConfig(this.databaseName, this.tableName, this.config.originalsStrings());
+
         // Add engine type based on table configuration.
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             if (isReplicatedReplacingMergeTree) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
+                this.query.append(String.format(" Engine=ReplicatedReplacingMergeTree(%s, %s)", VERSION_COLUMN, isDeletedColumn));
             } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(",").append(isDeletedColumn).append(")");
             }
         } else {
             if (isReplicatedReplacingMergeTree) {
-                this.query.append(String.format("Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
+                this.query.append(String.format(" Engine=ReplicatedReplacingMergeTree(%s)", VERSION_COLUMN));
             } else {
                 this.query.append(" Engine=ReplacingMergeTree(").append(VERSION_COLUMN).append(")");
             }
         }
 
-        // Append partitioning and ordering clauses.
-        if (partitionByColumn.length() > 0) {
+        // Append partitioning and ordering clauses, using values from tableConfig if they exist
+
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+        } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+            // Use the partition_by from tableConfig if it exists
+            this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
+        } else if (partitionByColumn.length() > 0) {
+            // Fallback to partitionByColumn if tableConfig does not provide a partition_by value
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
-        if (orderByColumns.length() == 0) {
+
+        if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+            // Use the primary_key from tableConfig if it exists
+            this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
+        }else if (orderByColumns.length() == 0) {
             this.query.append(Constants.ORDER_BY_TUPLE);
-        } else {
-            this.query.append(Constants.ORDER_BY).append(orderByColumns.toString());
+        } else{
+            // Convert the orderByColumns object to a string
+            String orderByStr = orderByColumns.toString();
+
+            // Regex pattern to detect invalid column suffix like id_registro(10)
+            String regex = "\\b(\\w+)\\(\\d+\\)";
+
+            if (orderByStr.matches(".*" + regex + ".*")) {
+                // If pattern is matched: clean up suffix and append ORDER BY
+                String fixedOrderBy = orderByStr.replaceAll(regex, "$1");
+
+                // Append the sanitized ORDER BY clause to the query
+                this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
+            } else {
+                // Otherwise, use the orderByColumns for ordering
+
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    this.query.append(Constants.ORDER_BY);
+                    this.query.append("(");
+                    this.query.append(orderByColumns.toString());
+                    this.query.append(",`").append(DELETED_TIME_COLUMN).append("`");
+
+                    this.query.append(")");
+                }
+                else {
+                    this.query.append(Constants.ORDER_BY).append(orderByStr);
+                }
+            }
+        }
+
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            this.query.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+        }
+        
+
+        if (tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
+            // Use the settings from tableConfig if it exists
+            this.query.append(Constants.SETTINGS).append(tableConfig.getSettings());
         }
     }
 
@@ -408,8 +470,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         for (ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
                             if (generatedColumnTree instanceof MySqlParser.ExpressionContext) {
+                                for(ParseTree generatedColumnTreeChildren: ((MySqlParser.ExpressionContext) generatedColumnTree).children) {
+                                    //System.out.println(generatedColumnTreeChildren.getText().trim());
+                                    // iterate over the children of the generatedColumnTreeChildren
+                                    if(generatedColumnTreeChildren instanceof MySqlParser.IsNullPredicateContext) {
+                                        for (ParseTree generatedColumnTreeChildrenChildren : ((MySqlParser.IsNullPredicateContext) generatedColumnTreeChildren).children) {
+                                            if (generatedColumnTreeChildrenChildren instanceof MySqlParser.ExpressionAtomPredicateContext) {
+                                                //System.out.println(generatedColumnTreeChildrenChildren.getText().trim());
+                                                generatedColumn = generatedColumnTreeChildrenChildren.getText();
+                                            }
+                                        }
+                                    } else {
+                                        generatedColumn = generatedColumnTreeChildren.getText();
+                                    }
+                                }
                                 isGeneratedColumn = true;
-                                generatedColumn = generatedColumnTree.getText();
+                                //generatedColumn = generatedColumnTree.getText();
                             }
                         }
                     }
@@ -481,6 +557,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Convert MySQL data type to the equivalent ClickHouse data type.
         chDataType = DataTypeConverter.convertToString(this.config, columnName,
                 scale, precision, dtc, this.userProvidedTimeZone);
+
+        Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping(this.config.originalsStrings());
+
+        // Use a single null check with optional.
+        if (defaultColumnDataTypeMap != null) {
+            chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
+        }
 
         return chDataType;
     }
@@ -599,7 +682,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
+                            // if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN))
+                            {
                                 isNullColumn = false;
                             }
                         }

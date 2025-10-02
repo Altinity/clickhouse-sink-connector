@@ -176,15 +176,14 @@ public class ITCommon {
         defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s/altinity_sink_connector",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s/altinity_sink_connector",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
+        defaultProps.setProperty("jdbc.schema.history.table.name", "altinity_sink_connector.replicate_schema_history");
 
         return defaultProps;
 

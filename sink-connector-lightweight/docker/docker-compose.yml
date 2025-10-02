@@ -1,4 +1,3 @@
-version: "3.4"
 
 # Ubuntu , set this for redpanda to start
 # https://sort.veritas.com/public/documents/HSO/2.0/linux/productguides/html/hfo_admin_ubuntu/ch04s03.htm

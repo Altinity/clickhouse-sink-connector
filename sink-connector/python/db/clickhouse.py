@@ -26,6 +26,10 @@ def clickhouse_execute_conn(conn, sql):
     result = cursor.fetchall()
     return result
 
+def get_table_partition_key(conn, database, table):
+   sql = f"SELECT partition_key FROM system.tables WHERE name = '{table}'  AND database = '{database}' FORMAT TabSeparated"
+   res = clickhouse_execute_conn(conn, sql)
+   return res
 
 def execute_sql(conn, strSql):
     """
