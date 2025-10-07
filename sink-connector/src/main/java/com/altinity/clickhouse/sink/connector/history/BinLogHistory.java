@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.history;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -132,7 +134,7 @@ public class BinLogHistory {
      *
      * @param currentBatch list of ClickHouseStruct objects to insert into history table
      */
-    public void addRecordsToHistoryTable(String historyTableName, Connection conn, String DDL, List<ClickHouseStruct> currentBatch) throws SQLException {
+    public void addRecordsToHistoryTable(ClickHouseSinkConnectorConfig config, String historyTableName, Connection conn, String DDL, List<ClickHouseStruct> currentBatch) throws SQLException {
         if (currentBatch == null || currentBatch.isEmpty()) {
             return;
         }
@@ -145,7 +147,7 @@ public class BinLogHistory {
         // Generate insert query using QueryFormatter
         String insertQuery = queryFormatter.getInsertQueryUsingInputFunction(historyTableName, columnToDataTypeMap);
 
-        this.executeInsertWithStructs(conn, insertQuery, DDL, currentBatch);
+        this.executeInsertWithStructs(config, conn, insertQuery, DDL, currentBatch);
     }
 
     /**
@@ -157,7 +159,7 @@ public class BinLogHistory {
      * @param clickHouseStructs list of ClickHouseStruct objects to insert
      * @throws SQLException if database operation fails
      */
-    public void executeInsertWithStructs(Connection conn, String insertSql, String DDL, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
+    public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
@@ -168,7 +170,7 @@ public class BinLogHistory {
                     if (columnName.equals(DDL_COLUMN)) {
                         ps.setString(paramIndex++, DDL);
                     } else {
-                        Object value = getValueFromStruct(struct, columnName);
+                        Object value = getValueFromStruct(struct, columnName, config);
                         ps.setObject(paramIndex++, value);
                     }
                 }
@@ -187,7 +189,7 @@ public class BinLogHistory {
      * @param columnName name of the column to extract
      * @return the value for the specified column
      */
-    private Object getValueFromStruct(ClickHouseStruct struct, String columnName) {
+    private Object getValueFromStruct(ClickHouseStruct struct, String columnName, ClickHouseSinkConnectorConfig config) {
         switch (columnName) {
             case GTID_COLUMN:
                 return struct.getGtid();
@@ -232,7 +234,10 @@ public class BinLogHistory {
                 Long version= SnowFlakeId.generate(struct.getTs_ms(), struct.getGtid(), false);
                 return version;
             case HOST_COLUMN:
-                return Long.toString(struct.getServerId()); // Host might need special handling
+            case PRIMARY_HOST_COLUMN:
+                // Get this value from database.hostname
+                String databaseHostname = config.getString(ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString());
+                return databaseHostname; // Host might need special handling
             case LOGFILE_COLUMN:
                 if(struct.getFile() == null) {
                     return "";
@@ -240,11 +245,6 @@ public class BinLogHistory {
                 return struct.getFile();
             case POSITION_COLUMN:
                 return struct.getPos();
-            case PRIMARY_HOST_COLUMN:
-                if(struct.getServerId() == null) {
-                    return "";
-                }
-                return Long.toString(struct.getServerId()); // Primary host might need special handling
             default:
                 return null;
         }

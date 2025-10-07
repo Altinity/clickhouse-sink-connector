@@ -469,7 +469,7 @@ public class DebeziumChangeEventCapture {
                         // Add the chStruct to the list
                         List<ClickHouseStruct> currentBatch = new ArrayList<>();
                         currentBatch.add(chStruct);
-                        binLogHistory.addRecordsToHistoryTable(historyTableName, replicationHistoryDbConnection, DDL, currentBatch);
+                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, currentBatch);
                     }
                 } catch (Exception e) {
                     log.error("Error adding DDL records to history table", e);
