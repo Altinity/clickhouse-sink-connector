@@ -59,6 +59,10 @@ public class BinLogHistory {
     public static final String POSITION_COLUMN_DATA_TYPE = "UInt64";
     public static final String PRIMARY_HOST_COLUMN = "primary_host";
     public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "LowCardinality(String)";
+    public static final String SERVER_ID_COLUMN = "server_id";
+    public static final String SERVER_ID_COLUMN_DATA_TYPE = "UInt32";
+    public static final String ROW_COLUMN = "row";
+    public static final String ROW_COLUMN_DATA_TYPE = "UInt32";
 
     public static final Map<String, String> HISTORY_COLUMNS = new LinkedHashMap<String, String>() {{
         put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
@@ -76,6 +80,8 @@ public class BinLogHistory {
         put(LOGFILE_COLUMN, LOGFILE_COLUMN_DATA_TYPE);
         put(POSITION_COLUMN, POSITION_COLUMN_DATA_TYPE);
         put(PRIMARY_HOST_COLUMN, PRIMARY_HOST_COLUMN_DATA_TYPE);
+        put(SERVER_ID_COLUMN, SERVER_ID_COLUMN_DATA_TYPE);
+        put(ROW_COLUMN, ROW_COLUMN_DATA_TYPE);
     }};
 
     // get column to data type map
@@ -112,7 +118,9 @@ public class BinLogHistory {
         sb.append(") ").append(ENGINE_REPLACING_MERGE_TREE);
 
         // ORDER BY gtid
-        sb.append(" ").append(ORDER_BY).append(" `").append(TIME_COLUMN).append("`");
+        sb.append(" ").append(ORDER_BY).append("(").append(SERVER_ID_COLUMN).append(",")
+                .append(LOGFILE_COLUMN).append(",").append(POSITION_COLUMN).append(",")
+                .append(ROW_COLUMN).append(",").append(TIME_COLUMN).append(")");
         // Add partition by toDate(_time)
         sb.append(PARTITION_BY).append(TIME_COLUMN).append("`)");
         // Add TTL toDate(_time) + toIntervalDay(ttlDays)
@@ -245,6 +253,10 @@ public class BinLogHistory {
                 return struct.getFile();
             case POSITION_COLUMN:
                 return struct.getPos();
+            case SERVER_ID_COLUMN:
+                return struct.getServerId();
+            case ROW_COLUMN:
+                return struct.getRow();
             default:
                 return null;
         }
