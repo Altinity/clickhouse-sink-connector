@@ -24,10 +24,7 @@ def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql
     conn = engine.connect()
     return conn
 
-def get_columns(conn, mysql_database, datetime_column):
-   sql = f"select column_name, table_name, table_schema from information_schema.columns where column_name = '{datetime_column}'"
-   return execute_mysql(conn, sql)
-
+  
 def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False, include_partitions_regex=None):
     schema = mysql_database
     exclude_regex_clause = ""
@@ -119,7 +116,7 @@ def resolve_credentials_from_config(config_file):
 
 
 def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
-    sql = f"explain select * from {mysql_table} where {where} and {pk} between {min_pk} and {max_pk}"
+    sql = f"explain select * from `{mysql_table}` where {where} and {pk} between {min_pk} and {max_pk}"
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
     count = int(head['rows'].iloc[0])
@@ -127,7 +124,7 @@ def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
 
 
 def get_min_max_pk_value(conn, mysql_table, pk, where):
-    sql = f"select min({pk}) as min_pk, max({pk}) as max_pk from {mysql_table} where {where}"
+    sql = f"select min({pk}) as min_pk, max({pk}) as max_pk from `{mysql_table}` where {where}"
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
     if head['max_pk'].isnull().values.any():
@@ -188,7 +185,7 @@ def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
 
         # we need to make sure there is data in the chunk, as CH wants data on insert in a pipe
         # we can use that to find a better minimum
-        sql = f"select {pk} from {mysql_table} where {where} and {pk} between {lower_bound} and {upper_bound}  order by {pk} limit 1"
+        sql = f"select {pk} from `{mysql_table}` where {where} and {pk} between {lower_bound} and {upper_bound}  order by {pk} limit 1"
         df = mysql_execute_df(conn, sql)
         index = df.index
         number_of_rows = len(index)

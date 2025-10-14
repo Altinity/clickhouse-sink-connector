@@ -50,7 +50,7 @@ def compute_checksum(table, statements, conn):
     return result
 
 
-def get_table_checksum_query(table, conn, binary_encoding, where):
+def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
@@ -67,25 +67,36 @@ def get_table_checksum_query(table, conn, binary_encoding, where):
         data_type = row['data_type']
         is_nullable = row['is_nullable']
 
+        if row['column_name'] in excluded_columns:
+            logging.info("Excluding column "+row['column_name'])
+            continue
+        
         if not first_column:
             select += ","
-
+            
         if is_nullable == 'YES':
             nullables.append(column_name)
-        if 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
+        
+        select_column = ""
+        if 'json' in data_type :
+            # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
+            # https://bugs.mysql.com/bug.php?id=118990
+            # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
+            select_column += f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\\\s(-*\\\\d|\\\\[|\\\\{{|true|false)','":$1'),'\\\\.0\\\\b',''),'\\\\s+(".*?)\\\\s*','$1'),'\\\\s*\\\\n\\\\\\s*',''), '\\\\\\\\u([0-9A-F]{{3}})a', '\\\\\\\\u$1A'), '\\\\\\\\u([0-9A-F]{{3}})b', '\\\\\\\\u$1B'), '\\\\\\\\u([0-9A-F]{{3}})c', '\\\\\\\\u$1C'), '\\\\\\\\u([0-9A-F]{{3}})d', '\\\\\\\\u$1D'), '\\\\\\\\u([0-9A-F]{{3}})e', '\\\\\\\\u$1E'), '\\\\\\\\u([0-9A-F]{{3}})f', '\\\\\\\\u$1F')"""
+        elif 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(3)))) else {column_name} end end"
+            select_column += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(3)))) else substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
         elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
             # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
-            select += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(6)))) else  {column_name} end end"
+            select_column += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(6)))) else  substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
         elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
-            select += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
+            select_column += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
         elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
-            select += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
+            select_column += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
         else:
             if 'date' == data_type:  # Date are converted to Date32 in CH
               # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
-                select += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
+                select_column += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
             else:
                 if is_binary_datatype(data_type):
                     binary_encode = "lower(hex(cast(" + \
@@ -93,9 +104,13 @@ def get_table_checksum_query(table, conn, binary_encoding, where):
                     if binary_encoding == 'base64':
                         binary_encode = "replace(to_base64(cast(" + \
                             column_name+" as binary)),'\\n','')"
-                    select += binary_encode
+                    select_column += binary_encode
                 else:
-                    select += column_name + ""
+                    select_column += f"{column_name}"
+                    
+        if is_nullable == 'YES':
+            select_column = f"ifnull({select_column},'')"
+        select+=select_column
         first_column = False
         data_types[row['column_name']] = data_type
 
@@ -117,7 +132,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where):
     if len(primary_key_columns) > 0:
         order_by_columns = ','.join(primary_key_columns)
 
-    query = "select "+select+"  as query from "+args.mysql_database+"."+table
+    query = "select "+select+"  as query from `"+args.mysql_database+"`.`"+table+"`"
     if where :
         query += " where "+where
 
@@ -135,6 +150,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where):
 @staticmethod
 def fstr(template, partition_expression):
         return eval(f"f'{template}'")
+
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = ['set names utf8mb4']
@@ -178,7 +194,7 @@ def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
 
-def calculate_sql_checksum(conn, table, where):
+def calculate_sql_checksum(conn, table, where, excluded_columns):
     result = None
     try:
         if args.ignore_tables_regex:
@@ -191,7 +207,7 @@ def calculate_sql_checksum(conn, table, where):
         statements = []
 
         (query, select_query, distributed_by,
-         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where)
+         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types, where)
         result = compute_checksum(table, statements, conn)
@@ -201,7 +217,7 @@ def calculate_sql_checksum(conn, table, where):
     return result
 
 
-def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, chunk, pk, where):
+def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns):
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
     _where = "1=1"
     if where:
@@ -211,11 +227,11 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
         max_pk = int(chunk['max_pk'])
         _where = f" {_where} and {pk} between {min_pk} and {max_pk}" 
 
-    result = calculate_sql_checksum(conn, mysql_table, _where)
+    result = calculate_sql_checksum(conn, mysql_table, _where, excluded_columns)
     return result
 
 
-def calculate_checksum(mysql_table, mysql_user, mysql_password):
+def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns):
     if args.ignore_tables_regex:
         rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex_ignore_tables.match(mysql_table):
@@ -263,7 +279,7 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password):
             futures = []
             for chunk in divide_table_into_even_chunks(conn, mysql_table, args.chunk_size, pk, where): 
                 futures.append(executor.submit(
-                    calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where))
+                    calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns))
             for future in concurrent.futures.as_completed(futures):
                 result.append(future.result())
                 if future.exception() is not None:
@@ -340,7 +356,7 @@ def main():
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
-                        nargs='+', default=['_sign', '_version'])
+                        nargs='+', default=[])
     parser.add_argument('--threads_per_table', type=int,
                         help='number of parallel threads per table', default=1)
     parser.add_argument('--chunk_size', type=int, help='Chunk size', default=10000)
@@ -384,7 +400,7 @@ def main():
             future_to_table = {}
             for table in tables.fetchall():
                 future = executor.submit(
-                    calculate_checksum, table['table_name'], mysql_user, mysql_password)
+                    calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns)
                 futures.append(future)
                 future_to_table[future] = table['table_name']
             for future in concurrent.futures.as_completed(futures):
