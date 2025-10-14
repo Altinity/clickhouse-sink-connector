@@ -792,6 +792,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.MEDIUM,
+                        "Hostname of the database",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
                 );
     }
 }

@@ -85,15 +85,16 @@ public class ClickHouseDbConstants {
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
 
 
+    public static final String DELETED_TIME_COLUMN_TO_DATE = "toDate(`%s`)";
     /**
      * The name of the column indicating the deleted time.
      */
-    public static final String DELETED_TIME_COLUMN = "deleted_time";
+    public static final String DELETED_TIME_COLUMN = "valid_to";
 
     /**
      * The data type of the deleted time column, typically a date time.
      */
-    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime";
+    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT '2149-06-06'" ;
     
     /**
      * The name of the column indicating whether a record

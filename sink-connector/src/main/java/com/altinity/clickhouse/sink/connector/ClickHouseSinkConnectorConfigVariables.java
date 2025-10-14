@@ -102,8 +102,9 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_DATABASE_NAME("replication.history.database.name"),
 
-    REPLICATION_HISTORY_TTL("replication.history.ttl");
+    REPLICATION_HISTORY_TTL("replication.history.ttl"), 
 
+    DATABASE_HOSTNAME("database.hostname");
 
 
 

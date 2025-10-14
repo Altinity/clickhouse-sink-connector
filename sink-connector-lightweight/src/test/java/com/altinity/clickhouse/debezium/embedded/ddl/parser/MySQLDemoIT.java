@@ -421,7 +421,7 @@ public class MySQLDemoIT  {
         // Validate in ClickHouse
         DBMetadata metadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
-        Assert.assertEquals("officeCode should be Int32", "Int32", columns.get("officeCode"));
+        Assert.assertEquals("officeCode should be Int32", "Nullable(Int32)", columns.get("officeCode"));
     }
 
     /**

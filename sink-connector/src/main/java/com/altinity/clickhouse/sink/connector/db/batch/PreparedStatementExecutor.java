@@ -24,7 +24,9 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.*;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -43,6 +45,13 @@ public class PreparedStatementExecutor {
      * This logger is used throughout the class to log messages related to database operations.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
+
+    /**
+     * Default epoch timestamp in seconds for the deleted_time column (2149-06-06 00:00:00 UTC).
+     * This represents a far-future date used to mark records that are not deleted.
+     */
+    private static final long DEFAULT_DELETED_TIME_EPOCH_SECONDS = 
+            LocalDateTime.of(2149, 6, 6, 0, 0, 0).toEpochSecond(ZoneOffset.UTC);
 
     /**
      * The column name used for "delete" operations in the ReplacingMergeTree engine.
@@ -216,8 +225,17 @@ public class PreparedStatementExecutor {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
+                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                                    false, config, columnToDataTypeMap, engine, tableName);
+
+                        } else {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine, tableName);
+                                    false, config, columnToDataTypeMap, engine, tableName);
+                        }
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -399,15 +417,31 @@ public class PreparedStatementExecutor {
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
                         record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
                     // Set the current time (truncate milliseconds for DateTime compatibility)
-                    long currentTimeMs = System.currentTimeMillis();
-                    long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
-                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
+                    //long currentTimeMs = System.currentTimeMillis();
+                    //long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
                     //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
-
+                    if(beforeSection) {
+                        long debeziumTsMs = record.getTs_ms();
+                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
+                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), debeziumTimestampSeconds);
+                    }
+                    else {
+                        // Set default value 2149-06-06
+                        //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
+                        // Set to current time.
+                        long currentTimeMs = System.currentTimeMillis();
+                        long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), currentTimeSec);
+                        
+                    }
                 } else {
                     // Set default value 2149-06-06
-                    ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(2149, 6, 6, 0, 0, 0, 0));
+                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
                 }
+            }
+            if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
             }
         }
 

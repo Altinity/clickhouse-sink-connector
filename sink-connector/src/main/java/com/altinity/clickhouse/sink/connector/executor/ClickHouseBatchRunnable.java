@@ -294,7 +294,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                             firstRecord, databaseConn);
 
                     BinLogHistory binLogHistory = new BinLogHistory();
-                    binLogHistory.addRecordsToHistoryTable(tableName, writer.getConnection(), "", currentBatch);
+                    binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", currentBatch);
                 }
 
                 ///// ***** START PROCESSING BATCH **************************
