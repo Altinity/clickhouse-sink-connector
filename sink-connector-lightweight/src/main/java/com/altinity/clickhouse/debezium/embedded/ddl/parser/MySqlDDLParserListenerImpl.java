@@ -259,6 +259,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append("`").append(DELETED_TIME_COLUMN)
                     .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
                     .append(",");
+
+            this.query.append("`").append(OPERATION_COLUMN)
+                    .append("` ").append(OPERATION_COLUMN_DATA_TYPE)
+                    .append(",");
         }
 
 

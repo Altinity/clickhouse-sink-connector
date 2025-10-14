@@ -168,6 +168,12 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
                     .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
                     .append(",");
+
+            // Add operation column
+            createTableSyntax.append("`").append(OPERATION_COLUMN)
+                    .append("` ").append(OPERATION_COLUMN_DATA_TYPE)
+                    .append(",");
+            
         }
 
         if (isNewReplacingMergeTreeEngine == true) {

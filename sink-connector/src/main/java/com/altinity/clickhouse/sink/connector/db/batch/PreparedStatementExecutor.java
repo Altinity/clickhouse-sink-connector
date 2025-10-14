@@ -225,8 +225,17 @@ public class PreparedStatementExecutor {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
+                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                                    false, config, columnToDataTypeMap, engine, tableName);
+
+                        } else {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine, tableName);
+                                    false, config, columnToDataTypeMap, engine, tableName);
+                        }
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -430,6 +439,9 @@ public class PreparedStatementExecutor {
                     // Set default value 2149-06-06
                     ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
                 }
+            }
+            if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
             }
         }
 

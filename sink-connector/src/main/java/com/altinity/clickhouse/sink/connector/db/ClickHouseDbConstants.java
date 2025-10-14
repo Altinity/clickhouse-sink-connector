@@ -89,7 +89,7 @@ public class ClickHouseDbConstants {
     /**
      * The name of the column indicating the deleted time.
      */
-    public static final String DELETED_TIME_COLUMN = "deleted_time";
+    public static final String DELETED_TIME_COLUMN = "valid_to";
 
     /**
      * The data type of the deleted time column, typically a date time.
