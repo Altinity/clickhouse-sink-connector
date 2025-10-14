@@ -85,6 +85,7 @@ public class ClickHouseDbConstants {
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
 
 
+    public static final String DELETED_TIME_COLUMN_TO_DATE = "toDate(`%s`)";
     /**
      * The name of the column indicating the deleted time.
      */

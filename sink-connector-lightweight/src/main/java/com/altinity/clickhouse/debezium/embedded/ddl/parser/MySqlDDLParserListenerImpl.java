@@ -293,7 +293,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Append partitioning and ordering clauses, using values from tableConfig if they exist
 
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            this.query.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+            String deletedTimeColumnToDate = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
+            this.query.append(" PARTITION BY ").append(deletedTimeColumnToDate);
         } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
             // Use the partition_by from tableConfig if it exists
             this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());

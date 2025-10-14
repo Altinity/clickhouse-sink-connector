@@ -210,7 +210,8 @@ public class ClickHouseAutoCreateTable
 
         // If Replication history is enabled, add the PARTITION BY toDate(deleted_time)
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            createTableSyntax.append(" PARTITION BY `").append(DELETED_TIME_COLUMN).append("`");
+            String partitionbyDateColumn = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
+            createTableSyntax.append(" PARTITION BY ").append(partitionbyDateColumn);
         } else {
 
             // Add PARTITION BY if it is present
