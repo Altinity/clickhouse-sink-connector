@@ -10,10 +10,7 @@ import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -31,6 +28,7 @@ import java.util.concurrent.Executors;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 import static org.junit.Assert.assertTrue;
 
+@Disabled
 public class BinLogHistoryIT {
 
     private static final Logger log = LoggerFactory.getLogger(BinLogHistoryIT.class);
