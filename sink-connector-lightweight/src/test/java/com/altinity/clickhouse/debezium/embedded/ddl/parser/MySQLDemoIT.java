@@ -29,6 +29,9 @@ import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
+
 /**
  * Integration Test class to validate MySQL and ClickHouse operations using Debezium.
  * Tests various DDL and DML operations including column additions, modifications,
@@ -44,7 +47,7 @@ public class MySQLDemoIT  {
 
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
             .asCompatibleSubstituteFor("clickhouse"))
             .withInitScript("init_clickhouse_it.sql")
             .withUsername("ch_user")
@@ -52,7 +55,7 @@ public class MySQLDemoIT  {
             .withExposedPorts(8123);
 
     @Container
-    public static MySQLContainer mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+    public static MySQLContainer mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("alter_ddl_add_column.sql")
@@ -74,7 +77,7 @@ public class MySQLDemoIT  {
     public static void startContainers()  {
 
         mySqlContainer = new MySQLContainer<>(
-                DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+                DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                         .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees")
                 .withUsername("root")

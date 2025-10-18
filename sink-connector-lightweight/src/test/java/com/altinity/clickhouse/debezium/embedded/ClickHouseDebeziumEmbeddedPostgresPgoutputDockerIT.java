@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDefaultProperties;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
@@ -34,7 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
 
     @Container
-    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+    public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
             .asCompatibleSubstituteFor("clickhouse"))
             .withInitScript("init_clickhouse_it.sql")
             .withUsername("ch_user")
