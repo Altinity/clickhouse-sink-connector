@@ -125,7 +125,7 @@ public class DataTypeConverter {
 
         // if the data type is in the overriddenDataTypesMap, then return the overridden data type
         if (overriddenDataTypesMap.containsKey(dataType.name().toLowerCase())) {
-            return overriddenDataTypesMap.get(dataType.name());
+            return overriddenDataTypesMap.get(dataType.name().toLowerCase());
         }
 
         // Map the schema to the corresponding ClickHouse data type
