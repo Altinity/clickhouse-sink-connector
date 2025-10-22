@@ -85,11 +85,11 @@ def run_quick_safe_checksum(cmd, host, table):
         return None
     
 
-def compute_checksum (database, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False):
+def compute_checksum (database, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
     table_name = f"{database}.{table}"
     logging.info(f"Checksumming {table_name}")
     commands = []
-    cmd = get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)
+    cmd = get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
     
     commands.append((mysql_host,cmd))
     
@@ -115,7 +115,7 @@ def get_tables_from_regexp(conn, database, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, database, tables_regexp, include_partitions_regex=args.include_partitions_regex, exclude_tables_regex=args.exclude_tables_regex, non_partitioned_tables_only=args.non_partitioned_tables_only)
 
 
-def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False):
+def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
     partition_date = args.partition_date
     where_argument = '--where " 1=1 '
     if where:
@@ -132,8 +132,11 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     debug_output_clause = ""
     if debug_output:
         debug_output_clause = "--debug_output"
-        
-    cmd = f"""set -e pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    
+    defaults_file_clause = ""
+    if defaults_file:
+        defaults_file_clause = f"--defaults_file={defaults_file}"
+    cmd = f"""set -e pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     logging.debug(f"MySQL command: {cmd}")
     return cmd 
 
@@ -258,7 +261,7 @@ def run_config(config):
                     if database in ignored_columns_map and table['table_name'] in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table['table_name']].keys())
                     future = executor.submit(
-                        compute_checksum, database, table['table_name'], mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output)
+                        compute_checksum, database, table['table_name'], mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file)
                     futures.append(future)
                     future_to_table[future] = table['table_name']
                 for future in concurrent.futures.as_completed(futures):
@@ -366,6 +369,7 @@ def main():
     parser.add_argument('--lock_tables_on_source', action='store_true', default=False,
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
+    
     global args
     args = parser.parse_args()
 
