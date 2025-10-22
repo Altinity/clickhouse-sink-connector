@@ -34,9 +34,10 @@ in terms of number of elements the queue can hold and the maximum size of the qu
 
 ```
     # The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
-    sink.connector.max.queue.size: "100000"
+    sink.connector.max.queue.size: "1000"
 
 ```
+
 
 3. **Thread Pool**:
 ```

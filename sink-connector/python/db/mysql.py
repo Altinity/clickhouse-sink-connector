@@ -24,6 +24,7 @@ def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql
     conn = engine.connect()
     return conn
 
+  
 def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False, include_partitions_regex=None):
     schema = mysql_database
     exclude_regex_clause = ""
