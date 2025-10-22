@@ -26,6 +26,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 @Testcontainers
 @DisplayName("Integration Test that validates replication of Truncate Table DDL statement")
 public class TruncateTableIT {
@@ -35,7 +38,7 @@ public class TruncateTableIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("truncate_table.sql")
@@ -49,7 +52,7 @@ public class TruncateTableIT {
     }
 
     static {
-        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")

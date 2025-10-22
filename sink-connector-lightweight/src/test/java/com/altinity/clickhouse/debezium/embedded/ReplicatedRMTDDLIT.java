@@ -27,6 +27,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
 @Testcontainers
 @DisplayName("Integration test that validates auto creation of Replicated RMT when the flag is set in config(auto.create.replicated.tables)")
 public class ReplicatedRMTDDLIT {
@@ -43,7 +45,7 @@ public class ReplicatedRMTDDLIT {
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
 
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types_test.sql")

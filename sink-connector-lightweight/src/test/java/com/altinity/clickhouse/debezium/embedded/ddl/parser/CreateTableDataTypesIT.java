@@ -29,6 +29,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+
 @Testcontainers
 @Tag("datetime")
 @DisplayName("Integration test that tests replication of data types and validates datetime," +
@@ -37,7 +39,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types.sql")
