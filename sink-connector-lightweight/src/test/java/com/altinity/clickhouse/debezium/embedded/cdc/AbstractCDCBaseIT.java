@@ -11,20 +11,23 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 @Testcontainers
 public class AbstractCDCBaseIT {
 
         protected static MySQLContainer mySqlContainer;
         protected static ClickHouseContainer clickHouseContainer;
         static {
-            clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+            clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                     .asCompatibleSubstituteFor("clickhouse"))
                     .withInitScript("init_clickhouse_it.sql")
                     .withUsername("ch_user")
                     .withPassword("password")
                     .withExposedPorts(8123);
 
-            mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+            mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                     .asCompatibleSubstituteFor("mysql"))
                     .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                     .withInitScript("alter_ddl_add_column.sql")

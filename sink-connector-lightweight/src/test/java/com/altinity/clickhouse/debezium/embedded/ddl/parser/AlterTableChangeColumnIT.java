@@ -23,13 +23,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
 @Testcontainers
 @DisplayName("Integration Test that validates DDL replication of ALTER table column, first, after and MODIFY column")
 public class AlterTableChangeColumnIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("alter_ddl_change_column.sql")

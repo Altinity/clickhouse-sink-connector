@@ -25,6 +25,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
 @Disabled
 @Testcontainers
 @DisplayName("Integration Test to validate replication of employees database")
@@ -34,7 +36,7 @@ public class EmployeesDBIT extends DDLBaseIT {
         @BeforeEach
         @Override
         public void startContainers() throws InterruptedException {
-            mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+            mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                     .asCompatibleSubstituteFor("mysql"))
                     .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                     .withInitScript("employees.sql")
