@@ -22,7 +22,7 @@ public class BinLogHistoryTest {
             "test_db",
             30
         );
-        String expected = "CREATE TABLE IF NOT EXISTS test_db.`test_history`(`gtid` String,`database` LowCardinality(String),`table` LowCardinality(String),`ddl` String,`before` LowCardinality(String),`after` LowCardinality(String),`_raw` String,`_time` DateTime64(3),`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` LowCardinality(String),`logfile` LowCardinality(String),`position` UInt64,`primary_host` LowCardinality(String)) ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY `_time` PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
+        String expected = "CREATE TABLE IF NOT EXISTS test_db.`test_history`(`gtid` String,`database` LowCardinality(String),`table` LowCardinality(String),`ddl` String,`before` LowCardinality(String),`after` LowCardinality(String),`_raw` String,`_time` DateTime64(3),`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` LowCardinality(String),`logfile` LowCardinality(String),`position` UInt64,`primary_host` LowCardinality(String),`server_id` UInt32,`row` UInt32) ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY(server_id,logfile,position,row,_time) PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
         assertEquals(expected, result);
     }
 
@@ -34,8 +34,9 @@ public class BinLogHistoryTest {
             "production_db",
             30
         );
-        String expected = "CREATE TABLE IF NOT EXISTS production_db.`user_history`(`gtid` String,`database` LowCardinality(String),`table` LowCardinality(String),`ddl` String,`before` LowCardinality(String),`after` LowCardinality(String),`_raw` String,`_time` DateTime64(3),`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` LowCardinality(String),`logfile` LowCardinality(String),`position` UInt64,`primary_host` LowCardinality(String)) ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY `_time` PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
-         Assert.assertTrue(expected.equalsIgnoreCase(result));
+        String expected = "CREATE TABLE IF NOT EXISTS production_db.`user_history`(`gtid` String,`database` LowCardinality(String),`table` LowCardinality(String),`ddl` String,`before` LowCardinality(String),`after` LowCardinality(String),`_raw` String,`_time` DateTime64(3),`is_deleted` UInt8,`operation` String,`_version` UInt64,`host` LowCardinality(String),`logfile` LowCardinality(String),`position` UInt64,`primary_host` LowCardinality(String),`server_id` UInt32,`row` UInt32) ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY(server_id,logfile,position,row,_time) PARTITION BY toDate(`_time`) TTL toDate(`_time`) + toIntervalDay(30);";
+
+        Assert.assertTrue(expected.equalsIgnoreCase(result));
         //Assert.assertTrue(result.contains("CREATE TABLE production_db.`user_history`"));
         //Assert.assertTrue(result.contains("ENGINE = MergeTree()"));
     }

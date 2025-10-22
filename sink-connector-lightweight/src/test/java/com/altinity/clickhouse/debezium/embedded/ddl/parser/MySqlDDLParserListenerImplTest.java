@@ -198,6 +198,17 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    public void testAutoCreateTable() {
+        String createQuery = "CREATE TABLE IF NOT EXISTS test.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17 (id INT NOT NULL,D4 DECIMAL(2,1), D5 DECIMAL(30, 10), Doublex DOUBLE, x_date DATE,x_datetime6 DATETIME(6),x_time TIME,x_time6 TIME(6),Intmin INT, Intmax INT,UIntmin INT UNSIGNED, UIntmax INT UNSIGNED,BIGIntmin BIGINT,BIGIntmax BIGINT,UBIGIntmin BIGINT UNSIGNED,UBIGIntmax BIGINT UNSIGNED,TIntmin TINYINT,TIntmax TINYINT,UTIntmin TINYINT UNSIGNED,UTIntmax TINYINT UNSIGNED,SIntmin SMALLINT,SIntmax SMALLINT,USIntmin SMALLINT UNSIGNED,USIntmax SMALLINT UNSIGNED,MIntmin MEDIUMINT,MIntmax MEDIUMINT,UMIntmin MEDIUMINT UNSIGNED,UMIntmax MEDIUMINT UNSIGNED, x_char CHAR, x_text TEXT, x_varchar VARCHAR(4), x_Blob BLOB, x_Mediumblob MEDIUMBLOB, x_Longblob LONGBLOB, x_binary BINARY, x_varbinary VARBINARY(4), PRIMARY KEY (id)) ENGINE = InnoDB";
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        HashMap<String, String> props = new HashMap<>();
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
+        mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
+        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float32),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(Int64),UIntmax Nullable(Int64),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(Int16),UTIntmax Nullable(Int16),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(Int32),USIntmax Nullable(Int32),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(Int32),UMIntmax Nullable(Int32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+    }
+    @Test
     @DisplayName("Auto create table with user provided clickhouse timezone")
     public void testAutoCreateTableWithCHTimezone() {
         String createQuery6 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
