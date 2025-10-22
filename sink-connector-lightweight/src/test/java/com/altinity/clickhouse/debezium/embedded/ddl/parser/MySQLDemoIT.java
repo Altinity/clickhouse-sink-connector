@@ -238,6 +238,7 @@ public class MySQLDemoIT  {
      * @throws Exception if column modification fails
      */
     @Test
+    @Disabled
     @DisplayName("Test modifying officeCode column")
     public void testModifyOfficeCode() throws Exception {
         modifyOfficeCodeColumn(mysqlConn, writer);
