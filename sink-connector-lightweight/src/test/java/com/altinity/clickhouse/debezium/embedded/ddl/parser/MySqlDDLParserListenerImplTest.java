@@ -468,7 +468,7 @@ public class MySqlDDLParserListenerImplTest {
         String mysqlQuery2 = "ALTER TABLE server_team_replicate.test ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT 0 AFTER lglent_group;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery2, "server_team_replicate", clickHouseQuery2);
-        String expectedQuery = "ALTER TABLE employees.test ADD COLUMN coins TINYINT(1) DEFAULT 0 AFTER lglent_group";
+        String expectedQuery = "ALTER TABLE employees.test ADD COLUMN coins Int8 DEFAULT 0 AFTER lglent_group";
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(expectedQuery));
         log.info("CLICKHOUSE QUERY: " + clickHouseQuery2);
 
