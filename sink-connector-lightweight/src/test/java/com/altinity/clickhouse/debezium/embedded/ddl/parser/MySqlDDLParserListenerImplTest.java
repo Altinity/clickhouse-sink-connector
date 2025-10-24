@@ -354,7 +354,7 @@ public class MySqlDDLParserListenerImplTest {
 
         String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN ssn_number Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
-        String alterDBAddColumn = "ALTER TABLE employees add column ssn_number varchar(100)";
+        String alterDBAddColumn = "ALTER TABLE employees ADD COLUMN ssn_number varchar(255)";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
 
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
