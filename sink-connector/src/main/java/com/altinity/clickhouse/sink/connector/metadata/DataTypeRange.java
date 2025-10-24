@@ -132,4 +132,17 @@ public class DataTypeRange {
      * 2299-12-31 23:59:59.0
      */
     public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.0";
+
+    /**
+     * Converts epoch seconds to a date string in the format YYYY-MM-DD.
+     *
+     * @param epochSeconds the epoch seconds to convert
+     * @return the date string in YYYY-MM-DD format
+     */
+    public static String epochSecondsToDateString(long epochSeconds) {
+        LocalDate date = Instant.ofEpochSecond(epochSeconds)
+                .atZone(ZoneOffset.UTC)
+                .toLocalDate();
+        return date.toString();
+    }
 }

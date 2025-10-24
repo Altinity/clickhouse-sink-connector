@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+
 /**
  * ClickHouseDbConstants holds a set of string constants
  * and SQL snippets used for creating and altering
@@ -94,7 +96,7 @@ public class ClickHouseDbConstants {
     /**
      * The data type of the deleted time column, typically a date time.
      */
-    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT '2149-06-06'" ;
+    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "Date DEFAULT '" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX) + "'";
     
     /**
      * The name of the column indicating whether a record

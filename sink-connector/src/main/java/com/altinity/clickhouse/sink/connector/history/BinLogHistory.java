@@ -63,6 +63,8 @@ public class BinLogHistory {
     public static final String SERVER_ID_COLUMN_DATA_TYPE = "UInt32";
     public static final String ROW_COLUMN = "row";
     public static final String ROW_COLUMN_DATA_TYPE = "UInt32";
+    public static final String SEQUENCE_COLUMN = "sequence";
+    public static final String SEQUENCE_COLUMN_DATA_TYPE = "UInt64";
 
     public static final Map<String, String> HISTORY_COLUMNS = new LinkedHashMap<String, String>() {{
         put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
@@ -82,6 +84,7 @@ public class BinLogHistory {
         put(PRIMARY_HOST_COLUMN, PRIMARY_HOST_COLUMN_DATA_TYPE);
         put(SERVER_ID_COLUMN, SERVER_ID_COLUMN_DATA_TYPE);
         put(ROW_COLUMN, ROW_COLUMN_DATA_TYPE);
+        put(SEQUENCE_COLUMN, SEQUENCE_COLUMN_DATA_TYPE);
     }};
 
     // get column to data type map
@@ -120,7 +123,7 @@ public class BinLogHistory {
         // ORDER BY gtid
         sb.append(" ").append(ORDER_BY).append("(").append(SERVER_ID_COLUMN).append(",")
                 .append(LOGFILE_COLUMN).append(",").append(POSITION_COLUMN).append(",")
-                .append(ROW_COLUMN).append(",").append(TIME_COLUMN).append(")");
+                .append(SEQUENCE_COLUMN).append(",").append(TIME_COLUMN).append(")");
         // Add partition by toDate(_time)
         sb.append(PARTITION_BY).append(TIME_COLUMN).append("`)");
         // Add TTL toDate(_time) + toIntervalDay(ttlDays)
@@ -204,11 +207,19 @@ public class BinLogHistory {
             case DATABASE_COLUMN:
                 return struct.getDatabase();
             case TABLE_COLUMN:
-                if(struct.getTopic() == null) {
+                if(struct.getTopic() != null) {
+                    // table should be retrieved after the dot from end of the string.
+                    // server53.db1.table1 -> table1
+                    String[] parts = struct.getTopic().split("\\.");
+                   // just return the last part of the array
+                   // only if the array is not empty
+                   if(parts.length > 0) {
+                       String table = parts[parts.length - 1];
+                       return table != null && !table.isEmpty() ? table : "";
+                   } else
+                       return "";
+                } else
                     return "";
-                }
-                return struct.getTopic() != "" ?
-                    struct.getTopic() : "";
             case DDL_COLUMN:
                 return ""; // DDL might need special handling
             case BEFORE_COLUMN:
@@ -257,6 +268,8 @@ public class BinLogHistory {
                 return struct.getServerId();
             case ROW_COLUMN:
                 return struct.getRow();
+            case SEQUENCE_COLUMN:
+                return struct.getSequenceNumber();
             default:
                 return null;
         }
