@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -437,7 +438,7 @@ public class PreparedStatementExecutor {
                     }
                 } else {
                     // Set default value 2149-06-06
-                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
+                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX);
                 }
             }
             if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {

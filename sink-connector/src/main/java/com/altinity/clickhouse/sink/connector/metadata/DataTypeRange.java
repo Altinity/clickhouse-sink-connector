@@ -140,9 +140,8 @@ public class DataTypeRange {
      * @return the date string in YYYY-MM-DD format
      */
     public static String epochSecondsToDateString(long epochSeconds) {
-        LocalDate date = Instant.ofEpochSecond(epochSeconds)
-                .atZone(ZoneOffset.UTC)
-                .toLocalDate();
-        return date.toString();
+        LocalDateTime dateTime = Instant.ofEpochSecond(epochSeconds)
+                .atZone(ZoneOffset.UTC).toLocalDateTime();
+        return dateTime.toString();
     }
 }
