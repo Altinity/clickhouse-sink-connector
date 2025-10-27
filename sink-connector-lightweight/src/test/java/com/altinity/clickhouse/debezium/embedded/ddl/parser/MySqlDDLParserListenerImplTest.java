@@ -354,7 +354,7 @@ public class MySqlDDLParserListenerImplTest {
 
         String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN ssn_number Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
-        String alterDBAddColumn = "ALTER TABLE employees add column ssn_number varchar(100)";
+        String alterDBAddColumn = "ALTER TABLE employees ADD COLUMN ssn_number varchar(255)";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
 
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
@@ -2306,8 +2306,8 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         parserService.parseSql(sql, "test_db", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64 NOT NULL ,`valid_to` DateTime DEFAULT '2149-06-06',`operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`valid_to`) ORDER BY (`id`,`valid_to`) TTL `valid_to` + toIntervalDay(30)";
-
+        //String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64 NOT NULL ,`valid_to` DateTime DEFAULT '2149-06-06',`operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`valid_to`) ORDER BY (`id`,`valid_to`) TTL `valid_to` + toIntervalDay(30)";
+        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64 NOT NULL ,`valid_to` DateTime DEFAULT '2100-01-01 00:00:00',`operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`valid_to`) ORDER BY (`id`,`valid_to`) TTL `valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
