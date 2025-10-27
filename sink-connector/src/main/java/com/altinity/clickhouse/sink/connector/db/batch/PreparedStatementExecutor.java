@@ -438,7 +438,7 @@ public class PreparedStatementExecutor {
                     }
                 } else {
                     // Set default value 2149-06-06
-                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX);
+                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
                 }
             }
             if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {

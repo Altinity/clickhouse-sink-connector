@@ -78,7 +78,9 @@ public class DataTypeRange {
     public static final long DATETIME32_MAX = LocalDateTime
             .of(LocalDate.of(2106, 2, 7), LocalTime.of(6, 28, 15))
             .toEpochSecond(ZoneOffset.UTC);
-
+    public static final long DATETIME32_MAX_TTL = LocalDateTime
+            .of(LocalDate.of(2100, 1, 1), LocalTime.of(0, 00, 00))
+            .toEpochSecond(ZoneOffset.UTC);
     // DateTime
 
     /**
@@ -134,14 +136,14 @@ public class DataTypeRange {
     public static final String DATETIME64_6_MAX = "2299-12-31 23:59:59.0";
 
     /**
-     * Converts epoch seconds to a date string in the format YYYY-MM-DD.
+     * Converts epoch seconds to a date string in the format YYYY-MM-DD HH:mm:ss.
      *
      * @param epochSeconds the epoch seconds to convert
-     * @return the date string in YYYY-MM-DD format
+     * @return the date string in YYYY-MM-DD HH:mm:ss format
      */
     public static String epochSecondsToDateString(long epochSeconds) {
         LocalDateTime dateTime = Instant.ofEpochSecond(epochSeconds)
                 .atZone(ZoneOffset.UTC).toLocalDateTime();
-        return dateTime.toString();
+        return dateTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 }
