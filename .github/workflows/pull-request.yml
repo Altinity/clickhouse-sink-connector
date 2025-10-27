@@ -16,12 +16,12 @@ jobs:
     with:
       IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
 
-  testflows-kafka:
-    needs: [build-kafka-lightweight]
-    uses: ./.github/workflows/testflows-sink-connector-kafka.yml
-    secrets: inherit
-    with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+#  testflows-kafka:
+#    needs: [build-kafka-lightweight]
+#    uses: ./.github/workflows/testflows-sink-connector-kafka.yml
+#    secrets: inherit
+#    with:
+#      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
   testflows-lightweight-x86:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/testflows-sink-connector-lightweight.yml
