@@ -49,7 +49,7 @@ jobs:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
 
   publish:
-    needs: [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
+    needs: [testflows-lightweight, java-tests-kafka, java-tests-lightweight]
     uses: ./.github/workflows/publish.yml
     secrets: inherit
     with:
