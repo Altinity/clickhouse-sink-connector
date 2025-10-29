@@ -432,7 +432,7 @@ public class PreparedStatementExecutor {
                         //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
                         // Set to current time.
                         long currentTimeMs = System.currentTimeMillis();
-                        long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                        long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
                         ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), currentTimeSec);
                         
                     }
