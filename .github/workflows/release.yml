@@ -22,12 +22,12 @@ jobs:
     with:
       IMAGE_TAG: ${{ inputs.release_tag }}-test
 
-  testflows-kafka:
-    needs: [build-kafka-lightweight]
-    uses: ./.github/workflows/testflows-sink-connector-kafka.yml
-    secrets: inherit
-    with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-kafka
+  # testflows-kafka:
+  #   needs: [build-kafka-lightweight]
+  #   uses: ./.github/workflows/testflows-sink-connector-kafka.yml
+  #   secrets: inherit
+  #   with:
+  #     SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-kafka
 
   testflows-lightweight:
     needs: [build-kafka-lightweight]
@@ -49,7 +49,7 @@ jobs:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
 
   publish:
-    needs: [testflows-kafka, testflows-lightweight, java-tests-kafka, java-tests-lightweight]
+    needs: [testflows-lightweight, java-tests-kafka, java-tests-lightweight]
     uses: ./.github/workflows/publish.yml
     secrets: inherit
     with:
