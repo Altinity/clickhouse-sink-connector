@@ -216,8 +216,18 @@ public class PreparedStatementExecutor {
                     }
 
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                true, config, columnToDataTypeMap, engine, tableName);
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
+                            record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                        true, config, columnToDataTypeMap, engine, tableName);
+                                ps.addBatch();
+                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                        false, config, columnToDataTypeMap, engine, tableName);
+                        }
+                        else {
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                        }
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                 false, config, columnToDataTypeMap, engine, tableName);
@@ -476,10 +486,26 @@ public class PreparedStatementExecutor {
             if (columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
                     !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    if (replacingMergeTreeWithIsDeletedColumn)
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                    else
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                    // if after section and REPLICATION HISTORY ENABLE is set to true in config
+                    if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        if(!beforeSection){
+                            if (replacingMergeTreeWithIsDeletedColumn)
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                            else
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                        } else {
+                            // before section.
+                            if (replacingMergeTreeWithIsDeletedColumn)
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
+                            else
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        }
+                    } else {
+                        if (replacingMergeTreeWithIsDeletedColumn)
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        else
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                    }
                 } else {
                     if (replacingMergeTreeWithIsDeletedColumn)
                         ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
