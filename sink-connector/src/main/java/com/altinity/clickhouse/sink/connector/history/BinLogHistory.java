@@ -41,13 +41,14 @@ public class BinLogHistory {
     public static final String TABLE_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String BEFORE_COLUMN = "before";
     public static final String AFTER_COLUMN = "after";
+    public static final String BEFORE_AFTER_COLUMN_DATA_TYPE = "String";
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(3)";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
-    public static final String OPERATION_COLUMN = "operation";
+    public static final String OPERATION_COLUMN = "_operation";
     public static final String OPERATION_COLUMN_DATA_TYPE = "String";
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
@@ -71,8 +72,8 @@ public class BinLogHistory {
         put(DATABASE_COLUMN, DATABASE_COLUMN_DATA_TYPE);
         put(TABLE_COLUMN, TABLE_COLUMN_DATA_TYPE);
         put(DDL_COLUMN, DDL_COLUMN_DATA_TYPE);
-        put(BEFORE_COLUMN, TABLE_COLUMN_DATA_TYPE);
-        put(AFTER_COLUMN, TABLE_COLUMN_DATA_TYPE);
+        put(BEFORE_COLUMN, BEFORE_AFTER_COLUMN_DATA_TYPE);
+        put(AFTER_COLUMN, BEFORE_AFTER_COLUMN_DATA_TYPE);
         put(RAW_COLUMN, RAW_COLUMN_DATA_TYPE);
         put(TIME_COLUMN, TIME_COLUMN_DATA_TYPE);
         put(IS_DELETED_COLUMN, IS_DELETED_COLUMN_DATA_TYPE);
@@ -238,7 +239,7 @@ public class BinLogHistory {
                 }
                 return struct.sourceRecordToJson();
             case TIME_COLUMN:
-                return struct.getTs_ms();
+                return struct.getTsSec();
             case IS_DELETED_COLUMN:
                 if(struct.getCdcOperation() == null) {
                     return 0;

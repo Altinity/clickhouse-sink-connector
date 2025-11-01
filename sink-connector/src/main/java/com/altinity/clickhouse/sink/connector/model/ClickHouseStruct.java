@@ -182,6 +182,13 @@ public class ClickHouseStruct {
     @Setter
     private long lsn = UNINITIALIZED_VALUE;
 
+    /**
+     * Timestamp in seconds from sourceOffset (ts_sec).
+     */
+    @Getter
+    @Setter
+    private long tsSec = UNINITIALIZED_VALUE;
+
     // Inheritance doesn't work because of different package
     // error, composition.
 
@@ -290,6 +297,7 @@ public class ClickHouseStruct {
         this.setCommitter(committer);
         this.setSourceRecord(sourceRecord);
         this.setLastRecordInBatch(lastRecordInBatch);
+        parseSourceOffset(sourceRecord);
     }
 
     public ClickHouseStruct(){
@@ -498,6 +506,7 @@ public class ClickHouseStruct {
                 .append(" partition:").append(kafkaPartition)
                 .append(" key:").append(key)
                 .append(" ts_ms:").append(ts_ms)
+                .append(" ts_sec:").append(tsSec)
                 .append(" snapshot:").append(snapshot)
                 .append(" server_id").append(serverId)
                 .append(" binlog_file").append(file)
@@ -702,6 +711,37 @@ public class ClickHouseStruct {
         } catch (Exception e) {
             log.error("Error serializing afterModifiedFields to JSON", e);
             return null;
+        }
+    }
+
+    /**
+     * Parses the sourceOffset map to extract ts_sec value.
+     * This method is called during construction with the sourceRecord.
+     *
+     * @param sourceRecord The change event containing the source record
+     */
+    private void parseSourceOffset(ChangeEvent<SourceRecord, SourceRecord> sourceRecord) {
+        if (sourceRecord == null || sourceRecord.value() == null) {
+            return;
+        }
+        
+        try {
+            SourceRecord record = sourceRecord.value();
+            Map<String, ?> sourceOffset = record.sourceOffset();
+            
+            if (sourceOffset != null && sourceOffset.containsKey("ts_sec")) {
+                Object tsSecValue = sourceOffset.get("ts_sec");
+                if (tsSecValue instanceof Long) {
+                    this.tsSec = (Long) tsSecValue;
+                } else if (tsSecValue instanceof Integer) {
+                    this.tsSec = ((Integer) tsSecValue).longValue();
+                } else if (tsSecValue instanceof String) {
+                    this.tsSec = Long.parseLong((String) tsSecValue);
+                }
+                log.debug("Parsed ts_sec from sourceOffset: {}", this.tsSec);
+            }
+        } catch (Exception e) {
+            log.error("Error parsing ts_sec from sourceOffset", e);
         }
     }
 }
