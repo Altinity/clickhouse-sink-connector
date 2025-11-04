@@ -422,6 +422,10 @@ public class DebeziumChangeEventCapture {
                                      ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
                                      boolean lastRecordInBatch, ClickHouseStruct chStruct) {
         String databaseName = getDatabaseName(sr);
+        // Get source timezone from config
+        String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+        // Get server timezone from config
+        String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
 
         // If replication histry is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -469,7 +473,8 @@ public class DebeziumChangeEventCapture {
                         // Add the chStruct to the list
                         List<ClickHouseStruct> currentBatch = new ArrayList<>();
                         currentBatch.add(chStruct);
-                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, currentBatch);
+                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, 
+                        currentBatch, sourceTimeZone, serverTimeZone);
                     }
                 } catch (Exception e) {
                     log.error("Error adding DDL records to history table", e);

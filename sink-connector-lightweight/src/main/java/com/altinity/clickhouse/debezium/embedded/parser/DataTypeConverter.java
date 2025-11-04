@@ -132,31 +132,9 @@ public class DataTypeConverter {
         ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(
                 schemaBuilder.schema().type(), schemaBuilder.schema().name());
 
-                                                         
         // Check for DateTime and time zone
-        if (userProvidedTimeZone != null
-                && (chDataType == ClickHouseDataType.DateTime
-                || chDataType == ClickHouseDataType.DateTime32)) {
-            return new StringBuffer()
-                    .append(chDataType)
-                    .append("(")
-                    .append("'")
-                    .append(userProvidedTimeZone)
-                    .append("'")
-                    .append(")")
-                    .toString();
-        } else if (userProvidedTimeZone != null
-                && chDataType == ClickHouseDataType.DateTime64) {
-            return new StringBuffer()
-                    .append(chDataType)
-                    .append("(")
-                    .append(precision)
-                    .append(",")
-                    .append("'")
-                    .append(userProvidedTimeZone)
-                    .append("'")
-                    .append(")")
-                    .toString();
+        if (userProvidedTimeZone != null && isDateTimeType(chDataType)) {
+            return addTimeZoneToDateTimeType(chDataType, precision, userProvidedTimeZone);
         }
 
         // Handle Decimal and other numeric types with precision/scale
@@ -178,6 +156,52 @@ public class DataTypeConverter {
         }
 
         return convertedDataType;
+    }
+
+    /**
+     * Checks if the given ClickHouse data type is a DateTime type that supports time zones.
+     *
+     * @param chDataType The ClickHouse data type to check.
+     * @return true if the data type is DateTime, DateTime32, or DateTime64, false otherwise.
+     */
+    private static boolean isDateTimeType(ClickHouseDataType chDataType) {
+        return chDataType == ClickHouseDataType.DateTime
+                || chDataType == ClickHouseDataType.DateTime32
+                || chDataType == ClickHouseDataType.DateTime64;
+    }
+
+    /**
+     * Adds timezone information to DateTime column types.
+     *
+     * @param chDataType The ClickHouse DateTime data type.
+     * @param precision The precision for DateTime64 types.
+     * @param userProvidedTimeZone The timezone to add.
+     * @return A string representation of the DateTime type with timezone.
+     */
+    public static String addTimeZoneToDateTimeType(ClickHouseDataType chDataType, int precision, ZoneId userProvidedTimeZone) {
+        if (chDataType == ClickHouseDataType.DateTime || chDataType == ClickHouseDataType.DateTime32) {
+            return new StringBuffer()
+                    .append(chDataType)
+                    .append("(")
+                    .append("'")
+                    .append(userProvidedTimeZone)
+                    .append("'")
+                    .append(")")
+                    .toString();
+        } else if (chDataType == ClickHouseDataType.DateTime64) {
+            return new StringBuffer()
+                    .append(chDataType)
+                    .append("(")
+                    .append(precision)
+                    .append(",")
+                    .append("'")
+                    .append(userProvidedTimeZone)
+                    .append("'")
+                    .append(")")
+                    .toString();
+        }
+        // Fallback - should not reach here for valid DateTime types
+        return chDataType.toString();
     }
 
     /**

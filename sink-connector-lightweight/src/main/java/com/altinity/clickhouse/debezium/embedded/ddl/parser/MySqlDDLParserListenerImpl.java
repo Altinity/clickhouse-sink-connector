@@ -13,6 +13,8 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.AlterByAddColumnContext;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
@@ -253,11 +255,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
                 .AUTO_CREATE_TABLES_REPLICATED.toString());
 
+        String chDataTypeWithTimeZone = DataTypeConverter.addTimeZoneToDateTimeType(ClickHouseDataType.DateTime, 0, userProvidedTimeZone);
+        // append this to the chDataTypeWithTimeZone
+        chDataTypeWithTimeZone = chDataTypeWithTimeZone + " DEFAULT " + "'" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
         // If Replication history is enabled, add the
         // deleted_time DateTime DEFAULT '2149-06-06',
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
             this.query.append("`").append(DELETED_TIME_COLUMN)
-                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append("` ").append(chDataTypeWithTimeZone)
                     .append(",");
 
             this.query.append("`").append(OPERATION_COLUMN)

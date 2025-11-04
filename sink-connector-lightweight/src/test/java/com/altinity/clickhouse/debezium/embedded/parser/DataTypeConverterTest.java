@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZoneId;
-import java.util.HashMap;
+import java.util.*;
 
 /**
  * Unit tests for DataTypeConverter.convertToString method.
@@ -21,6 +21,31 @@ import java.util.HashMap;
 public class DataTypeConverterTest {
 
     private static ClickHouseSinkConnectorConfig config;
+
+    /**
+     * Test case data structure to hold input parameters and expected output
+     */
+    static class TestCase {
+        String description;
+        String dataTypeString;
+        int scale;
+        int precision;
+        ZoneId timezone;
+        String expectedResult;
+
+        TestCase(String description, String dataTypeString, int scale, int precision, ZoneId timezone, String expectedResult) {
+            this.description = description;
+            this.dataTypeString = dataTypeString;
+            this.scale = scale;
+            this.precision = precision;
+            this.timezone = timezone;
+            this.expectedResult = expectedResult;
+        }
+
+        TestCase(String description, String dataTypeString, String expectedResult) {
+            this(description, dataTypeString, 0, 0, null, expectedResult);
+        }
+    }
 
     @BeforeAll
     static void setUp() {
@@ -64,290 +89,90 @@ public class DataTypeConverterTest {
         throw new RuntimeException("Could not find DataTypeContext in parsed SQL");
     }
 
-    @Test
-    @DisplayName("Test INT data type conversion")
-    public void testIntDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("INT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int32", result);
+    /**
+     * Provides all test cases for data type conversion
+     */
+    private static List<TestCase> getTestCases() {
+        List<TestCase> testCases = new ArrayList<>();
+        
+        // Basic integer types
+        testCases.add(new TestCase("INT data type", "INT", "Int32"));
+        testCases.add(new TestCase("TINYINT data type - should be overridden to Int8", "TINYINT", "Int8"));
+        testCases.add(new TestCase("BIGINT UNSIGNED data type - should be overridden to UInt64", "BIGINT UNSIGNED", "UInt64"));
+        testCases.add(new TestCase("BIGINT (regular) data type", "BIGINT", "Int64"));
+        testCases.add(new TestCase("SMALLINT data type", "SMALLINT", "Int16"));
+        testCases.add(new TestCase("SMALLINT UNSIGNED data type", "SMALLINT UNSIGNED", "Int32"));
+        testCases.add(new TestCase("MEDIUMINT data type", "MEDIUMINT", "Int32"));
+        
+        // String types
+        testCases.add(new TestCase("VARCHAR data type", "VARCHAR(255)", "String"));
+        testCases.add(new TestCase("TEXT data type", "TEXT", "String"));
+        testCases.add(new TestCase("CHAR data type", "CHAR(10)", "String"));
+        testCases.add(new TestCase("BINARY data type", "BINARY(16)", "String"));
+        testCases.add(new TestCase("VARBINARY data type", "VARBINARY(255)", "String"));
+        
+        // Decimal types
+        testCases.add(new TestCase("DECIMAL with precision and scale", "DECIMAL(10,2)", 2, 10, null, "Decimal(10,2)"));
+        testCases.add(new TestCase("DECIMAL with precision only", "DECIMAL(10)", 0, 10, null, "Decimal(10, 0)"));
+        testCases.add(new TestCase("DECIMAL with high precision", "DECIMAL(30,10)", 10, 30, null, "Decimal(30,10)"));
+        
+        // Float types
+        testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float32"));
+        testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float32"));
+        
+        // Date types
+        testCases.add(new TestCase("DATE data type", "DATE", "Date32"));
+        
+        // DateTime types without timezone
+        testCases.add(new TestCase("DATETIME without timezone", "DATETIME", "DateTime64"));
+        testCases.add(new TestCase("DATETIME(6) with precision without timezone", "DATETIME(6)", 0, 6, null, "DateTime64(6, 0)"));
+        testCases.add(new TestCase("TIMESTAMP without timezone", "TIMESTAMP", "DateTime64"));
+        
+        // DateTime types with timezone
+        testCases.add(new TestCase("DATETIME with timezone UTC", "DATETIME", 0, 0, ZoneId.of("UTC"), "DateTime64(0,'UTC')"));
+        testCases.add(new TestCase("DATETIME with timezone America/New_York", "DATETIME", 0, 0, ZoneId.of("America/New_York"), "DateTime64(0,'America/New_York')"));
+        testCases.add(new TestCase("DATETIME(6) with precision and timezone", "DATETIME(6)", 0, 6, ZoneId.of("UTC"), "DateTime64(6,'UTC')"));
+        testCases.add(new TestCase("DATETIME(3) with precision and timezone", "DATETIME(3)", 0, 3, ZoneId.of("Europe/London"), "DateTime64(3,'Europe/London')"));
+        testCases.add(new TestCase("TIMESTAMP with timezone", "TIMESTAMP", 0, 0, ZoneId.of("UTC"), "DateTime64(0,'UTC')"));
+        testCases.add(new TestCase("TIMESTAMP(6) with precision and timezone", "TIMESTAMP(6)", 0, 6, ZoneId.of("Asia/Tokyo"), "DateTime64(6,'Asia/Tokyo')"));
+        
+        // Boolean types
+        testCases.add(new TestCase("BOOL/BOOLEAN data type", "BOOL", "Bool"));
+        testCases.add(new TestCase("BIT data type", "BIT", "Bool"));
+        
+        // BLOB and special types
+        testCases.add(new TestCase("BLOB data type", "BLOB", "String"));
+        testCases.add(new TestCase("JSON data type", "JSON", "String"));
+        testCases.add(new TestCase("ENUM data type", "ENUM('A', 'B', 'C')", "String"));
+        testCases.add(new TestCase("SET data type", "SET('A', 'B', 'C')", "String"));
+        testCases.add(new TestCase("TIME data type", "TIME", "String"));
+        testCases.add(new TestCase("YEAR data type", "YEAR", "Int32"));
+        
+        return testCases;
     }
 
     @Test
-    @DisplayName("Test TINYINT data type conversion - should be overridden to Int8")
-    public void testTinyIntDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TINYINT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int8", result);
-    }
-
-    @Test
-    @DisplayName("Test BIGINT UNSIGNED data type conversion - should be overridden to UInt64")
-    public void testBigIntUnsignedDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BIGINT UNSIGNED");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("UInt64", result);
-    }
-
-    @Test
-    @DisplayName("Test BIGINT (regular) data type conversion")
-    public void testBigIntDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BIGINT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int64", result);
-    }
-
-    @Test
-    @DisplayName("Test VARCHAR data type conversion")
-    public void testVarcharDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("VARCHAR(255)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test TEXT data type conversion")
-    public void testTextDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TEXT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test DECIMAL with precision and scale")
-    public void testDecimalWithPrecisionAndScale() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DECIMAL(10,2)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 2, 10, dataType, null);
-        Assert.assertEquals("Decimal(10,2)", result);
-    }
-
-    @Test
-    @DisplayName("Test DECIMAL with precision only")
-    public void testDecimalWithPrecisionOnly() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DECIMAL(10)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 10, dataType, null);
-        Assert.assertEquals("Decimal(10, 0)", result);
-    }
-
-    @Test
-    @DisplayName("Test DECIMAL with high precision")
-    public void testDecimalWithHighPrecision() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DECIMAL(30,10)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 10, 30, dataType, null);
-        Assert.assertEquals("Decimal(30,10)", result);
-    }
-
-    @Test
-    @DisplayName("Test FLOAT data type conversion")
-    public void testFloatDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("FLOAT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Float32", result);
-    }
-
-    @Test
-    @DisplayName("Test DOUBLE data type conversion")
-    public void testDoubleDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DOUBLE");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Float32", result);
-    }
-
-    @Test
-    @DisplayName("Test DATE data type conversion")
-    public void testDateDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATE");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Date32", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME without timezone")
-    public void testDateTimeWithoutTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("DateTime64", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME with timezone")
-    public void testDateTimeWithTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME");
-        ZoneId timezone = ZoneId.of("UTC");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, timezone);
-        Assert.assertEquals("DateTime64(0,'UTC')", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME with timezone America/New_York")
-    public void testDateTimeWithTimeZoneNewYork() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME");
-        ZoneId timezone = ZoneId.of("America/New_York");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, timezone);
-        Assert.assertEquals("DateTime64(0,'America/New_York')", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME(6) with precision without timezone")
-    public void testDateTime64WithPrecisionWithoutTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME(6)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 6, dataType, null);
-        Assert.assertEquals("DateTime64(6, 0)", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME(6) with precision and timezone")
-    public void testDateTime64WithPrecisionAndTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME(6)");
-        ZoneId timezone = ZoneId.of("UTC");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 6, dataType, timezone);
-        Assert.assertEquals("DateTime64(6,'UTC')", result);
-    }
-
-    @Test
-    @DisplayName("Test DATETIME(3) with precision and timezone")
-    public void testDateTime64Precision3WithTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("DATETIME(3)");
-        ZoneId timezone = ZoneId.of("Europe/London");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 3, dataType, timezone);
-        Assert.assertEquals("DateTime64(3,'Europe/London')", result);
-    }
-
-    @Test
-    @DisplayName("Test TIMESTAMP without timezone")
-    public void testTimestampWithoutTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TIMESTAMP");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("DateTime64", result);
-    }
-
-    @Test
-    @DisplayName("Test TIMESTAMP with timezone")
-    public void testTimestampWithTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TIMESTAMP");
-        ZoneId timezone = ZoneId.of("UTC");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, timezone);
-        Assert.assertEquals("DateTime64(0,'UTC')", result);
-    }
-
-    @Test
-    @DisplayName("Test TIMESTAMP(6) with precision and timezone")
-    public void testTimestamp64WithPrecisionAndTimeZone() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TIMESTAMP(6)");
-        ZoneId timezone = ZoneId.of("Asia/Tokyo");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 6, dataType, timezone);
-        Assert.assertEquals("DateTime64(6,'Asia/Tokyo')", result);
-    }
-
-    @Test
-    @DisplayName("Test SMALLINT data type conversion")
-    public void testSmallIntDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("SMALLINT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int16", result);
-    }
-
-    @Test
-    @DisplayName("Test SMALLINT UNSIGNED data type conversion")
-    public void testSmallIntUnsignedDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("SMALLINT UNSIGNED");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int32", result);
-    }
-
-    @Test
-    @DisplayName("Test MEDIUMINT data type conversion")
-    public void testMediumIntDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("MEDIUMINT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int32", result);
-    }
-
-    @Test
-    @DisplayName("Test BOOL/BOOLEAN data type conversion")
-    public void testBoolDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BOOL");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Bool", result);
-    }
-
-    @Test
-    @DisplayName("Test BIT data type conversion")
-    public void testBitDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BIT");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Bool", result);
-    }
-
-    @Test
-    @DisplayName("Test BLOB data type conversion")
-    public void testBlobDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BLOB");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test JSON data type conversion")
-    public void testJsonDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("JSON");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test ENUM data type conversion")
-    public void testEnumDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("ENUM('A', 'B', 'C')");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test SET data type conversion")
-    public void testSetDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("SET('A', 'B', 'C')");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test TIME data type conversion")
-    public void testTimeDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("TIME");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test YEAR data type conversion")
-    public void testYearDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("YEAR");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("Int32", result);
-    }
-
-    @Test
-    @DisplayName("Test CHAR data type conversion")
-    public void testCharDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("CHAR(10)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test BINARY data type conversion")
-    public void testBinaryDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("BINARY(16)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
-    }
-
-    @Test
-    @DisplayName("Test VARBINARY data type conversion")
-    public void testVarbinaryDataType() {
-        MySqlParser.DataTypeContext dataType = parseDataType("VARBINARY(255)");
-        String result = DataTypeConverter.convertToString(config, "test_col", 0, 0, dataType, null);
-        Assert.assertEquals("String", result);
+    @DisplayName("Test all data type conversions")
+    public void testAllDataTypeConversions() {
+        List<TestCase> testCases = getTestCases();
+        
+        for (TestCase testCase : testCases) {
+            MySqlParser.DataTypeContext dataType = parseDataType(testCase.dataTypeString);
+            String result = DataTypeConverter.convertToString(
+                config, 
+                "test_col", 
+                testCase.scale, 
+                testCase.precision, 
+                dataType, 
+                testCase.timezone
+            );
+            
+            Assert.assertEquals(
+                "Failed for test case: " + testCase.description, 
+                testCase.expectedResult, 
+                result
+            );
+        }
     }
 }
 

@@ -2294,6 +2294,8 @@ public class MySqlDDLParserListenerImplTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
+        config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        
         ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
         MySQLDDLParserService parserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
                 "employees");
@@ -2306,8 +2308,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         parserService.parseSql(sql, "test_db", clickHouseQuery);
 
-        //String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64 NOT NULL ,`valid_to` DateTime DEFAULT '2149-06-06',`operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`valid_to`) ORDER BY (`id`,`valid_to`) TTL `valid_to` + toIntervalDay(30)";
-        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64 NOT NULL ,`valid_to` DateTime DEFAULT '2100-01-01 00:00:00',`operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`valid_to`) ORDER BY (`id`,`valid_to`) TTL `valid_to` + toIntervalDay(30)";
+        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 

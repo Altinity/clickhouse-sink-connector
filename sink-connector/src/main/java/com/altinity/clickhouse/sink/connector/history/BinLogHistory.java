@@ -3,14 +3,18 @@ package com.altinity.clickhouse.sink.connector.history;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
+import com.clickhouse.data.ClickHouseDataType;
 import org.apache.kafka.connect.source.SourceRecord;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -101,12 +105,14 @@ public class BinLogHistory {
      * @param historyTableName name of the history table to create
      * @param databaseName name of the database in which the history table is created
      * @param ttlDays number of days for TTL retention
+     * @param serverTimeZone timezone to use for DateTime columns
      * @return SQL statement string for creating the history table
      */
     public String createHistoryTableSyntax(
                                            String historyTableName,
                                            String databaseName,
-                                           int ttlDays) {
+                                           int ttlDays,
+                                           ZoneId serverTimeZone) {
 
         StringBuilder sb = new StringBuilder();
         sb.append(CREATE_TABLE).append(" ").append(IF_NOT_EXISTS)
@@ -114,8 +120,16 @@ public class BinLogHistory {
                 .append(".`").append(historyTableName).append("`(");
 
         // Iterate through all history columns (LinkedHashMap preserves insertion order)
+        // Special handling for TIME_COLUMN to add timezone
         String columnDefinitions = HISTORY_COLUMNS.entrySet().stream()
-                .map(entry -> "`" + entry.getKey() + "` " + entry.getValue())
+                .map(entry -> {
+                    String dataType = entry.getValue();
+                    // Add timezone to TIME_COLUMN
+                    if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
+                        dataType = "DateTime('" + serverTimeZone + "')";
+                    }
+                    return "`" + entry.getKey() + "` " + dataType;
+                })
                 .collect(Collectors.joining(","));
         sb.append(columnDefinitions);
         
@@ -146,7 +160,8 @@ public class BinLogHistory {
      *
      * @param currentBatch list of ClickHouseStruct objects to insert into history table
      */
-    public void addRecordsToHistoryTable(ClickHouseSinkConnectorConfig config, String historyTableName, Connection conn, String DDL, List<ClickHouseStruct> currentBatch) throws SQLException {
+    public void addRecordsToHistoryTable(ClickHouseSinkConnectorConfig config, String historyTableName, Connection conn, 
+    String DDL, List<ClickHouseStruct> currentBatch, String sourceTimeZone, String serverTimeZone) throws SQLException {
         if (currentBatch == null || currentBatch.isEmpty()) {
             return;
         }
@@ -159,7 +174,7 @@ public class BinLogHistory {
         // Generate insert query using QueryFormatter
         String insertQuery = queryFormatter.getInsertQueryUsingInputFunction(historyTableName, columnToDataTypeMap);
 
-        this.executeInsertWithStructs(config, conn, insertQuery, DDL, currentBatch);
+        this.executeInsertWithStructs(config, conn, insertQuery, DDL, currentBatch, sourceTimeZone, serverTimeZone);
     }
 
     /**
@@ -167,11 +182,14 @@ public class BinLogHistory {
      * into a history table using the input() function pattern.
      *
      * @param conn database connection
-     * @param insertSql the SQL insert query with input() function
+     * @param insertSql the SQL insert query with input() function  
      * @param clickHouseStructs list of ClickHouseStruct objects to insert
+     * @param sourceTimeZone source timezone
+     * @param serverTimeZone server timezone
      * @throws SQLException if database operation fails
      */
-    public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, List<ClickHouseStruct> clickHouseStructs) throws SQLException {
+    public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, 
+    List<ClickHouseStruct> clickHouseStructs, String sourceTimeZone, String serverTimeZone) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
@@ -181,7 +199,12 @@ public class BinLogHistory {
                     // If the column name is DDL_COLUMN, set the value to the DDL
                     if (columnName.equals(DDL_COLUMN)) {
                         ps.setString(paramIndex++, DDL);
-                    } else {
+
+                    }   else if(columnName.equals(TIME_COLUMN)) {
+                            ps.setString(paramIndex++, DebeziumConverter.TimestampConverter.convert(DataTypeRange.DATETIME32_MAX_TTL, ClickHouseDataType.DateTime,
+                                        ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone)));
+                    } 
+                    else {
                         Object value = getValueFromStruct(struct, columnName, config);
                         ps.setObject(paramIndex++, value);
                     }
