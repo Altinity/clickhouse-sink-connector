@@ -1,6 +1,5 @@
 FROM amazoncorretto:17
-
-RUN microdnf update && microdnf install procps
+RUN yum update -y && yum install -y procps-ng microdnf && yum clean all
 ARG DOCKER_TAG
 ENV DOCKER_TAG=${DOCKER_TAG}
 COPY sink-connector-client/sink-connector-client /sink-connector-client
