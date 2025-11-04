@@ -1,4 +1,4 @@
-FROM eclipse-temurin:17
+FROM amazoncorretto:17
 
 RUN microdnf update && microdnf install procps
 ARG DOCKER_TAG
