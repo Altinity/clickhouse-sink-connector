@@ -1,4 +1,4 @@
-FROM openjdk:17
+FROM eclipse-temurin:17
 
 RUN microdnf update && microdnf install procps
 ARG DOCKER_TAG
