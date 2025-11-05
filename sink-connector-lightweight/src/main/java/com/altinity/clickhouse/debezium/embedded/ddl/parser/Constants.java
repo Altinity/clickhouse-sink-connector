@@ -187,7 +187,7 @@ public class Constants {
     /**
      * Template for dropping a constraint, e.g. "DROP CONSTRAINT %s".
      */
-    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT %s";
+    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT IF EXISTS %s";
 
     /**
      * Version number associated with ReplacingMergeTree improvements
