@@ -255,12 +255,12 @@ public class DebeziumConverterTest {
     @Test
     public void testTimestampConverterMaxTTL() {
         // Testing DebeziumConverter.TimestampConverter with DATETIME32_MAX_TTL / 1000
-        long datetime32MaxTtlDiv1000 = DataTypeRange.DATETIME32_MAX_TTL / 1000;
+        long datetime32MaxTtlDiv1000 = DataTypeRange.DATETIME32_MAX_TTL * 1000;
         String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(datetime32MaxTtlDiv1000,
                 ClickHouseDataType.DateTime32, ZoneId.of("UTC"), ZoneId.of("UTC"));
 
         // Assert the expected result, adjust according to the documented behavior
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("Specify_expected_string_based_on_conversion_logic"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2100-01-01 00:00:00"));
     }
 
 }
