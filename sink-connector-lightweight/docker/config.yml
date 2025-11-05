@@ -202,3 +202,6 @@ database.connection.reconnect.backoff.max.ms: "10000"
 database.ssl.mode: "disabled"
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"
+
+# Single threaded mode.
+single.threaded: "true"
