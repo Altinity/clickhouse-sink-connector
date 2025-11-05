@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -280,15 +281,46 @@ public class ClickHouseAutoCreateTable
                                    Connection connection,
                                    ClickHouseSinkConnectorConfig config)
             throws SQLException {
+        // Get server timezone
+        ZoneId serverTimeZone = getServerTimeZone(config, connection);
+        
         String sql = new BinLogHistory().createHistoryTableSyntax(
                  historyTableName,
                 databaseName,
-                config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()));
+                config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()),
+                serverTimeZone);
         log.info(String.format(
                 "**** AUTO CREATE HISTORY TABLE for database(%s), Query :%s)",
                 databaseName, sql));
         DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, sql);
+    }
+    
+    /**
+     * Gets the server timezone, first checking if user has provided one,
+     * otherwise querying the ClickHouse server.
+     *
+     * @param config the connector configuration
+     * @param connection the database connection
+     * @return a ZoneId representing the server timezone
+     */
+    private ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config, Connection connection) {
+        String userProvidedTimeZone = config.getString(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        
+        ZoneId userProvidedTimeZoneId = null;
+        if (userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
+            try {
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+            } catch (Exception e) {
+                log.error("Error parsing user provided timezone", e);
+            }
+        }
+        
+        if (userProvidedTimeZoneId != null) {
+            return userProvidedTimeZoneId;
+        }
+        return new DBMetadata(config).getServerTimeZone(connection);
     }
 
     public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {

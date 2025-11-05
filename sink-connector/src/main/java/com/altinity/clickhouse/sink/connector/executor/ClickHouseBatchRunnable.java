@@ -256,6 +256,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     public void run() {
         Long taskId = config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+        
+        // Get source timezone from config
+        String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+        // Get server timezone from config
+        String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         try {
             // Poll from Queue until its empty.
@@ -294,7 +299,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                             firstRecord, databaseConn);
 
                     BinLogHistory binLogHistory = new BinLogHistory();
-                    binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", currentBatch);
+                    binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", currentBatch, sourceTimeZone, serverTimeZone);
                 }
 
                 ///// ***** START PROCESSING BATCH **************************

@@ -6,6 +6,7 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
@@ -421,6 +422,15 @@ public class PreparedStatementExecutor {
             }
         }
 
+        String sourceTimeZone = "UTC";
+
+        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                sourceTimeZone = configSourceTimeZone;
+            }
+        }
+
         // If Replication history is enabled, add the deleted_time column
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
             if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
@@ -436,13 +446,18 @@ public class PreparedStatementExecutor {
                         // Set default value 2149-06-06
                         //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
                         // Set to current time.
-                        long currentTimeMs = System.currentTimeMillis();
-                        long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
-                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), currentTimeSec);
+                        //long currentTimeMs = System.currentTimeMillis();
+                        //long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
+                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getTsSec());
+                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                                ZoneId.of(sourceTimeZone), serverTimeZone));
                     }
                     else {
-                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
-
+                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
+                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                        ZoneId.of(sourceTimeZone), serverTimeZone));
 //                        long debeziumTsMs = record.getTs_ms();
 //                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
 //                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), debeziumTimestampSeconds);
@@ -450,7 +465,12 @@ public class PreparedStatementExecutor {
                     }
                 } else {
                     // Set default value 2149-06-06
-                    ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
+                    //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
+
+                    ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                    ZoneId.of(sourceTimeZone), serverTimeZone));
+
                 }
             }
             if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
