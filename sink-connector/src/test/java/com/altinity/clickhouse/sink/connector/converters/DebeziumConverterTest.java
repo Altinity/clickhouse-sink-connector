@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import org.junit.Assert;
 import org.junit.jupiter.api.DisplayName;
@@ -249,6 +250,17 @@ public class DebeziumConverterTest {
 
         String result4 = DebeziumConverter.removeTrailingZeros("2022-01-01 11:50:00.100");
         Assert.assertTrue(result4.equalsIgnoreCase("2022-01-01 11:50:00.1"));
+    }
+
+    @Test
+    public void testTimestampConverterMaxTTL() {
+        // Testing DebeziumConverter.TimestampConverter with DATETIME32_MAX_TTL / 1000
+        long datetime32MaxTtlDiv1000 = DataTypeRange.DATETIME32_MAX_TTL / 1000;
+        String formattedTimestamp = DebeziumConverter.TimestampConverter.convert(datetime32MaxTtlDiv1000,
+                ClickHouseDataType.DateTime32, ZoneId.of("UTC"), ZoneId.of("UTC"));
+
+        // Assert the expected result, adjust according to the documented behavior
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("Specify_expected_string_based_on_conversion_logic"));
     }
 
 }

@@ -450,13 +450,13 @@ public class PreparedStatementExecutor {
                         //long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
                         //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getTsSec());
                         ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                                DebeziumConverter.TimestampConverter.convert(record.getTsSec(), ClickHouseDataType.DateTime,
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
                                 ZoneId.of(sourceTimeZone), serverTimeZone));
                     }
                     else {
                         //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
                         ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                                DebeziumConverter.TimestampConverter.convert(DataTypeRange.DATETIME32_MAX_TTL, ClickHouseDataType.DateTime,
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
                                         ZoneId.of(sourceTimeZone), serverTimeZone));
 //                        long debeziumTsMs = record.getTs_ms();
 //                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
@@ -468,7 +468,7 @@ public class PreparedStatementExecutor {
                     //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
 
                     ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                            DebeziumConverter.TimestampConverter.convert(DataTypeRange.DATETIME32_MAX_TTL, ClickHouseDataType.DateTime,
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
                                     ZoneId.of(sourceTimeZone), serverTimeZone));
 
                 }

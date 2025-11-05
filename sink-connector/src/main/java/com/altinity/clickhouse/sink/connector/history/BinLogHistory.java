@@ -201,7 +201,8 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-                            ps.setString(paramIndex++, DebeziumConverter.TimestampConverter.convert(DataTypeRange.DATETIME32_MAX_TTL, ClickHouseDataType.DateTime,
+                            ps.setString(paramIndex++, DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
+                                    struct.getTsSec() * 1000, ClickHouseDataType.DateTime,
                                         ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone)));
                     } 
                     else {
