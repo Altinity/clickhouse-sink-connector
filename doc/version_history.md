@@ -1,90 +1,25 @@
-# Version History
+# Temporal Data Tracking and Version History
 
-To enable persistence of version history, the `replication.history.enable` configuration variable has to be set to true.
-When its enabled, the **history** table and the replicated tables are persisted to the database defined in this
-configuration variable **`replication.history.database.name`**
-The history table is defined by the **`replication.history.table.name`** config variable.
+This document explains how the ClickHouse Sink Connector implements comprehensive temporal data tracking using two complementary mechanisms:
 
-**History table(Schema)**
-```
-CREATE TABLE binlog_history.history
-(
-    `gtid` String,
-    `database` String,
-    `table` String,
-    `ddl` String,
-    `before` String,
-    `after` String,
-    `_raw` String,
-    `_time` UInt64,
-    `is_deleted` UInt8,
-    `operation` String,
-    `_version` UInt64,
-    `host` String,
-    `logfile` String,
-    `position` UInt64,
-    `primary_host` String
-)
-ENGINE = MergeTree
-PARTITION BY toDate(_time)
-ORDER BY gtid
-TTL toDate(_time) + toIntervalDay(30)
-SETTINGS index_granularity = 8192
-```
+1. **`binlog_history` table** - A complete, immutable audit trail of every change
+2. **`_valid_to` column** - Enables efficient time-travel queries on data tables
 
-**History table(DML)**
-```
-gtid:         2290064
-database:     sbtest
-table:        embeddedconnector.sbtest.sbtest1
-ddl:          
-before:       
-after:        [{"name":"id","index":0,"schema":{"type":"INT32","optional":false},"value":1},{"name":"k","index":1,"schema":{"type":"INT32","optional":false},"value":50},{"name":"c","index":2,"schema":{"type":"STRING","optional":false},"value":"31451373586-15688153734-79729593694-96509299839-83724898275-86711833539-78981337422-35049690573-51724173961-87474696253"},{"name":"pad","index":3,"schema":{"type":"STRING","optional":false},"value":"98996621624-36689827414-04092488557-09587706818-65008859162"}]
-_raw:         {"key":{"id":1},"value":{"op":"c","before":null,"ts_us":1757199874527207,"after":{"pad":"98996621624-36689827414-04092488557-09587706818-65008859162","c":"31451373586-15688153734-79729593694-96509299839-83724898275-86711833539-78981337422-35049690573-51724173961-87474696253","id":1,"k":50},"source":{"ts_us":1757111993608980,"query":null,"thread":27172,"server_id":940,"version":"3.1.3.Final","sequence":null,"file":"mysql-bin.000004","connector":"mysql","pos":23226335,"name":"embeddedconnector","gtid":"ed8a2f96-8919-11f0-b8c4-8e913c21687b:2290064","row":0,"ts_ns":1757111993608980000,"ts_ms":1757111993608,"snapshot":"false","db":"sbtest","table":"sbtest1"},"ts_ns":1757199874527207770,"transaction":null,"ts_ms":1757199874527},"topic":"embeddedconnector.sbtest.sbtest1","sourceOffset":{"ts_sec":1757111993,"file":"mysql-bin.000004","pos":23226191,"gtids":"ed8a2f96-8919-11f0-b8c4-8e913c21687b:1-2290063","row":1,"server_id":940,"event":2},"sourcePartition":{"server":"embeddedconnector"}}
-_time:        1757111993608
-is_deleted:   0
-operation:    CREATE
-_version:     0
-host:         940
-logfile:      mysql-bin.000004
-position:     23226335
-primary_host: 940
-```
-
-**History table(DDL)**
-```
-gtid:         2316537
-database:     sbtest
-table:        
-ddl:          alter table sbtest1 add column o varchar(100)
-before:       
-after:        
-_raw:         
-_time:        1757216371080
-is_deleted:   0
-operation:    
-_version:     0
-host:         940
-logfile:      mysql-bin.000004
-position:     35924824
-primary_host: 940
-```
-
-# Temporal Data Tracking with binlog_history and _valid_to
-
-This document explains how the ClickHouse Sink Connector uses two complementary mechanisms to provide complete temporal data tracking: the `binlog_history` table for audit trails and the `_valid_to` column in data tables for time-travel queries.
+Together, these mechanisms provide point-in-time queries, complete audit trails, and automatic data lifecycle management.
 
 ![Temporal Data Tracking Architecture](binlog_history_diagram.png)
 
 ## Overview
 
-The sink connector implements a sophisticated temporal data tracking system that enables:
+The sink connector's temporal data tracking system enables:
 
 - **Complete Audit Trail**: Every change is permanently recorded
 - **Point-in-Time Queries**: View data as it existed at any moment in history
 - **Time Travel**: Query historical states without performance penalty
 - **Automatic Data Lifecycle**: TTL-based partition management
 - **Efficient Storage**: Automatic cleanup of expired data
+
+> **Important**: Version history tracking is designed to be enabled in a **separate connector instance**. This separation ensures that binlog history and schema (DDL) changes can be reliably captured and audited without impacting normal data ingestion throughput or risking missed changes due to connector restarts or failures.
 
 ## Architecture Components
 
@@ -145,6 +80,46 @@ TTL toDate(_time) + toIntervalDay(30);
 2. **Debugging**: Trace exact sequence of operations
 3. **Change Analysis**: Understand when and what changed
 4. **Rollback Planning**: Know exactly what changed to plan recovery
+
+#### Example: DML Event in History Table
+
+```
+gtid:         2290064
+database:     sbtest
+table:        embeddedconnector.sbtest.sbtest1
+ddl:          
+before:       
+after:        [{"name":"id","index":0,"schema":{"type":"INT32","optional":false},"value":1},{"name":"k","index":1,"schema":{"type":"INT32","optional":false},"value":50},{"name":"c","index":2,"schema":{"type":"STRING","optional":false},"value":"31451373586-15688153734-79729593694-96509299839-83724898275-86711833539-78981337422-35049690573-51724173961-87474696253"},{"name":"pad","index":3,"schema":{"type":"STRING","optional":false},"value":"98996621624-36689827414-04092488557-09587706818-65008859162"}]
+_raw:         {"key":{"id":1},"value":{"op":"c","before":null,"ts_us":1757199874527207,"after":{"pad":"98996621624-36689827414-04092488557-09587706818-65008859162","c":"31451373586-15688153734-79729593694-96509299839-83724898275-86711833539-78981337422-35049690573-51724173961-87474696253","id":1,"k":50},"source":{"ts_us":1757111993608980,"query":null,"thread":27172,"server_id":940,"version":"3.1.3.Final","sequence":null,"file":"mysql-bin.000004","connector":"mysql","pos":23226335,"name":"embeddedconnector","gtid":"ed8a2f96-8919-11f0-b8c4-8e913c21687b:2290064","row":0,"ts_ns":1757111993608980000,"ts_ms":1757111993608,"snapshot":"false","db":"sbtest","table":"sbtest1"},"ts_ns":1757199874527207770,"transaction":null,"ts_ms":1757199874527},"topic":"embeddedconnector.sbtest.sbtest1","sourceOffset":{"ts_sec":1757111993,"file":"mysql-bin.000004","pos":23226191,"gtids":"ed8a2f96-8919-11f0-b8c4-8e913c21687b:1-2290063","row":1,"server_id":940,"event":2},"sourcePartition":{"server":"embeddedconnector"}}
+_time:        1757111993608
+is_deleted:   0
+operation:    CREATE
+_version:     0
+host:         940
+logfile:      mysql-bin.000004
+position:     23226335
+primary_host: 940
+```
+
+#### Example: DDL Event in History Table
+
+```
+gtid:         2316537
+database:     sbtest
+table:        
+ddl:          alter table sbtest1 add column o varchar(100)
+before:       
+after:        
+_raw:         
+_time:        1757216371080
+is_deleted:   0
+operation:    
+_version:     0
+host:         940
+logfile:      mysql-bin.000004
+position:     35924824
+primary_host: 940
+```
 
 ### 2. Data Table with _valid_to - Time Travel Enabled
 
@@ -348,7 +323,9 @@ TTL _valid_to + toIntervalDay(30)
 
 ## Configuration
 
-Enable temporal data tracking in your connector configuration:
+### Enabling Version History
+
+To enable version history tracking, configure the following properties:
 
 ```properties
 # Enable replication history
@@ -367,31 +344,21 @@ replication.history.ttl.days=30
 clickhouse.datetime.timezone=America/Chicago
 ```
 
-## Use Cases and Benefits
+### Deployment Recommendations
 
-### 1. Compliance and Auditing
-- **SEC/SOX Compliance**: Complete, immutable audit trail
-- **GDPR Right to Access**: Show all historical data for a subject
-- **Healthcare HIPAA**: Track all access and modifications
-- **Financial Regulations**: Prove data integrity over time
+**Rationale for Separate Instance:**  
+Keeping version history in a separate connector instance decouples schema monitoring from data synchronization, allowing detailed tracking of all schema (DDL) changes alongside operational events. This setup is particularly useful for compliance, audits, and disaster recovery.
 
-### 2. Data Quality and Debugging
-- **Root Cause Analysis**: Trace when bad data entered the system
-- **Change Tracking**: Understand what changed and when
-- **Reconciliation**: Compare states at different points in time
-- **Testing**: Validate data transformations over time
+To deploy version history tracking:
 
-### 3. Business Analytics
-- **Trend Analysis**: How values changed over time
-- **Churn Analysis**: When did customers become inactive
-- **Price History**: Track historical pricing data
-- **Performance Metrics**: Calculate metrics as-of specific dates
+1. **Deploy a dedicated instance** of the sink connector
+2. **Set `replication.history.enable=true`** in the dedicated instance
+3. **Configure database and table names** using `replication.history.database.name` and `replication.history.table.name`
+4. **Keep your main data pipeline connector** focused on data ingestion without version history overhead
 
-### 4. Data Recovery
-- **Point-in-Time Recovery**: Restore to any previous state
-- **Selective Rollback**: Revert specific changes
-- **Data Resurrection**: Recover accidentally deleted data
-- **Error Correction**: Identify and fix data corruption
+> **Note**: If replicating DDL changes is not required for your application, you may leave version history tracking disabled in your main data pipeline connector.
+
+
 
 ## Performance Considerations
 
@@ -475,4 +442,3 @@ SELECT
 FROM system.parts
 WHERE table = 'users';
 ```
-
