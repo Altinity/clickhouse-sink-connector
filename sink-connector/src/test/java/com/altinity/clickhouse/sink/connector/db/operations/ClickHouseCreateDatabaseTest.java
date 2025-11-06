@@ -78,7 +78,7 @@ public class ClickHouseCreateDatabaseTest {
         Connection conn = dbWriter.getConnection();
 
         try {
-            act.createNewDatabase(conn, dbName, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+            act.createNewDatabase(conn, dbName, false, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         } catch(SQLException se) {
             //System.out.println(se.getMessage());
             Assert.assertTrue(false);

@@ -10,7 +10,7 @@ To use ClickHouse as a state storage, you need to specify the following configur
 ![State Storage](img/state_storage.jpg)
 
 # Offsets table(MySQL)
-The offsets table defined by the `offset.storage.jdbc.offset.table.name`
+The offsets table defined by the `offset.storage.jdbc.table.name`
 Default: **"altinity_sink_connector.replica_source_info"**
 This table is used to store the binlog file, position and gtids.
 | Column Name | Description                                                          | Example |
@@ -36,7 +36,7 @@ This table is used by Debezium to store historical DDL statements so the DDL sta
 
 
 # Offsets table.(PostgreSQL)
-The offsets table defined by the `offset.storage.jdbc.offset.table.name`
+The offsets table defined by the `offset.storage.jdbc.table.name`
 Default: **"altinity_sink_connector.replica_source_info"**
 This table is used to store the binlog file, position and gtids.
 | Column Name | Description                                                          | Example |

@@ -50,6 +50,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+
 /**
  * Integration Test class to validate MySQL and ClickHouse operations using Debezium.
  * Tests various DDL and DML operations including column additions, modifications,
@@ -68,7 +71,7 @@ public class SinkConnectorClientRestAPITest {
 
     @Container
     public static ClickHouseContainer clickHouseContainer =
-            new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+            new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                     .asCompatibleSubstituteFor("clickhouse"))
                     .withInitScript("init_clickhouse_user_provided_timezone.sql")
                     .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
@@ -88,7 +91,7 @@ public class SinkConnectorClientRestAPITest {
      */
     @BeforeAll
     public static void startContainers() {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees")
                 .withUsername("root")

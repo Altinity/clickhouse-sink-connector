@@ -23,6 +23,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+
 /**
  * Integration test to validate support for replication of multiple databases.
  */
@@ -36,7 +39,7 @@ public class MultipleDatabaseIT
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 // .withInitScript("data_types.sql")
@@ -49,7 +52,7 @@ public class MultipleDatabaseIT
     }
 
     static {
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")

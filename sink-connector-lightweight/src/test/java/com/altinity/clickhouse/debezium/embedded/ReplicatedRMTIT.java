@@ -27,6 +27,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 @Testcontainers
 @DisplayName("Integration test that validates auto creation of Replicated RMT when the flag is set in config(auto.create.replicated.tables)")
 public class ReplicatedRMTIT {
@@ -43,7 +46,7 @@ public class ReplicatedRMTIT {
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
 
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types_test.sql")
@@ -55,7 +58,7 @@ public class ReplicatedRMTIT {
         // clickHouseContainer.start();
         Thread.sleep(15000);
 
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")

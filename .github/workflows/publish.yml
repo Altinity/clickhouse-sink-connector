@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
@@ -39,19 +42,19 @@ jobs:
         if: ${{ !inputs.prerelease && !inputs.draft}}
         run: |
           docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka
-          docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-lt
 
-      - name: Tag images
+      - name: Tag and push Kafka image
         if: ${{ !inputs.prerelease && !inputs.draft}}
         run: |
           docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka altinity/clickhouse-sink-connector:$release_tag-kafka
-          docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-lt altinity/clickhouse-sink-connector:$release_tag-lt
+          docker push altinity/clickhouse-sink-connector:$release_tag-kafka
 
-      - name: Push images
+      - name: Tag and push Lightweight multi-arch image (ARM64 + AMD64)
         if: ${{ !inputs.prerelease && !inputs.draft }}
         run: |
-          docker push altinity/clickhouse-sink-connector:$release_tag-kafka
-          docker push altinity/clickhouse-sink-connector:$release_tag-lt
+          docker buildx imagetools create \
+            --tag altinity/clickhouse-sink-connector:$release_tag-lt \
+            altinityinfra/clickhouse-sink-connector:$release_tag-test-lt
 
       - name: Update Docker links
         working-directory: release-notes

@@ -6,7 +6,9 @@ import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -23,14 +25,14 @@ import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Types;
+import java.sql.*;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -45,6 +47,13 @@ public class PreparedStatementExecutor {
      * This logger is used throughout the class to log messages related to database operations.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
+
+    /**
+     * Default epoch timestamp in seconds for the deleted_time column (2149-06-06 00:00:00 UTC).
+     * This represents a far-future date used to mark records that are not deleted.
+     */
+    private static final long DEFAULT_DELETED_TIME_EPOCH_SECONDS = 
+            LocalDateTime.of(2149, 6, 6, 0, 0, 0).toEpochSecond(ZoneOffset.UTC);
 
     /**
      * The column name used for "delete" operations in the ReplacingMergeTree engine.
@@ -139,7 +148,6 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-
             if (false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
                     conn, tableName, columnToDataTypeMap, engine)) {
                 log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
@@ -209,8 +217,18 @@ public class PreparedStatementExecutor {
                     }
 
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                true, config, columnToDataTypeMap, engine, tableName);
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
+                            record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                        true, config, columnToDataTypeMap, engine, tableName);
+                                ps.addBatch();
+                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                        false, config, columnToDataTypeMap, engine, tableName);
+                        }
+                        else {
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                        }
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                 false, config, columnToDataTypeMap, engine, tableName);
@@ -219,8 +237,17 @@ public class PreparedStatementExecutor {
                             insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
+                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                                    false, config, columnToDataTypeMap, engine, tableName);
+
+                        } else {
                         insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                false, config, columnToDataTypeMap, engine, tableName);
+                                    false, config, columnToDataTypeMap, engine, tableName);
+                        }
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
@@ -334,9 +361,11 @@ public class PreparedStatementExecutor {
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
                 } else {
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                    log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                }
+                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
+                    }
+                                    }
                 ps.setNull(index, Types.OTHER);
                 continue;
             }
@@ -393,7 +422,64 @@ public class PreparedStatementExecutor {
             }
         }
 
+        String sourceTimeZone = "UTC";
+
+        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                sourceTimeZone = configSourceTimeZone;
+            }
+        }
+
+        // If Replication history is enabled, add the deleted_time column
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
+                //if the record is a DELETE or UPDATE, add the deleted_time column
+                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
+                        record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                    // Set the current time (truncate milliseconds for DateTime compatibility)
+                    //long currentTimeMs = System.currentTimeMillis();
+                    //long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
+                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
+                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
+                    if(beforeSection) {
+                        // Set default value 2149-06-06
+                        //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
+                        // Set to current time.
+                        //long currentTimeMs = System.currentTimeMillis();
+                        //long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
+                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getTsSec());
+                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                                ZoneId.of(sourceTimeZone), serverTimeZone));
+                    }
+                    else {
+                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
+                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                        ZoneId.of(sourceTimeZone), serverTimeZone));
+//                        long debeziumTsMs = record.getTs_ms();
+//                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
+//                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), debeziumTimestampSeconds);
+                        
+                    }
+                } else {
+                    // Set default value 2149-06-06
+                    //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
+
+                    ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                    ZoneId.of(sourceTimeZone), serverTimeZone));
+
+                }
+            }
+            if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
+                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
+            }
+        }
+
         // Handle Version column for REPLACING_MERGE_TREE and REPLICATED_REPLACING_MERGE_TREE engines.
+        Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
         if (engine != null &&
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
@@ -420,10 +506,26 @@ public class PreparedStatementExecutor {
             if (columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
                     !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    if (replacingMergeTreeWithIsDeletedColumn)
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                    else
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                    // if after section and REPLICATION HISTORY ENABLE is set to true in config
+                    if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        if(!beforeSection){
+                            if (replacingMergeTreeWithIsDeletedColumn)
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                            else
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                        } else {
+                            // before section.
+                            if (replacingMergeTreeWithIsDeletedColumn)
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
+                            else
+                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        }
+                    } else {
+                        if (replacingMergeTreeWithIsDeletedColumn)
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
+                        else
+                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
+                    }
                 } else {
                     if (replacingMergeTreeWithIsDeletedColumn)
                         ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);

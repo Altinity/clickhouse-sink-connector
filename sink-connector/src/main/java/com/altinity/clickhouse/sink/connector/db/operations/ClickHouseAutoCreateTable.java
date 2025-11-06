@@ -1,7 +1,10 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
@@ -10,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -57,14 +61,15 @@ public class ClickHouseAutoCreateTable
                                Connection connection,
                                boolean isNewReplacingMergeTree,
                                boolean useReplicatedReplacingMergeTree,
-                               String rmtDeleteColumn, ClickHouseSinkConnectorConfig config)
+                               String rmtDeleteColumn,
+                               ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> colNameToDataTypeMap =
-                this.getColumnNameToCHDataTypeMapping(fields);
+                this.getColumnNameToCHDataTypeMapping(fields,config);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName,
                 databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree,
-                rmtDeleteColumn);
+                rmtDeleteColumn,config);
         log.info(String.format("**** AUTO CREATE TABLE for database(%s), "
                 + "Query :%s)", databaseName, createTableQuery));
         // TODO: Run this before a session is created.
@@ -102,7 +107,19 @@ public class ClickHouseAutoCreateTable
                                     Map<String, String> columnToDataTypesMap,
                                     boolean isNewReplacingMergeTreeEngine,
                                     boolean useReplicatedReplacingMergeTree,
-                                    String rmtDeleteColumn) {
+                                    String rmtDeleteColumn,
+                                    ClickHouseSinkConnectorConfig config) {
+
+        SchemaOverrideConfig schemaConfig = new SchemaOverrideConfig();
+
+        // Get the schema configuration for the table "tr_live" in database "dbo"
+        SchemaOverrideConfig.Table tableConfig = schemaConfig.getTableConfig(databaseName, tableName,config.originalsStrings());
+
+        // Use the primaryKey from the tableConfig if it is not empty
+        if (tableConfig != null && tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+            primaryKey = new ArrayList<>();
+            primaryKey.add(tableConfig.getPrimaryKey());  // Replace with the primary key from tableConfig
+        }
 
         StringBuilder createTableSyntax = new StringBuilder();
 
@@ -144,6 +161,21 @@ public class ClickHouseAutoCreateTable
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
         }
+        
+
+        // If Replication history is enabled, add the 
+        // deleted_time DateTime DEFAULT '2149-06-06',
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
+                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append(",");
+
+            // Add operation column
+            createTableSyntax.append("`").append(OPERATION_COLUMN)
+                    .append("` ").append(OPERATION_COLUMN_DATA_TYPE)
+                    .append(",");
+            
+        }
 
         if (isNewReplacingMergeTreeEngine == true) {
             createTableSyntax.append("`").append(VERSION_COLUMN)
@@ -182,6 +214,20 @@ public class ClickHouseAutoCreateTable
                         .append(VERSION_COLUMN).append(")");
             }
         }
+
+        // If Replication history is enabled, add the PARTITION BY toDate(deleted_time)
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            String partitionbyDateColumn = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
+            createTableSyntax.append(" PARTITION BY ").append(partitionbyDateColumn);
+        } else {
+
+            // Add PARTITION BY if it is present
+            if (tableConfig != null && tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
+                createTableSyntax.append(" PARTITION BY `").append(tableConfig.getPartitionBy()).append("`");
+            }
+        }
+
+        // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
 
         if (primaryKey != null
@@ -195,22 +241,98 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(primaryKey.stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(",")));
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
+            }
             createTableSyntax.append(")");
         } else {
             // TODO: Define a default ORDER BY clause.
             createTableSyntax.append(ORDER_BY_TUPLE);
         }
+
+        // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
+        // TTL deleted_time + toIntervalDay(30)
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+            }
+        
+
+        // Add SETTINGS if they are provided (SETTINGS should be placed last)
+        if (tableConfig != null && tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
+            createTableSyntax.append(" SETTINGS ").append(tableConfig.getSettings());
+        }
+
         return createTableSyntax.toString();
     }
 
     /**
-     * Checks if all primary key columns are present in the column-to-data
-     * type map.
+     * Creates a history table with MergeTree engine, including
+     * CDC metadata columns such as database, table, raw payload,
+     * event time, operation type, host, logfile, position, and primary host.
      *
-     * @param primaryKeys a list of primary key column names
-     * @param columnToDataTypesMap a map of column names to data types
-     * @return true if all primary key columns are present; false otherwise
+     * @param historyTableName name of the history table to create
+     * @param databaseName name of the database in which the history table is created
+     * @param connection JDBC connection to the ClickHouse database
+     * @throws SQLException if a SQL exception occurs during table creation
      */
+    public void createHistoryTable(
+                                   String historyTableName,
+                                   String databaseName,
+                                   Connection connection,
+                                   ClickHouseSinkConnectorConfig config)
+            throws SQLException {
+        // Get server timezone
+        ZoneId serverTimeZone = getServerTimeZone(config, connection);
+        
+        String sql = new BinLogHistory().createHistoryTableSyntax(
+                 historyTableName,
+                databaseName,
+                config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()),
+                serverTimeZone);
+        log.info(String.format(
+                "**** AUTO CREATE HISTORY TABLE for database(%s), Query :%s)",
+                databaseName, sql));
+        DBMetadata metadata = new DBMetadata(config);
+        metadata.executeSystemQuery(connection, sql);
+    }
+    
+    /**
+     * Gets the server timezone, first checking if user has provided one,
+     * otherwise querying the ClickHouse server.
+     *
+     * @param config the connector configuration
+     * @param connection the database connection
+     * @return a ZoneId representing the server timezone
+     */
+    private ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config, Connection connection) {
+        String userProvidedTimeZone = config.getString(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        
+        ZoneId userProvidedTimeZoneId = null;
+        if (userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
+            try {
+                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
+            } catch (Exception e) {
+                log.error("Error parsing user provided timezone", e);
+            }
+        }
+        
+        if (userProvidedTimeZoneId != null) {
+            return userProvidedTimeZoneId;
+        }
+        return new DBMetadata(config).getServerTimeZone(connection);
+    }
+
+    public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
+        String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
+        log.info(String.format(
+                "**** AUTO CREATE HISTORY DATABASE for database(%s), Query :%s)",
+                databaseName, sql));
+        DBMetadata metadata = new DBMetadata(config);
+        metadata.executeSystemQuery(connection, sql);
+    }
+
+
     @VisibleForTesting
     boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,
                                       Map<String, String> columnToDataTypesMap) {

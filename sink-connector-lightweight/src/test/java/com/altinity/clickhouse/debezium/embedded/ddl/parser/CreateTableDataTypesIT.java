@@ -29,6 +29,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+
 @Testcontainers
 @Tag("datetime")
 @DisplayName("Integration test that tests replication of data types and validates datetime," +
@@ -37,7 +39,7 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("data_types.sql")
@@ -304,6 +306,84 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         Assert.assertTrue(geometryResultValidated);
 
 
+        // Check if show create table result for integer_types_bool 
+//            ┌─statement─────────────────────────────────────────┐
+// 1. │ CREATE TABLE employees.integer_types_BOOL        ↴│
+//    │↳(                                                ↴│
+//    │↳    `Type` String,                               ↴│
+//    │↳    `Minimum_Value` Int8,                        ↴│
+//    │↳    `Maximum_Value` Int8,                        ↴│
+//    │↳    `Null_Value` Nullable(Int8),                 ↴│
+//    │↳    `_version` UInt64,                           ↴│
+//    │↳    `is_deleted` UInt8                           ↴│
+//    │↳)                                                ↴│
+//    │↳ENGINE = ReplacingMergeTree(_version, is_deleted)↴│
+//    │↳ORDER BY Type                                    ↴│
+//    │↳SETTINGS index_granularity = 8192                 │
+//    └───────────────────────────────────────────────────┘
+        ResultSet rs3 = ITCommon.executeQueryWithResultSet("show create table employees.integer_types_BOOL", writer.getConnection());
+        boolean integerTypesBoolResultValidated = false;
+        while(rs3.next()) {
+            integerTypesBoolResultValidated = true;
+            String createTableDML = rs3.getString(1);
+            Assert.assertTrue(createTableDML.equalsIgnoreCase("CREATE TABLE employees.integer_types_BOOL\n" +
+                "(\n" +
+                "    `Type` String,\n" +
+                "    `Minimum_Value` Int8,\n" +
+                "    `Maximum_Value` Int8,\n" +
+                "    `Null_Value` Nullable(Int8),\n" +
+                "    `_version` UInt64,\n" +
+                "    `is_deleted` UInt8\n" +
+                ")\n" +
+                "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                "ORDER BY Type\n" +
+                "SETTINGS index_granularity = 8192"));
+        }
+        Assert.assertTrue(integerTypesBoolResultValidated);
+
+        // check if show create table result for integer_types_bigint
+//         1. │ CREATE TABLE employees.integer_types_BIGINT      ↴│
+//    │↳(                                                ↴│
+//    │↳    `Type` String,                               ↴│
+//    │↳    `Storage_Bytes` Int32,                       ↴│
+//    │↳    `Minimum_Value_Signed` Int64,                ↴│
+//    │↳    `Minimum_Value_Unsigned` UInt64,             ↴│
+//    │↳    `Maximum_Value_Signed` Int64,                ↴│
+//    │↳    `Maximum_Value_Unsigned` UInt64,             ↴│
+//    │↳    `Null_Value_Signed` Nullable(Int64),         ↴│
+//    │↳    `Null_Value_Unsigned` Nullable(UInt64),      ↴│
+//    │↳    `_version` UInt64,                           ↴│
+//    │↳    `is_deleted` UInt8                           ↴│
+//    │↳)                                                ↴│
+//    │↳ENGINE = ReplacingMergeTree(_version, is_deleted)↴│
+//    │↳ORDER BY Type                                    ↴│
+//    │↳SETTINGS index_granularity = 8192   
+//        
+        ResultSet rs4 = ITCommon.executeQueryWithResultSet("show create table employees.integer_types_BIGINT", writer.getConnection());
+        boolean integerTypesBigintResultValidated = false;
+        while(rs4.next()) {
+            integerTypesBigintResultValidated = true;
+            String createTableDML = rs4.getString(1);
+            Assert.assertTrue(createTableDML.equalsIgnoreCase("CREATE TABLE employees.integer_types_BIGINT\n" +
+                "(\n" +
+                "    `Type` String,\n" +
+                "    `Storage_Bytes` Int32,\n" +
+                "    `Minimum_Value_Signed` Int64,\n" +
+                "    `Minimum_Value_Unsigned` UInt64,\n" +
+                "    `Maximum_Value_Signed` Int64,\n" +
+                "    `Maximum_Value_Unsigned` UInt64,\n" +
+                "    `Null_Value_Signed` Nullable(Int64),\n" +
+                "    `Null_Value_Unsigned` Nullable(UInt64),\n" +
+                "    `_version` UInt64,\n" +
+                "    `is_deleted` UInt8\n" +
+                ")\n" +
+                "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                "ORDER BY Type\n" +
+                "SETTINGS index_granularity = 8192"));
+        }
+        Assert.assertTrue(integerTypesBigintResultValidated);
+        
+        
         if(engine.get() != null) {
             engine.get().stop();
         }

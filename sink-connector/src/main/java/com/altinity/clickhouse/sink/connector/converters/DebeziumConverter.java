@@ -91,13 +91,14 @@ public class DebeziumConverter {
          * Input represents number of milliseconds from Epoch and does not include timezone information.
          * Timestamp does not have microseconds
          * ISO formatted String.
+         *
          * @param value
          * @return
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-            if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
@@ -108,25 +109,51 @@ public class DebeziumConverter {
             // Get the milliseconds value of the timezone.
             TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
             int sourceOffset = sourceTZ.getRawOffset();
+            Long epochMillisWithOffset = epochMillis - sourceOffset;
 
-            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillis)))) {
-                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            if (sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillisWithOffset)))) {
+                Long dstOffset = (long) (sourceTZ.getRawOffset() + sourceTZ.getDSTSavings());
+                epochMillisWithOffset = epochMillis - dstOffset;
             }
 
             // Add this offset to wrongly calculated epoch.
-            Long epochMillisWithOffset = epochMillis - sourceOffset;
             Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
 
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
-            if(rangeExceeded[0]) {
+            if (rangeExceeded[0]) {
                 // return the modifiedDTWithLimits as a string without timezone conversion
                 return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
-    }
 
+
+        public static String convertWithoutTimeZoneAdjustment(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            }
+
+            Long epochMillis = (Long) value;
+            // Step 1: Convert from incorrect timezone to LocalDateTime
+            //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
+
+
+            // Add this offset to wrongly calculated epoch.
+            Instant i = Instant.ofEpochMilli(epochMillis);
+
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            if (rangeExceeded[0]) {
+                // return the modifiedDTWithLimits as a string without timezone conversion
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+            }
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
+        }
+
+    }
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
         rangeExceeded[0] = false;
 

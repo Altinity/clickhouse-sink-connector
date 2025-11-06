@@ -736,6 +736,73 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_0,
                         ConfigDef.Width.NONE,
                         ERROR_TABLE_NAME.toString()
+                )
+                // Add ERROR_LOGGING_ENABLE boolean (false by default)
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, error logging is enabled",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(),
+                        Type.STRING,
+                        "history",
+                        Importance.MEDIUM,
+                        "Table name for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, replication history tables are created and maintained",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(),
+                        Type.STRING,
+                        "binlog_history",
+                        Importance.MEDIUM,
+                        "Database name for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_2,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString(),
+                        Type.INT,
+                        30,
+                        Importance.MEDIUM,
+                        "TTL for replication history tables",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.MEDIUM,
+                        "Hostname of the database",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
                 );
     }
 }

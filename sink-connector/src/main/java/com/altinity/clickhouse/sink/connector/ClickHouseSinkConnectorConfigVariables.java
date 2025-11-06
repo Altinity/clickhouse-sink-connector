@@ -84,7 +84,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     CONNECTION_POOL_DISABLE("connection.pool.disable"),
 
-    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.offset.table.name"),
+    OFFSET_STORAGE_TABLE_NAME("offset.storage.jdbc.table.name"),
 
     ERRORS_MAX_RETRIES("errors.max.retries"),
 
@@ -92,7 +92,19 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     NON_DEFAULT_VALUE("non.default.value"),
 
-    ERROR_TABLE_NAME("default.error.table");
+    ERROR_TABLE_NAME("default.error.table"),
+
+    ERROR_LOGGING_ENABLE("error.logging.enable"),
+
+    REPLICATION_HISTORY_ENABLE("replication.history.enable"),
+
+    REPLICATION_HISTORY_TABLE_NAME("replication.history.table.name"),
+
+    REPLICATION_HISTORY_DATABASE_NAME("replication.history.database.name"),
+
+    REPLICATION_HISTORY_TTL("replication.history.ttl"), 
+
+    DATABASE_HOSTNAME("database.hostname");
 
 
 

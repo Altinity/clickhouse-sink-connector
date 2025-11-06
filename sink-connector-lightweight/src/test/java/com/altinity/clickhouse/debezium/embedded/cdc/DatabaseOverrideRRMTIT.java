@@ -32,6 +32,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 import static org.junit.Assert.assertTrue;
 public class DatabaseOverrideRRMTIT {
 
@@ -50,14 +52,14 @@ public class DatabaseOverrideRRMTIT {
         Network network = Network.newNetwork();
         zookeeperContainer.withNetwork(network).withNetworkAliases("zookeeper");
         zookeeperContainer.start();
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
 //                .withInitScript("15k_tables_mysql.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
-        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_schema_only_column_timezone.sql")
                 //   .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")

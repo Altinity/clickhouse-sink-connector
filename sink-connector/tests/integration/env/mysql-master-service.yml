@@ -3,7 +3,7 @@ version: "2.3"
 services:
   mysql-master:
     container_name: mysql-master
-    image: docker.io/bitnami/mysql:8.0.36
+    image: mysql:8.0.36
     restart: "no"
     expose:
       - "3306"
@@ -14,7 +14,7 @@ services:
       - MYSQL_REPLICATION_USER=repl_user
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
-      - ./mysqld.cnf:/opt/bitnami/mysql/conf/my_custom.cnf
+     - ./mysqld.cnf:/etc/mysql/conf.d/my_custom.cnf
       - ../sql/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
       - "${CLICKHOUSE_TESTS_DIR}/_instances/share_folder:/tmp/share_folder"
     healthcheck:

@@ -31,6 +31,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 @Testcontainers
 @Tag("datetime")
 @DisplayName("Integration Test that validates replication of DateTime columns when user overrides CH server timezone, also MySQL server runs on a different timezone.")
@@ -38,7 +41,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
             .asCompatibleSubstituteFor("clickhouse"))
             .withInitScript("init_clickhouse_user_provided_timezone.sql")
             .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
@@ -49,7 +52,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("datetime.sql")
@@ -72,7 +75,7 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
             try {
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
+                engine.get().setup(getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -260,16 +263,12 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         HikariDbSource.close();
     }
 
-    protected Properties getDebeziumProperties() throws Exception {
+    protected Properties getDebeziumProperties(MySQLContainer mySqlContainer, ClickHouseContainer clickHouseContainer) throws Exception {
 
         // Start the debezium embedded application.
 
-        Properties defaultProps = new Properties();
-        Properties defaultProperties = PropertiesHelper.getProperties("config.properties");
+        Properties defaultProps =  ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
-        defaultProps.putAll(defaultProperties);
-        Properties fileProps = new ConfigLoader().load("config.yml");
-        defaultProps.putAll(fileProps);
 
         // **** OVERRIDE set to schema only
         defaultProps.setProperty("snapshot.mode", "initial");
@@ -277,31 +276,6 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
         defaultProps.setProperty("auto.create.tables", "true");
         defaultProps.setProperty("enable.snapshot.ddl", "true");
 
-        defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
-        defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
-        defaultProps.setProperty("database.user", "root");
-        defaultProps.setProperty("database.password", "adminpass");
-
-        defaultProps.setProperty("clickhouse.server.url", clickHouseContainer.getHost());
-        defaultProps.setProperty("clickhouse.server.port", String.valueOf(clickHouseContainer.getFirstMappedPort()));
-        defaultProps.setProperty("clickhouse.server.user", clickHouseContainer.getUsername());
-        defaultProps.setProperty("clickhouse.server.password", clickHouseContainer.getPassword());
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
-
-
-//        props.setProperty("database.include.list", "datatypes");
-//        props.setProperty("clickhouse.server.database", "datatypes");
         // Override clickhouse server timezone.
         defaultProps.setProperty("database.connectionTimeZone", "UTC");
         defaultProps.setProperty("clickhouse.datetime.timezone", "UTC");

@@ -14,7 +14,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.HashMap;
+
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 public class ITCommon {
+    // Docker image constants
+    public static final String MYSQL_DOCKER_IMAGE = "docker.io/mysql:8.0.36";
+    public static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:latest";
+
     static public Connection connectToMySQL(MySQLContainer mySqlContainer) {
         Connection conn = null;
         try {
@@ -176,15 +183,14 @@ public class ITCommon {
         defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s/altinity_sink_connector",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
+        defaultProps.setProperty("offset.storage.jdbc.url", String.format("jdbc:clickhouse://%s:%s/altinity_sink_connector",
                 clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
-        defaultProps.setProperty("schema.history.internal.jdbc.url", String.format("jdbc:clickhouse://%s:%s",
-                clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort()));
 
+        defaultProps.setProperty("jdbc.schema.history.table.name", "altinity_sink_connector.replicate_schema_history");
 
         return defaultProps;
 

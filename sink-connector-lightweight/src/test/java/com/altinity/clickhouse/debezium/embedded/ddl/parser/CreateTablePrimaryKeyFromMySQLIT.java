@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.connectToMySQL;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 
 @Testcontainers
 @DisplayName("Integration test to verify Primary Key from MySQL should be translated to non-null type in ClickHouse")
@@ -37,7 +39,7 @@ public class CreateTablePrimaryKeyFromMySQLIT {
     protected MySQLContainer mySqlContainer;
 
     @Container
-    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:latest")
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
             .asCompatibleSubstituteFor("clickhouse"))
             .withInitScript("init_clickhouse_it.sql")
             .withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml")
@@ -47,7 +49,7 @@ public class CreateTablePrimaryKeyFromMySQLIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 //  .withInitScript("data_types.sql")

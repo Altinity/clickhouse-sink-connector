@@ -23,13 +23,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
+
 @DisplayName("Integration Test that validates handling of ALTER table(Add Column) DDL received from MYSQL")
 @Testcontainers
 public class AlterTableAddColumnIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = new MySQLContainer<>(DockerImageName.parse("docker.io/bitnami/mysql:8.0.36")
+        mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("alter_ddl_add_column.sql")
@@ -94,7 +96,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
         Assert.assertTrue(shipClassColumns.get("somecol").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(shipClassColumns.get("newcol").equalsIgnoreCase("Nullable(Bool)"));
-        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertTrue(shipClassColumns.get("customer_address").equalsIgnoreCase("String"));
         Assert.assertTrue(shipClassColumns.get("customer_name").equalsIgnoreCase("Nullable(String)"));
 
         // Validate all add_test columns.
