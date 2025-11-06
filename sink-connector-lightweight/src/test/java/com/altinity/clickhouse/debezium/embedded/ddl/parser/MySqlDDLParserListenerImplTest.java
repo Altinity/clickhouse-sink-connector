@@ -2317,6 +2317,18 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table employees drop CONSTRAINT employees_ibfk_2";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
+    }
+
+    @Test
+    public void testAlterTableAddColumnAlgorithm() {
+    String sql = "ALTER TABLE test_lot ADD COLUMN event_ref_type_id INTEGER, algorithm=instant, ADD COLUMN event_ref_id BIGINT, algorithm=instant;";
+
+    StringBuffer clickHouseQuery = new StringBuffer();
+    mySQLDDLParserService.parseSql(sql, "test_db", clickHouseQuery);
+    
+    Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
+            "ALTER TABLE employees.test_lot ADD COLUMN event_ref_type_id Nullable(Int32)"));
     }
 }
