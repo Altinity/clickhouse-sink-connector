@@ -148,7 +148,7 @@ TTL _valid_to + toIntervalDay(30);
 
 **The `_valid_to` Column:**
 - Indicates **when this version of the record expired** (was replaced or deleted)
-- Active records have `_valid_to = '2100-01-01 00:00:00'` (far future default)
+- Active records have `_valid_to > now()` (far future default)
 - Superseded records have `_valid_to` set to the timestamp of the next change
 - Enables efficient "as-of" queries without scanning entire history
 
@@ -196,7 +196,7 @@ Get only the active, current records:
 ```sql
 SELECT id, name, email
 FROM users
-WHERE _valid_to = '2100-01-01 00:00:00'
+WHERE _valid_to > now()
   AND is_deleted = 0;
 ```
 
@@ -283,7 +283,7 @@ ORDER BY change_count DESC;
   
 - **Query Pattern**: 
   ```sql
-  WHERE _valid_to = '2100-01-01 00:00:00'
+  WHERE _valid_to > now()
   ```
 
 ### Historical Partitions (Date-Based)
