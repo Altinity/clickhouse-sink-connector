@@ -94,6 +94,10 @@ public class ClickHouseDbConstants {
     public static final String DELETED_TIME_COLUMN = "_valid_to";
 
     /**
+     * _valid_from column to the table
+     */
+    public static final String DELETED_FROM_TIME_COLUMN = "_valid_from";
+    /**
      * The data type of the deleted time column, typically a date time.
      */
     public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT '" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";

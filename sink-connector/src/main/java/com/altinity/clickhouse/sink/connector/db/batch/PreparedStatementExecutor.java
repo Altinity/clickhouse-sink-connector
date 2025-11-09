@@ -437,36 +437,22 @@ public class PreparedStatementExecutor {
                 //if the record is a DELETE or UPDATE, add the deleted_time column
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
                         record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                    // Set the current time (truncate milliseconds for DateTime compatibility)
-                    //long currentTimeMs = System.currentTimeMillis();
-                    //long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
-                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
-                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
+                    
                     if(beforeSection) {
-                        // Set default value 2149-06-06
-                        //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
-                        // Set to current time.
-                        //long currentTimeMs = System.currentTimeMillis();
-                        //long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
-                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getTsSec());
                         ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
                                 DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
                                 ZoneId.of(sourceTimeZone), serverTimeZone));
                     }
                     else {
-                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
                         ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
                                 DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                        ZoneId.of(sourceTimeZone), serverTimeZone));
-//                        long debeziumTsMs = record.getTs_ms();
-//                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
-//                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), debeziumTimestampSeconds);
-                        
+                                        ZoneId.of(sourceTimeZone), serverTimeZone));                        
                     }
                 } else {
-                    // Set default value 2149-06-06
-                    //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
-
+                    // INSERT, set the valid_from column to record.getTsSec(), keep the valid_to column as the max TTL.
+                    ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                                    ZoneId.of(sourceTimeZone), serverTimeZone));
                     ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
                             DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
                                     ZoneId.of(sourceTimeZone), serverTimeZone));

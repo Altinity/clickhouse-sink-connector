@@ -61,13 +61,13 @@ public class QueryFormatter {
      * the ones expected by ClickHouse.
      * </p>
      *
-     * @param tableName the name of the ClickHouse table.
-     * @param fields the list of fields from the source schema.
+     * @param tableName               the name of the ClickHouse table.
+     * @param fields                  the list of fields from the source schema.
      * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
-     * @param includeKafkaMetaData flag indicating whether Kafka metadata columns should be included.
-     * @param includeRawData flag indicating whether raw data should be included in the query.
-     * @param rawDataColumn the name of the raw data column.
-     * @param dbName the name of the database.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included in the query.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database.
      * @return a MutablePair containing the generated INSERT query and a map of column names to their indices.
      */
     public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
@@ -77,16 +77,68 @@ public class QueryFormatter {
             boolean includeRawData,
             String rawDataColumn, String dbName) {
 
-        Map<String, Integer> colNameToIndexMap = new HashMap<>();
-        int index = 1;
+        // Create column data structures
+        ColumnData columnData = createColumns(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName);
 
-        StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesToDataTypes = new StringBuilder();
+        if (columnData == null) {
+            return null;
+        }
+
+        // Construct the full insert query
+        String tableWithBackTicks = "`" + tableName + "`";
+        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
+                tableWithBackTicks, columnData.colNamesDelimited, columnData.colNamesDelimited, columnData.colNamesToDataTypes);
+
+        // Return the query and column index map
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
+        response.left = insertQuery;
+        response.right = columnData.colNameToIndexMap;
+
+        return response;
+    }
+
+
+    /**
+     * Helper class to hold the results of column creation.
+     */
+    private static class ColumnData {
+        Map<String, Integer> colNameToIndexMap;
+        StringBuilder colNamesDelimited;
+        StringBuilder colNamesToDataTypes;
+
+        ColumnData(Map<String, Integer> colNameToIndexMap, StringBuilder colNamesDelimited, StringBuilder colNamesToDataTypes) {
+            this.colNameToIndexMap = colNameToIndexMap;
+            this.colNamesDelimited = colNamesDelimited;
+            this.colNamesToDataTypes = colNamesToDataTypes;
+        }
+    }
+
+    /**
+     * Creates column data structures for generating INSERT queries.
+     *
+     * @param tableName               the name of the table (used for error logging).
+     * @param fields                  the list of fields from the source schema.
+     * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database (used for error logging).
+     * @return a ColumnData object containing the column index map and delimited strings, or null if fields is null.
+     */
+    private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
+                                     boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
             return null;
         }
+
+        Map<String, Integer> colNameToIndexMap = new HashMap<>();
+        int index = 1;
+
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
 
         // Loop over each column to generate the insert query and map data types
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
@@ -128,17 +180,7 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimited);
         removeTrailingComma(colNamesToDataTypes);
 
-        // Construct the full insert query
-        String tableWithBackTicks = "`" + tableName + "`";
-        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
-                tableWithBackTicks, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
-
-        // Return the query and column index map
-        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
-        response.left = insertQuery;
-        response.right = colNameToIndexMap;
-
-        return response;
+        return new ColumnData(colNameToIndexMap, colNamesDelimited, colNamesToDataTypes);
     }
 
     /**
@@ -159,7 +201,7 @@ public class QueryFormatter {
      * This method constructs an INSERT query based on the provided column names and data types.
      * </p>
      *
-     * @param tableName the name of the ClickHouse table.
+     * @param tableName               the name of the ClickHouse table.
      * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
      * @return the generated INSERT SQL query.
      */
@@ -181,5 +223,13 @@ public class QueryFormatter {
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
+    }
+
+    public void getInsertQueryForUpdate(String tableName, List<Field> fields,
+                                        Map<String, String> columnNameToDataTypeMap, String dbName) {
+
+
+//        return String.format("INSERT INTO %s SELECT %s FROM %s WHERE %s AND valid_to = %s AND is_deleted = %s UNION ALL SELECT %s WHERE %s AND valid_to = %s AND is_deleted = %s",
+//                tableName, fields, tableName, condition, validTo, isDeleted, fields, condition, validTo, isDeleted);
     }
 }
