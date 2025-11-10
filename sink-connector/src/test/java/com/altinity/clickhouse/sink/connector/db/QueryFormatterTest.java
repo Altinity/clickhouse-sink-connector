@@ -100,4 +100,72 @@ public class QueryFormatterTest {
         //String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
+
+    @Test
+    public void testGetInsertQueryForUpdate() {
+        QueryFormatter qf = new QueryFormatter();
+
+        // Setup test data for employees table with temporal tracking fields
+        Map<String, String> employeeColumns = new HashMap<>();
+        employeeColumns.put("employeeNumber", "Int32");
+        employeeColumns.put("lastName", "String");
+        employeeColumns.put("firstName", "String");
+        employeeColumns.put("extension", "String");
+        employeeColumns.put("email", "String");
+        employeeColumns.put("officeCode", "String");
+        employeeColumns.put("reportsTo", "Int32");
+        employeeColumns.put("jobTitle", "String");
+        employeeColumns.put("valid_from", "DateTime");
+        employeeColumns.put("valid_to", "DateTime");
+        employeeColumns.put("operation", "String");
+        employeeColumns.put("_version", "Int64");
+        employeeColumns.put("is_deleted", "Int8");
+
+        List<Field> employeeFields = new ArrayList<>();
+        employeeFields.add(new Field("employeeNumber", 0, Schema.INT32_SCHEMA));
+        employeeFields.add(new Field("lastName", 1, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("firstName", 2, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("extension", 3, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("email", 4, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("officeCode", 5, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("reportsTo", 6, Schema.INT32_SCHEMA));
+        employeeFields.add(new Field("jobTitle", 7, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("valid_from", 8, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field("valid_to", 9, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field("operation", 10, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field("_version", 11, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field("is_deleted", 12, Schema.INT8_SCHEMA));
+
+        String tableName = "test_history.employees";
+        String primaryKeyColumnName = "employeeNumber";
+        Object primaryKeyValue = 1001;
+        String validToMax = "'2100-01-01 00:00:00'";
+
+        String result = qf.getInsertQueryForUpdate(
+                tableName,
+                employeeFields,
+                employeeColumns,
+                primaryKeyColumnName,
+                primaryKeyValue,
+                validToMax
+        );
+
+        // Expected query format based on the provided example
+        // Note: The actual order of columns may vary based on the HashMap iteration
+        String expectedPattern = "INSERT INTO `test_history.employees`";
+        Assert.assertTrue("Query should start with INSERT INTO statement", 
+                result.contains(expectedPattern));
+        Assert.assertTrue("Query should contain UNION ALL", 
+                result.contains("UNION ALL"));
+        Assert.assertTrue("Query should contain WHERE clause with primary key", 
+                result.contains("WHERE employeeNumber=1001"));
+        Assert.assertTrue("Query should contain valid_to condition", 
+                result.contains("valid_to = '2100-01-01 00:00:00'"));
+        Assert.assertTrue("Query should contain is_deleted condition", 
+                result.contains("is_deleted = 0"));
+
+        // Print the generated query for debugging
+        System.out.println("Generated Insert Query for Update:");
+        System.out.println(result);
+    }
 }

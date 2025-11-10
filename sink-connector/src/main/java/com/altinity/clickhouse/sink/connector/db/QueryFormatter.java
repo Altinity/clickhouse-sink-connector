@@ -225,10 +225,27 @@ public class QueryFormatter {
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
     }
 
-    public void getInsertQueryForUpdate(String tableName, List<Field> fields,
-                                        Map<String, String> columnNameToDataTypeMap, String dbName) {
+    public String getInsertQueryForUpdate(String tableName, List<Field> fields,
+                                        Map<String, String> columnNameToDataTypeMap,
+                                        String primaryKeyColumnName,
+                                        Object primaryKeyValue,
+                                        String validToMax) {
 
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
 
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = "`" + entry.getKey() + "`";
+            colNamesDelimited.append(columnName).append(",");
+            colNamesToDataTypes.append(columnName).append(" ").append(entry.getValue()).append(",");
+        }
+
+        removeTrailingComma(colNamesDelimited);
+        removeTrailingComma(colNamesToDataTypes);
+
+        String tableWithBackTicks = "`" + tableName + "`";
+        return String.format("INSERT INTO %s SELECT %s FROM %s WHERE %s=%s AND valid_to = %s AND is_deleted = %s UNION ALL SELECT %s",
+                tableWithBackTicks, colNamesDelimited, tableWithBackTicks, primaryKeyColumnName, primaryKeyValue, validToMax, 0, colNamesDelimited);
 //        return String.format("INSERT INTO %s SELECT %s FROM %s WHERE %s AND valid_to = %s AND is_deleted = %s UNION ALL SELECT %s WHERE %s AND valid_to = %s AND is_deleted = %s",
 //                tableName, fields, tableName, condition, validTo, isDeleted, fields, condition, validTo, isDeleted);
     }
