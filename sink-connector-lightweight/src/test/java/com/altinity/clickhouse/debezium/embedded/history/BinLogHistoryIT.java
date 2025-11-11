@@ -6,7 +6,9 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -122,6 +124,12 @@ public class BinLogHistoryIT {
         // Validate in Clickhouse the last record written is 29999
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
+        // Validate binlog_history.history table exists and has correct schema
+        validateBinLogHistoryTableSchema(writer.getConnection());
+        
+        // Validate data tables have temporal tracking columns
+        validateTemporalTrackingColumns(writer.getConnection(), "employees2", "newtable");
+
         long col2 = 0L;
 //        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
 //        while(version1Result.next()) {
@@ -155,5 +163,124 @@ public class BinLogHistoryIT {
 
         HikariDbSource.close();
 
+    }
+    
+    /**
+     * Validates that the binlog_history.history table exists and has all required columns
+     * matching the temporal data tracking specification.
+     * Uses constants from BinLogHistory to avoid hardcoding column names.
+     */
+    private void validateBinLogHistoryTableSchema(Connection clickhouseConn) throws Exception {
+        log.info("Validating binlog_history.history table schema");
+        
+        // Query to get table schema
+        String query = "SELECT name, type FROM system.columns WHERE database = 'binlog_history' AND table = 'history' ORDER BY position";
+        ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
+        
+        // Expected columns with their data types using constants from BinLogHistory
+        String[][] expectedColumns = {
+            {BinLogHistory.GTID_COLUMN, BinLogHistory.GTID_COLUMN_DATA_TYPE},
+            {BinLogHistory.DATABASE_COLUMN, BinLogHistory.DATABASE_COLUMN_DATA_TYPE},
+            {BinLogHistory.TABLE_COLUMN, BinLogHistory.TABLE_COLUMN_DATA_TYPE},
+            {BinLogHistory.DDL_COLUMN, BinLogHistory.DDL_COLUMN_DATA_TYPE},
+            {BinLogHistory.BEFORE_COLUMN, BinLogHistory.BEFORE_AFTER_COLUMN_DATA_TYPE},
+            {BinLogHistory.AFTER_COLUMN, BinLogHistory.BEFORE_AFTER_COLUMN_DATA_TYPE},
+            {BinLogHistory.RAW_COLUMN, BinLogHistory.RAW_COLUMN_DATA_TYPE},
+            {BinLogHistory.TIME_COLUMN, BinLogHistory.TIME_COLUMN_DATA_TYPE},
+            {BinLogHistory.IS_DELETED_COLUMN, BinLogHistory.IS_DELETED_COLUMN_DATA_TYPE},
+            {BinLogHistory.OPERATION_COLUMN, BinLogHistory.OPERATION_COLUMN_DATA_TYPE},
+            {BinLogHistory.VERSION_COLUMN, BinLogHistory.VERSION_COLUMN_DATA_TYPE},
+            {BinLogHistory.HOST_COLUMN, BinLogHistory.HOST_COLUMN_DATA_TYPE},
+            {BinLogHistory.LOGFILE_COLUMN, BinLogHistory.LOGFILE_COLUMN_DATA_TYPE},
+            {BinLogHistory.POSITION_COLUMN, BinLogHistory.POSITION_COLUMN_DATA_TYPE},
+            {BinLogHistory.PRIMARY_HOST_COLUMN, BinLogHistory.PRIMARY_HOST_COLUMN_DATA_TYPE},
+            {BinLogHistory.SERVER_ID_COLUMN, BinLogHistory.SERVER_ID_COLUMN_DATA_TYPE},
+            {BinLogHistory.ROW_COLUMN, BinLogHistory.ROW_COLUMN_DATA_TYPE},
+            {BinLogHistory.SEQUENCE_COLUMN, BinLogHistory.SEQUENCE_COLUMN_DATA_TYPE}
+        };
+        
+        int columnCount = 0;
+        while (rs.next()) {
+            String columnName = rs.getString("name");
+            String columnType = rs.getString("type");
+            log.info("Found column: {} with type: {}", columnName, columnType);
+            
+            // Find matching expected column
+            boolean found = false;
+            for (String[] expectedColumn : expectedColumns) {
+                if (expectedColumn[0].equals(columnName)) {
+                    found = true;
+                    // Validate type (handle DateTime with timezone variants)
+                    if (expectedColumn[1].equals(BinLogHistory.TIME_COLUMN_DATA_TYPE)) {
+                        assertTrue("Column " + columnName + " should be DateTime type, but got: " + columnType,
+                            columnType.startsWith("DateTime"));
+                    } else {
+                        assertTrue("Column " + columnName + " should be " + expectedColumn[1] + ", but got: " + columnType,
+                            columnType.equals(expectedColumn[1]));
+                    }
+                    break;
+                }
+            }
+            assertTrue("Unexpected column found: " + columnName, found);
+            columnCount++;
+        }
+        
+        assertTrue("Expected 18 columns in binlog_history.history table, but found: " + columnCount, 
+            columnCount == 18);
+        
+        log.info("Successfully validated binlog_history.history table has all {} required columns", columnCount);
+    }
+    
+    /**
+     * Validates that data tables have the required temporal tracking columns.
+     * Uses constants from ClickHouseDbConstants to avoid hardcoding column names.
+     */
+    private void validateTemporalTrackingColumns(Connection clickhouseConn, String database, String table) throws Exception {
+        log.info("Validating temporal tracking columns for {}.{}", database, table);
+        
+        String query = String.format("SELECT name, type FROM system.columns WHERE database = '%s' AND table = '%s' " +
+            "AND name IN ('%s', '%s', '%s', '%s') ORDER BY name", 
+            database, table,
+            ClickHouseDbConstants.DELETED_TIME_COLUMN,
+            ClickHouseDbConstants.OPERATION_COLUMN,
+            ClickHouseDbConstants.VERSION_COLUMN,
+            ClickHouseDbConstants.IS_DELETED_COLUMN);
+        ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
+        
+        // Expected temporal tracking columns using constants from ClickHouseDbConstants
+        String[][] expectedColumns = {
+            {ClickHouseDbConstants.OPERATION_COLUMN, ClickHouseDbConstants.OPERATION_COLUMN_DATA_TYPE},
+            {ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime"}, // _valid_to
+            {ClickHouseDbConstants.VERSION_COLUMN, ClickHouseDbConstants.VERSION_COLUMN_DATA_TYPE},
+            {ClickHouseDbConstants.IS_DELETED_COLUMN, ClickHouseDbConstants.IS_DELETED_COLUMN_DATA_TYPE}
+        };
+        
+        int columnCount = 0;
+        while (rs.next()) {
+            String columnName = rs.getString("name");
+            String columnType = rs.getString("type");
+            log.info("Found temporal tracking column: {} with type: {}", columnName, columnType);
+            
+            // Find matching expected column
+            for (String[] expectedColumn : expectedColumns) {
+                if (expectedColumn[0].equals(columnName)) {
+                    // Validate type (handle DateTime with timezone variants and DEFAULT clauses)
+                    if (expectedColumn[1].equals("DateTime") || expectedColumn[1].startsWith("DateTime")) {
+                        assertTrue("Column " + columnName + " should be DateTime type, but got: " + columnType,
+                            columnType.startsWith("DateTime"));
+                    } else {
+                        assertTrue("Column " + columnName + " should be " + expectedColumn[1] + ", but got: " + columnType,
+                            columnType.equals(expectedColumn[1]));
+                    }
+                    break;
+                }
+            }
+            columnCount++;
+        }
+        
+        assertTrue("Expected 4 temporal tracking columns in " + database + "." + table + ", but found: " + columnCount, 
+            columnCount == 4);
+        
+        log.info("Successfully validated {} temporal tracking columns for {}.{}", columnCount, database, table);
     }
 }
