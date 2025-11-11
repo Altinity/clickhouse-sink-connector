@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -115,11 +116,11 @@ public class QueryFormatterTest {
         employeeColumns.put("officeCode", "String");
         employeeColumns.put("reportsTo", "Int32");
         employeeColumns.put("jobTitle", "String");
-        employeeColumns.put("valid_from", "DateTime");
-        employeeColumns.put("valid_to", "DateTime");
-        employeeColumns.put("operation", "String");
-        employeeColumns.put("_version", "Int64");
-        employeeColumns.put("is_deleted", "Int8");
+        employeeColumns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        employeeColumns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        employeeColumns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        employeeColumns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        employeeColumns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
 
         List<Field> employeeFields = new ArrayList<>();
         employeeFields.add(new Field("employeeNumber", 0, Schema.INT32_SCHEMA));
@@ -130,24 +131,29 @@ public class QueryFormatterTest {
         employeeFields.add(new Field("officeCode", 5, Schema.STRING_SCHEMA));
         employeeFields.add(new Field("reportsTo", 6, Schema.INT32_SCHEMA));
         employeeFields.add(new Field("jobTitle", 7, Schema.STRING_SCHEMA));
-        employeeFields.add(new Field("valid_from", 8, Schema.INT64_SCHEMA));
-        employeeFields.add(new Field("valid_to", 9, Schema.INT64_SCHEMA));
-        employeeFields.add(new Field("operation", 10, Schema.STRING_SCHEMA));
-        employeeFields.add(new Field("_version", 11, Schema.INT64_SCHEMA));
-        employeeFields.add(new Field("is_deleted", 12, Schema.INT8_SCHEMA));
+        employeeFields.add(new Field(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, 8, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field(ClickHouseDbConstants.DELETED_TIME_COLUMN, 9, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field(ClickHouseDbConstants.OPERATION_COLUMN, 10, Schema.STRING_SCHEMA));
+        employeeFields.add(new Field(ClickHouseDbConstants.VERSION_COLUMN, 11, Schema.INT64_SCHEMA));
+        employeeFields.add(new Field(ClickHouseDbConstants.IS_DELETED_COLUMN, 12, Schema.INT8_SCHEMA));
 
         String tableName = "test_history.employees";
         String primaryKeyColumnName = "employeeNumber";
         Object primaryKeyValue = 1001;
         String validToMax = "'2100-01-01 00:00:00'";
-
+        String binlogRecordTimestamp = "'2025-03-01 10:30:00'";
+        long version = 1234567890;
+        ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
         String result = qf.getInsertQueryForUpdate(
                 tableName,
                 employeeFields,
                 employeeColumns,
                 primaryKeyColumnName,
                 primaryKeyValue,
-                validToMax
+                validToMax,
+                binlogRecordTimestamp,
+                version,
+                cdcOperation
         );
 
         // Expected query format based on the provided example
