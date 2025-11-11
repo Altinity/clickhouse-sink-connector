@@ -236,30 +236,40 @@ public class QueryFormatter {
                                           long version,
                                           ClickHouseConverter.CDC_OPERATION cdcOperation) {
 
+        StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
         StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
+
+        // Loop over each column to generate the insert query
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = "`" + entry.getKey() + "`";
+            colNamesDelimited.append(columnName).append(",");
+            colNamesToDataTypes.append(columnName).append(" ").append(entry.getValue()).append(",");
+        }
+
 
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
 
             String columnName = entry.getKey();
             // If column name is VALID_TO, replace it with toDateTime('2100-01-01 00:00:00')
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                columnName = String.format("toDateTime('%s') as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
+                columnName = String.format("toDateTime(%s) as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
             }
             // If column name is IS_DELETED, replace it with 0
-            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+            else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 columnName = String.format("0 as %s", ClickHouseDbConstants.IS_DELETED_COLUMN);
             }
             // If column name is OPERATION, replace it with 'update'
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
                 columnName = String.format("'%s' as %s", cdcOperation.getOperation(), ClickHouseDbConstants.OPERATION_COLUMN);
             }
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                columnName = String.format("'%s' as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                columnName = String.format("%s as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
             }
+            else
+                columnName = "`" + columnName + "`";
 
-            columnName = "`" + columnName + "`";
             colNamesDelimitedForFirstSelect.append(columnName).append(",");
 
             colNamesToDataTypes.append(columnName).append(" ").append(entry.getValue()).append(",");
@@ -269,33 +279,35 @@ public class QueryFormatter {
 
         
             if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-            columnName = String.format("toDateTime('%s') as %s", binlogRecordTimestamp, ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN);
+            columnName = String.format("toDateTime(%s) as %s", binlogRecordTimestamp, ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN);
         
             }
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                columnName = String.format("toDateTime('%s') as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                columnName = String.format("toDateTime(%s) as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
             }
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 columnName = String.format("0 as %s", ClickHouseDbConstants.IS_DELETED_COLUMN);
             }
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
                 columnName = String.format("'%s' as %s", cdcOperation.getOperation(), ClickHouseDbConstants.OPERATION_COLUMN);
             }
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                columnName = String.format("'%s' as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
-            }
-            columnName = "`" + columnName + "`";
+            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                columnName = String.format("%s as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
+            } else
+                columnName = "`" + columnName + "`";
+
             colNamesDelimitedForSecondSelect.append(columnName).append(",");
 
         }
 
+        removeTrailingComma(colNamesDelimited);
         removeTrailingComma(colNamesDelimitedForFirstSelect);
         removeTrailingComma(colNamesDelimitedForSecondSelect);
         removeTrailingComma(colNamesToDataTypes);
 
         String tableWithBackTicks = "`" + tableName + "`";
-        return String.format("INSERT INTO %s SELECT %s FROM %s WHERE %s=%s AND valid_to = %s AND is_deleted = %s UNION ALL SELECT %s",
-                tableWithBackTicks, colNamesDelimitedForFirstSelect, tableWithBackTicks, primaryKeyColumnName, primaryKeyValue, validToMax, 0, colNamesDelimitedForSecondSelect);
+        return String.format("INSERT INTO %s(%s) SELECT %s FROM %s WHERE %s=%s AND _valid_to = %s AND is_deleted = %s UNION ALL SELECT %s from %s",
+                tableWithBackTicks, colNamesDelimited, colNamesDelimitedForFirstSelect, tableWithBackTicks, primaryKeyColumnName, primaryKeyValue, validToMax, 0, colNamesDelimitedForSecondSelect, tableWithBackTicks);
 
     }
 }
