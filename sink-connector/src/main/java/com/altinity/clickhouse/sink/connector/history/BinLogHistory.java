@@ -57,17 +57,17 @@ public class BinLogHistory {
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
     public static final String HOST_COLUMN = "host";
-    public static final String HOST_COLUMN_DATA_TYPE = "String";
+    public static final String HOST_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String LOGFILE_COLUMN = "logfile";
-    public static final String LOGFILE_COLUMN_DATA_TYPE = "String";
+    public static final String LOGFILE_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String POSITION_COLUMN = "position";
     public static final String POSITION_COLUMN_DATA_TYPE = "UInt64";
     public static final String PRIMARY_HOST_COLUMN = "primary_host";
-    public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "String";
+    public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String SERVER_ID_COLUMN = "server_id";
-    public static final String SERVER_ID_COLUMN_DATA_TYPE = "UInt64";
+    public static final String SERVER_ID_COLUMN_DATA_TYPE = "UInt32";
     public static final String ROW_COLUMN = "row";
-    public static final String ROW_COLUMN_DATA_TYPE = "UInt64";
+    public static final String ROW_COLUMN_DATA_TYPE = "UInt32";
     public static final String SEQUENCE_COLUMN = "sequence";
     public static final String SEQUENCE_COLUMN_DATA_TYPE = "UInt64";
 
