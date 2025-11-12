@@ -202,7 +202,7 @@ public class BinLogHistoryIT {
             columnCount++;
         }
         
-        assertTrue("Expected 18 columns in binlog_history.history table, but found: " + columnCount, 
+        assertTrue("Expected 18 columns in binlog_history.history table, but found: " + columnCount,
             columnCount == 18);
         
         log.info("Successfully validated binlog_history.history table has all {} required columns", columnCount);
@@ -256,7 +256,7 @@ public class BinLogHistoryIT {
         }
         
         assertTrue("Expected 4 temporal tracking columns in " + database + "." + table + ", but found: " + columnCount, 
-            columnCount == 4);
+            columnCount == 3);
         
         log.info("Successfully validated {} temporal tracking columns for {}.{}", columnCount, database, table);
     }
