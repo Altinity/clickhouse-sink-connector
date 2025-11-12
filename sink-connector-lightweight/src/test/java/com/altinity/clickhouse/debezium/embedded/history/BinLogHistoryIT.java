@@ -32,7 +32,6 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IM
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 import static org.junit.Assert.assertTrue;
 
-@Disabled
 public class BinLogHistoryIT {
 
     private static final Logger log = LoggerFactory.getLogger(BinLogHistoryIT.class);
