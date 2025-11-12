@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
@@ -25,6 +26,7 @@ import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import javax.management.Query;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -238,14 +240,27 @@ public class PreparedStatementExecutor {
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                            // insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                            //         true, config, columnToDataTypeMap, engine, tableName);
+                            // ps.addBatch();
+                            // insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                            //         false, config, columnToDataTypeMap, engine, tableName);
+
+                            // convert epoch seconds to date string
+                            String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
+                            // Create a new prepared statement where inplace updates are done.
+                            long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
+                            String insertQueryInplace = new QueryFormatter().getInsertQueryForUpdate(tableName, record.getAfterModifiedFields(),
+                             columnToDataTypeMap, record.getPrimaryKey().get(0), 1, validToMax, Long.toString(record.getTsSec()),
+                             version, record.getCdcOperation());
+                            PreparedStatement psInplace = metadata.getPreparedStatement(conn, insertQueryInplace);
+                            insertPreparedStatement(entry.getKey().right, psInplace, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
-                            ps.addBatch();
-                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                    false, config, columnToDataTypeMap, engine, tableName);
+                            psInplace.addBatch();
+                            int[] batchResultInplace = psInplace.executeBatch();
 
                         } else {
-                        insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                     false, config, columnToDataTypeMap, engine, tableName);
                         }
                     } else {

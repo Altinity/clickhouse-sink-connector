@@ -169,6 +169,11 @@ public class QueryFormatterTest {
                 result.contains("valid_to = '2100-01-01 00:00:00'"));
         Assert.assertTrue("Query should contain is_deleted condition", 
                 result.contains("is_deleted = 0"));
+        
+        // Verify that the second SELECT uses placeholders for regular columns
+        Assert.assertTrue("Second SELECT should contain ? as columnName for regular columns",
+                result.contains("? as employeeNumber") || result.contains("? as lastName") || 
+                result.contains("? as firstName") || result.contains("? as email"));
 
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update:");

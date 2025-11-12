@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
-import com.alibaba.fastjson.JSONObject;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -211,25 +210,6 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Gets the database name from the topic name.
-     * Topic name format is expected to be: server.database.table
-     *
-     * @param topicName The topic name
-     * @return The database name, or null if not found
-     */
-    private String getDatabaseNameFromTopic(String topicName) {
-        if (topicName == null || topicName.isEmpty()) {
-            return null;
-        }
-
-        String[] parts = topicName.split("\\.");
-        if (parts.length >= 3) {
-            return parts[parts.length - 2]; // Second to last part is database name
-        }
-        return null;
-    }
-
-    /**
      * Gets the server name from the topic name.
      * Topic name format is expected to be: server.database.table
      *
@@ -282,25 +262,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 }
 
                 // If replication history is enabled, add the records to the history table.
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-
-                    // Get Replication History Database Name
-
-                    String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-                    // Get Replication History Table Name
-                    String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
-                    // Get Replication History Topic Name
-
-                    String historyTableName = databaseName + "." + tableName;
-
-                    ClickHouseStruct firstRecord = currentBatch.get(0);
-                    Connection databaseConn = getClickHouseConnection(databaseName);
-                    DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
-                            firstRecord, databaseConn);
-
-                    BinLogHistory binLogHistory = new BinLogHistory();
-                    binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", currentBatch, sourceTimeZone, serverTimeZone);
-                }
+                addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
 
                 ///// ***** START PROCESSING BATCH **************************
                 // Step 1: Add to Inflight batches.
@@ -363,6 +325,26 @@ public class ClickHouseBatchRunnable implements Runnable {
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
+        }
+    }
+
+    /**
+     * Function to persist records to binlog history table when replication history mode is enabled.
+     * @param records
+     * @param sourceTimeZone
+     * @param serverTimeZone
+     * @throws SQLException
+     */
+    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+            String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+            Connection databaseConn = getClickHouseConnection(databaseName);
+            DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
+                    records.get(0), databaseConn);
+
+            BinLogHistory binLogHistory = new BinLogHistory();
+            binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
         }
     }
 

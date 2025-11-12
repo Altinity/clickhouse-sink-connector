@@ -294,7 +294,7 @@ public class QueryFormatter {
             else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
                 columnName = String.format("%s as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
             } else
-                columnName = "`" + columnName + "`";
+                columnName = "`? as " + columnName + "`";
 
             colNamesDelimitedForSecondSelect.append(columnName).append(",");
 
