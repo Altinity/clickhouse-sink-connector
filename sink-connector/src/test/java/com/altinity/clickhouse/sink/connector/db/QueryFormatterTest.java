@@ -140,11 +140,11 @@ public class QueryFormatterTest {
         String tableName = "test_history.employees";
         String primaryKeyColumnName = "employeeNumber";
         Object primaryKeyValue = 1001;
-        String validToMax = "'2100-01-01 00:00:00'";
-        String binlogRecordTimestamp = "'2025-03-01 10:30:00'";
+        String validToMax = "2100-01-01 00:00:00";
+        String binlogRecordTimestamp = "2025-03-01 10:30:00";
         long version = 1234567890;
         ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
-        String result = qf.getInsertQueryForUpdate(
+        MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForUpdate(
                 tableName,
                 employeeFields,
                 employeeColumns,
@@ -158,25 +158,117 @@ public class QueryFormatterTest {
 
         // Expected query format based on the provided example
         // Note: The actual order of columns may vary based on the HashMap iteration
+        String query = result.left;
+        Map<String, Integer> columnIndexMap = result.right;
+        
         String expectedPattern = "INSERT INTO `test_history.employees`";
         Assert.assertTrue("Query should start with INSERT INTO statement", 
-                result.contains(expectedPattern));
+                query.contains(expectedPattern));
         Assert.assertTrue("Query should contain UNION ALL", 
-                result.contains("UNION ALL"));
+                query.contains("UNION ALL"));
         Assert.assertTrue("Query should contain WHERE clause with primary key", 
-                result.contains("WHERE employeeNumber=1001"));
-        Assert.assertTrue("Query should contain valid_to condition", 
-                result.contains("valid_to = '2100-01-01 00:00:00'"));
+                query.contains("WHERE employeeNumber=1001"));
+        Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
+                query.contains("_valid_to = toDateTime('2100-01-01 00:00:00')"));
         Assert.assertTrue("Query should contain is_deleted condition", 
-                result.contains("is_deleted = 0"));
+                query.contains("is_deleted = 0"));
         
         // Verify that the second SELECT uses placeholders for regular columns
         Assert.assertTrue("Second SELECT should contain ? as columnName for regular columns",
-                result.contains("? as employeeNumber") || result.contains("? as lastName") || 
-                result.contains("? as firstName") || result.contains("? as email"));
+                query.contains("? as `employeeNumber`") || query.contains("? as `lastName`") || 
+                query.contains("? as `firstName`") || query.contains("? as `email`"));
+        
+        // Verify that the second SELECT uses explicit values for temporal tracking columns
+        Assert.assertTrue("Second SELECT should contain _valid_from with timestamp",
+                query.contains("toDateTime('2025-03-01 10:30:00') as _valid_from"));
+        Assert.assertTrue("Second SELECT should contain _valid_to with max date",
+                query.contains("toDateTime('2100-01-01 00:00:00') as _valid_to"));
+        Assert.assertTrue("Second SELECT should contain operation",
+                query.contains("'U' as _operation"));
+        Assert.assertTrue("Second SELECT should contain version",
+                query.contains("1234567890 as _version"));
+        Assert.assertTrue("Second SELECT should contain is_deleted",
+                query.contains("0 as is_deleted"));
+        
+        // Verify that temporal tracking columns are NOT in the column index map (they use literals)
+        Assert.assertFalse("Temporal tracking column should not need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
+        Assert.assertFalse("Temporal tracking column should not need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN));
+        Assert.assertFalse("Temporal tracking column should not need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN));
+        Assert.assertFalse("Temporal tracking column should not need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.OPERATION_COLUMN));
+        Assert.assertFalse("Temporal tracking column should not need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.VERSION_COLUMN));
+        
+        // Verify that regular columns ARE in the column index map
+        Assert.assertTrue("Regular column should need parameter binding",
+                columnIndexMap.containsKey("employeeNumber"));
+        Assert.assertTrue("Regular column should need parameter binding",
+                columnIndexMap.containsKey("lastName"));
 
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update:");
-        System.out.println(result);
+        System.out.println(query);
+        System.out.println("Column Index Map: " + columnIndexMap);
+    }
+    
+    @Test
+    public void testGetInsertQueryForUpdateWithStringPrimaryKey() {
+        QueryFormatter qf = new QueryFormatter();
+
+        // Setup test data for offices table with temporal tracking fields and String primary key
+        Map<String, String> officeColumns = new HashMap<>();
+        officeColumns.put("officeCode", "String");
+        officeColumns.put("city", "String");
+        officeColumns.put("phone", "String");
+        officeColumns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        officeColumns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        officeColumns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        officeColumns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        officeColumns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+
+        List<Field> officeFields = new ArrayList<>();
+        officeFields.add(new Field("officeCode", 0, Schema.STRING_SCHEMA));
+        officeFields.add(new Field("city", 1, Schema.STRING_SCHEMA));
+        officeFields.add(new Field("phone", 2, Schema.STRING_SCHEMA));
+
+        String tableName = "test_history.offices";
+        String primaryKeyColumnName = "officeCode";
+        Object primaryKeyValue = "NYC01";  // String primary key
+        String validToMax = "2100-01-01 00:00:00";
+        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        long version = 1234567890;
+        ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
+        
+        MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForUpdate(
+                tableName,
+                officeFields,
+                officeColumns,
+                primaryKeyColumnName,
+                primaryKeyValue,
+                validToMax,
+                binlogRecordTimestamp,
+                version,
+                cdcOperation
+        );
+
+        String query = result.left;
+        Map<String, Integer> columnIndexMap = result.right;
+        
+        // Verify that the String primary key value is properly quoted
+        Assert.assertTrue("Query should contain quoted string primary key value",
+                query.contains("officeCode='NYC01'"));
+        
+        // Verify basic query structure
+        Assert.assertTrue("Query should contain UNION ALL", 
+                query.contains("UNION ALL"));
+        Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
+                query.contains("_valid_to = toDateTime('2100-01-01 00:00:00')"));
+        
+        // Print the generated query for debugging
+        System.out.println("Generated Insert Query for Update (String PK):");
+        System.out.println(query);
     }
 }

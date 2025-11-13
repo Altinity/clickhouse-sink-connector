@@ -261,6 +261,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // If Replication history is enabled, add the
         // deleted_time DateTime DEFAULT '2149-06-06',
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+
+            this.query.append("`").append(DELETED_FROM_TIME_COLUMN)
+                    .append("` ").append(chDataTypeWithTimeZone)
+                    .append(",");
+
             this.query.append("`").append(DELETED_TIME_COLUMN)
                     .append("` ").append(chDataTypeWithTimeZone)
                     .append(",");

@@ -204,6 +204,7 @@ public class PreparedStatementExecutor {
             try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 for (ClickHouseStruct record : batch) {
+                    boolean updateRecord = false;
                     if (record.getDatabase() != null)
                         databaseName = record.getDatabase();
 
@@ -248,14 +249,19 @@ public class PreparedStatementExecutor {
 
                             // convert epoch seconds to date string
                             String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
+                            String binlogRecordTimestamp = DataTypeRange.epochSecondsToDateString(record.getTsSec());
                             // Create a new prepared statement where inplace updates are done.
                             long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
-                            String insertQueryInplace = new QueryFormatter().getInsertQueryForUpdate(tableName, record.getAfterModifiedFields(),
-                             columnToDataTypeMap, record.getPrimaryKey().get(0), 1, validToMax, Long.toString(record.getTsSec()),
+                            // Get the primary key column name and its value from the record
+                            String primaryKeyColumnName = record.getPrimaryKey().get(0);
+                            Object primaryKeyValue = record.getAfterStruct().get(primaryKeyColumnName);
+                            MutablePair<String, Map<String, Integer>> insertQueryInplace = new QueryFormatter().getInsertQueryForUpdate(tableName, record.getAfterModifiedFields(),
+                             columnToDataTypeMap, primaryKeyColumnName, primaryKeyValue, validToMax, binlogRecordTimestamp,
                              version, record.getCdcOperation());
-                            PreparedStatement psInplace = metadata.getPreparedStatement(conn, insertQueryInplace);
+                            PreparedStatement psInplace = metadata.getPreparedStatement(conn, insertQueryInplace.left);
                             insertPreparedStatement(entry.getKey().right, psInplace, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
+                            updateRecord = true;
                             psInplace.addBatch();
                             int[] batchResultInplace = psInplace.executeBatch();
 
@@ -266,8 +272,8 @@ public class PreparedStatementExecutor {
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
-
-                    ps.addBatch();
+                    if(!updateRecord)
+                        ps.addBatch();
                 }
 
                 int[] batchResult = ps.executeBatch();

@@ -117,6 +117,48 @@ public class QueryFormatter {
     }
 
     /**
+     * Checks if a column is a temporal tracking column used for history.
+     * These columns should use DEFAULT values from the table schema.
+     *
+     * @param colName the name of the column to check.
+     * @return true if the column is a temporal tracking column, false otherwise.
+     */
+    private boolean isTemporalTrackingColumn(String colName) {
+        return colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN);
+    }
+
+    /**
+     * Formats a value for use in SQL based on the ClickHouse data type.
+     * String types are quoted, numeric types are not.
+     *
+     * @param value the value to format
+     * @param dataType the ClickHouse data type
+     * @return the formatted value as a string
+     */
+    private String formatValueForSql(Object value, String dataType) {
+        if (value == null) {
+            return "NULL";
+        }
+        
+        // Check if the data type is a string type
+        String upperDataType = dataType.toUpperCase();
+        if (upperDataType.startsWith("STRING") || 
+            upperDataType.startsWith("FIXEDSTRING") ||
+            upperDataType.startsWith("ENUM") ||
+            upperDataType.startsWith("UUID")) {
+            // Quote string types
+            return "'" + value.toString().replace("'", "''") + "'";
+        }
+        
+        // Numeric and other types don't need quotes
+        return value.toString();
+    }
+
+    /**
      * Creates column data structures for generating INSERT queries.
      *
      * @param tableName               the name of the table (used for error logging).
@@ -227,7 +269,7 @@ public class QueryFormatter {
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
     }
 
-    public String getInsertQueryForUpdate(String tableName, List<Field> fields,
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName, List<Field> fields,
                                           Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
@@ -240,6 +282,10 @@ public class QueryFormatter {
         StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
         StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
+        
+        // Map to track which columns need parameter binding (only non-temporal-tracking columns)
+        Map<String, Integer> colNameToIndexMap = new HashMap<>();
+        int parameterIndex = 1;
 
         // Loop over each column to generate the insert query
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
@@ -254,7 +300,7 @@ public class QueryFormatter {
             String columnName = entry.getKey();
             // If column name is VALID_TO, replace it with toDateTime('2100-01-01 00:00:00')
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                columnName = String.format("toDateTime(%s) as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
+                columnName = String.format("toDateTime('%s') as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
             }
             // If column name is IS_DELETED, replace it with 0
             else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
@@ -276,25 +322,36 @@ public class QueryFormatter {
         }
         for(Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
+            String originalColumnName = columnName;
 
-        
-            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-            columnName = String.format("toDateTime(%s) as %s", binlogRecordTimestamp, ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN);
-        
+            // For the second SELECT (new record), set temporal tracking columns explicitly
+//            if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+//                columnName = String.format("toDateTime('%s') as %s", binlogRecordTimestamp, ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN);
+//            }
+//            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+//                columnName = String.format("toDateTime('%s') as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
+//            }
+//            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+//                columnName = String.format("0 as %s", ClickHouseDbConstants.IS_DELETED_COLUMN);
+//            }
+//            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+//                columnName = String.format("'%s' as %s", cdcOperation.getOperation(), ClickHouseDbConstants.OPERATION_COLUMN);
+//            }
+//            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+//                columnName = String.format("%s as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
+//            } else
+           if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+               columnName = "toDateTime(?) as " + columnName;
+           }
+           else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+               columnName = "toDateTime(?) as " + columnName;
+           }
+           else 
+            {
+                // This column needs parameter binding
+                columnName = "? as `" + columnName + "`";
             }
-            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                columnName = String.format("toDateTime(%s) as %s", validToMax, ClickHouseDbConstants.DELETED_TIME_COLUMN);
-            }
-            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                columnName = String.format("0 as %s", ClickHouseDbConstants.IS_DELETED_COLUMN);
-            }
-            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
-                columnName = String.format("'%s' as %s", cdcOperation.getOperation(), ClickHouseDbConstants.OPERATION_COLUMN);
-            }
-            else if(columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                columnName = String.format("%s as %s", version, ClickHouseDbConstants.VERSION_COLUMN);
-            } else
-                columnName = "`? as " + columnName + "`";
+                colNameToIndexMap.put(originalColumnName, parameterIndex++);
 
             colNamesDelimitedForSecondSelect.append(columnName).append(",");
 
@@ -305,9 +362,17 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimitedForSecondSelect);
         removeTrailingComma(colNamesToDataTypes);
 
-        String tableWithBackTicks = "`" + tableName + "`";
-        return String.format("INSERT INTO %s(%s) SELECT %s FROM %s WHERE %s=%s AND _valid_to = %s AND is_deleted = %s UNION ALL SELECT %s from %s",
-                tableWithBackTicks, colNamesDelimited, colNamesDelimitedForFirstSelect, tableWithBackTicks, primaryKeyColumnName, primaryKeyValue, validToMax, 0, colNamesDelimitedForSecondSelect, tableWithBackTicks);
+        // Get the primary key data type and format the value appropriately
+        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
+        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
 
+        String tableWithBackTicks = "`" + tableName + "`";
+        String query = String.format("INSERT INTO %s(%s) SELECT %s FROM %s WHERE %s=%s AND _valid_to = toDateTime('%s') AND is_deleted = %s UNION ALL SELECT %s from %s",
+                tableWithBackTicks, colNamesDelimited, colNamesDelimitedForFirstSelect, tableWithBackTicks, primaryKeyColumnName, formattedPrimaryKeyValue, validToMax, 0, colNamesDelimitedForSecondSelect, tableWithBackTicks);
+
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
+        response.left = query;
+        response.right = colNameToIndexMap;
+        return response;
     }
 }
