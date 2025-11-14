@@ -386,6 +386,20 @@ public class ITCommon {
         props.setProperty("password", password);
         
         try (Connection conn = DriverManager.getConnection(url, props)) {
+            // Check if _sign column exists to determine if we need FINAL and WHERE clause
+            boolean hasSignColumn = false;
+            String checkSignSql = String.format(
+                "SELECT count(*) as cnt FROM system.columns WHERE database='%s' AND table='%s' AND name='_sign'",
+                database, table
+            );
+            
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(checkSignSql)) {
+                if (rs.next()) {
+                    hasSignColumn = rs.getInt("cnt") > 0;
+                }
+            }
+            
             // Get column metadata
             String sql = String.format(
                 "SELECT name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale " +
@@ -397,44 +411,61 @@ public class ITCommon {
             
             StringBuilder select = new StringBuilder();
             List<String> nullables = new ArrayList<>();
-            boolean firstColumn = true;
+            List<Map<String, Object>> columns = new ArrayList<>();
             
+            // Collect all column metadata first
             try (Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
                 
                 while (rs.next()) {
-                    String columnName = "\"" + rs.getString("name") + "\"";
-                    String dataType = rs.getString("type");
-                    boolean isNullable = rs.getInt("is_nullable") == 1;
-                    
-                    if (firstColumn) {
-                        firstColumn = false;
-                    } else {
-                        select.append("||");
-                    }
-                    
-                    if (isNullable) {
-                        nullables.add(columnName);
-                        select.append(" CASE WHEN ").append(columnName).append(" IS NULL THEN '' ELSE ");
-                    }
-                    
-                    select.append("toString(").append(columnName).append(")");
-                    
-                    if (isNullable) {
-                        select.append(" END");
-                    }
-                    
+                    Map<String, Object> column = new HashMap<>();
+                    column.put("name", rs.getString("name"));
+                    column.put("type", rs.getString("type"));
+                    column.put("is_nullable", rs.getInt("is_nullable") == 1);
+                    columns.add(column);
+                }
+            }
+            
+            // Build select expression
+            for (int i = 0; i < columns.size(); i++) {
+                Map<String, Object> column = columns.get(i);
+                String columnName = "\"" + column.get("name") + "\"";
+                boolean isNullable = (boolean) column.get("is_nullable");
+                boolean isLastColumn = (i == columns.size() - 1);
+                
+                if (i > 0) {
+                    select.append("||");
+                }
+                
+                if (isNullable) {
+                    nullables.add(columnName);
+                    select.append(" CASE WHEN ").append(columnName).append(" IS NULL THEN '' ELSE ");
+                }
+                
+                select.append("toString(").append(columnName).append(")");
+                
+                if (isNullable) {
+                    select.append(" END");
+                }
+                
+                // Only add '#' separator if not the last column
+                if (!isLastColumn) {
                     select.append("||'#'");
                 }
             }
             
             if (!nullables.isEmpty()) {
+                select.append("||'#'");
                 for (String nullable : nullables) {
                     select.append("|| CASE WHEN ").append(nullable).append(" IS NULL THEN '1' ELSE '0' END ");
                 }
             }
             
-            // Execute checksum query
+            // Build the checksum query with conditional FINAL and WHERE clause
+            String finalClause = hasSignColumn ? "FINAL" : "";
+            String whereClause = hasSignColumn ? "WHERE _sign > 0" : "";
+            String settingsClause = hasSignColumn ? "SETTINGS do_not_merge_across_partitions_select_final=1" : "";
+            
             String checksumSql = String.format(
                 "SELECT " +
                 "  count(*) AS cnt, " +
@@ -443,10 +474,10 @@ public class ITCommon {
                 "  coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 17, 8))))),0) AS c, " +
                 "  coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) AS d " +
                 "FROM ( " +
-                "  SELECT hex(MD5(%s||',')) AS \"hash\" " +
-                "  FROM %s.%s FINAL WHERE _sign > 0 " +
-                ") AS t SETTINGS do_not_merge_across_partitions_select_final=1",
-                select, database, table
+                "  SELECT hex(MD5(%s)) AS \"hash\" " +
+                "  FROM %s.%s %s %s " +
+                ") AS t %s",
+                select, database, table, finalClause, whereClause, settingsClause
             );
             
             try (Statement stmt = conn.createStatement();
@@ -484,5 +515,86 @@ public class ITCommon {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
+    }
+    
+    /**
+     * Get row count for a MySQL table
+     * 
+     * @param host MySQL host
+     * @param port MySQL port
+     * @param user MySQL username
+     * @param password MySQL password
+     * @param database Database name
+     * @param table Table name
+     * @return Row count
+     * @throws Exception if connection or query fails
+     */
+    static public long getMySQLTableRowCount(String host, int port, String user, String password,
+                                             String database, String table) throws Exception {
+        String url = String.format("jdbc:mysql://%s:%d/%s", host, port, database);
+        
+        try (Connection conn = DriverManager.getConnection(url, user, password);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(String.format("SELECT COUNT(*) as cnt FROM %s.%s", database, table))) {
+            
+            if (rs.next()) {
+                return rs.getLong("cnt");
+            }
+        }
+        
+        return 0;
+    }
+    
+    /**
+     * Get row count for a ClickHouse table
+     * 
+     * @param host ClickHouse host
+     * @param port ClickHouse port
+     * @param user ClickHouse username
+     * @param password ClickHouse password
+     * @param database Database name
+     * @param table Table name
+     * @return Row count
+     * @throws Exception if connection or query fails
+     */
+    static public long getClickHouseTableRowCount(String host, int port, String user, String password,
+                                                  String database, String table) throws Exception {
+        String url = String.format("jdbc:clickhouse://%s:%d/%s", host, port, database);
+        
+        Properties props = new Properties();
+        props.setProperty("user", user);
+        props.setProperty("password", password);
+        
+        try (Connection conn = DriverManager.getConnection(url, props)) {
+            // Check if _sign column exists
+            boolean hasSignColumn = false;
+            String checkSignSql = String.format(
+                "SELECT count(*) as cnt FROM system.columns WHERE database='%s' AND table='%s' AND name='_sign'",
+                database, table
+            );
+            
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(checkSignSql)) {
+                if (rs.next()) {
+                    hasSignColumn = rs.getInt("cnt") > 0;
+                }
+            }
+            
+            // Build query with conditional FINAL and WHERE clause
+            String finalClause = hasSignColumn ? "FINAL" : "";
+            String whereClause = hasSignColumn ? "WHERE _sign > 0" : "";
+            String countSql = String.format("SELECT COUNT(*) as cnt FROM %s.%s %s %s", 
+                                           database, table, finalClause, whereClause);
+            
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(countSql)) {
+                
+                if (rs.next()) {
+                    return rs.getLong("cnt");
+                }
+            }
+        }
+        
+        return 0;
     }
 }
