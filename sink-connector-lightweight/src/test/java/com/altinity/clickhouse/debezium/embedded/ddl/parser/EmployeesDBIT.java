@@ -7,6 +7,8 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.log4j.BasicConfigurator;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
@@ -18,7 +20,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -31,6 +32,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IM
 @Testcontainers
 @DisplayName("Integration Test to validate replication of employees database")
 public class EmployeesDBIT extends DDLBaseIT {
+        private static final Logger log = LogManager.getLogger(EmployeesDBIT.class);
 
 
         @BeforeEach
@@ -114,21 +116,46 @@ public class EmployeesDBIT extends DDLBaseIT {
             Assert.assertTrue(titlesColumns.get("to_date").equalsIgnoreCase("Nullable(Date32)"));
 
 
-            int employeesMySqlCount = 0;
-            // Check if counts match
-            ResultSet rs = conn.prepareStatement("select count(*) from employees").executeQuery();
-            while(rs.next()) {
-                employeesMySqlCount =  rs.getInt(1);
+            // Validate data consistency using checksums
+            log.info("Starting checksum validation for replicated tables...");
+            
+            String[] tablesToValidate = {"departments", "dept_emp", "dept_manager", "employees", "salaries", "titles"};
+            
+            for (String table : tablesToValidate) {
+                log.info("Validating table: " + table);
+                
+                // Calculate MySQL checksum using ITCommon utility
+                String mysqlChecksum = ITCommon.calculateMySQLTableChecksum(
+                        mySqlContainer.getHost(),
+                        mySqlContainer.getMappedPort(3306),
+                        mySqlContainer.getUsername(),
+                        mySqlContainer.getPassword(),
+                        mySqlContainer.getDatabaseName(),
+                        table
+                );
+                
+                // Calculate ClickHouse checksum using ITCommon utility
+                String clickhouseChecksum = ITCommon.calculateClickHouseTableChecksum(
+                        clickHouseContainer.getHost(),
+                        clickHouseContainer.getMappedPort(8123),
+                        clickHouseContainer.getUsername(),
+                        clickHouseContainer.getPassword(),
+                        mySqlContainer.getDatabaseName(),
+                        table
+                );
+                
+                log.info(String.format("Table %s - MySQL checksum: %s, ClickHouse checksum: %s", 
+                        table, mysqlChecksum, clickhouseChecksum));
+                
+                Assert.assertEquals(
+                        String.format("Checksum mismatch for table %s", table),
+                        mysqlChecksum,
+                        clickhouseChecksum
+                );
             }
-
-            int employeesCHCount = 0;
-
-            ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from employees").executeQuery();
-            while(chRs.next()) {
-                employeesCHCount =  chRs.getInt(1);
-            }
-
-            Assert.assertTrue(employeesMySqlCount == employeesCHCount);
+            
+            log.info("All tables validated successfully!");
+            
             // Files.deleteIfExists(tmpFilePath);
             if(engine.get() != null) {
                 engine.get().stop();
