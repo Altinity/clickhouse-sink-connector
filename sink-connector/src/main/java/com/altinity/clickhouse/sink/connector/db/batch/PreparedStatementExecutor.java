@@ -480,6 +480,19 @@ public class PreparedStatementExecutor {
 
                 }
             }
+
+            if (columnNameToDataTypeMap.containsKey(DELETED_FROM_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_FROM_TIME_COLUMN)) {
+                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
+                        record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                    ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                                    ZoneId.of(sourceTimeZone), serverTimeZone));
+                } else {
+                    ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
+                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                    ZoneId.of(sourceTimeZone), serverTimeZone));
+                }
+            }
             if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
                 ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
             }
