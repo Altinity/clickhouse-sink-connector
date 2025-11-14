@@ -56,7 +56,6 @@ def init_sink_connector(
             "auto.create.tables": auto_create_tables,
             "auto.create.tables.replicated": auto_create_replicated_tables,
             "schema.evolution": False,
-            "deduplication.policy": "off",
             "metadata.max.age.ms": 10000,
             "connection.pool.disable": "true"
         },
