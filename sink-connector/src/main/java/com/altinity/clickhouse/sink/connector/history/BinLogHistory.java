@@ -190,6 +190,13 @@ public class BinLogHistory {
      */
     public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, 
     List<ClickHouseStruct> clickHouseStructs, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        // if serverTimeZone is empty, default to UTC.
+        if(serverTimeZone == null || serverTimeZone.isEmpty()) {
+            serverTimeZone = "UTC";
+        }
+        if(sourceTimeZone == null || sourceTimeZone.isEmpty()) {
+            sourceTimeZone = "UTC";
+        }
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;
