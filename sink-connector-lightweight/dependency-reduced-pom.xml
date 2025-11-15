@@ -96,6 +96,36 @@
           </execution>
         </executions>
       </plugin>
+      <plugin>
+        <groupId>org.honton.chas</groupId>
+        <artifactId>license-maven-plugin</artifactId>
+        <version>0.0.6</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>compliance</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <acceptableLicenses>
+            <license>
+              <name>Eclipse Public License, Version 2\.0</name>
+              <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EPLv2\.txt</url>
+            </license>
+            <license>
+              <name>Eclipse Distribution License - v 1\.0</name>
+              <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EDLv1\.txt</url>
+            </license>
+            <license>
+              <name>The BSD License</name>
+              <url>https?://(www\.)?antlr\.org/license\.html</url>
+            </license>
+          </acceptableLicenses>
+          <acceptableLicenseResources>osi-permissive</acceptableLicenseResources>
+          <scopes>compile,runtime,provided</scopes>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
   <profiles>
@@ -351,12 +381,6 @@
       <groupId>org.apache.tomcat</groupId>
       <artifactId>annotations-api</artifactId>
       <version>6.0.53</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcpkix-fips</artifactId>
-      <version>1.0.3</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
