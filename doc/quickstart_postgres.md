@@ -147,7 +147,7 @@ docker compose -f docker-compose-postgres.yml down
     or
     
     # CDC replication(transfer only new data in PostgreSQL)
-    snapshot.mode: schema_only
+    snapshot.mode: no_data
 ```
 **Note: ClickHouse Secure(Altinity Cloud/ClickHouse Cloud)**:
 Set the sever url to `https` and add `?ssl=true` to the end of the url.
