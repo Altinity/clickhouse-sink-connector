@@ -89,25 +89,25 @@ jobs:
       - name: Download jar files
         uses: actions/download-artifact@v4
 
-      - name: Upload sink-connector-client jar file to release (ARM64)
+      - name: Upload sink-connector-client binary to release (ARM64)
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.jar
-          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.jar/clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.jar
-          asset_content_type: application/java-archive
+          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64
+          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.bin/sink-connector-client-arm64
+          asset_content_type: application/octet-stream
 
-      - name: Upload sink-connector-client jar file to release (General)
+      - name: Upload sink-connector-client binary to release (AMD64)
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}.jar
-          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}.jar/clickhouse-sink-connector-client-${{ env.release_tag }}.jar
-          asset_content_type: application/java-archive
+          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-amd64
+          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}.bin/sink-connector-client-amd64
+          asset_content_type: application/octet-stream
 
 #      - name: Zip jar files
 #        run: |
