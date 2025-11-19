@@ -41,7 +41,7 @@ data:
     ENGINE = ReplacingMergeTree(_version)
     ORDER BY id
     SETTINGS index_granularity = 8192"
-    offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+    offset.storage.jdbc.table.delete: "select * from %s"
     enable.snapshot.ddl: "true"
     auto.create.tables: "true"
     database.dbname: "public"
@@ -119,7 +119,7 @@ data:
       ENGINE = ReplacingMergeTree(_version)
       ORDER BY id
       SETTINGS index_granularity = 8192"
-      offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+      offset.storage.jdbc.table.delete: "select * from %s"
       offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
       schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
       schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
