@@ -91,7 +91,7 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
-offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.table.delete: "select * from %s"
 
 offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
 
