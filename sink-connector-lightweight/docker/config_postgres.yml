@@ -84,7 +84,7 @@ offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
-offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.table.delete: "select * from %s"
 # enable.snapshot.ddl: If set to true, the connector wil parse the DDL statements as part of initial load.
 enable.snapshot.ddl: "true"
 
