@@ -816,7 +816,7 @@ public class DebeziumChangeEventCapture {
         return snapshotDDL;
     }
 
-    boolean checkDDLAgainstRegexPatterns(String DDL) {
+    public boolean checkDDLAgainstRegexPatterns(String DDL) {
         IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
         List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
         for (String regex : ignoreDDLRegexList) {
