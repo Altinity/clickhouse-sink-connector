@@ -58,15 +58,18 @@ data:
       `offset_val` String,
       `record_insert_ts` DateTime,
       `record_insert_seq` UInt64
-    ) AS U
-    SELECT
-      now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,
-      formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source,
-      toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time,
-      fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time,
-      *
-    FROM merge(altinity_sink_connector, 'replica_source_info_.*')
-    FINAL
+    ) AS
+    SELECT *
+    FROM
+    (
+      SELECT
+        now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,
+        formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source,
+        toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time,
+        fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time,
+        *
+      FROM merge(altinity_sink_connector, 'replica_source_info_.*')
+      FINAL
     ) AS U
     ORDER BY offset_key ASC"
     use.nongraceful.disconnect: "true"
