@@ -2319,4 +2319,50 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
     }
+
+    @Test
+    @DisplayName("Test that internal DDL ignore list correctly identifies partition operations")
+    public void testInternalDDLIgnoreList() {
+        // Map of DDL statements to whether they should be ignored (true) or allowed (false)
+        Map<String, Boolean> ddlTestCases = new HashMap<>();
+        
+        // Partition operations that SHOULD be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales ANALYZE PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE employees.sales ADD PARTITION (p2024)", true);
+        ddlTestCases.put("ALTER TABLE employees.sales DROP PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE employees.sales REORGANIZE PARTITION p2023 INTO (p2023q1, p2023q2)", true);
+        ddlTestCases.put("ALTER TABLE employees.sales REMOVE PARTITIONING", true);
+        ddlTestCases.put("ALTER TABLE employees.sales TRUNCATE PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE employees.sales CHECK PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE employees.sales OPTIMIZE PARTITION p2023", true);
+        
+        // AUTO_INCREMENT operations that SHOULD be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales AUTO_INCREMENT = 1000", true);
+        ddlTestCases.put("ALTER TABLE employees.users AUTO_INCREMENT=5000", true);
+        ddlTestCases.put("  ALTER TABLE test.mytable AUTO_INCREMENT = 12345  ", true);
+        
+        // Normal DDL operations that should NOT be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales ADD COLUMN new_col INT", false);
+        ddlTestCases.put("ALTER TABLE employees.sales DROP COLUMN old_col", false);
+        ddlTestCases.put("ALTER TABLE employees.sales MODIFY COLUMN price DECIMAL(10,2)", false);
+        ddlTestCases.put("CREATE TABLE test (id INT PRIMARY KEY)", false);
+        ddlTestCases.put("DROP TABLE employees.old_table", false);
+        
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        
+        for (Map.Entry<String, Boolean> testCase : ddlTestCases.entrySet()) {
+            String ddl = testCase.getKey();
+            Boolean shouldBeIgnored = testCase.getValue();
+            boolean actuallyIgnored = capture.checkDDLAgainstRegexPatterns(ddl);
+            
+            Assert.assertEquals(
+                String.format("DDL '%s' ignore status mismatch", ddl),
+                shouldBeIgnored,
+                actuallyIgnored
+            );
+        }
+        
+        log.info("Successfully validated " + ddlTestCases.size() + " DDL ignore patterns");
+    }
+
 }
