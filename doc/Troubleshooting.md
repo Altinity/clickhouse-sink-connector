@@ -40,7 +40,7 @@ the following configuration
 is added to `config.yml`
 
 ### Slow startup when replicating Database with high number of tables.
-Use the following configuration to limit the number of tables that Debezium would capture in the schema_only mode.
+Use the following configuration to limit the number of tables that Debezium would capture in the no_data mode.
 See: https://github.com/Altinity/clickhouse-sink-connector/issues/507
 ```
 table.include.list: "sbtest.table1,sbtest.table2,sbtest.table3"

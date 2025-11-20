@@ -92,7 +92,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     /**
      * Default maximum number of retries for errors.
      */
-    private static final int DEFAULT_ERRORS_MAX_RETRIES = 3;
+    private static final int DEFAULT_ERRORS_MAX_RETRIES = 10;
 
     /**
      * Default error table name.
@@ -723,9 +723,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(),
                         Type.INT,
-                        3,
+                        DEFAULT_ERRORS_MAX_RETRIES,
                         Importance.HIGH,
-                        "The maximum number of retries for errors",
+                        "The maximum number of retries for ClickHouse operations (database creation, DDL, metadata queries, etc.)",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         15,
                         ConfigDef.Width.NONE,
