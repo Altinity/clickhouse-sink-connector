@@ -85,7 +85,7 @@ public class DatabaseOverrideRRMTIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("snapshot.mode", "schema_only");
+        props.setProperty("snapshot.mode", "no_data");
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
         props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
         props.setProperty("clickhouse.database.override.map", "employees:employees2, products:productsnew");
