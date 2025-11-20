@@ -139,7 +139,7 @@ https://debezium.io/documentation/reference/stable/connectors/mysql.html#setting
     or
     
     # CDC replication(transfer only new data in MySQL)
-    snapshot.mode: schema_only
+    snapshot.mode: no_data
 ```
 **Note: ClickHouse Secure(Altinity Cloud/ClickHouse Cloud)**:
 Set the sever url to `https` and add `?ssl=true` to the end of the url.

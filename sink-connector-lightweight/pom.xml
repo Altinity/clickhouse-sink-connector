@@ -705,6 +705,11 @@
                             <name>The BSD License</name>
                             <url>https?://(www\.)?antlr\.org/license\.html</url>
                         </license>
+                        <!-- CDDL+GPL dual license for javax.json -->
+                        <license>
+                            <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
+                            <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
+                        </license>
                     </acceptableLicenses>
                     <!-- Use OSI permissive licenses as acceptable licenses -->
                     <acceptableLicenseResources>osi-permissive</acceptableLicenseResources>

@@ -38,7 +38,7 @@ def config_with_replicated_table_and_disabled_auto_create(
 def config_with_schema_only(self, config_file=default_config_path + "schema_only.yml"):
     """Create the Sink Connector configuration with the schema only."""
     change_sink_configuration(
-        values={"snapshot.mode": "schema_only"}, config_file=config_file
+        values={"snapshot.mode": "no_data"}, config_file=config_file
     )
 
 

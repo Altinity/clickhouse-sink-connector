@@ -69,14 +69,14 @@ public class Debezium15KTablesLoadIT {
 
     @Test
     @Disabled
-    @DisplayName("Test that validates skipping of large tables in schema_only mode")
+    @DisplayName("Test that validates skipping of large tables in no_data mode")
     public void testLoadingTablesInSchemaOnlyMode() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
         props.setProperty("table.include.list","employees.table[1-3]$");
-        props.setProperty("snapshot.mode","schema_only");
+        props.setProperty("snapshot.mode","no_data");
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
         props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
 

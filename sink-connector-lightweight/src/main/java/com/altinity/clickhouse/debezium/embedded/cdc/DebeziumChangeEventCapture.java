@@ -126,9 +126,10 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Maximum number of retries for Debezium setup.
+     * Maximum number of retries for Debezium setup and other operations.
+     * Default value, can be overridden by errors.max.retries configuration.
      */
-    public static int MAX_RETRIES = 25;
+    public static int MAX_RETRIES = 10;
 
     /**
      * Sleep time (in milliseconds) between retries.
@@ -326,6 +327,7 @@ public class DebeziumChangeEventCapture {
             if (props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
                 Integer maxRetries = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()));
                 DBMetadata.setMaxRetries(maxRetries);
+                MAX_RETRIES = maxRetries;  // Update the static MAX_RETRIES for Debezium setup and DDL operations
             }
         } catch (Exception e) {
             log.error("Error retrieving max retries", e);
@@ -445,9 +447,8 @@ public class DebeziumChangeEventCapture {
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-        // Add max retries of 10
-        // Add sleep time of 10 seconds
-        int MAX_DDL_RETRIES = 10;
+        // Use the configured MAX_RETRIES value for DDL operations
+        int MAX_DDL_RETRIES = MAX_RETRIES;
         int SLEEP_TIME = 10000;
         int numRetries = 0;
 
