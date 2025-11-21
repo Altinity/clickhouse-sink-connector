@@ -2365,4 +2365,12 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Successfully validated " + ddlTestCases.size() + " DDL ignore patterns");
     }
 
+    // Add tets for  ALTER TABLE test_lot ADD COLUMN event_ref_type_id INTEGER, algorithm=instant, ADD COLUMN event_ref_id BIGINT, algorithm=instant;
+    @Test
+    public void testAlterTableAddColumn() {
+        String sql = "ALTER TABLE test_lot ADD COLUMN event_ref_type_id INTEGER, algorithm=instant, ADD COLUMN event_ref_id BIGINT, algorithm=instant;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(sql, "test_lot", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE test_lot ADD COLUMN event_ref_type_id Int32, algorithm=instant, ADD COLUMN event_ref_id UInt64, algorithm=instant"));
+    }
 }
