@@ -28,6 +28,8 @@ import org.apache.logging.log4j.Logger;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * This class is an implementation of the MySQL DDL parser listener. It overrides specific methods from the generated
@@ -82,6 +84,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     DBMetadata dbMetadata;
 
     /**
+     * The original SQL string for regex fallback parsing.
+     */
+    String originalSql;
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -89,10 +96,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @param tableName      The name of the table involved in the operation.
      * @param databaseName   The name of the database.
      * @param config         The configuration object containing connector settings.
+     * @param originalSql    The original SQL string for regex fallback parsing.
      */
     public MySqlDDLParserListenerImpl(BaseDbWriter writer, StringBuffer transformedQuery, String tableName,
-                                      String databaseName,
-                                      ClickHouseSinkConnectorConfig config) {
+                                      String databaseName, ClickHouseSinkConnectorConfig config, String originalSql) {
         this.config = config;
         try {
             if (this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()) != null)
@@ -112,6 +119,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.dbMetadata = new DBMetadata(config);
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
+        this.originalSql = originalSql;
     }
 
     /**
@@ -359,6 +367,28 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Finds partitioning options using regex when ANTLR parser fails to identify partitions.
+     * This method provides a fallback mechanism to extract partition columns from the raw DDL text.
+     *
+     * @param source The raw DDL source string to search for partitioning patterns.
+     * @return The partitioning options string, or empty string if no partitioning is found.
+     */
+    private String findPartitioningOptions(String source) {
+        Pattern pattern = Pattern.compile("PARTITION\\s+BY\\s+RANGE\\s+COLUMNS\\((.*?)\\)", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(source);
+        String partitioningKeys = null;
+        if (matcher.find()) {
+            partitioningKeys = matcher.group(1);
+            log.info("Partitioning key: " + partitioningKeys);
+        }
+        String partitioningOptions = "";
+        if (partitioningKeys != null) {
+            partitioningOptions = "PARTITION BY " + partitioningKeys;
+        }
+        return partitioningOptions;
+    }
+
+    /**
      * This function parses the CREATE TABLE statement and processes the columns,
      * order by clauses, and partitioning specifications.
      *
@@ -434,6 +464,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         }
                     }
                 }
+            }
+        }
+
+        // If ANTLR parser didn't find partition columns, try regex as fallback
+        if (partitionByColumns.length() == 0 && originalSql != null) {
+            try {
+                // Use the original DDL text for regex parsing (handles MySQL comments)
+                String regexPartitioning = findPartitioningOptions(originalSql);
+                if (!regexPartitioning.isEmpty()) {
+                    // Extract only the partition columns part (remove "PARTITION BY " prefix)
+                    String partitionColumns = regexPartitioning.substring("PARTITION BY ".length());
+                    partitionByColumns.append(partitionColumns);
+                    log.info("Regex fallback found partitioning: " + partitionColumns);
+                }
+            } catch (Exception e) {
+                log.warn("Regex fallback for partition parsing failed: " + e.getMessage());
             }
         }
 

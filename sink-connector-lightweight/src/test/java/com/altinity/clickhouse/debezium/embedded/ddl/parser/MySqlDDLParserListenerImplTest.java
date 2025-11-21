@@ -121,6 +121,31 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
+
+    @Test
+    public void testCreateTableWithCommentedPartition() {
+        String createQuery = "create table t(\n" +
+                "id int not null,\n" +
+                "dt date not null,\n" +
+                "primary key(id, dt)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_general_cs ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8\n" +
+                "/*!50500 PARTITION BY RANGE  COLUMNS(dt)\n" +
+                "(PARTITION p20201231 VALUES LESS THAN ('2021-01-01') ENGINE = InnoDB,\n" +
+                " PARTITION p20211230 VALUES LESS THAN ('2021-12-31') ENGINE = InnoDB,\n" +
+                " PARTITION p20211231 VALUES LESS THAN ('2022-01-03') ENGINE = InnoDB,\n" +
+                " PARTITION p20220103 VALUES LESS THAN ('2022-01-04') ENGINE = InnoDB,\n" +
+                " PARTITION p20220104 VALUES LESS THAN ('2022-01-05') ENGINE = InnoDB,\n" +
+                " PARTITION p20220105 VALUES LESS THAN ('2022-01-06') ENGINE = InnoDB\n" +
+                ")*/;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        
+        // This test verifies that our regex fallback correctly parses partition columns from commented partition syntax
+        Assert.assertTrue(clickHouseQuery.toString().contains("PARTITION BY"));
+        Assert.assertTrue(clickHouseQuery.toString().contains("dt"));
+        log.info("Create table with commented partition: " + clickHouseQuery);
+    }
+
     @Test
     public void testCreateTableWithKeyPartition() {
         String createQuery = "CREATE TABLE members (\n" +
