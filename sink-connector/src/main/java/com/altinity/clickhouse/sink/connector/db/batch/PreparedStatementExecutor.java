@@ -241,11 +241,6 @@ public class PreparedStatementExecutor {
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                            // insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                            //         true, config, columnToDataTypeMap, engine, tableName);
-                            // ps.addBatch();
-                            // insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                            //         false, config, columnToDataTypeMap, engine, tableName);
 
                             // convert epoch seconds to date string
                             String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
