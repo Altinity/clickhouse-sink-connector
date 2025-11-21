@@ -19,6 +19,19 @@ on:
         required: false
       DOCKERHUB_TOKEN:
         required: false
+  workflow_dispatch:
+    inputs: 
+      release_tag:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+        default: true
+      draft:
+        required: true
+        type: boolean
+        default: false
 
 env:
   release_tag: ${{ inputs.release_tag }}
@@ -73,8 +86,37 @@ jobs:
           draft: ${{ inputs.draft }}
           body_path: ${{ github.workspace }}/release-notes/${{ env.release_tag }}.md
 
-      - name: Download jar files
+      #- name: Download Kafka jar artifact
+      #  uses: actions/download-artifact@v4
+      #  with:
+      #    name: clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
+      #    path: ./artifacts/kafka
+
+      - name: Download Lightweight jar artifact
         uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+          path: ./artifacts/lightweight
+
+      - name: Upload sink-connector-client binary to release (ARM64)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64
+          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.bin/sink-connector-client-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload sink-connector-client binary to release (AMD64)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-amd64
+          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}.bin/sink-connector-client-amd64
+          asset_content_type: application/octet-stream
 
 #      - name: Zip jar files
 #        run: |

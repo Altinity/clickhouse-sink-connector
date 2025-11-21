@@ -97,7 +97,7 @@ public class MySQLDDLParserService implements DDLParserService {
         lexer.addErrorListener(errorListener);
 
         // Initialize the listener to handle the parsing logic
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -127,7 +127,7 @@ public class MySQLDDLParserService implements DDLParserService {
         lexer.addErrorListener(errorListener);
 
         // Initialize the listener to handle the parsing logic
-        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config);
+        MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 

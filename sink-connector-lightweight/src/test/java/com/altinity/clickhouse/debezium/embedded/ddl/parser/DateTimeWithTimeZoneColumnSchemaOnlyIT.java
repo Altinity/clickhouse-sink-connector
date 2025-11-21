@@ -74,7 +74,7 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
         defaultProps.putAll(fileProps);
 
         // **** OVERRIDE set to schema only
-        defaultProps.setProperty("snapshot.mode", "schema_only");
+        defaultProps.setProperty("snapshot.mode", "no_data");
         defaultProps.setProperty("disable.drop.truncate", "true");
 
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
