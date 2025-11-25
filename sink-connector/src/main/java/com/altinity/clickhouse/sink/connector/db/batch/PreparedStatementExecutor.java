@@ -17,9 +17,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.*;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -37,45 +35,6 @@ public class PreparedStatementExecutor {
      * This logger is used throughout the class to log messages related to database operations.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
-
-    /**
-     * Default epoch timestamp in seconds for the deleted_time column (2149-06-06 00:00:00 UTC).
-     * This represents a far-future date used to mark records that are not deleted.
-     */
-    private static final long DEFAULT_DELETED_TIME_EPOCH_SECONDS = 
-            LocalDateTime.of(2149, 6, 6, 0, 0, 0).toEpochSecond(ZoneOffset.UTC);
-
-    /**
-     * The column name used for "delete" operations in the ReplacingMergeTree engine.
-     * This column is used to track deleted records in ClickHouse when using
-     * ReplacingMergeTree with deletion support.
-     */
-    private String replacingMergeTreeDeleteColumn;
-
-    /**
-     * Flag indicating whether the ReplacingMergeTree engine uses an "isDeleted" column.
-     * If true, the engine uses an "isDeleted" column to mark records as deleted instead
-     * of directly using the "delete" column.
-     */
-    private boolean replacingMergeTreeWithIsDeletedColumn;
-
-    /**
-     * The name of the column used for the sign of a record, typically used in the
-     * context of ReplacingMergeTree engines to track changes (e.g., a flag for changes).
-     */
-    private String signColumn;
-
-    /**
-     * The name of the version column, used in ReplacingMergeTree engines to track the
-     * version of records for conflict resolution or replacement logic.
-     */
-    private String versionColumn;
-
-    /**
-     * The server's time zone used for converting timestamps and handling date/time
-     * related operations.
-     */
-    private ZoneId serverTimeZone;
 
     /**
      * The name of the database being used for the operations in this class.
@@ -103,11 +62,7 @@ public class PreparedStatementExecutor {
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
                                      String databaseName, ZoneId serverTimeZone) {
-        this.replacingMergeTreeDeleteColumn = replacingMergeTreeDeleteColumn;
-        this.replacingMergeTreeWithIsDeletedColumn = replacingMergeTreeWithIsDeletedColumn;
-        this.signColumn = signColumn;
-        this.versionColumn = versionColumn;
-        this.serverTimeZone = serverTimeZone;
+
         this.databaseName = databaseName;
         
         // Initialize the field mapper with the same configuration
@@ -153,7 +108,7 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-            if (false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+            if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
                     conn, tableName, columnToDataTypeMap, engine)) {
                 log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
                         "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
