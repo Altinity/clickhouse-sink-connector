@@ -267,7 +267,7 @@
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
-            <version>4.10.1</version>
+            <version>4.13.1</version>
         </dependency>
         <dependency>
             <groupId>com.github.docker-java</groupId>
@@ -381,12 +381,6 @@
             <groupId>org.apache.tomcat</groupId>
             <artifactId>annotations-api</artifactId>
             <version>6.0.53</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-fips</artifactId>
-            <version>1.0.3</version>
             <scope>provided</scope>
         </dependency>
 
@@ -573,6 +567,12 @@
             <version>${sink-connector-library-version}</version>
             <scope>compile</scope>
         </dependency>
+        <!-- Explicit dependency to resolve antlr4-maven-plugin transitive dependency issue -->
+        <dependency>
+            <groupId>org.glassfish</groupId>
+            <artifactId>javax.json</artifactId>
+            <version>1.1.4</version>
+        </dependency>
     </dependencies>
     <build>
         <extensions>
@@ -666,7 +666,7 @@
             <plugin>
                 <groupId>org.antlr</groupId>
                 <artifactId>antlr4-maven-plugin</artifactId>
-                <version>4.10.1</version>
+                <version>4.13.1</version>
                 <executions>
                     <execution>
                         <goals>
@@ -674,6 +674,48 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+
+            <!-- License Compliance Plugin -->
+            <plugin>
+                <groupId>org.honton.chas</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>0.0.6</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compliance</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- Add explicit licenses for libraries with non-standard license declarations -->
+                    <acceptableLicenses>
+                        <!-- Eclipse licenses for JTS library -->
+                        <license>
+                            <name>Eclipse Public License, Version 2\.0</name>
+                            <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EPLv2\.txt</url>
+                        </license>
+                        <license>
+                            <name>Eclipse Distribution License - v 1\.0</name>
+                            <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EDLv1\.txt</url>
+                        </license>
+                        <!-- BSD License for ANTLR -->
+                        <license>
+                            <name>The BSD License</name>
+                            <url>https?://(www\.)?antlr\.org/license\.html</url>
+                        </license>
+                        <!-- CDDL+GPL dual license for javax.json -->
+                        <license>
+                            <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
+                            <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
+                        </license>
+                    </acceptableLicenses>
+                    <!-- Use OSI permissive licenses as acceptable licenses -->
+                    <acceptableLicenseResources>osi-permissive</acceptableLicenseResources>
+                    <!-- Check compile, runtime, and provided scopes (exclude test) -->
+                    <scopes>compile,runtime,provided</scopes>
+                </configuration>
             </plugin>
         </plugins>
     </build>

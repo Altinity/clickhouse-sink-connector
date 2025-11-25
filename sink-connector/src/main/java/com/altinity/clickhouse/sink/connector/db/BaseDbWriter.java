@@ -126,7 +126,16 @@ public class BaseDbWriter {
             }
         } catch (Exception e) {
             int maxRetries = 0;
-            final int MAX_RETRIES = 5;
+            // Get max retries from configuration, default to 10
+            int MAX_RETRIES = 10;
+            try {
+                if (config.getInt(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
+                    MAX_RETRIES = config.getInt(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
+                }
+            } catch (Exception ex) {
+                log.warn("Error retrieving errors.max.retries configuration, using default: " + MAX_RETRIES);
+            }
+            
             log.error("Error creating Database: " + databaseName);
 
             // Retry creating the database until max retries is reached.
