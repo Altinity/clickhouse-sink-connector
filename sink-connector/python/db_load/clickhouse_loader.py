@@ -501,10 +501,11 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                     datatype = column['datatype']
                     mysql_datetype = column['mysql_datatype']
                     if 'timestamp' in mysql_datetype.lower():
+                        escaped_datatype = f" {datatype}".replace("'","\\'")
                         if column['nullable'] == True:
-                            structure += f" Nullable({datatype})"
+                            structure += f" Nullable({escaped_datatype})"
                         else:
-                            structure += f" {datatype}".replace("'","\\'")
+                            structure += f" {escaped_datatype}"
                     else:
                         if column['nullable'] == True:
                             structure += " Nullable(String)"

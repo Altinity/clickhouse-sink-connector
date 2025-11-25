@@ -52,7 +52,7 @@ def compute_checksum(table, statements, conn):
 
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns):
 
-    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable from information_schema.columns where table_schema='" +
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
 
     select = ""
@@ -62,11 +62,15 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    for row in rowset:
+    row_list = [row for row in rowset]
+    same_charset = True
+    collations = [row['collation'] for row in row_list if row['collation'] is not None]
+    same_charset = len(collations) <= 1
+    for row in row_list:
         column_name = '`'+row['column_name']+'`'
         data_type = row['data_type']
         is_nullable = row['is_nullable']
-
+        collation =  row['collation']
         if row['column_name'] in excluded_columns:
             logging.info("Excluding column "+row['column_name'])
             continue
@@ -106,7 +110,12 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
                             column_name+" as binary)),'\\n','')"
                     select_column += binary_encode
                 else:
-                    select_column += f"{column_name}"
+                    if same_charset or collation is None:
+                        select_column += f"{column_name}"
+                    else:
+                        select_column += f"convert({column_name} using utf8mb4)"
+
+
                     
         if is_nullable == 'YES':
             select_column = f"ifnull({select_column},'')"
