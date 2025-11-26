@@ -2,6 +2,8 @@
 max_connections=100000
 binlog_transaction_compression = ON
 binlog_transaction_compression_level_zstd = 3
+default_authentication_plugin=mysql_native_password
+
 
 gtid-mode = on
 enforce-gtid-consistency = true
