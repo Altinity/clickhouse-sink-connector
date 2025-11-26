@@ -99,7 +99,7 @@ offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
-offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.table.delete: "select * from %s"
 
 
 # schema.history.internal: The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.
@@ -154,18 +154,31 @@ metrics.enable: "true"
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
 
-replica.status.view: "CREATE VIEW %s.show_replica_status
+replica.status.view: "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status
 (
     `seconds_behind_source` Int32,
+    `duration_behind_source` String,
     `utc_time` DateTime('UTC'),
-    `local_time` DateTime
+    `local_time` DateTime,
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64
 ) AS
-SELECT
-    now() - fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS seconds_behind_source,
-    toDateTime(fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)), 'UTC') AS utc_time,
-    fromUnixTimestamp(toInt32(JSONExtractUInt(offset_val, 'ts_usec') / 1000000)) AS local_time
-FROM altinity_sink_connector.replica_source_info
-SETTINGS final = 1"
+SELECT *
+FROM
+(
+    SELECT
+        now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,
+        formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source,
+        toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time,
+        fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time,
+        *
+    FROM merge(altinity_sink_connector, 'replica_source_info_.*')
+    FINAL
+) AS U
+ORDER BY offset_key ASC"
 
 
 # Required for fixing bug with freeze in debezium loop.
