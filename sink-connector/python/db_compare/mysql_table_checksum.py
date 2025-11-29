@@ -55,6 +55,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
 
+    logging.debug("Excluded columns: "+str(excluded_columns))
     select = ""
     nullables = []
     data_types = {}
@@ -236,7 +237,10 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
         max_pk = int(chunk['max_pk'])
         _where = f" {_where} and {pk} between {min_pk} and {max_pk}" 
 
-    result = calculate_sql_checksum(conn, mysql_table, _where, excluded_columns)
+    parsed_excluded_columns = []
+    for col in excluded_columns:
+        parsed_excluded_columns.extend(col.split(','))  # split values with commas
+    result = calculate_sql_checksum(conn, mysql_table, _where, parsed_excluded_columns)
     return result
 
 
