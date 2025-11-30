@@ -261,7 +261,7 @@ def run_config(config):
                 futures = []
                 future_to_table = {}
                 future_to_conn = {}
-                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")]
+                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
                 for table in tables.fetchall():
                     if len(table_include_list)>0 and f"{database}.{table['table_name']}" not in table_include_list:
                         logging.info(f"Skipping table {database}.{table['table_name']} since not in include list")
