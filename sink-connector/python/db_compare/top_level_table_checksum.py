@@ -84,17 +84,27 @@ def run_quick_safe_checksum(cmd, host, table):
         return None
     
 
-def compute_checksum (database, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
-    table_name = f"{database}.{table}"
+def compute_checksum (mysql_database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
+    table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     commands = []
-    cmd = get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
+    cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
    
     commands.append((mysql_host,cmd))
     
     for ch_host in replica_hosts:
-         cmd = get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)
-         commands.append((ch_host, cmd))
+        ch_database = mysql_database
+        if ch_host in database_override_map and mysql_database in database_override_map[ch_host]:
+            override_map = database_override_map[ch_host]
+            database_maps = override_map.split(',')
+            for database_map in database_maps:
+                (source_db, target_db) = database_map.split(':')
+                if source_db == mysql_database:
+                    ch_database = target_db
+                    break
+            logging.info(f"Overriding database for host {ch_host} from {mysql_database} to {ch_database}")
+        cmd = get_clickhouse_checksum_command(ch_host, ch_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)
+        commands.append((ch_host, cmd))
     results = []    
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(commands)) as executor:
             futures = []
@@ -197,11 +207,20 @@ def run_config(config):
     logging.info(f"Source MySQL Host: {mysql_host}")
     
     replica_hosts = []
+    database_override_map = {}
+    mysql_table_include_list = None
+    
+    if "table_include_list" in  config['source']['mysql']:
+            mysql_table_include_list = config['source']['mysql']['table_include_list'].split(',')
+    
     for i, replica in enumerate(config['replicas']):
         replica_hosts.append(replica['clickhouse']['host'])
+        if "database_override_map" in replica['clickhouse']:
+            database_override_map[replica['clickhouse']['host']] = replica['clickhouse']['database_override_map']
+            
    
     logging.info(f"\nFound {len( config['replicas'])} ClickHouse replicas: {replica_hosts}")
-   
+    
     mysql_user = args.mysql_user
     config_file = args.defaults_file
     (mysql_user, mysql_password) = resolve_credentials_from_config(config_file)
@@ -242,7 +261,11 @@ def run_config(config):
                 futures = []
                 future_to_table = {}
                 future_to_conn = {}
+                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
                 for table in tables.fetchall():
+                    if len(table_include_list)>0 and f"{database}.{table['table_name']}" not in table_include_list:
+                        logging.info(f"Skipping table {database}.{table['table_name']} since not in include list")
+                        continue
                     if args.lock_tables_on_source:
                         # we need a new connection for each table since the lock is per connection
                         conn = get_mysql_connection(mysql_host, mysql_user,
@@ -259,8 +282,10 @@ def run_config(config):
                     ignored_columns = []
                     if database in ignored_columns_map and table['table_name'] in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table['table_name']].keys())
+                        
+                    logging.info(f"Ignored columns for table {table_name}: {ignored_columns}")
                     future = executor.submit(
-                        compute_checksum, database, table['table_name'], mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file)
+                        compute_checksum, database, database_override_map, table['table_name'], mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file)
                     futures.append(future)
                     future_to_table[future] = table['table_name']
                 for future in concurrent.futures.as_completed(futures):
