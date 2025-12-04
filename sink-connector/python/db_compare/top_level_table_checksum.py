@@ -198,7 +198,33 @@ def unlock_tables(conn, table):
     unlock_stmt = "UNLOCK TABLES"
     logging.info(f"Unlocking table {table} with statement {unlock_stmt}")
     execute_mysql(conn, unlock_stmt)
+
+def match_table_include_list(database, table, table_include_list):
+    """
+    Check if a table matches any regex pattern in the include list.
     
+    Args:
+        database: The database name
+        table: The table object or dict with 'table_name' key
+        table_include_list: List of regex patterns for table names in format "database.table"
+    
+    Returns:
+        True if the table matches any pattern in the include list, False otherwise
+    """
+    table_name = table['table_name'] if isinstance(table, dict) else table
+    full_table_name = f"{database}.{table_name}"
+    
+    for pattern in table_include_list:
+        try:
+            rex = re.compile(pattern.strip())
+            if rex.match(full_table_name):
+                return True
+        except re.error as e:
+            logging.error(f"Invalid regex pattern '{pattern}': {e}")
+            continue
+    
+    return False
+
 def run_config(config):
     """Display the parsed configuration."""
     logging.info("\nConfiguration Details:")
@@ -263,7 +289,7 @@ def run_config(config):
                 future_to_conn = {}
                 table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
                 for table in tables.fetchall():
-                    if len(table_include_list)>0 and f"{database}.{table['table_name']}" not in table_include_list:
+                    if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):  
                         logging.info(f"Skipping table {database}.{table['table_name']} since not in include list")
                         continue
                     if args.lock_tables_on_source:
