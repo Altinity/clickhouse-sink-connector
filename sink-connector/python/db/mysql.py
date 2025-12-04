@@ -53,20 +53,35 @@ def get_tables_from_regex(conn, no_wc,  mysql_database, include_tables_regex, ex
     return x
 
 
-def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclude_tables_regex=None, include_partitions_regex=None, non_partitioned_tables_only=False):
+def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclude_tables_regex=None, include_partitions_regex=None, non_partitioned_tables_only=False, limit=None):
     
     table_sql =  get_tables_from_regex_sql(conn, False,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only)
     
     include_regex_clause = ""
     if include_partitions_regex is not None:
          include_regex_clause = f"and partition_name rlike '{include_partitions_regex}'"
-         
-    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name, PARTITION_NAME as partition_name, PARTITION_EXPRESSION as partition_expression from information_schema.partitions where table_schema = '{mysql_database}' {include_regex_clause} and (table_schema, table_name) IN ({table_sql}) order by 1,2,3"
+    
+    limit_clause = ""
+    if limit:
+        limit_clause = f"limit {limit}"
+    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name, PARTITION_NAME as partition_name, PARTITION_EXPRESSION as partition_expression from information_schema.partitions where table_schema = '{mysql_database}' {include_regex_clause} and (table_schema, table_name) IN ({table_sql}) order by 1,2,3 {limit_clause}"
     (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
 
     return x
 
+
+def get_table_partition_key(conn, database, table):
+    partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
+    partitions = partitions.fetchall()
+    if len(partitions) > 0:
+        for partition in partitions:
+            partition_name = partition['partition_name']
+            partition_expression = partition['partition_expression']
+            return partition_expression
+            break
+    return None
+            
 
 def mysql_execute_df(conn, sql):
     logging.debug(sql)

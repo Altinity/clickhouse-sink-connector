@@ -265,19 +265,10 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
     where = "1=1"
     if args.where:
         where = args.where
-        if "{partition_expression}" in where:
-            partitions = get_partitions_from_regex(conn,
-                                            args.mysql_database,
-                                            '^'+mysql_table+'$')
-            partitions = partitions.fetchall()
-            if len(partitions) > 0:
-                for partition in partitions:
-                    partition_name = partition['partition_name']
-                    partition_expression = partition['partition_expression']
-                    partition_clause = ""
-                    if partition_name is not None:
-                        where = fstr(where, partition_expression)
-                        break
+        if "{partition_expression}" in where: 
+            partition_key = get_table_partition_key(conn, args.mysql_database, mysql_table)
+            if partition_key is not None:
+                where = fstr(where, partition_key)
     md5_sum = ""
     cnt = -1
     result = []
