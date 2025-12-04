@@ -78,8 +78,8 @@ def get_table_partition_key(conn, database, table):
         for partition in partitions:
             partition_name = partition['partition_name']
             partition_expression = partition['partition_expression']
-            return partition_expression
-            break
+            if partition_name is not None:
+                return partition_expression
     return None
             
 
