@@ -84,7 +84,7 @@ def run_quick_safe_checksum(cmd, host, table):
         return None
     
 
-def compute_checksum (mysql_database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
+def compute_checksum (mysql_database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     commands = []
@@ -103,7 +103,7 @@ def compute_checksum (mysql_database, database_override_map, table, mysql_user, 
                     ch_database = target_db
                     break
             logging.info(f"Overriding database for host {ch_host} from {mysql_database} to {ch_database}")
-        cmd = get_clickhouse_checksum_command(ch_host, ch_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output)
+        cmd = get_clickhouse_checksum_command(ch_host, ch_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key)
         commands.append((ch_host, cmd))
     results = []    
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(commands)) as executor:
@@ -150,7 +150,7 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     return cmd 
 
 
-def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False):
+def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None):
     partition_date = args.partition_date   
     where_argument = '--where " 1=1 '
     if where:
@@ -160,7 +160,7 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
 
     where_argument += '"'
     
-    ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted"
+    ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted,__is_deleted"
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
         ignored_columns_clause += ","+",".join(ignored_columns)
@@ -169,7 +169,10 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
     if debug_output:
         debug_output_clause = "--debug_output"
         
-    cmd = f"""set -e pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} |grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    partition_key_clause = ""
+    if partition_key:
+        partition_key_clause = f" --partition_key {partition_key.replace('`','')}"
+    cmd = f"""set -e pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     return cmd 
 
 
@@ -288,44 +291,46 @@ def run_config(config):
                 future_to_table = {}
                 future_to_conn = {}
                 table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
-                for table in tables.fetchall():
+                for table_row in tables.fetchall():
+                    table = table_row['table_name']
+                    table_name = f"{database}.{table}"
                     if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):  
-                        logging.info(f"Skipping table {database}.{table['table_name']} since not in include list")
+                        logging.info(f"Skipping table {database}.{table} since not in include list")
                         continue
                     if args.lock_tables_on_source:
                         # we need a new connection for each table since the lock is per connection
                         conn = get_mysql_connection(mysql_host, mysql_user,
                                     mysql_password, args.mysql_port, database)
-                        logging.info(f"Locking table {table['table_name']} on source {mysql_host}")
-                        lock_tables(conn, table['table_name'])
+                        logging.info(f"Locking table {table} on source {mysql_host}")
+                        lock_tables(conn, table)
                         time.sleep(args.sleep_after_lock)  # slight delay for the sink-connector to catch up
-                        future_to_conn[table['table_name']] = conn
+                        future_to_conn[table_name] = conn
                         
-                    pk = mysql_pk_columns(conn, database, table['table_name'])
+                    pk = mysql_pk_columns(conn, database, table)
                     pk_column = pk[0] if len(pk) > 0 else 'NULL'
-                    (min_pk, max_pk) = get_min_max_pk_value(conn, table['table_name'], pk_column, '1=1')
-                    table_name = f"{database}.{table['table_name']}"
+                    (min_pk, max_pk) = get_min_max_pk_value(conn, table, pk_column, '1=1')
+                    partition_key = get_table_partition_key(conn, database, table)
                     ignored_columns = []
-                    if database in ignored_columns_map and table['table_name'] in ignored_columns_map[database]:
-                        ignored_columns = list(ignored_columns_map[database][table['table_name']].keys())
+                    if database in ignored_columns_map and table in ignored_columns_map[database]:
+                        ignored_columns = list(ignored_columns_map[database][table].keys())
                         
                     logging.info(f"Ignored columns for table {table_name}: {ignored_columns}")
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table['table_name'], mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file)
+                        compute_checksum, database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key)
                     futures.append(future)
-                    future_to_table[future] = table['table_name']
+                    future_to_table[future] = table_name
                 for future in concurrent.futures.as_completed(futures):
                     conn =  future_to_conn.get(future_to_table[future], None)
-                    table = future_to_table[future]
+                    table_name = future_to_table[future]
                     if future.exception() is not None:
-                        logging.error("Exception in table " + table)
+                        logging.error("Exception in table " + table_name)
                         logging.error(future.exception())
                         if conn:
-                            unlock_tables(conn, table)
+                            unlock_tables(conn, table_name)
                         raise future.exception()
                     else:
                         if conn:
-                            unlock_tables(conn, table)
+                            unlock_tables(conn, table_name)
                         analyze_differences(future.result(), mysql_host, replica_hosts)      
 
         except (KeyboardInterrupt, SystemExit):
