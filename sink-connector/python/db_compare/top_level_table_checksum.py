@@ -9,7 +9,7 @@ from datetime import datetime
 from subprocess import Popen, PIPE
 import subprocess
 import time
-
+import re
 def parse_config(config_file):
     """Parse the YAML configuration file."""
     try:
