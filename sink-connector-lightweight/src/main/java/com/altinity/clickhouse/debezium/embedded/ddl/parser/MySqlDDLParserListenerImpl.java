@@ -374,18 +374,79 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @return The partitioning options string, or empty string if no partitioning is found.
      */
     private String findPartitioningOptions(String source) {
+        // First try to match PARTITION BY RANGE COLUMNS(...)
         Pattern pattern = Pattern.compile("PARTITION\\s+BY\\s+RANGE\\s+COLUMNS\\((.*?)\\)", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(source);
         String partitioningKeys = null;
         if (matcher.find()) {
             partitioningKeys = matcher.group(1);
-            log.info("Partitioning key: " + partitioningKeys);
+            log.info("Partitioning key (RANGE COLUMNS): " + partitioningKeys);
         }
+        
+        // If not found, try to match function-based partitioning like PARTITION BY RANGE( YEAR(...) )
+        if (partitioningKeys == null) {
+            // Match PARTITION BY RANGE( <function_or_expression> ) but stop before the partition definitions
+            Pattern functionPattern = Pattern.compile("PARTITION\\s+BY\\s+RANGE\\s*\\(\\s*([^)]+)\\s*\\)\\s*\\(", Pattern.CASE_INSENSITIVE);
+            Matcher functionMatcher = functionPattern.matcher(source);
+            if (functionMatcher.find()) {
+                String functionExpression = functionMatcher.group(1).trim();
+                log.info("Found function-based partitioning: " + functionExpression);
+                // Convert MySQL function to ClickHouse equivalent
+                partitioningKeys = convertMySQLPartitionFunctionToClickHouse(functionExpression);
+                if (partitioningKeys != null) {
+                    log.info("Converted to ClickHouse partition: " + partitioningKeys);
+                }
+            }
+        }
+        
         String partitioningOptions = "";
         if (partitioningKeys != null) {
             partitioningOptions = "PARTITION BY " + partitioningKeys;
         }
         return partitioningOptions;
+    }
+    
+    /**
+     * Convert MySQL partition function expressions to ClickHouse equivalents
+     * @param mysqlFunction MySQL partition function expression (e.g., "YEAR(order_date)")
+     * @return ClickHouse partition expression or null if conversion not supported
+     */
+    private String convertMySQLPartitionFunctionToClickHouse(String mysqlFunction) {
+        if (mysqlFunction == null || mysqlFunction.isEmpty()) {
+            return null;
+        }
+        
+        // Extract column name from function like YEAR(column_name) or TO_DAYS(column_name)
+        Pattern columnPattern = Pattern.compile("(\\w+)\\s*\\(\\s*([\\w`]+)\\s*\\)", Pattern.CASE_INSENSITIVE);
+        Matcher columnMatcher = columnPattern.matcher(mysqlFunction);
+        
+        if (columnMatcher.find()) {
+            String function = columnMatcher.group(1).toUpperCase();
+            String columnName = columnMatcher.group(2).replaceAll("`", "");
+            
+            // Convert MySQL functions to ClickHouse equivalents
+            switch (function) {
+                case "YEAR":
+                    return "toYear(" + columnName + ")";
+                case "MONTH":
+                    return "toMonth(" + columnName + ")";
+                case "DAY":
+                case "DAYOFMONTH":
+                    return "toDayOfMonth(" + columnName + ")";
+                case "TO_DAYS":
+                    // ClickHouse doesn't have exact TO_DAYS equivalent, use date directly
+                    return columnName;
+                case "UNIX_TIMESTAMP":
+                    return "toUnixTimestamp(" + columnName + ")";
+                default:
+                    log.warn("Unsupported MySQL partition function: " + function + ". Using column directly.");
+                    return columnName;
+            }
+        }
+        
+        // If no function pattern matches, return the expression as-is
+        log.info("Could not parse partition function, using expression as-is: " + mysqlFunction);
+        return mysqlFunction;
     }
 
     /**
@@ -460,6 +521,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         for (ParseTree partitionFunctionRangeTree: ((MySqlParser.PartitionFunctionRangeContext) partitionTree).children) {
                             if (partitionFunctionRangeTree instanceof MySqlParser.UidListContext) {
                                 partitionByColumns.append("(").append(partitionFunctionRangeTree.getText()).append(")");
+                            } else if (partitionFunctionRangeTree instanceof MySqlParser.PredicateExpressionContext) {
+                                // Handle function-based partitioning like PARTITION BY RANGE( YEAR(order_date) )
+                                String functionExpression = partitionFunctionRangeTree.getText();
+                                log.info("Found partition function expression: " + functionExpression);
+                                // Convert MySQL function to ClickHouse equivalent
+                                String clickhousePartition = convertMySQLPartitionFunctionToClickHouse(functionExpression);
+                                if (clickhousePartition != null && !clickhousePartition.isEmpty()) {
+                                    partitionByColumns.append(clickhousePartition);
+                                    log.info("Converted partition to ClickHouse format: " + clickhousePartition);
+                                }
                             }
                         }
                     }

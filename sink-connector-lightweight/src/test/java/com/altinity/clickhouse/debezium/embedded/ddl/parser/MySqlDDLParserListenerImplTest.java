@@ -2390,4 +2390,32 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Successfully validated " + ddlTestCases.size() + " DDL ignore patterns");
     }
 
+    @Test
+    public void testCreateTableWithRangePartitionByYearFunction() {
+        String createQuery = "CREATE TABLE test3 (\n" +
+                "    order_id INT AUTO_INCREMENT,\n" +
+                "    product_name VARCHAR(255),\n" +
+                "    quantity INT,\n" +
+                "    order_date DATE,\n" +
+                "    PRIMARY KEY (order_id, order_date)\n" +
+                ") \n" +
+                "ENGINE = InnoDB\n" +
+                "PARTITION BY RANGE( YEAR(order_date) ) (\n" +
+                "    PARTITION p2020 VALUES LESS THAN (2021),\n" +
+                "    PARTITION p2021 VALUES LESS THAN (2022),\n" +
+                "    PARTITION p2022 VALUES LESS THAN (2023),\n" +
+                "    PARTITION p2023 VALUES LESS THAN (2024),\n" +
+                "    PARTITION p2024 VALUES LESS THAN (2025)\n" +
+                ")";
+        
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "employees", clickHouseQuery);
+
+        String expectedQuery = "CREATE TABLE employees.test3(order_id Nullable(Int32),product_name Nullable(String),quantity Nullable(Int32),order_date Nullable(Date32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
+
+        // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
+       Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+        log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
+    }
+
 }
