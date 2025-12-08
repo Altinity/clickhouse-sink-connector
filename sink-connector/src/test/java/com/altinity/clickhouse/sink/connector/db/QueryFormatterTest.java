@@ -156,57 +156,51 @@ public class QueryFormatterTest {
                 cdcOperation
         );
 
-        // Expected query format based on the provided example
-        // Note: The actual order of columns may vary based on the HashMap iteration
         String query = result.left;
         Map<String, Integer> columnIndexMap = result.right;
         
+        // Verify basic query structure
         String expectedPattern = "INSERT INTO `test_history.employees`";
         Assert.assertTrue("Query should start with INSERT INTO statement", 
                 query.contains(expectedPattern));
-        Assert.assertTrue("Query should contain UNION ALL", 
-                query.contains("UNION ALL"));
-        Assert.assertTrue("Query should contain WHERE clause with primary key", 
-                query.contains("WHERE employeeNumber=1001"));
-        Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("_valid_to = toDateTime('2100-01-01 00:00:00')"));
-        Assert.assertTrue("Query should contain is_deleted condition", 
-                query.contains("is_deleted = 0"));
         
-        // Verify that the second SELECT uses placeholders for regular columns
-        Assert.assertTrue("Second SELECT should contain ? as columnName for regular columns",
+        // Query should have TWO UNION ALL clauses (three SELECTs total)
+        int unionAllCount = query.split("UNION ALL").length - 1;
+        Assert.assertEquals("Query should have two UNION ALL clauses for three SELECTs", 2, unionAllCount);
+        
+        Assert.assertTrue("Query should contain WHERE clause with primary key", 
+                query.contains("WHERE `employeeNumber`=1001"));
+        Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
+                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00')"));
+        Assert.assertTrue("Query should contain is_deleted condition", 
+                query.contains("`is_deleted` = 0"));
+        
+        // First SELECT should CLOSE the record with binlog timestamp (not validToMax)
+        Assert.assertTrue("First SELECT should close record with binlog timestamp",
+                query.contains("toDateTime('2025-03-01 10:30:00') as `_valid_to`"));
+        
+        // Verify that second and third SELECTs use placeholders for columns
+        Assert.assertTrue("Second/Third SELECT should contain ? as columnName for regular columns",
                 query.contains("? as `employeeNumber`") || query.contains("? as `lastName`") || 
                 query.contains("? as `firstName`") || query.contains("? as `email`"));
         
-        // Verify that the second SELECT uses explicit values for temporal tracking columns
-        Assert.assertTrue("Second SELECT should contain _valid_from with timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00') as _valid_from"));
-        Assert.assertTrue("Second SELECT should contain _valid_to with max date",
-                query.contains("toDateTime('2100-01-01 00:00:00') as _valid_to"));
-        Assert.assertTrue("Second SELECT should contain operation",
-                query.contains("'U' as _operation"));
-        Assert.assertTrue("Second SELECT should contain version",
-                query.contains("1234567890 as _version"));
-        Assert.assertTrue("Second SELECT should contain is_deleted",
-                query.contains("0 as is_deleted"));
-        
-        // Verify that temporal tracking columns are NOT in the column index map (they use literals)
-        Assert.assertFalse("Temporal tracking column should not need parameter binding",
-                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
-        Assert.assertFalse("Temporal tracking column should not need parameter binding",
-                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN));
-        Assert.assertFalse("Temporal tracking column should not need parameter binding",
-                columnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN));
-        Assert.assertFalse("Temporal tracking column should not need parameter binding",
-                columnIndexMap.containsKey(ClickHouseDbConstants.OPERATION_COLUMN));
-        Assert.assertFalse("Temporal tracking column should not need parameter binding",
-                columnIndexMap.containsKey(ClickHouseDbConstants.VERSION_COLUMN));
-        
-        // Verify that regular columns ARE in the column index map
-        Assert.assertTrue("Regular column should need parameter binding",
+        // Second SELECT: after image columns should be in index map
+        Assert.assertTrue("After image column should need parameter binding",
                 columnIndexMap.containsKey("employeeNumber"));
-        Assert.assertTrue("Regular column should need parameter binding",
+        Assert.assertTrue("After image column should need parameter binding",
                 columnIndexMap.containsKey("lastName"));
+        Assert.assertTrue("After image temporal column should need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
+        Assert.assertTrue("After image temporal column should need parameter binding",
+                columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN));
+        
+        // Third SELECT: before image columns should be in index map with "before_" prefix
+        Assert.assertTrue("Before image column should need parameter binding with before_ prefix",
+                columnIndexMap.containsKey("before_employeeNumber"));
+        Assert.assertTrue("Before image column should need parameter binding with before_ prefix",
+                columnIndexMap.containsKey("before_lastName"));
+        Assert.assertTrue("Before image temporal column should need parameter binding with before_ prefix",
+                columnIndexMap.containsKey("before_" + ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
 
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update:");
@@ -259,16 +253,33 @@ public class QueryFormatterTest {
         
         // Verify that the String primary key value is properly quoted
         Assert.assertTrue("Query should contain quoted string primary key value",
-                query.contains("officeCode='NYC01'"));
+                query.contains("`officeCode`='NYC01'"));
+        
+        // Query should have TWO UNION ALL clauses (three SELECTs total)
+        int unionAllCount = query.split("UNION ALL").length - 1;
+        Assert.assertEquals("Query should have two UNION ALL clauses for three SELECTs", 2, unionAllCount);
         
         // Verify basic query structure
-        Assert.assertTrue("Query should contain UNION ALL", 
-                query.contains("UNION ALL"));
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("_valid_to = toDateTime('2100-01-01 00:00:00')"));
+                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00')"));
+        
+        // First SELECT should close the record with binlog timestamp
+        Assert.assertTrue("First SELECT should close record with binlog timestamp",
+                query.contains("toDateTime('2025-03-01 10:30:00') as `_valid_to`"));
+        
+        // Verify column index map has both after and before image columns
+        Assert.assertTrue("After image column should be in index map",
+                columnIndexMap.containsKey("officeCode"));
+        Assert.assertTrue("After image column should be in index map",
+                columnIndexMap.containsKey("city"));
+        Assert.assertTrue("Before image column should be in index map with before_ prefix",
+                columnIndexMap.containsKey("before_officeCode"));
+        Assert.assertTrue("Before image column should be in index map with before_ prefix",
+                columnIndexMap.containsKey("before_city"));
         
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update (String PK):");
         System.out.println(query);
+        System.out.println("Column Index Map: " + columnIndexMap);
     }
 }
