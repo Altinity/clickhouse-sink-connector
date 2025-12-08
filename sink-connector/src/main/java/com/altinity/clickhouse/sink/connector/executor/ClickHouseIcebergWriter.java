@@ -163,6 +163,10 @@ public class ClickHouseIcebergWriter implements Closeable {
                     catalogProperties.put(CatalogProperties.WAREHOUSE_LOCATION,
                             warehouseLocation);
                 }
+                // For REST catalog, we need to override the FileIO with our S3 config
+                // The REST catalog might return different S3 settings from the server
+                catalogProperties.put(CatalogProperties.FILE_IO_IMPL,
+                        "org.apache.iceberg.aws.s3.S3FileIO");
                 break;
             case HADOOP:
                 catalogProperties.put(CatalogProperties.CATALOG_IMPL,
@@ -192,6 +196,16 @@ public class ClickHouseIcebergWriter implements Closeable {
                 throw new IllegalArgumentException(
                         "Unsupported catalog type: " + catalogType);
         }
+
+        // Log all catalog properties for debugging
+        log.info("Initializing Iceberg catalog with properties:");
+        catalogProperties.forEach((k, v) -> {
+            if (k.contains("secret") || k.contains("password") || k.contains("key")) {
+                log.info("  {} = ***", k);
+            } else {
+                log.info("  {} = {}", k, v);
+            }
+        });
 
         this.catalog = CatalogUtil.buildIcebergCatalog(
                 "iceberg_catalog", catalogProperties, hadoopConf);
@@ -297,7 +311,7 @@ public class ClickHouseIcebergWriter implements Closeable {
                 ClickHouseSinkConnectorConfigVariables.ICEBERG_WAREHOUSE_LOCATION
                         .toString());
 
-        // Build additional properties
+        // Build additional properties for catalog
         Map<String, String> props = new HashMap<>();
 
         // Add bearer token if provided (for REST catalog authentication)
@@ -316,7 +330,7 @@ public class ClickHouseIcebergWriter implements Closeable {
             props.put("credential", credential);
         }
 
-        // Add S3 configuration if provided
+        // Get S3 configuration
         String s3AccessKey = config.getString(
                 ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ACCESS_KEY
                         .toString());
@@ -330,6 +344,28 @@ public class ClickHouseIcebergWriter implements Closeable {
                 ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ENDPOINT
                         .toString());
 
+        // Configure Hadoop for S3 access
+        Configuration hadoopConf = new Configuration();
+        
+        // Configure Hadoop S3A filesystem (for HadoopFileIO)
+        if (s3AccessKey != null && !s3AccessKey.isEmpty()) {
+            hadoopConf.set("fs.s3a.access.key", s3AccessKey);
+        }
+        if (s3SecretKey != null && !s3SecretKey.isEmpty()) {
+            hadoopConf.set("fs.s3a.secret.key", s3SecretKey);
+        }
+        if (s3Endpoint != null && !s3Endpoint.isEmpty()) {
+            hadoopConf.set("fs.s3a.endpoint", s3Endpoint);
+            hadoopConf.set("fs.s3a.path.style.access", "true");
+        }
+        if (s3Region != null && !s3Region.isEmpty()) {
+            hadoopConf.set("fs.s3a.endpoint.region", s3Region);
+        }
+        hadoopConf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+        hadoopConf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+        hadoopConf.set("fs.s3a.connection.ssl.enabled", "false");
+
+        // Add S3 configuration to catalog properties (for S3FileIO with AWS SDK v2)
         if (s3AccessKey != null && !s3AccessKey.isEmpty()) {
             props.put("s3.access-key-id", s3AccessKey);
         }
@@ -342,7 +378,13 @@ public class ClickHouseIcebergWriter implements Closeable {
         }
         if (s3Endpoint != null && !s3Endpoint.isEmpty()) {
             props.put("s3.endpoint", s3Endpoint);
+            props.put("s3.path-style-access", "true");
+            // Additional settings for MinIO/S3-compatible stores
+            props.put("http-client.type", "urlconnection");
         }
+        
+        // Set IO implementation to use S3FileIO
+        props.put("io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
 
         // Parse catalog type
         CatalogType catalogType;
@@ -355,7 +397,7 @@ public class ClickHouseIcebergWriter implements Closeable {
         }
 
         return new ClickHouseIcebergWriter(catalogUri, warehouseLocation,
-                catalogType, props);
+                catalogType, hadoopConf, props);
     }
 
     /**

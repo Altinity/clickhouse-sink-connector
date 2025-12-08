@@ -30,7 +30,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 /**
  * Runnable object that will be called on a schedule to perform the
- * batch insert of records to ClickHouse.
+ * batch insert of records to ClickHouse or Iceberg.
  */
 public class ClickHouseBatchRunnable implements Runnable {
 
@@ -92,6 +92,21 @@ public class ClickHouseBatchRunnable implements Runnable {
     private static final long ERROR_SLEEP_TIME_MS = 10000;
 
     /**
+     * Flag indicating if Iceberg writing is enabled.
+     */
+    private final boolean icebergEnabled;
+
+    /**
+     * Iceberg writer instance (only initialized if Iceberg is enabled).
+     */
+    private ClickHouseIcebergWriter icebergWriter;
+
+    /**
+     * Iceberg namespace (database) from configuration.
+     */
+    private String icebergNamespace;
+
+    /**
      * Constructs a ClickHouseBatchRunnable.
      *
      * @param records        the queue of record batches
@@ -112,15 +127,30 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
-        this.dbCredentials = parseDBConfiguration();
-        this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
-        try {
-            this.databaseOverrideMap = Utils.parseSourceToDestinationDatabaseMap(
-                    this.config.getString(
-                            ClickHouseSinkConnectorConfigVariables.
-                                    CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
-        } catch (Exception e) {
-            log.error("Error parsing database override map" + e);
+
+        // Check if Iceberg is enabled
+        this.icebergEnabled = ClickHouseIcebergWriter.isEnabled(config);
+
+        if (this.icebergEnabled) {
+            // Initialize Iceberg writer
+            log.info("Iceberg writing is ENABLED - initializing Iceberg writer");
+            this.icebergWriter = ClickHouseIcebergWriter.fromConfig(config);
+            this.icebergNamespace = ClickHouseIcebergWriter.getNamespace(config);
+            // Skip ClickHouse JDBC initialization when Iceberg is enabled
+            this.dbCredentials = null;
+            this.systemConnection = null;
+        } else {
+            // Initialize ClickHouse JDBC connections
+            this.dbCredentials = parseDBConfiguration();
+            this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+            try {
+                this.databaseOverrideMap = Utils.parseSourceToDestinationDatabaseMap(
+                        this.config.getString(
+                                ClickHouseSinkConnectorConfigVariables.
+                                        CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
+            } catch (Exception e) {
+                log.error("Error parsing database override map" + e);
+            }
         }
     }
 
@@ -282,7 +312,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                 }
 
                 // If replication history is enabled, add the records to the history table.
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                // Skip when Iceberg is enabled (replication history is ClickHouse-specific)
+                if(!this.icebergEnabled && config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
 
                     // Get Replication History Database Name
 
@@ -360,7 +391,8 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
-            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
+            // Only log to ClickHouse error table if not using Iceberg
+            if(!this.icebergEnabled && config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
         }
@@ -471,8 +503,68 @@ public class ClickHouseBatchRunnable implements Runnable {
     private boolean processBatchRecords(List<ClickHouseStruct> records, String topicName,
                                       String tableName, String databaseName,
                                       ClickHouseStruct firstRecord) throws Exception {
-        boolean result = false;
 
+        // If Iceberg is enabled, write to Iceberg instead of ClickHouse
+        if (this.icebergEnabled) {
+            return processRecordsToIceberg(records, tableName, databaseName);
+        }
+
+        // ClickHouse JDBC path
+        return processRecordsToClickHouse(records, topicName, tableName,
+                databaseName, firstRecord);
+    }
+
+    /**
+     * Processes records and writes them to Iceberg.
+     *
+     * @param records      the list of records to write
+     * @param tableName    the target table name
+     * @param databaseName the source database name
+     * @return true if writing succeeds; false otherwise
+     */
+    private boolean processRecordsToIceberg(List<ClickHouseStruct> records,
+                                            String tableName,
+                                            String databaseName) {
+        try {
+            // Use configured namespace or fall back to source database name
+            String namespace = this.icebergNamespace;
+            if (namespace == null || namespace.isEmpty()
+                    || "default".equals(namespace)) {
+                namespace = databaseName;
+            }
+
+            log.info("Writing {} records to Iceberg table {}.{}",
+                    records.size(), namespace, tableName);
+
+            int written = this.icebergWriter.writeToIceberg(
+                    records, namespace, tableName);
+
+            log.info("Successfully wrote {} records to Iceberg", written);
+            return true;
+        } catch (Exception e) {
+            log.error("Error writing records to Iceberg: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Processes records and writes them to ClickHouse via JDBC.
+     *
+     * @param records      the list of records to write
+     * @param topicName    the topic name
+     * @param tableName    the target table name
+     * @param databaseName the target database name
+     * @param firstRecord  the first record for metadata
+     * @return true if writing succeeds; false otherwise
+     * @throws Exception if an error occurs
+     */
+    private boolean processRecordsToClickHouse(List<ClickHouseStruct> records,
+                                               String topicName,
+                                               String tableName,
+                                               String databaseName,
+                                               ClickHouseStruct firstRecord)
+            throws Exception {
+        boolean result = false;
 
         // Check if user has overridden the database name.
         if (this.databaseOverrideMap.containsKey(databaseName))
