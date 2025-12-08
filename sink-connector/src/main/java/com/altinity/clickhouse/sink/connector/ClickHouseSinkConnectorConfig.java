@@ -807,6 +807,129 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
+                )
+
+                // Iceberg configuration
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_ICEBERG.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If enabled, data will be written to Apache Iceberg tables instead of ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_ICEBERG.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_TYPE.toString(),
+                        Type.STRING,
+                        "REST",
+                        Importance.HIGH,
+                        "Iceberg catalog type: REST, HADOOP, HIVE, or JDBC",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_TYPE.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_URI.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "Iceberg catalog URI (e.g., http://localhost:8181 for REST catalog, thrift://localhost:9083 for Hive)",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_URI.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_WAREHOUSE_LOCATION.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.HIGH,
+                        "Iceberg warehouse location (e.g., s3://bucket/warehouse, /path/to/warehouse)",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_WAREHOUSE_LOCATION.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_CREDENTIAL.toString(),
+                        Type.PASSWORD,
+                        "",
+                        Importance.MEDIUM,
+                        "Iceberg catalog credential (OAuth2 client credential for token exchange)",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_CREDENTIAL.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_TOKEN.toString(),
+                        Type.PASSWORD,
+                        "",
+                        Importance.MEDIUM,
+                        "Iceberg REST catalog bearer token for authentication",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_CATALOG_TOKEN.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_NAMESPACE.toString(),
+                        Type.STRING,
+                        "default",
+                        Importance.MEDIUM,
+                        "Iceberg namespace (database) to write tables to",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_5,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_NAMESPACE.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ACCESS_KEY.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.MEDIUM,
+                        "AWS S3 access key for Iceberg warehouse storage",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ACCESS_KEY.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_SECRET_KEY.toString(),
+                        Type.PASSWORD,
+                        "",
+                        Importance.MEDIUM,
+                        "AWS S3 secret key for Iceberg warehouse storage",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_SECRET_KEY.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_REGION.toString(),
+                        Type.STRING,
+                        "us-east-1",
+                        Importance.MEDIUM,
+                        "AWS S3 region for Iceberg warehouse storage",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_REGION.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ENDPOINT.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Custom S3 endpoint URL (for MinIO, LocalStack, or other S3-compatible services)",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ICEBERG_S3_ENDPOINT.toString()
                 );
     }
 }

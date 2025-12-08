@@ -172,3 +172,16 @@ connection.pool.disable: "true"
 thread.pool.size: "1"
 
 sink.connector.max.queue.size: 500
+
+
+# Enable Iceberg
+iceberg.enable=true
+iceberg.catalog.type=REST
+iceberg.catalog.uri=http://localhost:5000
+iceberg.warehouse.location=s3://bucket1
+iceberg.namespace=nyc
+
+# S3 credentials
+iceberg.s3.access.key=miniouser
+iceberg.s3.secret.key=minipassword
+iceberg.s3.region=us-east-1
