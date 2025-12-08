@@ -254,7 +254,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 columnName = columnName.replace("`", "");
             }
             if (columnName.equalsIgnoreCase(isDeletedColumn)) {
-                isDeletedColumn = "__" + IS_DELETED_COLUMN;
+                isDeletedColumn = "_" + IS_DELETED_COLUMN;
                 break;
             }
         }
