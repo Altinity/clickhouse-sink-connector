@@ -192,7 +192,7 @@ def analyze_differences(results, mysql_host, replica_hosts):
    
     
 def lock_tables(conn, table):
-    lock_stmt = f"FLUSH TABLE {table} WITH READ LOCK"
+    lock_stmt = f"FLUSH TABLE `{table}` WITH READ LOCK"
     logging.info(f"Locking table with statement {lock_stmt}")
     execute_mysql(conn, lock_stmt)
     
