@@ -3,11 +3,8 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
-import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -47,6 +44,8 @@ public class PreparedStatementExecutor {
      */
     private PreparedStatementFieldMapper fieldMapper;
 
+    private ZoneId serverTimeZone;
+
     /**
      * Constructor for PreparedStatementExecutor.
      * Initializes the instance with the provided configuration values.
@@ -64,7 +63,7 @@ public class PreparedStatementExecutor {
                                      String databaseName, ZoneId serverTimeZone) {
 
         this.databaseName = databaseName;
-        
+        this.serverTimeZone = serverTimeZone;
         // Initialize the field mapper with the same configuration
         this.fieldMapper = new PreparedStatementFieldMapper(
                 replacingMergeTreeDeleteColumn,
@@ -199,25 +198,19 @@ public class PreparedStatementExecutor {
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-
-                            // convert epoch seconds to date string
-                            String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
-                            String binlogRecordTimestamp = DataTypeRange.epochSecondsToDateString(record.getTsSec());
-                            // Create a new prepared statement where inplace updates are done.
-                            long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
-                            // Get the primary key column name and its value from the record
-                            String primaryKeyColumnName = record.getPrimaryKey().get(0);
-                            Object primaryKeyValue = record.getAfterStruct().get(primaryKeyColumnName);
-                            MutablePair<String, Map<String, Integer>> insertQueryInplace = new QueryFormatter().getInsertQueryForUpdate(tableName, record.getAfterModifiedFields(),
-                             columnToDataTypeMap, primaryKeyColumnName, primaryKeyValue, validToMax, binlogRecordTimestamp,
-                             version, record.getCdcOperation());
-                            PreparedStatement psInplace = metadata.getPreparedStatement(conn, insertQueryInplace.left);
-                            fieldMapper.insertPreparedStatement(entry.getKey().right, psInplace, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                    true, config, columnToDataTypeMap, engine, tableName);
+                            // Use ReplicationHistoryHandler for SCD Type 2 updates
+                            ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config);
+                            historyHandler.executeHistoryUpdate(
+                                    conn,
+                                    tableName,
+                                    record,
+                                    columnToDataTypeMap,
+                                    fieldMapper,
+                                    entry.getKey().right,
+                                    config,
+                                    engine, this.serverTimeZone
+                            );
                             updateRecord = true;
-                            psInplace.addBatch();
-                            int[] batchResultInplace = psInplace.executeBatch();
-
                         } else {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                     false, config, columnToDataTypeMap, engine, tableName);
