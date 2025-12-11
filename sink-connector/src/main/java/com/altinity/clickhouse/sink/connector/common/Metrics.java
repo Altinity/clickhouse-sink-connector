@@ -250,6 +250,8 @@ public class Metrics {
             server = HttpServer.create(new InetSocketAddress(port), 0);
             server.createContext("/metrics", httpExchange -> {
                 String response = prometheusMeterRegistry.scrape();
+                // Set Content-Type header for Prometheus 3.x compatibility
+                httpExchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4");
                 httpExchange.sendResponseHeaders(200, response.getBytes().length);
                 try (OutputStream os = httpExchange.getResponseBody()) {
                     os.write(response.getBytes());

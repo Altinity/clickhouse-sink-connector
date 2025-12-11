@@ -3,7 +3,7 @@ version: "3.4"
 services:
   prometheus:
     container_name: prometheus
-    image: bitnami/prometheus:2.36.0
+    image: prom/prometheus:v3.7.1
     restart: "no"
     ports:
       - "9090:9090"
