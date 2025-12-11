@@ -11,6 +11,7 @@ import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.data.ClickHouseDataType;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
@@ -39,15 +40,27 @@ public class ReplicationHistoryHandler {
 
     private final QueryFormatter queryFormatter;
     private final DBMetadata dbMetadata;
-
+    private final ZoneId sourceTimeZone;
+    private final ZoneId serverTimeZone;
     /**
      * Creates a new ReplicationHistoryHandler with default dependencies.
      *
      * @param config The connector configuration
      */
-    public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config) {
+    public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config, ZoneId serverTimeZone) {
         this.queryFormatter = new QueryFormatter();
         this.dbMetadata = new DBMetadata(config);
+
+
+        String sourceTimeZone = "UTC";
+        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                sourceTimeZone = configSourceTimeZone;
+            }
+        }
+        this.sourceTimeZone = ZoneId.of(sourceTimeZone);
+        this.serverTimeZone = serverTimeZone;
     }
 
     /**
@@ -56,9 +69,12 @@ public class ReplicationHistoryHandler {
      * @param queryFormatter The query formatter to use
      * @param dbMetadata The database metadata handler to use
      */
+    @VisibleForTesting
     public ReplicationHistoryHandler(QueryFormatter queryFormatter, DBMetadata dbMetadata) {
         this.queryFormatter = queryFormatter;
         this.dbMetadata = dbMetadata;
+        this.sourceTimeZone = ZoneId.of("UTC");
+        this.serverTimeZone = ZoneId.of("UTC");
     }
 
     /**
@@ -69,8 +85,11 @@ public class ReplicationHistoryHandler {
      */
     public UpdateQueryParams buildUpdateQueryParams(ClickHouseStruct record) {
         // Convert epoch seconds to date strings
-        String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
-        String binlogRecordTimestamp = DataTypeRange.epochSecondsToDateString(record.getTsSec());
+        String validToMax = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                sourceTimeZone, serverTimeZone);
+
+        String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                sourceTimeZone, serverTimeZone);
 
         // Generate unique version using snowflake algorithm
         long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
@@ -113,7 +132,8 @@ public class ReplicationHistoryHandler {
                 params.getValidToMax(),
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
-                params.getCdcOperation()
+                params.getCdcOperation(),
+                serverTimeZone.getId()
         );
     }
 
@@ -140,8 +160,7 @@ public class ReplicationHistoryHandler {
             PreparedStatementFieldMapper fieldMapper,
             Map<String, Integer> columnIndexMap,
             ClickHouseSinkConnectorConfig config,
-            DBMetadata.TABLE_ENGINE engine,
-            ZoneId serverTimeZone) throws Exception {
+            DBMetadata.TABLE_ENGINE engine ) throws Exception {
 
         // Build query parameters from the record
         UpdateQueryParams params = buildUpdateQueryParams(record);
@@ -193,13 +212,6 @@ public class ReplicationHistoryHandler {
                         tableName
                 );
 
-                String sourceTimeZone = "UTC";
-                if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-                    String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-                    if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                        sourceTimeZone = configSourceTimeZone;
-                    }
-                }
 
                 // Override _valid_to for before image: should be max date, not binlog timestamp
                 // The before image represents a "canceled" record that should have open-ended _valid_to
@@ -207,9 +219,14 @@ public class ReplicationHistoryHandler {
                     //String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
                     //ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN), validToMax);
 
-                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN),
+                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN),
                     DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                            ZoneId.of(sourceTimeZone), serverTimeZone));
+                            sourceTimeZone, serverTimeZone));
+                }
+
+                // After the fieldMapper call for before image, add:
+                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                    ps.setInt(beforeColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
                 }
             }
 

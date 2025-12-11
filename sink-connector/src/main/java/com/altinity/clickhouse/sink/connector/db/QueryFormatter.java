@@ -276,7 +276,8 @@ public class QueryFormatter {
                                           String validToMax,
                                           String binlogRecordTimestamp,
                                           long version,
-                                          ClickHouseConverter.CDC_OPERATION cdcOperation) {
+                                          ClickHouseConverter.CDC_OPERATION cdcOperation,
+                                          String serverTimeZone) {
 
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
@@ -300,7 +301,7 @@ public class QueryFormatter {
             
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // CLOSE the record by setting _valid_to to binlog timestamp
-                selectExpr = String.format("toDateTime('%s') as `%s`", binlogRecordTimestamp, columnName);
+                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = String.format("0 as `%s`", columnName);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
@@ -322,10 +323,10 @@ public class QueryFormatter {
 
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
                 // New record starts at binlog timestamp
-                selectExpr = "toDateTime(?) as `" + columnName + "`";
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // New record is open-ended (valid until max time)
-                selectExpr = "toDateTime(?) as `" + columnName + "`";
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else {
                 // All other columns use parameter binding
                 selectExpr = "? as `" + columnName + "`";
@@ -341,9 +342,9 @@ public class QueryFormatter {
             String selectExpr;
 
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                selectExpr = "toDateTime(?) as `" + columnName + "`";
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                selectExpr = "toDateTime(?) as `" + columnName + "`";
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 // Mark the before image as NOT deleted (is_deleted = 0)
                 selectExpr = "? as `" + columnName + "`";
@@ -372,7 +373,7 @@ public class QueryFormatter {
         // 3. Insert "before" image for PK change tracking (NO FROM clause)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s') AND `is_deleted` = 0 " +
+            "SELECT %s FROM %s final WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s') AND `is_deleted` = 0 " +
             "UNION ALL " +
             "SELECT %s " +  // NO FROM clause for second SELECT
             "UNION ALL " +
@@ -384,6 +385,7 @@ public class QueryFormatter {
             primaryKeyColumnName, 
             formattedPrimaryKeyValue, 
             validToMax,
+            serverTimeZone,
             colNamesDelimitedForSecondSelect,
             colNamesDelimitedForThirdSelect
         );

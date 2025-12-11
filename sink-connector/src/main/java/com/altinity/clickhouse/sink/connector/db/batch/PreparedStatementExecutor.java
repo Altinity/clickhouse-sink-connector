@@ -199,7 +199,7 @@ public class PreparedStatementExecutor {
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
-                            ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config);
+                            ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
                             historyHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
@@ -208,7 +208,7 @@ public class PreparedStatementExecutor {
                                     fieldMapper,
                                     entry.getKey().right,
                                     config,
-                                    engine, this.serverTimeZone
+                                    engine
                             );
                             updateRecord = true;
                         } else {

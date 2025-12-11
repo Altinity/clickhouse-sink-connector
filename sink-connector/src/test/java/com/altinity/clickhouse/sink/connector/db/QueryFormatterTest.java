@@ -153,7 +153,8 @@ public class QueryFormatterTest {
                 validToMax,
                 binlogRecordTimestamp,
                 version,
-                cdcOperation
+                cdcOperation,
+                "UTC"
         );
 
         String query = result.left;
@@ -171,13 +172,13 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain WHERE clause with primary key", 
                 query.contains("WHERE `employeeNumber`=1001"));
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00')"));
+                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
         Assert.assertTrue("Query should contain is_deleted condition", 
                 query.contains("`is_deleted` = 0"));
         
         // First SELECT should CLOSE the record with binlog timestamp (not validToMax)
         Assert.assertTrue("First SELECT should close record with binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00') as `_valid_to`"));
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_to`"));
         
         // Verify that second and third SELECTs use placeholders for columns
         Assert.assertTrue("Second/Third SELECT should contain ? as columnName for regular columns",
@@ -245,7 +246,8 @@ public class QueryFormatterTest {
                 validToMax,
                 binlogRecordTimestamp,
                 version,
-                cdcOperation
+                cdcOperation,
+                "UTC"
         );
 
         String query = result.left;
@@ -261,11 +263,11 @@ public class QueryFormatterTest {
         
         // Verify basic query structure
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00')"));
+                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
         
         // First SELECT should close the record with binlog timestamp
         Assert.assertTrue("First SELECT should close record with binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00') as `_valid_to`"));
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_to`"));
         
         // Verify column index map has both after and before image columns
         Assert.assertTrue("After image column should be in index map",
