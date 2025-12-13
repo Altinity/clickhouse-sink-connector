@@ -154,7 +154,8 @@ public class QueryFormatterTest {
                 binlogRecordTimestamp,
                 version,
                 cdcOperation,
-                "UTC"
+                "UTC",
+                true  // includeBeforeImage
         );
 
         String query = result.left;
@@ -247,7 +248,8 @@ public class QueryFormatterTest {
                 binlogRecordTimestamp,
                 version,
                 cdcOperation,
-                "UTC"
+                "UTC",
+                true  // includeBeforeImage
         );
 
         String query = result.left;

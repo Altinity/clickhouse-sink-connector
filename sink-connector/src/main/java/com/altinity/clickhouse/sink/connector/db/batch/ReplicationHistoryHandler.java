@@ -42,6 +42,7 @@ public class ReplicationHistoryHandler {
     private final DBMetadata dbMetadata;
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
+    private final boolean includeBeforeImage;
     /**
      * Creates a new ReplicationHistoryHandler with default dependencies.
      *
@@ -61,6 +62,7 @@ public class ReplicationHistoryHandler {
         }
         this.sourceTimeZone = ZoneId.of(sourceTimeZone);
         this.serverTimeZone = serverTimeZone;
+        this.includeBeforeImage = config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_BEFORE_IMAGE_ENABLE.toString());
     }
 
     /**
@@ -71,10 +73,16 @@ public class ReplicationHistoryHandler {
      */
     @VisibleForTesting
     public ReplicationHistoryHandler(QueryFormatter queryFormatter, DBMetadata dbMetadata) {
+        this(queryFormatter, dbMetadata, false);
+    }
+
+    @VisibleForTesting
+    public ReplicationHistoryHandler(QueryFormatter queryFormatter, DBMetadata dbMetadata, boolean includeBeforeImage) {
         this.queryFormatter = queryFormatter;
         this.dbMetadata = dbMetadata;
         this.sourceTimeZone = ZoneId.of("UTC");
         this.serverTimeZone = ZoneId.of("UTC");
+        this.includeBeforeImage = includeBeforeImage;
     }
 
     /**
@@ -133,7 +141,8 @@ public class ReplicationHistoryHandler {
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
                 params.getCdcOperation(),
-                serverTimeZone.getId()
+                serverTimeZone.getId(),
+                includeBeforeImage
         );
     }
 
