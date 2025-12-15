@@ -277,8 +277,7 @@ public class QueryFormatter {
                                           String binlogRecordTimestamp,
                                           long version,
                                           ClickHouseConverter.CDC_OPERATION cdcOperation,
-                                          String serverTimeZone,
-                                          boolean includeBeforeImage) {
+                                          String serverTimeZone) {
 
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
@@ -302,7 +301,6 @@ public class QueryFormatter {
             
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // CLOSE the record by setting _valid_to to binlog timestamp
-                //selectExpr = String.format("now()`", columnName);
                 selectExpr = "now()";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = String.format("0 as `%s`", columnName);
@@ -338,35 +336,30 @@ public class QueryFormatter {
         }
 
         // Third SELECT: Cancel the "before" image (for PK updates - uses before values)
-        // Only include if includeBeforeImage is enabled
-        if (includeBeforeImage) {
-            for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-                String columnName = entry.getKey();
-                String originalColumnName = columnName;
-                String selectExpr;
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String originalColumnName = columnName;
+            String selectExpr;
 
-                if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                    selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
-                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                    selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
-                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                    // Mark the before image as NOT deleted (is_deleted = 0)
-                    selectExpr = "? as `" + columnName + "`";
-                } else {
-                    selectExpr = "? as `" + columnName + "`";
-                }
-                // Use "before_" prefix for third select parameter mapping
-                colNameToIndexMap.put("before_" + originalColumnName, parameterIndex++);
-                colNamesDelimitedForThirdSelect.append(selectExpr).append(",");
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                // Mark the before image as NOT deleted (is_deleted = 0)
+                selectExpr = "? as `" + columnName + "`";
+            } else {
+                selectExpr = "? as `" + columnName + "`";
             }
+            // Use "before_" prefix for third select parameter mapping
+            colNameToIndexMap.put("before_" + originalColumnName, parameterIndex++);
+            colNamesDelimitedForThirdSelect.append(selectExpr).append(",");
         }
 
         removeTrailingComma(colNamesDelimited);
         removeTrailingComma(colNamesDelimitedForFirstSelect);
         removeTrailingComma(colNamesDelimitedForSecondSelect);
-        if (includeBeforeImage) {
-            removeTrailingComma(colNamesDelimitedForThirdSelect);
-        }
+        removeTrailingComma(colNamesDelimitedForThirdSelect);
 
         // Get the primary key data type and format the value appropriately
         String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
@@ -374,47 +367,28 @@ public class QueryFormatter {
 
         String tableWithBackTicks = "`" + tableName + "`";
         
-        // Build the query with two or three SELECTs:
+        // Build the query with three SELECTs:
         // 1. Close existing record (from table with WHERE)
         // 2. Insert new "after" values (NO FROM clause)
-        // 3. (Optional) Insert "before" image for PK change tracking (NO FROM clause)
-        String query;
-        if (includeBeforeImage) {
-            query = String.format(
-                "INSERT INTO %s(%s) " +
-                "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s') AND `is_deleted` = 0 " +
-                "UNION ALL " +
-                "SELECT %s " +  // NO FROM clause for second SELECT
-                "UNION ALL " +
-                "SELECT %s",    // NO FROM clause for third SELECT
-                tableWithBackTicks, 
-                colNamesDelimited, 
-                colNamesDelimitedForFirstSelect, 
-                tableWithBackTicks, 
-                primaryKeyColumnName, 
-                formattedPrimaryKeyValue, 
-                validToMax,
-                serverTimeZone,
-                colNamesDelimitedForSecondSelect,
-                colNamesDelimitedForThirdSelect
-            );
-        } else {
-            query = String.format(
-                "INSERT INTO %s(%s) " +
-                "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s') AND `is_deleted` = 0 " +
-                "UNION ALL " +
-                "SELECT %s",    // NO FROM clause for second SELECT (no third SELECT)
-                tableWithBackTicks, 
-                colNamesDelimited, 
-                colNamesDelimitedForFirstSelect, 
-                tableWithBackTicks, 
-                primaryKeyColumnName, 
-                formattedPrimaryKeyValue, 
-                validToMax,
-                serverTimeZone,
-                colNamesDelimitedForSecondSelect
-            );
-        }
+        // 3. Insert "before" image for PK change tracking (NO FROM clause)
+        String query = String.format(
+            "INSERT INTO %s(%s) " +
+            "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s') AND `is_deleted` = 0 " +
+            "UNION ALL " +
+            "SELECT %s " +  // NO FROM clause for second SELECT
+            "UNION ALL " +
+            "SELECT %s",    // NO FROM clause for third SELECT
+            tableWithBackTicks, 
+            colNamesDelimited, 
+            colNamesDelimitedForFirstSelect, 
+            tableWithBackTicks, 
+            primaryKeyColumnName, 
+            formattedPrimaryKeyValue, 
+            validToMax,
+            serverTimeZone,
+            colNamesDelimitedForSecondSelect,
+            colNamesDelimitedForThirdSelect
+        );
 
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
         response.left = query;

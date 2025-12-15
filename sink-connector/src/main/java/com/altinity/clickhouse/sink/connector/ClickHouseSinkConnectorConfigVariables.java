@@ -104,8 +104,6 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_TTL("replication.history.ttl"), 
 
-    REPLICATION_HISTORY_BEFORE_IMAGE_ENABLE("replication.history.before.image.enable"),
-
     DATABASE_HOSTNAME("database.hostname");
 
 

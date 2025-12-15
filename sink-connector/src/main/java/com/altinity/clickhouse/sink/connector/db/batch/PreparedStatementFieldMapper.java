@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
@@ -339,6 +338,7 @@ public class PreparedStatementFieldMapper {
 
     /**
      * Handles Version column for REPLACING_MERGE_TREE engines.
+     * Uses the version already calculated and stored in the ClickHouseStruct.
      */
     private void handleVersionColumn(Map<String, Integer> columnNameToIndexMap,
                                       PreparedStatement ps,
@@ -346,24 +346,18 @@ public class PreparedStatementFieldMapper {
                                       ClickHouseSinkConnectorConfig config,
                                       Map<String, String> columnNameToDataTypeMap,
                                       DBMetadata.TABLE_ENGINE engine) throws Exception {
-        Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
         if (engine != null &&
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
                 && versionColumn != null) {
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
-                    if(columnNameToIndexMap.containsKey(versionColumn)) {
-                        if (record.getGtid() != -1) {
-                            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
-                            } else {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
-                            }
-                        } else if (record.getSequenceNumber() != -1) {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
-                        } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
-                        }
+                if (columnNameToIndexMap.containsKey(versionColumn)) {
+                    // Calculate version if not already set
+                    if (record.getVersion() == -1) {
+                        boolean useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
+                        record.calculateVersion(useSnowflakeId);
+                    }
+                    ps.setLong(columnNameToIndexMap.get(versionColumn), record.getVersion());
                 }
             }
         }

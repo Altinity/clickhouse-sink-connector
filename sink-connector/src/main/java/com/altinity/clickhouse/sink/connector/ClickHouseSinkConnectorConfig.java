@@ -798,17 +798,6 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
                 )
                 .define(
-                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_BEFORE_IMAGE_ENABLE.toString(),
-                        Type.BOOLEAN,
-                        false,
-                        Importance.MEDIUM,
-                        "If enabled, the before image is stored in replication history tables for PK updates",
-                        CONFIG_GROUP_CONNECTOR_CONFIG,
-                        ORDER_3,
-                        ConfigDef.Width.NONE,
-                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_BEFORE_IMAGE_ENABLE.toString()
-                )
-                .define(
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),
                         Type.STRING,
                         "",

@@ -42,7 +42,6 @@ public class ReplicationHistoryHandler {
     private final DBMetadata dbMetadata;
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
-    private final boolean includeBeforeImage;
     /**
      * Creates a new ReplicationHistoryHandler with default dependencies.
      *
@@ -62,7 +61,6 @@ public class ReplicationHistoryHandler {
         }
         this.sourceTimeZone = ZoneId.of(sourceTimeZone);
         this.serverTimeZone = serverTimeZone;
-        this.includeBeforeImage = config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_BEFORE_IMAGE_ENABLE.toString());
     }
 
     /**
@@ -73,16 +71,10 @@ public class ReplicationHistoryHandler {
      */
     @VisibleForTesting
     public ReplicationHistoryHandler(QueryFormatter queryFormatter, DBMetadata dbMetadata) {
-        this(queryFormatter, dbMetadata, false);
-    }
-
-    @VisibleForTesting
-    public ReplicationHistoryHandler(QueryFormatter queryFormatter, DBMetadata dbMetadata, boolean includeBeforeImage) {
         this.queryFormatter = queryFormatter;
         this.dbMetadata = dbMetadata;
         this.sourceTimeZone = ZoneId.of("UTC");
         this.serverTimeZone = ZoneId.of("UTC");
-        this.includeBeforeImage = includeBeforeImage;
     }
 
     /**
@@ -141,8 +133,7 @@ public class ReplicationHistoryHandler {
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
                 params.getCdcOperation(),
-                serverTimeZone.getId(),
-                includeBeforeImage
+                serverTimeZone.getId()
         );
     }
 
@@ -191,6 +182,8 @@ public class ReplicationHistoryHandler {
             // Populate the prepared statement with after values (second SELECT)
             // Filter the column index map to only include non-prefixed keys (after image)
             Map<String, Integer> afterColumnIndexMap = filterAfterImageColumns(queryColumnIndexMap);
+            // increase the version by 1 for record. 
+            record.setVersion(record.getVersion() + 1);
             fieldMapper.insertPreparedStatement(
                     afterColumnIndexMap,
                     ps,
@@ -203,6 +196,9 @@ public class ReplicationHistoryHandler {
                     engine,
                     tableName
             );
+
+            // Revert the version by 1 for record. 
+            record.setVersion(record.getVersion() - 1);
 
             // Populate the prepared statement with before values (third SELECT)
             // Translate "before_" prefixed keys to regular column names for the fieldMapper
