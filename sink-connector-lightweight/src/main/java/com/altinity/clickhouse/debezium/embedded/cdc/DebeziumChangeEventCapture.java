@@ -442,6 +442,10 @@ public class DebeziumChangeEventCapture {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
 
+        // if serverTimezone is empty default to UTC.
+        if(serverTimeZone.isEmpty()) {
+            serverTimeZone = "UTC";
+        }
         // If replication histry is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
