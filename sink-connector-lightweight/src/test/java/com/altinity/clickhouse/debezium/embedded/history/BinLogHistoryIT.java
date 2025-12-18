@@ -255,7 +255,7 @@ public class BinLogHistoryIT {
         }
         
         assertTrue("Expected 4 temporal tracking columns in " + database + "." + table + ", but found: " + columnCount, 
-            columnCount == 3);
+            columnCount == 4);
         
         log.info("Successfully validated {} temporal tracking columns for {}.{}", columnCount, database, table);
     }
