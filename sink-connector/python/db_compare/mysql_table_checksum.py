@@ -50,7 +50,7 @@ def compute_checksum(table, statements, conn):
     return result
 
 
-def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns):
+def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
@@ -75,7 +75,14 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         if row['column_name'] in excluded_columns:
             logging.info("Excluding column "+row['column_name'])
             continue
-        
+        if not include_floating_point_columns:
+            if 'float' in data_type or 'double' in data_type or 'real' in data_type:
+                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                continue
+        if not include_json_columns:
+            if 'json' in data_type:
+                logging.info(f"Excluding json column {column_name} of type {data_type}")
+                continue
         if not first_column:
             select += ","
             
@@ -115,9 +122,6 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
                         select_column += f"{column_name}"
                     else:
                         select_column += f"convert({column_name} using utf8mb4)"
-
-
-                    
         if is_nullable == 'YES':
             select_column = f"ifnull({select_column},'')"
         select+=select_column
@@ -204,7 +208,7 @@ def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
 
-def calculate_sql_checksum(conn, table, where, excluded_columns):
+def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floating_point_columns, include_json_columns):
     result = None
     try:
         if args.ignore_tables_regex:
@@ -217,7 +221,7 @@ def calculate_sql_checksum(conn, table, where, excluded_columns):
         statements = []
 
         (query, select_query, distributed_by,
-         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns)
+         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types, where)
         result = compute_checksum(table, statements, conn)
@@ -227,7 +231,7 @@ def calculate_sql_checksum(conn, table, where, excluded_columns):
     return result
 
 
-def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns):
+def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns,  include_floating_point_columns, include_json_columns):
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
     _where = "1=1"
     if where:
@@ -240,11 +244,11 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
     parsed_excluded_columns = []
     for col in excluded_columns:
         parsed_excluded_columns.extend(col.split(','))  # split values with commas
-    result = calculate_sql_checksum(conn, mysql_table, _where, parsed_excluded_columns)
+    result = calculate_sql_checksum(conn, mysql_table, _where, parsed_excluded_columns,  include_floating_point_columns, include_json_columns)
     return result
 
 
-def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns):
+def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns, include_floating_point_columns, include_json_columns):
     if args.ignore_tables_regex:
         rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex_ignore_tables.match(mysql_table):
@@ -283,7 +287,7 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
             futures = []
             for chunk in divide_table_into_even_chunks(conn, mysql_table, args.chunk_size, pk, where): 
                 futures.append(executor.submit(
-                    calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns))
+                    calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns, include_floating_point_columns, include_json_columns))
             for future in concurrent.futures.as_completed(futures):
                 result.append(future.result())
                 if future.exception() is not None:
@@ -366,6 +370,10 @@ def main():
     parser.add_argument('--chunk_size', type=int, help='Chunk size', default=10000)
     parser.add_argument('--threads', type=int,
                         help='number of tables in parallel to compute', default=1)
+    parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
+                        help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=True,
+                        help='JSON data types can not easily be compared, we do not include them by default', required=False)
     global args
     args = parser.parse_args()
 
@@ -404,7 +412,7 @@ def main():
             future_to_table = {}
             for table in tables.fetchall():
                 future = executor.submit(
-                    calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns)
+                    calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
                 futures.append(future)
                 future_to_table[future] = table['table_name']
             for future in concurrent.futures.as_completed(futures):

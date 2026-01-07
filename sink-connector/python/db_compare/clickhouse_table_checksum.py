@@ -127,6 +127,14 @@ def get_table_checksum_query(conn, table):
         numeric_scale = row[3]
         columns.append(row[0])
         unhex = row[0] in args.hex_columns
+        if not args.include_floating_point_columns:
+            if 'Float' in data_type:
+                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                continue
+        if not args.include_json_columns:
+            if 'json' in data_type:
+                logging.info(f"Excluding json column {column_name} of type {data_type}")
+                continue
         if not first_column:
             select += "||"
 
@@ -349,7 +357,10 @@ def main():
     parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
-
+    parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
+                        help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=True,
+                        help='JSON data types can not easily be compared, we include them by default, please ignore them explicitly', required=False)
     global args
     args = parser.parse_args()
 
