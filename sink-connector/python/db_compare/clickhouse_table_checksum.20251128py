@@ -127,14 +127,6 @@ def get_table_checksum_query(conn, table):
         numeric_scale = row[3]
         columns.append(row[0])
         unhex = row[0] in args.hex_columns
-        if not args.include_floating_point_columns:
-            if 'Float' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
-                continue
-        if not args.include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
-                continue
         if not first_column:
             select += "||"
 
@@ -268,7 +260,7 @@ def get_tables_from_regex(conn):
     return x
 
 
-def calculate_checksum(table, clickhouse_user, clickhouse_password, where, partition_key):
+def calculate_checksum(table, clickhouse_user, clickhouse_password, where):
     if args.ignore_tables_regex:
         rex_ignore_tables = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex_ignore_tables.match(table):
@@ -286,13 +278,10 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     sql = "select count(*) cnt from "+args.clickhouse_database+"."+table
     if where:
         if "{partition_expression}" in where:
-           if partition_key is None:
-                partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
-                logging.info(partition_key)
-                if len(partition_key) > 0 :
-                    partition_key = partition_key[0][0]
-           if partition_key is None or partition_key=='':
-               logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
+           partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
+           logging.info(partition_key)
+           if len(partition_key) > 0 :
+               partition_key = partition_key[0][0]
            where = fstr(where, partition_key)
         sql = sql + " where " + where
 
@@ -333,34 +322,49 @@ def main():
 
           ''')
     # Required
-    parser.add_argument('--clickhouse_host',  help='ClickHouse host', required=True)
-    parser.add_argument('--clickhouse_user', help='ClickHouse user', required=False)
-    parser.add_argument('--clickhouse_password', help='CH password (discouraged option use a configuration file)', required=False, default=None)
-    parser.add_argument('--clickhouse_config_file', help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
-    parser.add_argument('--clickhouse_database', help='ClickHouse database', required=True)
-    parser.add_argument('--clickhouse_port',  help='ClickHouse port', default=9000, required=False)
-    parser.add_argument('--secure', help='True or False', default=False, required=False)
+    parser.add_argument('--clickhouse_host',
+                        help='ClickHouse host', required=True)
+    parser.add_argument('--clickhouse_user',
+                        help='ClickHouse user', required=False)
+    parser.add_argument('--clickhouse_password',
+                        help='CH password (discouraged option use a configuration file)', required=False, default=None)
+    parser.add_argument('--clickhouse_config_file',
+                        help='CH config file either xml or yaml, default is ./clickhouse-client.xml', required=False, default='./clickhouse-client.xml')
+    parser.add_argument('--clickhouse_database',
+                        help='ClickHouse database', required=True)
+    parser.add_argument('--clickhouse_port',
+                        help='ClickHouse port', default=9000, required=False)
+    parser.add_argument('--secure',
+                        help='True or False', default=False, required=False)
     parser.add_argument('--sign_column', help='Override sign column, by default its _sign', default='_sign', required=False)
     parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--order_by', help='order by` clause', required=False)
-    parser.add_argument('--partition_key', help='partition key', required=False)
-    parser.add_argument('--ignore_tables_regex', help='Ignore table regexp', required=False)
-    parser.add_argument('--no_wc', action='store_true', default=False, help='Runs wc first to determine the table names from the regex', required=False)
-    parser.add_argument('--debug_output', action='store_true', default=False, help='Output the raw format to a file called out.txt', required=False)
-    parser.add_argument('--debug_limit', help='Limit the debug output in lines', required=False)
-    parser.add_argument('--hex_columns', help='columns to convert to hex', nargs='+', default=[])
-    parser.add_argument('--debug', dest='debug', action='store_true', default=False)
+    parser.add_argument('--ignore_tables_regex',
+                        help='Ignore table regexp', required=False)
+    parser.add_argument('--no_wc', action='store_true', default=False,
+                        help='Runs wc first to determine the table names from the regex', required=False)
+    parser.add_argument('--debug_output', action='store_true', default=False,
+                        help='Output the raw format to a file called out.txt', required=False)
+    parser.add_argument(
+        '--debug_limit', help='Limit the debug output in lines', required=False)
+    parser.add_argument(
+        '--hex_columns', help='columns to convert to hex', nargs='+', default=[])
+    parser.add_argument('--debug', dest='debug',
+                        action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
-    parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
-    parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
-    parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
-    parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
-    parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
-    parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
-                        help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we include them by default, please ignore them explicitly', required=False)
+    parser.add_argument('--exclude_columns', help='columns exclude',
+                        nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
+    parser.add_argument('--threads', type=int,
+                        help='number of parallel threads', default=1)
+    parser.add_argument(
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
+    parser.add_argument(
+            '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
+
+    parser.add_argument('--max_memory_usage',
+                        help='increase  max_memory_usage', required=False)
+
     global args
     args = parser.parse_args()
 
@@ -398,7 +402,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             for table in tables:
-              futures.append(executor.submit(calculate_checksum, table[0], clickhouse_user, clickhouse_password, args.where, args.partition_key))
+              futures.append(executor.submit(calculate_checksum, table[0], clickhouse_user, clickhouse_password, args.where))
             for future in concurrent.futures.as_completed(futures):
               if future.exception() is not None:
                 raise future.exception()
