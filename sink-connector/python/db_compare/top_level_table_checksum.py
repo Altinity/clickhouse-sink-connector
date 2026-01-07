@@ -84,10 +84,17 @@ def run_quick_safe_checksum(cmd, host, table):
         return None
     
 
-def compute_checksum (mysql_database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     commands = []
+    if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
+        if where is None:
+            where =''
+        if where != '':
+            where+= " and "
+        logging.info(f"Where override found for {table_name}")
+        where+= table_overrides_map[table_name]['where']
     cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
    
     commands.append((mysql_host,cmd))
@@ -279,7 +286,15 @@ def run_config(config):
             if table not in ignored_columns_map[db]:
                 ignored_columns_map[db][table] = {}
             ignored_columns_map[db][table][col] = True
-       
+    table_overrides = config['source']['mysql']['tables'] if 'tables' in config['source']['mysql'] else []
+    table_overrides_map = {}
+    for table_dict in table_overrides:
+        table = next(iter(table_dict))
+        if 'where' in table_dict[table]:
+            if not table in table_overrides_map:
+                table_overrides_map[table] = {}
+            table_overrides_map[table]['where'] = table_dict[table]['where']
+    logging.info(f"Table overrides : {table_overrides_map}")
     for database in databases:
         logging.info(f"Using MySQL database: {database}")
         try:
@@ -316,7 +331,7 @@ def run_config(config):
                         
                     logging.info(f"Ignored columns for table {table_name}: {ignored_columns}")
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key)
+                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key)
                     futures.append(future)
                     future_to_table[future] = table_name
                 for future in concurrent.futures.as_completed(futures):
