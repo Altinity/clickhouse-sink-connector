@@ -297,11 +297,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         
         // Determine which mode we're in: hash-based routing or legacy
         boolean useHashRouting = (threadId >= 0 && routedRecords != null);
-        useHashRouting = true;
+        useHashRouting = false;
         try {
-            if (useHashRouting) {
-                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
-            } else {
+//            if (useHashRouting) {
+//                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+//            } else
+           {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {

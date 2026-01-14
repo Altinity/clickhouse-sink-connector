@@ -59,7 +59,7 @@ public class Constants {
     /**
      * CREATE TABLE command.
      */
-    public static final String CREATE_TABLE = "CREATE TABLE";
+    public static final String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS";
 
     /**
      * A keyword used in ClickHouse to indicate a nullable column type.
