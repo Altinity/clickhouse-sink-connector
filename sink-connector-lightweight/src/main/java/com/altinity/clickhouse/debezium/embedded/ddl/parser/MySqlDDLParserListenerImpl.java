@@ -149,7 +149,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        ZoneId userProvidedTimeZoneId = null;
+        ZoneId userProvidedTimeZoneId = ZoneId.of("UTC");
         try {
             if(!userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);

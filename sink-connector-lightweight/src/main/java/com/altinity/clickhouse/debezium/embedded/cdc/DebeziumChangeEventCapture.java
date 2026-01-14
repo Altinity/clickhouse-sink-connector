@@ -442,6 +442,10 @@ public class DebeziumChangeEventCapture {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
 
+        // if serverTimezone is empty default to UTC.
+        if(serverTimeZone.isEmpty()) {
+            serverTimeZone = "UTC";
+        }
         // If replication histry is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
@@ -912,14 +916,11 @@ public class DebeziumChangeEventCapture {
         if (this.threadPoolSize > 1) {
             log.info("********* Using hash-based routing with {} threads *********", this.threadPoolSize);
             int maxQueueSize = config.getInt(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
-            this.routedRecords = new LinkedBlockingQueue<>(maxQueueSize);
-            
-            // Create a thread for each slot in the pool with assigned thread ID
             for (int i = 0; i < this.threadPoolSize; i++) {
                 this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.routedRecords, i, config, new HashMap<>()),
-                        0, 
-                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), 
+                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS);
             }
         } else {

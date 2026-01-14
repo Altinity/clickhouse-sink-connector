@@ -4,6 +4,12 @@ services:
   clickhouse:
     container_name: clickhouse
     image: clickhouse/clickhouse-server:24.8
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: "no"
     ports:
       - "8123:8123"
