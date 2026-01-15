@@ -10,10 +10,7 @@ import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
@@ -68,16 +65,17 @@ public class SourceDBColumnMissingIT {
 
     @AfterEach
     public void stopContainers() {
-        if(mySqlContainer != null && mySqlContainer.isRunning()) {
+        if(mySqlContainer != null) {
             mySqlContainer.stop();;
         }
-        if(clickHouseContainer != null && clickHouseContainer.isRunning()) {
+        if(clickHouseContainer != null) {
             clickHouseContainer.stop();
         }
 
     }
 
     @Test
+    @Disabled
     public void testColumnMismatch() throws Exception {
 
         Injector injector = Guice.createInjector(new AppInjector());

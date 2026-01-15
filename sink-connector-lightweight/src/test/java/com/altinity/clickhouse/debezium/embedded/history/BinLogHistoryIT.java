@@ -133,6 +133,12 @@ public class BinLogHistoryIT {
         Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
 
+        ClickHouseDebeziumEmbeddedApplication.stop();
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+
+
+        HikariDbSource.close();
+
         conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();

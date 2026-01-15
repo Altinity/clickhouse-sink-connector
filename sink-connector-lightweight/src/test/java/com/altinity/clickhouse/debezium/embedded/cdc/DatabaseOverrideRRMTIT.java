@@ -201,8 +201,9 @@ public class DatabaseOverrideRRMTIT {
             //assert rs.getString("name").equalsIgnoreCase("test");
         }
         assertTrue(prod3RecordFound);
-        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
 
+        ClickHouseDebeziumEmbeddedApplication.stop();
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
         conn.close();
         // Files.deleteIfExists( tmpFilePath);
         executorService.shutdown();
