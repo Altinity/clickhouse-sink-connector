@@ -101,6 +101,11 @@ public class DatabaseOverrideIT {
 
         Thread.sleep(25000);
 
+        // Validate in Clickhouse the last record written is 29999
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        // Create database employees2
+        writer.getConnection().prepareStatement("create database employees2").execute();
+        
         // Employees table
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
@@ -120,8 +125,7 @@ public class DatabaseOverrideIT {
 
         Thread.sleep(10000);
 
-        // Validate in Clickhouse the last record written is 29999
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        
 
         long col2 = 0L;
         ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
