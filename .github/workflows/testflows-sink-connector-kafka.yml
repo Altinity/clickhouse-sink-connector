@@ -67,7 +67,7 @@ env:
 
 jobs:
   testflows-kafka:
-    runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
+    runs-on: [self-hosted, on-demand, type-cx53, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2

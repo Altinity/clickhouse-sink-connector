@@ -83,7 +83,7 @@ env:
 
 jobs:
   testflows-lightweight:
-    runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
+    runs-on: [self-hosted, on-demand, type-cx53, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2
@@ -161,7 +161,7 @@ jobs:
           if-no-files-found: error
           retention-days: 60
   testflows-lightweight-replicated:
-    runs-on: [self-hosted, on-demand, type-cpx51, image-x86-app-docker-ce]
+    runs-on: [self-hosted, on-demand, type-cx53, image-x86-app-docker-ce]
 
     steps:
       - uses: actions/checkout@v2
