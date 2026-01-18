@@ -144,14 +144,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     /**
      * Parse the user-provided time zone string and return a ZoneId object.
      *
-     * @return The ZoneId object representing the user-provided time zone.
+     * @return The ZoneId object representing the user-provided time zone, or null if not provided.
      */
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        ZoneId userProvidedTimeZoneId = ZoneId.of("UTC");
+        ZoneId userProvidedTimeZoneId = null;
         try {
-            if(!userProvidedTimeZone.isEmpty()) {
+            if(userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
             }
         } catch (Exception e){

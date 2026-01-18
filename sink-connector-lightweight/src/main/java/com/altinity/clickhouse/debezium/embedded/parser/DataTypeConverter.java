@@ -175,10 +175,23 @@ public class DataTypeConverter {
      *
      * @param chDataType The ClickHouse DateTime data type.
      * @param precision The precision for DateTime64 types.
-     * @param userProvidedTimeZone The timezone to add.
+     * @param userProvidedTimeZone The timezone to add, or null if no timezone should be added.
      * @return A string representation of the DateTime type with timezone.
      */
     public static String addTimeZoneToDateTimeType(ClickHouseDataType chDataType, int precision, ZoneId userProvidedTimeZone) {
+        // If no timezone is provided, return the data type without timezone
+        if (userProvidedTimeZone == null) {
+            if (chDataType == ClickHouseDataType.DateTime64) {
+                return new StringBuffer()
+                        .append(chDataType)
+                        .append("(")
+                        .append(precision)
+                        .append(", 0)")
+                        .toString();
+            }
+            return chDataType.toString();
+        }
+        
         if (chDataType == ClickHouseDataType.DateTime || chDataType == ClickHouseDataType.DateTime32) {
             return new StringBuffer()
                     .append(chDataType)
