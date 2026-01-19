@@ -342,6 +342,9 @@ public class VersionHistoryIT {
 
         conn.close();
         executorService.shutdown();
+
+
+        ClickHouseDebeziumEmbeddedApplication.stop();
         HikariDbSource.close();
     }
 }
