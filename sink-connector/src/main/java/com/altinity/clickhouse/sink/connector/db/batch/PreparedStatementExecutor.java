@@ -494,8 +494,13 @@ public class PreparedStatementExecutor {
                             }
                         } else if (record.getSequenceNumber() != -1) {
                             ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
-                        } else {
+                        } else if (record.getLsn() != -1) {
                             ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
+                        } else {
+                            // Fallback when gtid, sequenceNumber, and lsn are all unavailable (-1).
+                            // Use SnowFlakeId with kafka offset to provide sub-millisecond uniqueness.
+                            ps.setLong(columnNameToIndexMap.get(versionColumn), 
+                                SnowFlakeId.generate(record.getTs_ms(), record.getKafkaOffset(), false));
                         }
                 }
             }
