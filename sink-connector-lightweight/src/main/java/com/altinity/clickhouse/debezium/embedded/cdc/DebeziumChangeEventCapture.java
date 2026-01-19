@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
@@ -465,6 +466,17 @@ public class DebeziumChangeEventCapture {
 
                 executeDDL(clickHouseQuery.toString(), writer, config);
 
+                // Invalidate cached DbWriter for this table so that subsequent inserts
+                // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
+                try {
+                    String tableName = getTableName(sr);
+                    if (tableName != null) {
+                        CacheInvalidationManager.getInstance().invalidateTable(databaseName + "." + tableName);
+                    }
+                } catch (Exception e) {
+                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                }
+
                 try {
                     // if replication history is enabled, add to the binlog history table.
                     if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
@@ -566,6 +578,27 @@ public class DebeziumChangeEventCapture {
             }
         }
         return "system";
+    }
+
+    /**
+     * Function to get the table name from the SourceRecord.
+     *
+     * @param sr The source record.
+     * @return The table name, or null if not found.
+     */
+    private String getTableName(SourceRecord sr) {
+        if (sr != null && sr.key() instanceof Struct) {
+            try {
+                String tableName = (String) ((Struct) sr.key()).get("tableName");
+                if (tableName != null && !tableName.isEmpty()) {
+                    return tableName;
+                }
+            } catch (Exception e) {
+                // tableName field may not exist in the struct
+                log.debug("tableName field not found in source record key");
+            }
+        }
+        return null;
     }
 
     /**

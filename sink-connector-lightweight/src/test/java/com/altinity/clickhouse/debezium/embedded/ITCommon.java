@@ -20,7 +20,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
 public class ITCommon {
     // Docker image constants
     public static final String MYSQL_DOCKER_IMAGE = "docker.io/mysql:8.0.36";
-    public static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:latest";
+    public static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:24.8";
 
     static public Connection connectToMySQL(MySQLContainer mySqlContainer) {
         Connection conn = null;
