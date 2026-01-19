@@ -11,14 +11,12 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <version.debezium>3.1.3.Final</version.debezium>
         <version.junit>5.9.1</version.junit>
         <version.testcontainers>1.20.4</version.testcontainers>
         <version.checkstyle.plugin>3.1.1</version.checkstyle.plugin>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
@@ -33,6 +31,13 @@
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
                 <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${version.junit}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -54,6 +59,7 @@
             <artifactId>jakarta.inject-api</artifactId>
             <version>2.0.1</version>
         </dependency>
+
 
 
         <!-- REST API SERVER -->
@@ -132,43 +138,12 @@
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
         </dependency>
-      <!--  <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-connector-oracle</artifactId>
-            <version>${version.debezium}</version>
-        </dependency> -->
-        <!-- <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>42.5.4</version>
-            <scope>test</scope>
-        </dependency> -->
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-mongodb</artifactId>
             <version>${version.debezium}</version>
             <scope>test</scope>
         </dependency>
-        <!-- <dependency>
-    <groupId>com.oracle.database.jdbc</groupId>
-    <artifactId>ojdbc11</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>com.oracle.database.nls</groupId>
-    <artifactId>orai18n</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>com.oracle.database.xml</groupId>
-    <artifactId>xdb</artifactId>
-    <scope>provided</scope>
-</dependency>
-<dependency>
-    <groupId>com.oracle.database.xml</groupId>
-    <artifactId>xmlparserv2</artifactId>
-    <scope>provided</scope>
-</dependency> -->
         <!-- https://mvnrepository.com/artifact/io.debezium/debezium-testing-testcontainers -->
         <dependency>
             <groupId>io.debezium</groupId>
@@ -196,7 +171,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.22</version>
+            <version>1.18.32</version>
             <scope>provided</scope>
         </dependency>
 
@@ -242,16 +217,6 @@
             <groupId>org.apache.maven</groupId>
             <artifactId>maven-artifact</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-api</artifactId>
-            <version>2.17.1</version>
-        </dependency>
-       <!-- <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-slf4j-impl</artifactId>
-            <version>3.0.0-beta2</version>
-        </dependency> -->
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j2-impl</artifactId>
@@ -345,13 +310,6 @@
 
         <!--junit for unit test-->
         <dependency>
-            <groupId>org.junit</groupId>
-            <artifactId>junit-bom</artifactId>
-            <version>${version.junit}</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
-        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
             <version>${version.junit}</version>
@@ -376,12 +334,6 @@
             <artifactId>junit-platform-engine</artifactId>
             <version>1.8.2</version>
             <scope>test</scope>
-        </dependency>
-        <dependency> <!-- necessary for Java 9+ -->
-            <groupId>org.apache.tomcat</groupId>
-            <artifactId>annotations-api</artifactId>
-            <version>6.0.53</version>
-            <scope>provided</scope>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.kafka/connect-api -->
@@ -415,29 +367,6 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.avro</groupId>
-            <artifactId>avro</artifactId>
-            <version>1.9.0</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.core</groupId>
-                    <artifactId>jackson-core</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.core</groupId>
-                    <artifactId>jackson-databind</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.apache.commons</groupId>
-                    <artifactId>commons-compress</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-api</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
             <version>2.12.6</version>
@@ -454,12 +383,6 @@
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-lang3</artifactId>
-            <version>3.12.0</version>
-            <scope>test</scope>
-        </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
@@ -504,42 +427,12 @@
             <artifactId>slf4j-api</artifactId>
             <version>2.0.12</version>
         </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.12</version>
-        </dependency>
 
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <version>31.0.1-jre</version>
         </dependency>
-
-        <!--junit for unit test-->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.8.1</version>
-            <scope>test</scope>
-        </dependency>
-<!--
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.6</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-log4j12</artifactId>
-            <version>2.0.6</version>
-
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <version>2.17.1</version>
-        </dependency> -->
         <dependency>
             <groupId>com.github.stefanbirkner</groupId>
             <artifactId>system-rules</artifactId>
@@ -547,18 +440,11 @@
             <scope>test</scope>
         </dependency>
 
-        <!--Kafka JSON converter for SMT unit test-->
+        <!--Kafka JSON converter for SMT-->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
             <version>${version.kafka}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>connect-json</artifactId>
-            <version>${version.kafka}</version>
-            <scope>compile</scope>
         </dependency>
 
         <dependency>
