@@ -501,8 +501,15 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         Connection connection) {
         DbWriter writer = null;
         if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-            return writer;
+            // Check if this table needs cache invalidation after DDL
+            String fullyQualifiedTableName = databaseName + "." + tableName;
+            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
+                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
+                this.topicToDbWriterMap.remove(topicName);
+            } else {
+                writer = this.topicToDbWriterMap.get(topicName);
+                return writer;
+            }
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,

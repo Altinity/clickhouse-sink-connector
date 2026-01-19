@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
@@ -284,8 +285,15 @@ public class ClickHouseBatchWriter {
                                         Connection connection) {
         DbWriter writer = null;
         if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-            return writer;
+            // Check if this table needs cache invalidation after DDL
+            String fullyQualifiedTableName = databaseName + "." + tableName;
+            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
+                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
+                this.topicToDbWriterMap.remove(topicName);
+            } else {
+                writer = this.topicToDbWriterMap.get(topicName);
+                return writer;
+            }
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
