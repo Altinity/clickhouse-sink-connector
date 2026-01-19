@@ -367,13 +367,17 @@ public class QueryFormatter {
 
         String tableWithBackTicks = "`" + tableName + "`";
         
+        // Build is_deleted condition only if the column exists in the table
+        String isDeletedCondition = columnNameToDataTypeMap.containsKey(
+                ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
+        
         // Build the query with three SELECTs:
         // 1. Close existing record (from table with WHERE)
         // 2. Insert new "after" values (NO FROM clause)
         // 3. Insert "before" image for PK change tracking (NO FROM clause)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s') AND `is_deleted` = 0 " +
+            "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
             "UNION ALL " +
             "SELECT %s " +  // NO FROM clause for second SELECT
             "UNION ALL " +
@@ -386,6 +390,7 @@ public class QueryFormatter {
             formattedPrimaryKeyValue, 
             validToMax,
             serverTimeZone,
+            isDeletedCondition,
             colNamesDelimitedForSecondSelect,
             colNamesDelimitedForThirdSelect
         );
