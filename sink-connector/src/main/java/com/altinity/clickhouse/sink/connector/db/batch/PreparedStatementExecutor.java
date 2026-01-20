@@ -199,15 +199,11 @@ public class PreparedStatementExecutor {
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
-                            // Get history database name and use fully-qualified table name
-                            String historyDatabaseName = config.getString(
-                                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-                            String fullyQualifiedTableName = historyDatabaseName + "." + tableName;
-                            
+                            // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
                             ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
                             historyHandler.executeHistoryUpdate(
                                     conn,
-                                    fullyQualifiedTableName,
+                                    tableName,
                                     record,
                                     columnToDataTypeMap,
                                     fieldMapper,
