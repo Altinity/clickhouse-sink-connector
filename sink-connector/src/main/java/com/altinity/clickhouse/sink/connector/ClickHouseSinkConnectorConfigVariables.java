@@ -104,7 +104,22 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_TTL("replication.history.ttl"), 
 
-    DATABASE_HOSTNAME("database.hostname");
+    DATABASE_HOSTNAME("database.hostname"),
+
+    // Iceberg configuration
+    ENABLE_ICEBERG("iceberg.enable"),
+    ICEBERG_CATALOG_TYPE("iceberg.catalog.type"),
+    ICEBERG_CATALOG_URI("iceberg.catalog.uri"),
+    ICEBERG_WAREHOUSE_LOCATION("iceberg.warehouse.location"),
+    ICEBERG_CATALOG_CREDENTIAL("iceberg.catalog.credential"),
+    ICEBERG_CATALOG_TOKEN("iceberg.catalog.token"),
+    ICEBERG_NAMESPACE("iceberg.namespace"),
+
+    // S3 configuration for Iceberg
+    ICEBERG_S3_ACCESS_KEY("iceberg.s3.access.key"),
+    ICEBERG_S3_SECRET_KEY("iceberg.s3.secret.key"),
+    ICEBERG_S3_REGION("iceberg.s3.region"),
+    ICEBERG_S3_ENDPOINT("iceberg.s3.endpoint");
 
 
 

@@ -152,9 +152,6 @@ clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000,input_form
 # ClickHouse JDBC configuration settings, as a list of key-value pairs separated by commas.
 clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1"
 
-# The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
-sink.connector.max.queue.size: "100000"
-
 # Skip schema history capturing
 schema.history.internal.store.only.captured.tables.ddl: "true"
 
@@ -172,3 +169,17 @@ connection.pool.disable: "true"
 thread.pool.size: "1"
 
 sink.connector.max.queue.size: 500
+
+
+# Iceberg configuration - using HADOOP catalog for direct S3 access
+iceberg.enable: "true"
+iceberg.catalog.type: "HADOOP"
+iceberg.catalog.uri: ""
+iceberg.warehouse.location: "s3a://warehouse"
+iceberg.namespace: "nyc"
+iceberg.catalog.token: ""
+# S3 credentials for MinIO
+iceberg.s3.access.key: "miniouser"
+iceberg.s3.secret.key: "minipassword"
+iceberg.s3.region: "us-east-1"
+iceberg.s3.endpoint: "http://localhost:9000"
