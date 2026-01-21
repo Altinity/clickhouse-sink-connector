@@ -372,12 +372,12 @@ public class QueryFormatter {
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
         
         // Build the query with three SELECTs:
-        // 1. Close existing record (from table with WHERE)
+        // 1. Close existing record (from table with WHERE) - uses FINAL to get merged view
         // 2. Insert new "after" values (NO FROM clause)
         // 3. Insert "before" image for PK change tracking (NO FROM clause)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
+            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
             "UNION ALL " +
             "SELECT %s " +  // NO FROM clause for second SELECT
             "UNION ALL " +

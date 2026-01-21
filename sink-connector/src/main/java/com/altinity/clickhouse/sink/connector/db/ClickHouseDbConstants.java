@@ -175,7 +175,7 @@ public class ClickHouseDbConstants {
     /**
      * The data type of the operation column.
      */
-    public static final String OPERATION_COLUMN_DATA_TYPE = "String";
+    public static final String OPERATION_COLUMN_DATA_TYPE = "LowCardinality(String)";
 
     /**
      * The column name for the host where the event originated.
