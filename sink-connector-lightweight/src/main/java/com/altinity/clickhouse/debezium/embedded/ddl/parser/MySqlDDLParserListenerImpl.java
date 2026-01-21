@@ -144,14 +144,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     /**
      * Parse the user-provided time zone string and return a ZoneId object.
      *
-     * @return The ZoneId object representing the user-provided time zone.
+     * @return The ZoneId object representing the user-provided time zone, or null if not provided.
      */
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
         ZoneId userProvidedTimeZoneId = null;
         try {
-            if(!userProvidedTimeZone.isEmpty()) {
+            if(userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
                 userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
             }
         } catch (Exception e){
@@ -269,6 +269,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // If Replication history is enabled, add the
         // deleted_time DateTime DEFAULT '2149-06-06',
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+
+            this.query.append("`").append(DELETED_FROM_TIME_COLUMN)
+                    .append("` ").append(chDataTypeWithTimeZone)
+                    .append(",");
+
             this.query.append("`").append(DELETED_TIME_COLUMN)
                     .append("` ").append(chDataTypeWithTimeZone)
                     .append(",");

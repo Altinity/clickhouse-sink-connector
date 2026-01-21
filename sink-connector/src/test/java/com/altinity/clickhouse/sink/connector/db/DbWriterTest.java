@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
+import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementFieldMapper;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.jdbc.ClickHouseConnection;
@@ -296,18 +297,17 @@ public class DbWriterTest {
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, config);
         DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
-        PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(null,
+        PreparedStatementFieldMapper fieldMapper = new PreparedStatementFieldMapper(null,
                 false, null, null, database, ZoneId.of("UTC"));
-
-        ClickHouseDataType dt1 = preparedStatementExecutor.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
+        // use the new class FieldMapper to get the ClickHouse data type);
+        ClickHouseDataType dt1 = fieldMapper.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
         Assert.assertTrue(dt1 == ClickHouseDataType.Date);
 
-        ClickHouseDataType dt2 = preparedStatementExecutor.getClickHouseDataType("MinDateTime", colNameToDataTypeMap);
+        ClickHouseDataType dt2 = fieldMapper.getClickHouseDataType("MinDateTime", colNameToDataTypeMap);
         Assert.assertTrue(dt2 == ClickHouseDataType.DateTime64);
 
-        ClickHouseDataType dt3 = preparedStatementExecutor.getClickHouseDataType("MaxDateTime", colNameToDataTypeMap);
+        ClickHouseDataType dt3 = fieldMapper.getClickHouseDataType("MaxDateTime", colNameToDataTypeMap);
         Assert.assertTrue(dt3 == ClickHouseDataType.DateTime64);
-        System.out.println("");
     }
     @Test
     @Tag("IntegrationTest")

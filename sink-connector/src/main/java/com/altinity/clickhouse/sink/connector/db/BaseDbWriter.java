@@ -263,12 +263,20 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            // URL encode the username and password
-            String encodedUserName = URLEncoder.encode(userName, "UTF-8");
-            String encodedPassword = URLEncoder.encode(password, "UTF-8");
+            String encodedUserName = null;
+            String encodedPassword = null;
 
-            // Append username and password to the URL
-            url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
+            // if username is empty don't encode it
+            if(userName != null && !userName.isEmpty()) {
+                encodedUserName = URLEncoder.encode(userName, "UTF-8");
+            }
+            if(password != null && !password.isEmpty()) {
+                encodedPassword = URLEncoder.encode(password, "UTF-8");
+            }
+            if(encodedUserName != null && encodedPassword != null) {
+                url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
+            }
+            
             SinkConnectorDataSource dataSource =
                     new SinkConnectorDataSource(url, properties);
 

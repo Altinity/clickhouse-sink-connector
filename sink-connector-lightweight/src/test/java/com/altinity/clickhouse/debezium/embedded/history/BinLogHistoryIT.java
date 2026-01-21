@@ -133,6 +133,12 @@ public class BinLogHistoryIT {
         Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
 
+        ClickHouseDebeziumEmbeddedApplication.stop();
+        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+
+
+        HikariDbSource.close();
+
         conn.close();
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
@@ -255,7 +261,7 @@ public class BinLogHistoryIT {
         }
         
         assertTrue("Expected 4 temporal tracking columns in " + database + "." + table + ", but found: " + columnCount, 
-            columnCount == 3);
+            columnCount == 4);
         
         log.info("Successfully validated {} temporal tracking columns for {}.{}", columnCount, database, table);
     }
