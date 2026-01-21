@@ -939,6 +939,7 @@ public class DebeziumChangeEventCapture {
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             log.info("********* Running in Single Threaded mode *********");
             singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap<>());
+            return;
         }
         
         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();

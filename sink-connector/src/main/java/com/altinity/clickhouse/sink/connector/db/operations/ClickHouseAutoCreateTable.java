@@ -163,9 +163,15 @@ public class ClickHouseAutoCreateTable
         }
         
 
-        // If Replication history is enabled, add the 
-        // deleted_time DateTime DEFAULT '2149-06-06',
+        // If Replication history is enabled, add the temporal columns
+        // _valid_from, _valid_to, _operation, and is_deleted
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            // Add _valid_from column
+            createTableSyntax.append("`").append(DELETED_FROM_TIME_COLUMN)
+                    .append("` ").append("DateTime")
+                    .append(",");
+
+            // Add _valid_to column
             createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
                     .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
                     .append(",");
@@ -174,15 +180,24 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(OPERATION_COLUMN)
                     .append("` ").append(OPERATION_COLUMN_DATA_TYPE)
                     .append(",");
-            
+
+            // Add is_deleted column for replication history
+            createTableSyntax.append("`").append(isDeletedColumn)
+                    .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE)
+                    .append(",");
         }
+
+        boolean replicationHistoryEnabled = config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
 
         if (isNewReplacingMergeTreeEngine == true) {
             createTableSyntax.append("`").append(VERSION_COLUMN)
-                    .append("` ").append(VERSION_COLUMN_DATA_TYPE)
-                    .append(",");
-            createTableSyntax.append("`").append(isDeletedColumn)
-                    .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+                    .append("` ").append(VERSION_COLUMN_DATA_TYPE);
+            // Only add is_deleted if not already added by replication history
+            if (!replicationHistoryEnabled) {
+                createTableSyntax.append(",");
+                createTableSyntax.append("`").append(isDeletedColumn)
+                        .append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
+            }
         } else {
             // Append sign and version columns.
             createTableSyntax.append("`").append(SIGN_COLUMN)
