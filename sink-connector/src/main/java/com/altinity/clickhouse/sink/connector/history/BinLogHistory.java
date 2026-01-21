@@ -53,7 +53,7 @@ public class BinLogHistory {
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
-    public static final String OPERATION_COLUMN_DATA_TYPE = "String";
+    public static final String OPERATION_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
     public static final String HOST_COLUMN = "host";
