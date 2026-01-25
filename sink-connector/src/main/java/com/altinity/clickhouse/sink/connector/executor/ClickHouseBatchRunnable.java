@@ -424,18 +424,30 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = true;
         // For each topic, process the records.
         // topic name syntax is server.database.table
-        for (Map.Entry<String, List<ClickHouseStruct>> entry :
-                topicToRecordsMap.entrySet()) {
 
-            result = processRecordsByTopic(entry.getKey(),
+        boolean replicationHistoryEnabled = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+        if(replicationLogOnly && replicationHistoryEnabled)  { 
+            // skip the following for loop and continue to the next step
+            log.debug("Replication log only mode is enabled, skipping the processing of records");
+        } else {
+            for (Map.Entry<String, List<ClickHouseStruct>> entry :
+                    topicToRecordsMap.entrySet()) {
+
+                result = processRecordsByTopic(entry.getKey(),
                         entry.getValue());
 
-            if (result == false) {
-                log.error("Error processing records for topic: " +
-                        entry.getKey());
-                break;
+                if (result == false) {
+                    log.error("Error processing records for topic: " +
+                            entry.getKey());
+                    break;
+                }
             }
         }
+            
+        
         if (result) {
             // Step 2: Check if the batch can be committed.
             if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {

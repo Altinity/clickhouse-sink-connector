@@ -169,47 +169,8 @@ public class DbWriter extends BaseDbWriter {
                 if (this.config.getBoolean(
                         ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES
                                 .toString())) {
-                    log.info(String.format(
-                            "**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) *** ",
-                            taskId, tableName, database));
-
-                    ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
-                    try {
-                        Field[] fields = null;
-                        if (record.getAfterStruct() != null) {
-                            fields = record.getAfterStruct().schema().fields()
-                                    .toArray(new Field[0]);
-                        } else if (record.getBeforeStruct() != null) {
-                            fields = record.getBeforeStruct().schema().fields()
-                                    .toArray(new Field[0]);
-                        }
-
-                        String rmtDeleteColumn = this.config.getString(
-                                ClickHouseSinkConnectorConfigVariables
-                                        .REPLACING_MERGE_TREE_DELETE_COLUMN
-                                        .toString());
-
-                        // Create a new table using the schema from record
-                        act.createNewTable(
-                                record.getPrimaryKey(),
-                                tableName,
-                                database,
-                                fields,
-                                this.conn,
-                                isNewReplacingMergeTreeEngine,
-                                useOnCluster,
-                                rmtDeleteColumn,
-                                this.config
-                        );
-
-
-                    } catch (Exception e) {
-                        log.error(String.format(
-                                        "**** Error creating table(%s), database(%s) ***",
-                                        tableName, database),
-                                e
-                        );
-                    }
+                    autoCreateTable(taskId, hostName, database, tableName,
+                            record, isNewReplacingMergeTreeEngine, useOnCluster);
                 } else {
                     log.error("********* AUTO CREATE DISABLED, Table does not "
                             + "exist, please enable it by setting "
@@ -259,6 +220,55 @@ public class DbWriter extends BaseDbWriter {
 
         } catch (Exception e) {
             log.error("***** DBWriter error initializing ****", e);
+        }
+    }
+
+    private void autoCreateTable(long taskId, String hostName,
+                                 String database,
+                                 String tableName,
+                                 ClickHouseStruct record,
+                                 boolean isNewReplacingMergeTreeEngine,
+                                 boolean useOnCluster) {
+        log.info(String.format(
+                "**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) *** ",
+                taskId, tableName, database));
+
+        ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
+        try {
+            Field[] fields = null;
+            if (record.getAfterStruct() != null) {
+                fields = record.getAfterStruct().schema().fields()
+                        .toArray(new Field[0]);
+            } else if (record.getBeforeStruct() != null) {
+                fields = record.getBeforeStruct().schema().fields()
+                        .toArray(new Field[0]);
+            }
+
+            String rmtDeleteColumn = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables
+                            .REPLACING_MERGE_TREE_DELETE_COLUMN
+                            .toString());
+
+            // Create a new table using the schema from record
+            act.createNewTable(
+                    record.getPrimaryKey(),
+                    tableName,
+                    database,
+                    fields,
+                    this.conn,
+                    isNewReplacingMergeTreeEngine,
+                    useOnCluster,
+                    rmtDeleteColumn,
+                    this.config
+            );
+
+
+        } catch (Exception e) {
+            log.error(String.format(
+                            "**** Error creating table(%s), database(%s) ***",
+                            tableName, database),
+                    e
+            );
         }
     }
 

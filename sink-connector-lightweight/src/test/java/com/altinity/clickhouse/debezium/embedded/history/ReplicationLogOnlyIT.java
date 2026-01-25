@@ -94,7 +94,7 @@ public class ReplicationLogOnlyIT {
         systemWriter.getConnection().prepareStatement("CREATE DATABASE IF NOT EXISTS binlog_history").execute();
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("snapshot.mode", "no_data");
+        props.setProperty("snapshot.mode", "initial");
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
         props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
         props.setProperty("database.include.list", "employees");
@@ -104,7 +104,7 @@ public class ReplicationLogOnlyIT {
         props.setProperty("replication.history.database.name", "binlog_history");
         
         // Use single-threaded mode for deterministic test behavior
-        props.setProperty("single.threaded", "true");
+        //props.setProperty("single.threaded", "true");
 
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
 
