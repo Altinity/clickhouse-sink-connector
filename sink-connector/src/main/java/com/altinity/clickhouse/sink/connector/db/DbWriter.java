@@ -227,7 +227,7 @@ public class DbWriter extends BaseDbWriter {
      * @param hostName The hostname for logging purposes.
      * @param record   The record containing schema information for table creation.
      */
-    private void initializeTableEngine(String hostName, ClickHouseStruct record) {
+    private void initializeTableEngine(String hostName, ClickHouseStruct record) throws SQLException {
         // Retrieve table engine details
         this.tableEngineResponse = dbMetadata.getTableEngine(this.conn, database, tableName);
         this.engine = tableEngineResponse.getLeft();
