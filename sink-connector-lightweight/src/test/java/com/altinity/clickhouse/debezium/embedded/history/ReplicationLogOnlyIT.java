@@ -100,6 +100,7 @@ public class ReplicationLogOnlyIT {
         props.setProperty("database.include.list", "employees");
 
         // Enable replication_log_only mode - writes to binlog history, skips regular tables
+        props.setProperty("replication.history.enable", "true");
         props.setProperty("replication.history.replication_log_only", "true");
         props.setProperty("replication.history.database.name", "binlog_history");
         
@@ -179,35 +180,26 @@ public class ReplicationLogOnlyIT {
         try {
             // Check if the table exists in binlog_history database
             ResultSet historyTableCheckRs = ITCommon.executeQueryWithResultSet(
-                "SELECT count(*) as cnt FROM system.tables WHERE database = 'binlog_history' AND name = 'log_only_test'",
+                "SELECT count(*) as cnt FROM system.tables WHERE database = 'binlog_history' AND name = 'history'",
                 systemWriter.getConnection());
             
             if (historyTableCheckRs.next()) {
                 historyTableExists = historyTableCheckRs.getInt("cnt") > 0;
             }
             
-            log.info("binlog_history.log_only_test table exists: {}", historyTableExists);
+            log.info("binlog_history.history table exists: {}", historyTableExists);
             
             if (historyTableExists) {
                 ResultSet historyCountRs = ITCommon.executeQueryWithResultSet(
-                    "SELECT count(*) as cnt FROM binlog_history.log_only_test",
+                    "SELECT count(*) as cnt FROM binlog_history.history",
                     systemWriter.getConnection());
                 
                 if (historyCountRs.next()) {
                     historyTableRecordCount = historyCountRs.getInt("cnt");
                 }
-                log.info("Record count in binlog_history.log_only_test: {}", historyTableRecordCount);
+                log.info("Record count in binlog_history.history: {}", historyTableRecordCount);
                 
-                // Show the actual records for debugging
-                ResultSet recordsRs = ITCommon.executeQueryWithResultSet(
-                    "SELECT * FROM binlog_history.log_only_test",
-                    systemWriter.getConnection());
-                while (recordsRs.next()) {
-                    log.info("History record: id={}, name={}, value={}", 
-                        recordsRs.getInt("id"),
-                        recordsRs.getString("name"),
-                        recordsRs.getInt("value"));
-                }
+
             }
         } catch (Exception e) {
             log.error("Exception while checking binlog history table: {}", e.getMessage(), e);
