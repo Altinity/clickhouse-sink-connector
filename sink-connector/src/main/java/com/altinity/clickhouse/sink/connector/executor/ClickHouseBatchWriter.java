@@ -368,8 +368,9 @@ public class ClickHouseBatchWriter {
         }
 
         // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(databaseName))
-            databaseName = this.databaseOverrideMap.get(databaseName);
+        if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
+            databaseName = this.databaseOverrideMap.get(
+                    firstRecord.getDatabase());
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
