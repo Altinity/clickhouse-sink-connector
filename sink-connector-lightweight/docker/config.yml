@@ -209,4 +209,4 @@ replication.history.table.name: "replication_history"
 replication.history.database.name: "replication_history_db"
 
 # Single threaded mode.
-single.threaded: "true"
+#single.threaded: "true"
