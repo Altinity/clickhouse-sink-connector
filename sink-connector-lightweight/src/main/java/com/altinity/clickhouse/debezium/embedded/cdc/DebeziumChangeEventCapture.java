@@ -481,7 +481,8 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
-                executeDDL(clickHouseQuery.toString(), writer, config);
+                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
+                    executeDDL(clickHouseQuery.toString(), writer, config);
 
                 // Invalidate cached DbWriter for this table so that subsequent inserts
                 // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
@@ -817,11 +818,12 @@ public class DebeziumChangeEventCapture {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                 try {
                     if (chStruct != null) {
-                        ReplicationStatusSingleton.getInstance().setReplicationLag(chStruct.getReplicationLag());
-                        ReplicationStatusSingleton.getInstance().setLastRecordTimestamp(chStruct.getTs_ms());
-                        ReplicationStatusSingleton.getInstance().setBinLogFile(chStruct.getFile());
-                        ReplicationStatusSingleton.getInstance().setBinLogPosition(String.valueOf(chStruct.getPos()));
-                        ReplicationStatusSingleton.getInstance().setGtid(String.valueOf(chStruct.getGtid()));
+                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
+                        rss.setReplicationLag(chStruct.getReplicationLag());
+                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
+                        rss.setBinLogFile(chStruct.getFile());
+                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
+                        rss.setGtid(String.valueOf(chStruct.getGtid()));
                     }
                 } catch (Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
