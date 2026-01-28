@@ -132,6 +132,56 @@ public class QueryFormatter {
     }
 
     /**
+     * Formats a parameter placeholder for use in SQL based on the ClickHouse data type.
+     * DECIMAL types are wrapped with CAST function, DateTime/DateTime64 types are wrapped
+     * with toDateTime/toDateTime64 functions to ensure proper type handling.
+     *
+     * @param dataType the ClickHouse data type
+     * @return the formatted parameter placeholder (e.g., "?", "CAST(?, 'Decimal(10, 2)')", "toDateTime(?)")
+     */
+    private String formatParameterPlaceholder(String dataType) {
+        if (dataType == null) {
+            return "?";
+        }
+        String upperDataType = dataType.toUpperCase();
+        // Check DateTime64 before DateTime since "DateTime64" contains "DateTime"
+        if (upperDataType.contains("DATETIME64")) {
+            // Extract precision from DateTime64(precision) or DateTime64(precision, 'timezone')
+            String precision = extractDateTime64Precision(dataType);
+            return "toDateTime64(?, " + precision + ")";
+        } else if (upperDataType.contains("DATETIME")) {
+            return "toDateTime(?)";
+        } else if (upperDataType.contains("DECIMAL")) {
+            return "CAST(?, '" + dataType + "')";
+        }
+        return "?";
+    }
+
+    /**
+     * Extracts the precision (scale) from a DateTime64 data type.
+     * Handles formats like "DateTime64(3)" or "DateTime64(3, 'UTC')".
+     *
+     * @param dataType the DateTime64 data type string
+     * @return the precision value as a string, defaults to "3" if not found
+     */
+    private String extractDateTime64Precision(String dataType) {
+        // Find the opening parenthesis
+        int start = dataType.indexOf('(');
+        if (start == -1) {
+            return "3"; // Default precision
+        }
+        // Find the first comma or closing parenthesis
+        int end = dataType.indexOf(',', start);
+        if (end == -1) {
+            end = dataType.indexOf(')', start);
+        }
+        if (end == -1 || end <= start + 1) {
+            return "3"; // Default precision
+        }
+        return dataType.substring(start + 1, end).trim();
+    }
+
+    /**
      * Formats a value for use in SQL based on the ClickHouse data type.
      * String types are quoted, numeric types are not.
      *
@@ -318,6 +368,7 @@ public class QueryFormatter {
         // Second SELECT: Insert new "after" image (NO FROM clause - just literal values)
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
+            String dataType = entry.getValue();
             String originalColumnName = columnName;
             String selectExpr;
 
@@ -328,8 +379,8 @@ public class QueryFormatter {
                 // New record is open-ended (valid until max time)
                 selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else {
-                // All other columns use parameter binding
-                selectExpr = "? as `" + columnName + "`";
+                // All other columns use parameter binding (with CAST for DECIMAL types)
+                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
             }
             colNameToIndexMap.put(originalColumnName, parameterIndex++);
             colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
@@ -338,6 +389,7 @@ public class QueryFormatter {
         // Third SELECT: Cancel the "before" image (for PK updates - uses before values)
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
+            String dataType = entry.getValue();
             String originalColumnName = columnName;
             String selectExpr;
 
@@ -347,9 +399,10 @@ public class QueryFormatter {
                 selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 // Mark the before image as NOT deleted (is_deleted = 0)
-                selectExpr = "? as `" + columnName + "`";
+                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
             } else {
-                selectExpr = "? as `" + columnName + "`";
+                // All other columns use parameter binding (with CAST for DECIMAL types)
+                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
             }
             // Use "before_" prefix for third select parameter mapping
             colNameToIndexMap.put("before_" + originalColumnName, parameterIndex++);
