@@ -181,17 +181,22 @@ public class PreparedStatementExecutor {
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                                 // Use ReplicationHistoryHandler for SCD Type 2 deletes
                                 // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
-                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
-                                historyHandler.executeHistoryDelete(
-                                        conn,
-                                        tableName,
-                                        record,
-                                        columnToDataTypeMap,
-                                        fieldMapper,
-                                        entry.getKey().right,
-                                        config,
-                                        engine
-                                );
+                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
+                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    false, config, columnToDataTypeMap, engine, tableName);
+//                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
+//                                historyHandler.executeHistoryDelete(
+//                                        conn,
+//                                        tableName,
+//                                        record,
+//                                        columnToDataTypeMap,
+//                                        fieldMapper,
+//                                        entry.getKey().right,
+//                                        config,
+//                                        engine
+//                                );
                                 updateRecord = true;
                         }
                         else {
