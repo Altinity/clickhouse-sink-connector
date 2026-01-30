@@ -217,7 +217,7 @@ public class BinLogHistory {
                         now.getNano(),
                          ClickHouseDataType.DateTime64,
                             ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
-                            log.info("convertedDateTime64Time: {}", convertedDateTime64Time);
+                            log.debug("convertedDateTime64Time: {}", convertedDateTime64Time);
                             ps.setString(paramIndex++, convertedDateTime64Time);
                     } 
                     else {
