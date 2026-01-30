@@ -153,6 +153,38 @@ public class DebeziumConverter {
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
 
+        /**
+         * Converts timestamp with nanosecond precision for DateTime64 columns.
+         * 
+         * @param epochSeconds seconds from epoch
+         * @param nanoAdjustment nanoseconds within the second (0-999999999)
+         * @param clickHouseDataType the target ClickHouse data type
+         * @param sourceTimeZone source timezone
+         * @param serverTimezone server timezone
+         * @return formatted timestamp string with nanosecond precision
+         */
+        public static String convertWithoutTimeZoneAdjustmentNanos(long epochSeconds, int nanoAdjustment, 
+                ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
+            // Use 9-digit nanosecond precision for DateTime64
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
+                // DateTime64 supports up to nanosecond precision
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            }
+
+            Instant i = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
+
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            if (rangeExceeded[0]) {
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
+            }
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
+        }
+
     }
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
         rangeExceeded[0] = false;

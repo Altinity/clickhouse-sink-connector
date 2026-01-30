@@ -244,6 +244,122 @@ public class ReplicationHistoryHandler {
     }
 
     /**
+     * Generates the INSERT query with UNION ALL for the replication history delete.
+     *
+     * @param tableName The target table name
+     * @param fields The list of fields to include in the query
+     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
+     * @param params The query parameters
+     * @return A pair containing the query string and the column-to-index map for PreparedStatement
+     */
+    public MutablePair<String, Map<String, Integer>> generateDeleteQuery(
+            String tableName,
+            List<Field> fields,
+            Map<String, String> columnToDataTypeMap,
+            UpdateQueryParams params) {
+
+        return queryFormatter.getInsertQueryForDelete(
+                tableName,
+                fields,
+                columnToDataTypeMap,
+                params.getPrimaryKeyColumnName(),
+                params.getPrimaryKeyValue(),
+                params.getValidToMax(),
+                params.getBinlogRecordTimestamp(),
+                params.getVersion(),
+                params.getCdcOperation(),
+                serverTimeZone.getId()
+        );
+    }
+
+    /**
+     * Executes the replication history delete for a single record.
+     * For DELETE, we close the existing record and mark it as deleted:
+     * - Set _valid_to to now() (close the record)
+     * - Set is_deleted = 1 (mark as deleted)
+     * This preserves history - all previous records remain visible.
+     *
+     * @param conn The database connection
+     * @param tableName The target table name
+     * @param record The CDC record to process
+     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
+     * @param fieldMapper The field mapper for populating the prepared statement
+     * @param columnIndexMap The column-to-index map for the main query
+     * @param config The connector configuration
+     * @param engine The table engine type
+     * @return true if the delete was executed successfully
+     * @throws Exception if an error occurs
+     */
+    public boolean executeHistoryDelete(
+            Connection conn,
+            String tableName,
+            ClickHouseStruct record,
+            Map<String, String> columnToDataTypeMap,
+            PreparedStatementFieldMapper fieldMapper,
+            Map<String, Integer> columnIndexMap,
+            ClickHouseSinkConnectorConfig config,
+            DBMetadata.TABLE_ENGINE engine) throws Exception {
+
+        // Build query parameters from the record (using before values for DELETE)
+        UpdateQueryParams params = buildDeleteQueryParams(record);
+
+        // Generate the DELETE query (single SELECT that closes existing record)
+        MutablePair<String, Map<String, Integer>> queryResult = generateDeleteQuery(
+                tableName,
+                record.getBeforeModifiedFields(),
+                columnToDataTypeMap,
+                params
+        );
+
+        String insertQuery = queryResult.left;
+
+        log.debug("Executing replication history delete query: {}", insertQuery);
+
+        // The query is a simple INSERT...SELECT with no parameter bindings
+        // All values come from the existing record or are literals in the query
+        try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
+            ps.addBatch();
+            int[] batchResult = ps.executeBatch();
+
+            log.debug("Replication history delete executed successfully for table: {}", tableName);
+            return batchResult.length > 0;
+        }
+    }
+
+    /**
+     * Generates the parameters needed for the replication history delete query.
+     *
+     * @param record The CDC record containing the change data
+     * @return UpdateQueryParams containing all parameters needed for the query
+     */
+    public UpdateQueryParams buildDeleteQueryParams(ClickHouseStruct record) {
+        // Convert epoch seconds to date strings
+        String validToMax = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
+                DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                sourceTimeZone, serverTimeZone);
+
+        String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
+                record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                sourceTimeZone, serverTimeZone);
+
+        // Generate unique version using snowflake algorithm
+        long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
+
+        // Get the primary key column name and its value from the before record (for DELETE)
+        String primaryKeyColumnName = record.getPrimaryKey().get(0);
+        Object primaryKeyValue = record.getBeforeStruct().get(primaryKeyColumnName);
+
+        return new UpdateQueryParams(
+                validToMax,
+                binlogRecordTimestamp,
+                version,
+                primaryKeyColumnName,
+                primaryKeyValue,
+                record.getCdcOperation()
+        );
+    }
+
+    /**
      * Filters the column index map to only include after image columns (non-prefixed keys).
      *
      * @param columnIndexMap The full column-to-index map

@@ -179,11 +179,20 @@ public class PreparedStatementExecutor {
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                        true, config, columnToDataTypeMap, engine, tableName);
-                                ps.addBatch();
-                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                        false, config, columnToDataTypeMap, engine, tableName);
+                                // Use ReplicationHistoryHandler for SCD Type 2 deletes
+                                // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
+                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
+                                historyHandler.executeHistoryDelete(
+                                        conn,
+                                        tableName,
+                                        record,
+                                        columnToDataTypeMap,
+                                        fieldMapper,
+                                        entry.getKey().right,
+                                        config,
+                                        engine
+                                );
+                                updateRecord = true;
                         }
                         else {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),

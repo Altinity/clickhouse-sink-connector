@@ -4,18 +4,18 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
-import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.clickhouse.data.ClickHouseDataType;
-import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.ZoneId;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 
 public class BinLogHistory {
 
+    private static final Logger log = LogManager.getLogger(BinLogHistory.class);
     public static final String CREATE_TABLE = "CREATE TABLE";
     public static final String IF_NOT_EXISTS = "IF NOT EXISTS";
     public static final String NULL = "NULL";
@@ -49,7 +50,7 @@ public class BinLogHistory {
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "DateTime";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(3, 'UTC')";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
@@ -124,9 +125,9 @@ public class BinLogHistory {
         String columnDefinitions = HISTORY_COLUMNS.entrySet().stream()
                 .map(entry -> {
                     String dataType = entry.getValue();
-                    // Add timezone to TIME_COLUMN
+                    // Add timezone to TIME_COLUMN with DateTime64 for nanosecond precision
                     if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
-                        dataType = "DateTime('" + serverTimeZone + "')";
+                        dataType = "DateTime64(9, '" + serverTimeZone + "')";
                     }
                     return "`" + entry.getKey() + "` " + dataType;
                 })
@@ -208,9 +209,16 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-                            ps.setString(paramIndex++, DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
-                                    struct.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                                        ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone)));
+
+                        Instant now = Instant.now();
+                       // long currentNano = now.getNano();
+                       String convertedDateTime64Time  = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustmentNanos(
+                        now.getEpochSecond(),
+                        now.getNano(),
+                         ClickHouseDataType.DateTime64,
+                            ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
+                            log.info("convertedDateTime64Time: {}", convertedDateTime64Time);
+                            ps.setString(paramIndex++, convertedDateTime64Time);
                     } 
                     else {
                         Object value = getValueFromStruct(struct, columnName, config);
