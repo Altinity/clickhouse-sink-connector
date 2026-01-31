@@ -117,6 +117,8 @@ public class BinLogHistoryIT {
         conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
 
+        // Delete a row to test DELETE operation tracking
+        conn.prepareStatement("delete from newtable where col1 = 'a'").execute();
 
         Thread.sleep(10000);
 
@@ -128,6 +130,12 @@ public class BinLogHistoryIT {
         
         // Validate data tables have temporal tracking columns
         validateTemporalTrackingColumns(writer.getConnection(), "binlog_history", "newtable");
+        
+        // Validate DDL statements are recorded in history
+        validateDDLPresent(writer.getConnection());
+        
+        // Validate DELETE operations are recorded in history
+        validateDeleteOperationPresent(writer.getConnection());
 
 
         Thread.sleep(10000);
@@ -264,5 +272,58 @@ public class BinLogHistoryIT {
             columnCount == 4);
         
         log.info("Successfully validated {} temporal tracking columns for {}.{}", columnCount, database, table);
+    }
+    
+    /**
+     * Validates that DDL statements are present in the binlog_history.history table.
+     * CREATE TABLE statements should be captured.
+     */
+    private void validateDDLPresent(Connection clickhouseConn) throws Exception {
+        log.info("Validating DDL presence in binlog_history.history table");
+        
+        String query = "SELECT COUNT(*) as cnt FROM binlog_history.history WHERE ddl != ''";
+        ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
+        
+        int ddlCount = 0;
+        if (rs.next()) {
+            ddlCount = rs.getInt("cnt");
+        }
+        
+        log.info("Found {} DDL records in binlog_history.history", ddlCount);
+        assertTrue("Expected at least 1 DDL record in binlog_history.history, but found: " + ddlCount, 
+            ddlCount >= 1);
+        
+        // Also log the actual DDL statements for debugging
+        String ddlQuery = "SELECT ddl FROM binlog_history.history WHERE ddl != '' LIMIT 5";
+        ResultSet ddlRs = ITCommon.executeQueryWithResultSet(ddlQuery, clickhouseConn);
+        while (ddlRs.next()) {
+            log.info("DDL statement found: {}", ddlRs.getString("ddl"));
+        }
+    }
+    
+    /**
+     * Validates that DELETE operations are recorded in the binlog_history.history table.
+     */
+    private void validateDeleteOperationPresent(Connection clickhouseConn) throws Exception {
+        log.info("Validating DELETE operation presence in binlog_history.history table");
+        
+        String query = "SELECT COUNT(*) as cnt FROM binlog_history.history WHERE _operation = 'DELETE'";
+        ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
+        
+        int deleteCount = 0;
+        if (rs.next()) {
+            deleteCount = rs.getInt("cnt");
+        }
+        
+        log.info("Found {} DELETE operation records in binlog_history.history", deleteCount);
+        assertTrue("Expected at least 1 DELETE operation record in binlog_history.history, but found: " + deleteCount, 
+            deleteCount >= 1);
+        
+        // Log all unique operations for debugging
+        String opsQuery = "SELECT DISTINCT _operation FROM binlog_history.history";
+        ResultSet opsRs = ITCommon.executeQueryWithResultSet(opsQuery, clickhouseConn);
+        while (opsRs.next()) {
+            log.info("Operation found: {}", opsRs.getString("_operation"));
+        }
     }
 }
