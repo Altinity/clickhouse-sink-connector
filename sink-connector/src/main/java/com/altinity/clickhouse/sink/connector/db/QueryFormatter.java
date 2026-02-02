@@ -491,10 +491,13 @@ public class QueryFormatter {
                                           String serverTimeZone) {
 
         StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesDelimitedForSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForThirdSelect = new StringBuilder();
         
-        // No parameter binding needed - all values come from existing record or are literals
+        // Map to track which columns need parameter binding
         Map<String, Integer> colNameToIndexMap = new HashMap<>();
+        int parameterIndex = 1;
 
         // Loop over each column to build column list
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
@@ -502,7 +505,7 @@ public class QueryFormatter {
             colNamesDelimited.append(columnName).append(",");
         }
 
-        // SELECT: Close the existing record and mark as deleted
+        // First SELECT: Close the existing record (set _valid_to to now())
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
             String selectExpr;
@@ -511,8 +514,8 @@ public class QueryFormatter {
                 // CLOSE the record by setting _valid_to to now()
                 selectExpr = "now()";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                // Mark as DELETED (is_deleted = 1)
-                selectExpr = String.format("1 as `%s`", columnName);
+                // Keep is_deleted = 0 for the closed record (it's historical, not deleted)
+                selectExpr = String.format("0 as `%s`", columnName);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
                 selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
@@ -521,11 +524,54 @@ public class QueryFormatter {
                 // Keep original value from existing row
                 selectExpr = "`" + columnName + "`";
             }
-            colNamesDelimitedForSelect.append(selectExpr).append(",");
+            colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
+        }
+
+        // Second SELECT: Insert new "after" image with is_deleted=1 (NO FROM clause - just literal values)
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String dataType = entry.getValue();
+            String originalColumnName = columnName;
+            String selectExpr;
+
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                // New record starts at binlog timestamp
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                // Deleted record has _valid_to at deletion time
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else {
+                // All other columns use parameter binding (with CAST for DECIMAL types)
+                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
+            }
+            colNameToIndexMap.put(originalColumnName, parameterIndex++);
+            colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
+        }
+
+        // Third SELECT: Insert "before" image (NO FROM clause - uses before values)
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String dataType = entry.getValue();
+            String originalColumnName = columnName;
+            String selectExpr;
+
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else {
+                // All other columns use parameter binding (with CAST for DECIMAL types)
+                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
+            }
+            // Use "before_" prefix for third select parameter mapping
+            colNameToIndexMap.put("before_" + originalColumnName, parameterIndex++);
+            colNamesDelimitedForThirdSelect.append(selectExpr).append(",");
         }
 
         removeTrailingComma(colNamesDelimited);
-        removeTrailingComma(colNamesDelimitedForSelect);
+        removeTrailingComma(colNamesDelimitedForFirstSelect);
+        removeTrailingComma(colNamesDelimitedForSecondSelect);
+        removeTrailingComma(colNamesDelimitedForThirdSelect);
 
         // Get the primary key data type and format the value appropriately
         String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
@@ -536,22 +582,29 @@ public class QueryFormatter {
         // Build is_deleted condition only if the column exists in the table
         String isDeletedCondition = columnNameToDataTypeMap.containsKey(
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
-        
-        // Build the query with single SELECT:
-        // Close existing record (set _valid_to = now(), is_deleted = 1)
-        // This preserves all history - previous records with different _valid_to values remain
+
+        // Build the query with three SELECTs (same pattern as UPDATE):
+        // 1. Close existing record (from table with WHERE) - uses FINAL to get merged view
+        // 2. Insert new "after" values with is_deleted=1 (NO FROM clause)
+        // 3. Insert "before" image (NO FROM clause)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
+            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
+            "UNION ALL " +
+            "SELECT %s " +  // NO FROM clause for second SELECT
+            "UNION ALL " +
+            "SELECT %s",    // NO FROM clause for third SELECT
             tableWithBackTicks, 
             colNamesDelimited, 
-            colNamesDelimitedForSelect, 
+            colNamesDelimitedForFirstSelect, 
             tableWithBackTicks, 
             primaryKeyColumnName, 
             formattedPrimaryKeyValue, 
             validToMax,
             serverTimeZone,
-            isDeletedCondition
+            isDeletedCondition,
+            colNamesDelimitedForSecondSelect,
+            colNamesDelimitedForThirdSelect
         );
 
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();

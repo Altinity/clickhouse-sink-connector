@@ -303,7 +303,7 @@ public class ReplicationHistoryHandler {
         // Build query parameters from the record (using before values for DELETE)
         UpdateQueryParams params = buildDeleteQueryParams(record);
 
-        // Generate the DELETE query (single SELECT that closes existing record)
+        // Generate the DELETE query (UNION ALL with 3 SELECTs - same pattern as UPDATE)
         MutablePair<String, Map<String, Integer>> queryResult = generateDeleteQuery(
                 tableName,
                 record.getBeforeModifiedFields(),
@@ -312,12 +312,68 @@ public class ReplicationHistoryHandler {
         );
 
         String insertQuery = queryResult.left;
+        Map<String, Integer> queryColumnIndexMap = queryResult.right;
 
         log.debug("Executing replication history delete query: {}", insertQuery);
 
-        // The query is a simple INSERT...SELECT with no parameter bindings
-        // All values come from the existing record or are literals in the query
         try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
+            // Populate the prepared statement with after values (second SELECT)
+            // For DELETE, the "after" image is the deleted record state
+            // Filter the column index map to only include non-prefixed keys (after image)
+            Map<String, Integer> afterColumnIndexMap = filterAfterImageColumns(queryColumnIndexMap);
+            // increase the version by 1 for record
+            record.setVersion(record.getVersion() + 1);
+            fieldMapper.insertPreparedStatement(
+                    afterColumnIndexMap,
+                    ps,
+                    record.getBeforeModifiedFields(),  // For DELETE, use before values as the "after" image
+                    record,
+                    record.getBeforeStruct(),          // Use before struct for DELETE
+                    false,  // isBeforeSection = false for after image
+                    config,
+                    columnToDataTypeMap,
+                    engine,
+                    tableName
+            );
+
+            // Override is_deleted for after image: should be 1 (deleted)
+            if (afterColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                ps.setInt(afterColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
+            }
+
+            // Revert the version by 1 for record
+            record.setVersion(record.getVersion() - 1);
+
+            // Populate the prepared statement with before values (third SELECT)
+            // Translate "before_" prefixed keys to regular column names for the fieldMapper
+            if (record.getBeforeStruct() != null && record.getBeforeModifiedFields() != null) {
+                Map<String, Integer> beforeColumnIndexMap = translateBeforeImageColumns(queryColumnIndexMap);
+                fieldMapper.insertPreparedStatement(
+                        beforeColumnIndexMap,
+                        ps,
+                        record.getBeforeModifiedFields(),
+                        record,
+                        record.getBeforeStruct(),
+                        true,  // isBeforeSection = true for before image
+                        config,
+                        columnToDataTypeMap,
+                        engine,
+                        tableName
+                );
+
+                // Override _valid_to for before image: should be max date
+                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN),
+                    DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                            sourceTimeZone, serverTimeZone));
+                }
+
+                // Override is_deleted for before image: should be 1 (deleted)
+                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                    ps.setInt(beforeColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
+                }
+            }
+
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
 

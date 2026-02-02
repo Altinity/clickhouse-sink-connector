@@ -184,19 +184,19 @@ public class PreparedStatementExecutor {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                             ps.addBatch();
-                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                    false, config, columnToDataTypeMap, engine, tableName);
-//                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
-//                                historyHandler.executeHistoryDelete(
-//                                        conn,
-//                                        tableName,
-//                                        record,
-//                                        columnToDataTypeMap,
-//                                        fieldMapper,
-//                                        entry.getKey().right,
-//                                        config,
-//                                        engine
-//                                );
+//                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+//                                    false, config, columnToDataTypeMap, engine, tableName);
+                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
+                                historyHandler.executeHistoryDelete(
+                                        conn,
+                                        tableName,
+                                        record,
+                                        columnToDataTypeMap,
+                                        fieldMapper,
+                                        entry.getKey().right,
+                                        config,
+                                        engine
+                                );
                                 updateRecord = true;
                         }
                         else {
