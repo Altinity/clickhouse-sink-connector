@@ -392,7 +392,7 @@ public class ClickHouseBatchWriter {
                 .groupQueryWithRecords(records, queryToRecordsMap,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),
-                        writer.getColumnNameToDataTypeMap());
+                        writer.getColumnNameToDataTypeMap(), writer);
         BlockMetaData bmd = new BlockMetaData();
         long maxBufferSize = this.config.getLong(
                 ClickHouseSinkConnectorConfigVariables.

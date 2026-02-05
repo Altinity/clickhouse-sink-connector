@@ -59,7 +59,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      * Map of database name to ClickHouse Connection.
      */
     private Map<String, Connection> databaseToConnectionMap =
-            new HashMap<>();
+            new ConcurrentHashMap<>();
 
     /**
      * Map of topic names to table names.
@@ -84,7 +84,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     /**
      * Map for overriding database names from source to destination.
      */
-    private Map<String, String> databaseOverrideMap = new HashMap<>();
+    private Map<String, String> databaseOverrideMap = new ConcurrentHashMap<>();
 
     /**
      * Sleep time in milliseconds after an exception occurs.
@@ -110,7 +110,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             this.topic2TableMap = topic2TableMap;
         }
         //this.queryToRecordsMap = new HashMap<>();
-        this.topicToDbWriterMap = new HashMap<>();
+        this.topicToDbWriterMap = new ConcurrentHashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
@@ -150,42 +150,76 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return a Connection to the specified database
      */
     private Connection getClickHouseConnection(String databaseName) {
-        if (this.databaseToConnectionMap.containsKey(databaseName)) {
-            return this.databaseToConnectionMap.get(databaseName);
+        // Fix BUG-CONC-5: Use atomic get() instead of check-then-act
+        Connection conn = this.databaseToConnectionMap.get(databaseName);
+        if (conn != null) {
+            return conn;
         }
-        // Create database if it doesnt exist.
-        String systemJdbcUrl = BaseDbWriter.getConnectionString(
-                this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), "system");
-        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), "system", config);
+        
+        // Fix BUG-CONC-4: Proper resource cleanup on all paths
+        Connection systemConn = null;
+        Connection newConn = null;
         try {
+            // Create database if it doesnt exist.
+            String systemJdbcUrl = BaseDbWriter.getConnectionString(
+                    this.dbCredentials.getHostName(),
+                    this.dbCredentials.getPort(), "system");
+            systemConn = BaseDbWriter.createConnection(systemJdbcUrl,
+                    BaseDbWriter.DATABASE_CLIENT_NAME,
+                    this.dbCredentials.getUserName(),
+                    this.dbCredentials.getPassword(), "system", config);
+            
             boolean useOnCluster = this.config.
                     getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
                     "CREATE DATABASE IF NOT EXISTS " + databaseName);
+            
+            // Create connection to the new database
+            String jdbcUrl = BaseDbWriter.getConnectionString(
+                    this.dbCredentials.getHostName(),
+                    this.dbCredentials.getPort(), databaseName);
+            newConn = BaseDbWriter.createConnection(jdbcUrl,
+                    BaseDbWriter.DATABASE_CLIENT_NAME,
+                    this.dbCredentials.getUserName(),
+                    this.dbCredentials.getPassword(), databaseName, config);
+            
+            // Fix BUG-CONC-5: Use putIfAbsent for atomic insertion
+            Connection existingConn = this.databaseToConnectionMap.putIfAbsent(databaseName, newConn);
+            if (existingConn != null) {
+                // Another thread created it first, close ours and use theirs
+                log.debug("Another thread created connection for database: " + databaseName);
+                try {
+                    newConn.close();
+                } catch (SQLException e) {
+                    log.error("Error closing duplicate connection", e);
+                }
+                return existingConn;
+            }
+            return newConn;
+            
         } catch (Exception e) {
-            log.error("Error creating database " + e);
+            log.error("Error creating database", e);
+            // Fix BUG-CONC-4: Close connection on exception path
+            if (newConn != null) {
+                try {
+                    newConn.close();
+                } catch (SQLException ex) {
+                    log.error("Error closing connection on exception path", ex);
+                }
+            }
+            throw new RuntimeException("Failed to create database: " + databaseName, e);
         } finally {
-            try {
-                systemConn.close();
-            } catch (SQLException e) {
-                log.error("Error closing connection when creating database" + e);
+            // Fix BUG-CONC-4: Always close system connection
+            if (systemConn != null) {
+                try {
+                    systemConn.close();
+                } catch (SQLException e) {
+                    log.error("Error closing system connection when creating database", e);
+                }
             }
         }
-        String jdbcUrl = BaseDbWriter.getConnectionString(
-                this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), databaseName);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), databaseName, config);
-        this.databaseToConnectionMap.put(databaseName, conn);
-        return conn;
     }
 
     /**
@@ -516,7 +550,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 .groupQueryWithRecords(records, queryToRecordsMap,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),
-                        writer.getColumnNameToDataTypeMap());
+                        writer.getColumnNameToDataTypeMap(), writer);
         BlockMetaData bmd = new BlockMetaData();
         long maxBufferSize = this.config.getLong(
                 ClickHouseSinkConnectorConfigVariables.

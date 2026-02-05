@@ -1,0 +1,53 @@
+# ClickHouse Sink Connector Configuration for E2E Testing
+# Flat key-value structure required by ConfigLoader
+
+# Connector identification
+name: "e2e-test-connector"
+
+# MySQL Source Configuration
+database.hostname: "localhost"
+database.port: "3306"
+database.user: "root"
+database.password: "root"
+database.include.list: "testdb"
+database.allowPublicKeyRetrieval: "true"
+
+# Debezium MySQL Connector
+connector.class: "io.debezium.connector.mysql.MySqlConnector"
+snapshot.mode: "initial"
+include.schema.changes: "true"
+
+# ClickHouse Sink Configuration
+clickhouse.server.url: "localhost"
+clickhouse.server.port: "8123"
+clickhouse.server.database: "testdb"
+clickhouse.server.user: "default"
+clickhouse.server.password: ""
+
+# Offset storage (state tracking) - using file-based for simplicity
+offset.storage: "org.apache.kafka.connect.storage.FileOffsetBackingStore"
+offset.storage.file.filename: "/tmp/offsets.dat"
+offset.flush.interval.ms: "60000"
+
+# Schema history storage - using file-based for simplicity
+schema.history.internal: "io.debezium.storage.file.history.FileSchemaHistory"
+schema.history.internal.file.filename: "/tmp/schema_history.dat"
+
+# Features
+enable.snapshot.ddl: "true"
+auto.create.tables: "true"
+schema.evolution.enabled: "true"
+
+# Performance tuning
+tasks.max: "1"
+buffer.size: "10000"
+batch.size: "1000"
+flush.ms: "5000"
+thread.pool.size: "1"
+
+# Connection pool configuration (prevent exhaustion)
+clickhouse.connection.pool.size: "10"
+clickhouse.connection.timeout.ms: "30000"
+
+# Binary log configuration
+binlog.row.metadata: "full"

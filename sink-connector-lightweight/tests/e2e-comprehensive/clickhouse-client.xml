@@ -1,0 +1,6 @@
+<clickhouse>
+    <host>clickhouse</host>
+    <port>9000</port>
+    <user>default</user>
+    <password>clickhouse_pass</password>
+</clickhouse>

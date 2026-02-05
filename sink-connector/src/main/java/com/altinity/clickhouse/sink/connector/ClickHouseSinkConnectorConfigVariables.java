@@ -102,9 +102,27 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_DATABASE_NAME("replication.history.database.name"),
 
-    REPLICATION_HISTORY_TTL("replication.history.ttl"), 
+    REPLICATION_HISTORY_TTL("replication.history.ttl"),
 
-    DATABASE_HOSTNAME("database.hostname");
+    DATABASE_HOSTNAME("database.hostname"),
+
+    // Phase 2: Data validation configuration parameters
+    STRICT_DATE_VALIDATION("strict.date.validation"),
+    STRICT_BIGINT_VALIDATION("strict.bigint.validation"),
+    ALLOW_PRECISION_LOSS("allow.decimal.precision.loss"),
+    ZERO_DATE_BEHAVIOR("zero.date.behavior"),
+
+    // Phase 3: DDL operation configuration parameters
+    DROP_COLUMN_BEHAVIOR("clickhouse.drop.column.behavior"),
+    DROP_TABLE_BEHAVIOR("clickhouse.drop.table.behavior"),
+    RENAME_COLUMN_BEHAVIOR("clickhouse.rename.column.behavior"),
+    TYPE_CHANGE_BEHAVIOR("clickhouse.type.change.behavior"),
+    TYPE_CHANGE_SAFE_ONLY("clickhouse.type.change.safe.only"),
+    
+    // Phase 4: Transaction support configuration parameters
+    ENABLE_TRANSACTION_SUPPORT("clickhouse.transaction.support.enable"),
+    TRANSACTION_BUFFER_SIZE("clickhouse.transaction.buffer.size"),
+    TRANSACTION_TIMEOUT_MS("clickhouse.transaction.timeout.ms");
 
 
 

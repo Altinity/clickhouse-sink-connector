@@ -16,9 +16,12 @@ import io.debezium.time.*;
 import io.debezium.time.Date;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
+import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.ParseException;
@@ -29,6 +32,8 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -43,6 +48,26 @@ import java.util.*;
  * logical types (e.g., date/time, geometry, decimal).
  */
 public class ClickHouseDataTypeMapper {
+
+    private static final Logger log = LogManager.getLogger(ClickHouseDataTypeMapper.class);
+
+    /**
+     * Helper method to safely get boolean config values with defaults.
+     * Handles missing configurations in lightweight connector deployment.
+     *
+     * @param config Configuration object
+     * @param key Configuration key
+     * @param defaultValue Default value if key is not found
+     * @return Configuration value or default
+     */
+    private static boolean getBooleanConfigSafe(ClickHouseSinkConnectorConfig config, String key, boolean defaultValue) {
+        try {
+            return config.getBoolean(key);
+        } catch (org.apache.kafka.common.config.ConfigException e) {
+            log.debug("Configuration '{}' not found, using default: {}", key, defaultValue);
+            return defaultValue;
+        }
+    }
 
     /**
      * A map linking pairs of Kafka Connect schema type and schema name
@@ -190,10 +215,27 @@ public class ClickHouseDataTypeMapper {
                 new MutablePair<>(Schema.Type.ARRAY,
                         Schema.Type.STRING.name()),
                 ClickHouseDataType.Array);
-    }
+   }
 
-    /**
-     * Converts a given value into the appropriate ClickHouse type
+   /**
+    * Helper method to check if a string contains 4-byte UTF-8 characters (emoji, etc.)
+    * @param str the string to check
+    * @return true if the string contains supplementary code points (4-byte UTF-8)
+    */
+   private static boolean containsFourByteUtf8(String str) {
+       if (str == null) {
+           return false;
+       }
+       for (int i = 0; i < str.length(); i++) {
+           if (Character.isSupplementaryCodePoint(str.codePointAt(i))) {
+               return true;
+           }
+       }
+       return false;
+   }
+
+   /**
+    * Converts a given value into the appropriate ClickHouse type
      * based on the Kafka Connect schema type and logical name.
      *
      * @param type the schema type of the value
@@ -212,7 +254,8 @@ public class ClickHouseDataTypeMapper {
     public static boolean convert(Schema.Type type, String schemaName,
                                   Object value, int index, PreparedStatement ps,
                                   ClickHouseSinkConnectorConfig config,
-                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone)
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  Field field)
             throws SQLException {
 
         boolean result = true;
@@ -268,17 +311,57 @@ public class ClickHouseDataTypeMapper {
                 // if the column is JSON,
                 // it should be written as String or JSON in CH
                 ps.setObject(index, value);
-            } else {
-                ps.setString(index, (String) value);
-            }
-        } else if (isFieldTypeInt) {
-            if (schemaName != null
-                    && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
-                // Date field arrives as INT32 with schema name
-                // set to io.debezium.time.Date
-                ps.setDate(index,
-                        DebeziumConverter.DateConverter.convert(
-                                value, clickHouseDataType));
+           } else {
+               String strValue = (String) value;
+               
+               // BUG-DATA-8: Validate 4-byte UTF-8 characters (emoji)
+               if (containsFourByteUtf8(strValue)) {
+                   log.debug("String contains emoji/4-byte UTF-8 characters: {}",
+                             strValue.substring(0, Math.min(50, strValue.length())));
+                   // ClickHouse String type supports UTF-8, this is just for monitoring
+               }
+               
+               ps.setString(index, strValue);
+           }
+       } else if (isFieldTypeInt) {
+           if (schemaName != null
+                   && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
+               // BUG-DATA-5: Handle MySQL zero date (0000-00-00)
+               if (value instanceof Integer && ((Integer) value) == 0) {
+                   String zeroDateBehavior = config.getString(
+                       ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString());
+                   
+                   if (zeroDateBehavior != null && zeroDateBehavior.equalsIgnoreCase("error")) {
+                       log.error("Zero date (0000-00-00) detected");
+                       throw new IllegalArgumentException(
+                           "Zero date (0000-00-00) is not supported. Configure zero.date.behavior=null to allow.");
+                   } else {
+                       // Default: convert to NULL
+                       log.warn("Zero date (0000-00-00) detected, using NULL");
+                       ps.setNull(index, Types.DATE);
+                       return true;
+                   }
+               }
+               
+               // Date field arrives as INT32 with schema name
+               // set to io.debezium.time.Date
+               java.sql.Date convertedDate = DebeziumConverter.DateConverter.convert(
+                       value, clickHouseDataType);
+               
+               // BUG-DATA-4: Validate date range for ClickHouse Date32 (1900-2299)
+               boolean strictDateValidation = getBooleanConfigSafe(config,
+                   ClickHouseSinkConnectorConfigVariables.STRICT_DATE_VALIDATION.toString(), false);
+               
+               if (strictDateValidation && clickHouseDataType == ClickHouseDataType.Date32) {
+                   LocalDate localDate = convertedDate.toLocalDate();
+                   if (localDate.getYear() < 1900 || localDate.getYear() > 2299) {
+                       log.error("Date out of range for ClickHouse Date32: {}", localDate);
+                       throw new IllegalArgumentException(
+                           "Date " + localDate + " outside ClickHouse Date32 range (1900-2299)");
+                   }
+               }
+               
+               ps.setDate(index, convertedDate);
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
@@ -296,6 +379,27 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
             ps.setBoolean(index, (Boolean) value);
         } else if (isFieldTypeBigInt || isFieldTinyInt) {
+            // BUG-DATA-3: BIGINT UNSIGNED overflow check
+            if (isFieldTypeBigInt && value instanceof Long) {
+                long longValue = (Long) value;
+                
+                // FIX: Handle missing strict.bigint.validation config (lightweight connector)
+                // Default to false (non-strict mode) to prevent ConfigException
+                boolean strictBigIntValidation = getBooleanConfigSafe(config,
+                    ClickHouseSinkConnectorConfigVariables.STRICT_BIGINT_VALIDATION.toString(), false);
+                
+                // Check if this is an unsigned value that overflows signed Int64
+                // MySQL BIGINT UNSIGNED can be up to 2^64-1, but signed Long is limited to 2^63-1
+                // Negative values in Java Long likely indicate unsigned overflow
+                if (strictBigIntValidation && longValue < 0) {
+                    // This is likely an unsigned value > Int64.MAX_VALUE
+                    log.error("BIGINT UNSIGNED value exceeds ClickHouse Int64 range: {}", longValue);
+                    throw new IllegalArgumentException(
+                        "BIGINT UNSIGNED value " + longValue + " exceeds Int64 max (2^63-1). " +
+                        "Consider using UInt64 in ClickHouse or set strict.bigint.validation=false");
+                }
+            }
+            
             ps.setObject(index, value);
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
@@ -332,10 +436,15 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.Type.BYTES) {
             // Blob storage.
             if (value instanceof byte[]) {
-                String hexValue = new String((byte[]) value);
-                ps.setString(index, hexValue);
+                // Fix BUG-DATA-6: Proper hex encoding for binary data
+                if(getBooleanConfigSafe(config, ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(), false)) {
+                    ps.setBytes(index, (byte[]) value);
+                } else {
+                    // Use proper hex encoding instead of direct String conversion
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode((byte[]) value));
+                }
             } else if (value instanceof java.nio.ByteBuffer) {
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                if(getBooleanConfigSafe(config, ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(), false)) {
                     //String hexValue = new String((byte[]) value);
                     ps.setBytes(index, ((ByteBuffer) value).array());
                 } else {
@@ -456,6 +565,21 @@ public class ClickHouseDataTypeMapper {
                 BigDecimal truncated =
                         new DebeziumConverter.BigDecimalConverter()
                                 .truncate(bigDecimal);
+                
+                // BUG-DATA-7: Validate decimal precision loss
+                boolean allowPrecisionLoss = getBooleanConfigSafe(config,
+                    ClickHouseSinkConnectorConfigVariables.ALLOW_PRECISION_LOSS.toString(), true);
+                
+                if (!truncated.equals(bigDecimal)) {
+                    log.warn("Decimal precision loss: original={}, truncated={}",
+                             bigDecimal, truncated);
+                    if (!allowPrecisionLoss) {
+                        throw new IllegalArgumentException(
+                            "Decimal precision would be lost. Original: " + bigDecimal +
+                            ", Truncated: " + truncated + ". Set allow.decimal.precision.loss=true to allow.");
+                    }
+                }
+                
                 ps.setBigDecimal(index, truncated);
             } else {
                 ps.setBigDecimal(index, new BigDecimal(0));
@@ -466,7 +590,13 @@ public class ClickHouseDataTypeMapper {
             ps.setArray(index, ps.getConnection().createArrayOf(
                     dt.name(), ((ArrayList) value).toArray()));
         } else {
-            result = false;
+            // BUG-DATA-2: Fix unmapped types silent failure
+            String errorMsg = "Unmapped data type: schema=" + schemaName +
+                             ", type=" + type +
+                             ", field=" + (field != null ? field.name() : "unknown") +
+                             ", value=" + (value != null ? value.getClass().getSimpleName() : "null");
+            log.error(errorMsg);
+            throw new IllegalArgumentException(errorMsg);
         }
         return result;
     }

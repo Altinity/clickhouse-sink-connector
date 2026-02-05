@@ -258,7 +258,7 @@ public class DbWriterTest {
         DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
                 , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(),
-                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
+                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"), dbWriter);
 
         Assert.assertTrue(result.isEmpty() == false);
 

@@ -255,16 +255,58 @@ public class PreparedStatementExecutor {
                     ps.addBatch();
                 }
 
-                int[] batchResult = ps.executeBatch();
+                // Fix BUG-TX-3: Implement exponential backoff retry logic
+                int maxRetries = 3;
+                int retryDelayMs = 1000;
+                boolean batchExecuted = false;
+                
+                for (int attempt = 0; attempt <= maxRetries; attempt++) {
+                    try {
+                        int[] batchResult = ps.executeBatch();
+                        
+                        long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+                        log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
+                                "task(" + taskId + ")" + " Thread ID: " +
+                                Thread.currentThread().getName() + " Result: " +
+                                batchResult.toString() + " Database: "
+                                + databaseName + " Table: " + tableName);
+                        result.set(true);
+                        batchExecuted = true;
+                        break;  // Success, exit retry loop
+                        
+                    } catch (SQLException e) {
+                        if (attempt == maxRetries) {
+                            // Final attempt failed
+                            Metrics.updateErrorCounters(topicName, entry.getValue().size());
+                            log.error(String.format("******* ERROR inserting Batch after %d retries, Database(%s), Table(%s) *****************",
+                                    maxRetries, databaseName, tableName), e);
+                            failedRecords.addAll(batch);
+                            throw new RuntimeException(e);
+                        }
+                        // Transient failure, retry with exponential backoff
+                        long backoffMs = retryDelayMs * (1L << attempt);  // Exponential backoff: 1s, 2s, 4s
+                        log.warn(String.format("Batch attempt %d failed for Database(%s), Table(%s), retrying in %dms...",
+                                (attempt + 1), databaseName, tableName, backoffMs), e);
+                        try {
+                            Thread.sleep(backoffMs);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("Retry interrupted", ie);
+                        }
+                    }
+                }
+                
+                if (!batchExecuted) {
+                    throw new RuntimeException("Batch execution failed after retries");
+                }
 
-                long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
-                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
-                        "task(" + taskId + ")" + " Thread ID: " +
-                        Thread.currentThread().getName() + " Result: " +
-                        batchResult.toString() + " Database: "
-                        + databaseName + " Table: " + tableName);
-                result.set(true);
-
+            } catch (RuntimeException e) {
+                // RuntimeException from retry logic or other sources
+                if (!failedRecords.contains(batch.get(0))) {
+                    Metrics.updateErrorCounters(topicName, entry.getValue().size());
+                    failedRecords.addAll(batch);
+                }
+                throw e;
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error(String.format("******* ERROR inserting Batch Database(%s), Table(%s) *****************",
@@ -349,6 +391,19 @@ public class PreparedStatementExecutor {
                     value = struct.getWithoutDefault(colName);
                 }
                 if (value == null) {
+                    // Fix BUG-DATA-1: Validate NULL values against NOT NULL columns
+                    String columnDataType = entry.getValue();
+                    if (columnDataType != null && !columnDataType.toLowerCase().contains("nullable")) {
+                        // Column is NOT NULL - check if this is a special column that can be skipped
+                        if (!colName.equalsIgnoreCase(versionColumn) &&
+                            !colName.equalsIgnoreCase(signColumn) &&
+                            !colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
+                            log.error(String.format("NULL value for NOT NULL column: Database(%s), Table(%s), Column(%s), Type(%s)",
+                                    databaseName, tableName, colName, columnDataType));
+                            throw new RuntimeException(String.format(
+                                    "NULL value not allowed for NOT NULL column: %s (type: %s)", colName, columnDataType));
+                        }
+                    }
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }
@@ -386,7 +441,7 @@ public class PreparedStatementExecutor {
             }
             // This will throw an exception, unknown data type.
             ClickHouseDataType chDataType = getClickHouseDataType(colName, columnNameToDataTypeMap);
-            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone)) {
+            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone, f)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }

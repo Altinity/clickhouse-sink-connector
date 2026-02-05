@@ -659,6 +659,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
+            // FIX: Default to nullable for MODIFY COLUMN to preserve existing nullability
+            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
             modifier = Constants.RENAME_COLUMN;
             modifierWithNull = Constants.RENAME_COLUMN_NULLABLE;
@@ -667,6 +669,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             isAlterChangeColumn = true;
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
+            // FIX: Default to nullable for CHANGE COLUMN to preserve existing nullability
+            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
             modifier = Constants.ADD_INDEX;
         } else {
@@ -728,21 +732,27 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (!nullExplicitlySet) {
             try {
                 if (writer == null) {
-                    log.error("Error with DB connection");
-                    throw new SQLException("Error with DB connection");
+                    log.warn("DB connection is null, defaulting to nullable for column: {}", columnName);
+                    // FIX: Default to nullable when no connection available
+                    isNullColumn = true;
                 }
                 else {
                     Map<String, Boolean> isNullableList = dbMetadata.getColumnsIsNullableForTable(tableName, writer.getConnection(), databaseName);
                     if (isNullableList.get(columnName) != null && isNullableList.get(columnName)) {
                         isNullColumn = true;
+                        log.debug("Column {} is nullable based on ClickHouse schema", columnName);
                     } else if (isNullableList.get(columnName) == null) {
                         isNullColumn = true;
+                        log.debug("Column {} not found in ClickHouse, defaulting to nullable", columnName);
                     } else {
                         isNullColumn = false;
+                        log.debug("Column {} is NOT NULL based on ClickHouse schema", columnName);
                     }
                 }
             } catch (Exception e) {
-                log.error("Error retrieving NULL column schema from ClickHouse", e);
+                // FIX: On error, default to nullable (safer than non-nullable)
+                log.warn("Error retrieving NULL column schema from ClickHouse for column {}, defaulting to nullable", columnName, e);
+                isNullColumn = true;
             }
         }
 
@@ -792,6 +802,33 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     @Override
     public void enterAlterTable(MySqlParser.AlterTableContext alterTableContext) {
         List<ParseTree> pt = alterTableContext.children;
+        
+        // Pre-check: if this ALTER TABLE only contains ADD INDEX, skip it entirely
+        // MySQL indexes (B-tree, FULLTEXT, etc.) don't directly translate to ClickHouse
+        boolean hasOnlyAddIndex = true;
+        boolean hasAddIndex = false;
+        for (ParseTree tree : pt) {
+            if (tree instanceof MySqlParser.AlterByAddIndexContext) {
+                hasAddIndex = true;
+            } else if (tree instanceof AlterByAddColumnContext ||
+                       tree instanceof MySqlParser.AlterByModifyColumnContext ||
+                       tree instanceof MySqlParser.AlterByDropColumnContext ||
+                       tree instanceof MySqlParser.AlterByRenameColumnContext ||
+                       tree instanceof MySqlParser.AlterByChangeColumnContext ||
+                       tree instanceof MySqlParser.AlterByDropConstraintCheckContext ||
+                       tree instanceof MySqlParser.AlterByRenameContext ||
+                       tree instanceof MySqlParser.AlterByAddPrimaryKeyContext ||
+                       tree instanceof MySqlParser.AlterByAddCheckTableConstraintContext) {
+                hasOnlyAddIndex = false;
+                break;
+            }
+        }
+        
+        if (hasAddIndex && hasOnlyAddIndex) {
+            log.info("ALTER TABLE ADD INDEX is not directly translated to ClickHouse - skipping entire statement");
+            return;
+        }
+        
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {

@@ -226,7 +226,12 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     schema=args.clickhouse_database
     # skip deleted rows
     if args.sign_column != '':
-      where+= f" and {args.sign_column} > 0 "
+      # is_deleted uses inverted logic: 0 = not deleted, 1 = deleted
+      if 'is_deleted' in args.sign_column.lower():
+        where+= f" and ({args.sign_column} = 0 OR {args.sign_column} IS NULL) "
+      else:
+        # _sign uses standard logic: > 0 = valid
+        where+= f" and {args.sign_column} > 0 "
 
     memory_setting = ""
     max_memory_usage = args.max_memory_usage
@@ -283,7 +288,7 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     # Create new threads to execute the sync
     conn = get_connection(clickhouse_user, clickhouse_password)
     # we need to count the values in CH first
-    sql = "select count(*) cnt from "+args.clickhouse_database+"."+table
+    sql = "select count(*) cnt from "+args.clickhouse_database+"."+table+" FINAL"
     if where:
         if "{partition_expression}" in where:
            if partition_key is None:
@@ -383,7 +388,7 @@ def main():
     clickhouse_password = args.clickhouse_password
 
     # check parameters
-    if args.clickhouse_password:
+    if args.clickhouse_password is not None:
         logging.warning("Using password on the command line is not secure, please specify a config file ")
         assert args.clickhouse_user is not None, "--clickhouse_user must be specified"
     else:

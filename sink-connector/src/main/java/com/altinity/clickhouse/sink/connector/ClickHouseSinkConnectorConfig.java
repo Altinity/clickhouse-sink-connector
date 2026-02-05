@@ -803,6 +803,62 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
+                )
+                // Phase 3: DDL Operation Configuration
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DROP_COLUMN_BEHAVIOR.toString(),
+                        Type.STRING,
+                        "RENAME",
+                        Importance.MEDIUM,
+                        "Behavior when DROP COLUMN is detected: DROP, RENAME, IGNORE, FAIL",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DROP_COLUMN_BEHAVIOR.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DROP_TABLE_BEHAVIOR.toString(),
+                        Type.STRING,
+                        "RENAME",
+                        Importance.MEDIUM,
+                        "Behavior when DROP TABLE is detected: DROP, RENAME, IGNORE, FAIL",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DROP_TABLE_BEHAVIOR.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.RENAME_COLUMN_BEHAVIOR.toString(),
+                        Type.STRING,
+                        "RENAME",
+                        Importance.MEDIUM,
+                        "Behavior when RENAME COLUMN is detected: RENAME, IGNORE, FAIL",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.RENAME_COLUMN_BEHAVIOR.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.TYPE_CHANGE_BEHAVIOR.toString(),
+                        Type.STRING,
+                        "MODIFY",
+                        Importance.MEDIUM,
+                        "Behavior when column type change is detected: MODIFY, IGNORE, FAIL",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.TYPE_CHANGE_BEHAVIOR.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.TYPE_CHANGE_SAFE_ONLY.toString(),
+                        Type.BOOLEAN,
+                        true,
+                        Importance.MEDIUM,
+                        "Only allow safe type changes (widening conversions)",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.TYPE_CHANGE_SAFE_ONLY.toString()
                 );
     }
 }

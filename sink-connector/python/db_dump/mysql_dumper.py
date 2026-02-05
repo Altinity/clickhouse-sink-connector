@@ -115,13 +115,13 @@ def generate_mysqlsh_command(dump_dir,
                              temp_file):
     mysql_user_clause = ""
     if mysql_user is not None:
-        mysql_user_clause = f" --user {mysql_user}"
+        mysql_user_clause = f" --user={mysql_user}"
     mysql_password_clause = ""
     if mysql_password is not None:
-        mysql_password_clause = f""" --password "{mysql_password}" """
+        mysql_password_clause = f" --password={mysql_password}"
     mysql_port_clause = ""
     if mysql_port is not None:
-        mysql_port_clause = f" --port {mysql_port}"
+        mysql_port_clause = f" --port={mysql_port}"
     defaults_file_clause = ""
     if defaults_file is not None:
         defaults_file_clause = f" --defaults-file={defaults_file}"

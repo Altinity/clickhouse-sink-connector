@@ -1,0 +1,58 @@
+# ClickHouse Sink Connector Configuration
+# Comprehensive E2E Test Configuration
+
+# Connector identity
+name: "e2e-comprehensive-test"
+topic.prefix: "e2e-comp"
+
+# MySQL connection
+database.hostname: "mysql"
+database.port: "3306"
+database.user: "root"
+database.password: "root_password"
+database.server.id: "9999"
+database.server.name: "e2e-server"
+database.include.list: "e2e_testdb"
+database.allowPublicKeyRetrieval: "true"
+
+# Snapshot configuration - schema_only since we load data via mysqlsh
+snapshot.mode: "schema_only"
+snapshot.locking.mode: "none"
+
+# ClickHouse connection
+clickhouse.server.url: "clickhouse"
+clickhouse.server.port: "8123"
+clickhouse.server.user: "default"
+clickhouse.server.password: "clickhouse_pass"
+clickhouse.server.database: "e2e_testdb"
+
+# Offset storage (state tracking) - using file-based for simplicity
+offset.storage: "org.apache.kafka.connect.storage.FileOffsetBackingStore"
+offset.storage.file.filename: "/tmp/e2e-comp-offsets.dat"
+offset.flush.interval.ms: "5000"
+
+# Schema history storage - using file-based for simplicity
+schema.history.internal: "io.debezium.storage.file.history.FileSchemaHistory"
+schema.history.internal.file.filename: "/tmp/e2e-comp-schema-history.dat"
+
+# Performance settings
+thread.pool.size: "4"
+buffer.count.records: "10000"
+buffer.size.bytes: "50000000"
+buffer.flush.time: "500"
+
+# Connection pool settings - disable pool to avoid connection leaks
+connection.pool.disable: "true"
+
+# Table auto-creation is disabled (tables created by snapshot load)
+auto.create.tables: "false"
+auto.create.tables.replicated: "false"
+
+# Schema evolution
+schema.evolution.enabled: "true"
+
+# Delete support (using is_deleted column)
+replacingmergetree.delete.column: "is_deleted"
+
+# Connector metadata
+connector.class: "io.debezium.connector.mysql.MySqlConnector"

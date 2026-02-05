@@ -1,0 +1,116 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: e2e-mysql
+    network_mode: host
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: testdb
+    volumes:
+      - ./init-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./test-scenarios.sql:/test-scenarios.sql
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: e2e-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  sink-connector:
+    build:
+      context: ../../..
+      dockerfile: sink-connector-lightweight/Dockerfile
+    container_name: e2e-sink-connector
+    depends_on:
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      # MySQL Source Configuration
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: testdb
+      
+      # ClickHouse Sink Configuration
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: testdb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      
+      # Connector Features
+      ENABLE_TRANSACTION_SUPPORT: "true"
+      ENABLE_SCHEMA_EVOLUTION: "true"
+      AUTO_CREATE_TABLES: "true"
+      
+      # Performance Tuning
+      THREAD_POOL_SIZE: "4"
+      BATCH_SIZE: "1000"
+      BUFFER_SIZE: "10000"
+      
+      # Logging
+      LOG_LEVEL: INFO
+      
+    volumes:
+      - ./config.yml:/config.yml
+      - ./connector-logs:/logs
+    command: ["java", "-jar", "/app.jar", "/config.yml", "com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "app.jar"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  test-runner:
+    image: mysql:8.0
+    container_name: e2e-test-runner
+    depends_on:
+      sink-connector:
+        condition: service_healthy
+    volumes:
+      - ./test-scenarios.sql:/test-scenarios.sql
+      - ./run-tests.sh:/run-tests.sh
+      - ./validate-results.sh:/validate-results.sh
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PWD: root
+      MYSQL_DATABASE: testdb
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+    command: ["/bin/bash", "/run-tests.sh"]
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24

@@ -1,0 +1,17 @@
+# Ignore runtime artifacts
+connector-logs/
+*.log
+
+# Ignore generated reports
+test-report.txt
+phase*-metrics.txt
+*.txt
+
+# Ignore dump directories
+dumps/
+*.dump
+
+# Ignore temporary files
+*.tmp
+*.swp
+*~

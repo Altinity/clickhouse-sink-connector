@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: percona:8.0
+    container_name: e2e-comp-mysql
+    hostname: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: e2e_testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+    volumes:
+      - ./test-data.sql:/docker-entrypoint-initdb.d/01-test-data.sql
+      - ./phase4-live-dml.sql:/test-scripts/phase4-live-dml.sql
+      - mysql-data:/var/lib/mysql
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --binlog-rows-query-log-events=ON
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_password"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - e2e-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    container_name: e2e-comp-clickhouse
+    hostname: clickhouse
+    environment:
+      CLICKHOUSE_DB: e2e_testdb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse_pass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ./init-clickhouse.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    ports:
+      - "8123:8123"  # HTTP interface (for external tools)
+      # Port 9000 not exposed to host - only used for inter-container communication
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --password=clickhouse_pass --query='SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - e2e-network
+
+  e2e-tools:
+    build:
+      context: ../../..
+      dockerfile: sink-connector-lightweight/tests/e2e-comprehensive/Dockerfile.e2e-tools
+    container_name: e2e-comp-tools
+    hostname: e2e-tools
+    depends_on:
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ./phase1-setup.sh:/scripts/phase1-setup.sh
+      - ./phase2-snapshot.sh:/scripts/phase2-snapshot.sh
+      - ./phase3-cdc.sh:/scripts/phase3-cdc.sh
+      - ./phase4-live-dml.sh:/scripts/phase4-live-dml.sh
+      - ./phase4-live-dml.sql:/scripts/phase4-live-dml.sql
+      - ./phase5-validate.sh:/scripts/phase5-validate.sh
+      - ./run-comprehensive-test.sh:/scripts/run-comprehensive-test.sh
+      - ./mysql-credentials.cnf:/root/.my.cnf
+      - ./clickhouse-client.xml:/app/clickhouse-client.xml
+      - dump-data:/dumps
+      - test-reports:/reports
+      - test-logs:/logs
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root_password
+      MYSQL_DATABASE: e2e_testdb
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_HTTP_PORT: 8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse_pass
+      CLICKHOUSE_DATABASE: e2e_testdb
+      PYTHONPATH: /app/python
+    networks:
+      - e2e-network
+    command: ["tail", "-f", "/dev/null"]
+
+  sink-connector:
+    build:
+      context: ../../..
+      dockerfile: sink-connector-lightweight/Dockerfile
+    container_name: e2e-comp-connector
+    hostname: sink-connector
+    depends_on:
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root_password
+      MYSQL_DATABASE: e2e_testdb
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: e2e_testdb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse_pass
+      ENABLE_TRANSACTION_SUPPORT: "true"
+      ENABLE_SCHEMA_EVOLUTION: "true"
+      AUTO_CREATE_TABLES: "false"
+      THREAD_POOL_SIZE: "4"
+      BATCH_SIZE: "1000"
+      BUFFER_SIZE: "10000"
+      LOG_LEVEL: INFO
+      # Auto-start connector with schema_only mode
+      SNAPSHOT_MODE: schema_only
+    volumes:
+      - ./connector-config.yml:/config.yml
+      - connector-logs:/logs
+    networks:
+      - e2e-network
+    # Auto-start connector after delay (allow MySQL/ClickHouse to fully initialize)
+    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 45 seconds for databases to be ready...'; sleep 45; echo 'Starting connector...'; java -jar /app.jar /config.yml"]
+
+networks:
+  e2e-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  mysql-data:
+  clickhouse-data:
+  clickhouse-logs:
+  dump-data:
+  test-reports:
+  test-logs:
+  connector-logs:

@@ -52,6 +52,7 @@ public class GroupInsertQueryWithBatchRecords {
      * @param databaseName         target database name.
      * @param connection           JDBC connection.
      * @param columnNameToDataTypeMap map of column names to their data types.
+     * @param writer               DbWriter instance to update shared cache after DDL.
      * @return true if grouping is successful; false otherwise.
      */
     public boolean groupQueryWithRecords(
@@ -61,7 +62,8 @@ public class GroupInsertQueryWithBatchRecords {
             Map<TopicPartition, Long> partitionToOffsetMap,
             ClickHouseSinkConnectorConfig config,
             String tableName, String databaseName, Connection connection,
-            Map<String, String> columnNameToDataTypeMap) {
+            Map<String, String> columnNameToDataTypeMap,
+            com.altinity.clickhouse.sink.connector.db.DbWriter writer) {
         boolean result = false;
 
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query ->
@@ -92,6 +94,14 @@ public class GroupInsertQueryWithBatchRecords {
                         new ClickHouseAlterTable().alterTable(
                                 record.getAfterStruct().schema().fields(),
                                 tableName, connection, columnNameToDataTypeMap, config);
+                        
+                        // Fix BUG-CONC-2: Update shared DbWriter cache after ALTER TABLE
+                        if (writer != null) {
+                            synchronized(writer) {
+                                writer.updateColumnNameToDataTypeMap();
+                            }
+                            log.debug("Updated shared DbWriter cache after ALTER TABLE on " + tableName);
+                        }
                         columnNameToDataTypeMap = new DBMetadata(config)
                                 .getColumnsDataTypesForTable(tableName,
                                         connection, databaseName);

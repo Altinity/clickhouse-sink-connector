@@ -7,6 +7,8 @@ import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.transaction.TransactionBoundaryTracker;
+import com.altinity.clickhouse.sink.connector.transaction.TransactionBatch;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -63,6 +65,11 @@ public class ClickHouseSinkTask extends SinkTask {
      * A de-duplicator utility to detect and skip duplicate messages.
      */
     private DeDuplicator deduplicator;
+
+    /**
+     * Transaction tracker for handling MySQL transaction boundaries.
+     */
+    private TransactionBoundaryTracker transactionTracker;
 
     /**
      * The configuration for the sink connector.
@@ -136,6 +143,29 @@ public class ClickHouseSinkTask extends SinkTask {
                 TimeUnit.MILLISECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
+        
+        // Initialize transaction support if enabled
+        boolean enableTransactionSupport = this.config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.ENABLE_TRANSACTION_SUPPORT.toString()
+        );
+        
+        if (enableTransactionSupport) {
+            int transactionBufferSize = this.config.getInt(
+                ClickHouseSinkConnectorConfigVariables.TRANSACTION_BUFFER_SIZE.toString()
+            );
+            long transactionTimeoutMs = this.config.getLong(
+                ClickHouseSinkConnectorConfigVariables.TRANSACTION_TIMEOUT_MS.toString()
+            );
+            
+            this.transactionTracker = new TransactionBoundaryTracker(
+                transactionBufferSize,
+                transactionTimeoutMs
+            );
+            log.info("Transaction support ENABLED: bufferSize={}, timeout={}ms",
+                transactionBufferSize, transactionTimeoutMs);
+        } else {
+            log.info("Transaction support DISABLED");
+        }
     }
 
     /**
@@ -192,6 +222,77 @@ public class ClickHouseSinkTask extends SinkTask {
                 totalRecords, taskId);
 
         ClickHouseConverter converter = new ClickHouseConverter();
+        
+        if (transactionTracker != null) {
+            // Process with transaction tracking
+            processWithTransactionSupport(records, converter);
+        } else {
+            // Original behavior - no transaction tracking
+            processWithoutTransactionSupport(records, converter);
+        }
+    }
+    
+    /**
+     * Process records with transaction support enabled.
+     * Groups records by transaction boundaries and processes atomically.
+     */
+    private void processWithTransactionSupport(Collection<SinkRecord> records, ClickHouseConverter converter) {
+        List<ClickHouseStruct> batchToQueue = new ArrayList<>();
+        
+        for (SinkRecord record : records) {
+            // Check for duplicates
+            if (!this.deduplicator.isNew(record.topic(), record)) {
+                continue;
+            }
+            
+            // Convert to ClickHouseStruct
+            ClickHouseStruct chStruct = converter.convert(record);
+            
+            // Process with transaction tracker
+            TransactionBatch txBatch = transactionTracker.processRecord(record, chStruct);
+            
+            if (txBatch != null) {
+                if (txBatch.isCommitted()) {
+                    // Transaction committed - add records to batch
+                    batchToQueue.addAll(txBatch.getRecords());
+                    
+                    if (txBatch.isTransactional()) {
+                        log.debug("Transaction {} committed with {} records",
+                            txBatch.getTransactionId(), txBatch.size());
+                    }
+                } else {
+                    // Transaction rolled back - discard records
+                    log.info("Transaction {} rolled back, {} records discarded",
+                        txBatch.getTransactionId(), txBatch.size());
+                }
+            }
+            // If txBatch is null, transaction still in progress (buffered)
+        }
+        
+        // Queue the batch if not empty
+        if (!batchToQueue.isEmpty()) {
+            try {
+                this.records.put(batchToQueue);
+                log.debug("Queued {} records (including {} from transactions)",
+                    batchToQueue.size(), batchToQueue.size());
+            } catch (InterruptedException e) {
+                throw new RetriableException(e);
+            }
+        }
+        
+        // Periodically cleanup stale transactions
+        if (totalRecords % 10000 == 0) {
+            int cleaned = transactionTracker.cleanupStaleTransactions();
+            if (cleaned > 0) {
+                log.warn("Cleaned up {} stale transactions", cleaned);
+            }
+        }
+    }
+    
+    /**
+     * Process records without transaction support (original behavior).
+     */
+    private void processWithoutTransactionSupport(Collection<SinkRecord> records, ClickHouseConverter converter) {
         List<ClickHouseStruct> batch = new ArrayList<>();
 
         for (SinkRecord record : records) {
@@ -200,7 +301,6 @@ public class ClickHouseSinkTask extends SinkTask {
                 if (c != null) {
                     batch.add(c);
                 }
-                //Update the hashmap with the topic name and the list of records.
             }
         }
 

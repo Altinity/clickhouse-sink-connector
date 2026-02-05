@@ -1,0 +1,46 @@
+# Dockerfile for E2E Testing Tools
+# Provides mysqlsh, clickhouse-client, Python scripts for dump/load/checksum
+
+FROM python:3.9-bookworm
+
+# Install system dependencies (default-mysql-client is compatible with Percona)
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    lsb-release \
+    curl \
+    zstd \
+    default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install MySQL Shell
+RUN wget https://dev.mysql.com/get/mysql-apt-config_0.8.24-1_all.deb && \
+    DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_0.8.24-1_all.deb && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C && \
+    apt-get update && \
+    apt-get install -y mysql-shell && \
+    rm mysql-apt-config_0.8.24-1_all.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install ClickHouse client
+RUN curl https://clickhouse.com/ | sh && \
+    mv clickhouse /usr/local/bin/clickhouse-client && \
+    chmod +x /usr/local/bin/clickhouse-client
+
+# Copy Python requirements
+COPY sink-connector/python/requirements.txt /tmp/requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy Python scripts
+COPY sink-connector/python/ /app/python/
+
+# Set working directory
+WORKDIR /app
+
+# Create directories for dumps and reports
+RUN mkdir -p /dumps /reports /logs
+
+# Default command
+CMD ["/bin/bash"]
