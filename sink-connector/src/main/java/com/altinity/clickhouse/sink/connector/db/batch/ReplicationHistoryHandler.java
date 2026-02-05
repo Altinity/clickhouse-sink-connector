@@ -179,13 +179,13 @@ public class ReplicationHistoryHandler {
         log.debug("Executing replication history update query: {}", insertQuery);
 
         try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
-            // Populate the prepared statement with after values (second SELECT)
-            // Filter the column index map to only include non-prefixed keys (after image)
-            Map<String, Integer> afterColumnIndexMap = filterAfterImageColumns(queryColumnIndexMap);
-            // increase the version by 1 for record. 
-            record.setVersion(record.getVersion() + 1);
+            // Populate the prepared statement with after values (second SELECT only)
+            // The third SELECT now reads from the table, so no parameter binding needed for before-image
+            // queryColumnIndexMap only contains entries for the second SELECT data columns
+            // (metadata columns like _version, is_deleted, _operation are hardcoded in SQL)
+            
             fieldMapper.insertPreparedStatement(
-                    afterColumnIndexMap,
+                    queryColumnIndexMap,  // Only contains second SELECT data columns
                     ps,
                     record.getAfterModifiedFields(),
                     record,
@@ -197,43 +197,8 @@ public class ReplicationHistoryHandler {
                     tableName
             );
 
-            // Revert the version by 1 for record. 
-            record.setVersion(record.getVersion() - 1);
-
-            // Populate the prepared statement with before values (third SELECT)
-            // Translate "before_" prefixed keys to regular column names for the fieldMapper
-            if (record.getBeforeStruct() != null && record.getBeforeModifiedFields() != null) {
-                Map<String, Integer> beforeColumnIndexMap = translateBeforeImageColumns(queryColumnIndexMap);
-                fieldMapper.insertPreparedStatement(
-                        beforeColumnIndexMap,
-                        ps,
-                        record.getBeforeModifiedFields(),
-                        record,
-                        record.getBeforeStruct(),
-                        true,  // isBeforeSection = true for before image
-                        config,
-                        columnToDataTypeMap,
-                        engine,
-                        tableName
-                );
-
-
-                // Override _valid_to for before image: should be max date, not binlog timestamp
-                // The before image represents a "canceled" record that should have open-ended _valid_to
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                    //String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
-                    //ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN), validToMax);
-
-                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN),
-                    DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                            sourceTimeZone, serverTimeZone));
-                }
-
-                // After the fieldMapper call for before image, add:
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                    ps.setInt(beforeColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
-                }
-            }
+            // NOTE: Third SELECT reads from table - no parameter binding needed for before-image
+            // The query reads original values from table and overrides temporal columns in SQL
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
@@ -317,16 +282,16 @@ public class ReplicationHistoryHandler {
         log.debug("Executing replication history delete query: {}", insertQuery);
 
         try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
-            // Populate the prepared statement with after values (second SELECT)
-            // For DELETE, the "after" image is the deleted record state
-            // Filter the column index map to only include non-prefixed keys (after image)
-            Map<String, Integer> afterColumnIndexMap = filterAfterImageColumns(queryColumnIndexMap);
-            // increase the version by 1 for record
-            record.setVersion(record.getVersion() + 1);
+            // Populate the prepared statement with second SELECT data columns only
+            // The third SELECT now reads from the table, so no parameter binding needed for before-image
+            // queryColumnIndexMap only contains entries for the second SELECT data columns
+            // (metadata columns like _version, is_deleted, _operation are hardcoded in SQL)
+            
+            // For DELETE, use before values as the data for the second SELECT
             fieldMapper.insertPreparedStatement(
-                    afterColumnIndexMap,
+                    queryColumnIndexMap,  // Only contains second SELECT data columns
                     ps,
-                    record.getBeforeModifiedFields(),  // For DELETE, use before values as the "after" image
+                    record.getBeforeModifiedFields(),  // For DELETE, use before values
                     record,
                     record.getBeforeStruct(),          // Use before struct for DELETE
                     false,  // isBeforeSection = false for after image
@@ -336,43 +301,9 @@ public class ReplicationHistoryHandler {
                     tableName
             );
 
-            // Override is_deleted for after image: should be 1 (deleted)
-            if (afterColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                ps.setInt(afterColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
-            }
-
-            // Revert the version by 1 for record
-            record.setVersion(record.getVersion() - 1);
-
-            // Populate the prepared statement with before values (third SELECT)
-            // Translate "before_" prefixed keys to regular column names for the fieldMapper
-            if (record.getBeforeStruct() != null && record.getBeforeModifiedFields() != null) {
-                Map<String, Integer> beforeColumnIndexMap = translateBeforeImageColumns(queryColumnIndexMap);
-                fieldMapper.insertPreparedStatement(
-                        beforeColumnIndexMap,
-                        ps,
-                        record.getBeforeModifiedFields(),
-                        record,
-                        record.getBeforeStruct(),
-                        true,  // isBeforeSection = true for before image
-                        config,
-                        columnToDataTypeMap,
-                        engine,
-                        tableName
-                );
-
-                // Override _valid_to for before image: should be max date
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN),
-                    DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                            sourceTimeZone, serverTimeZone));
-                }
-
-                // Override is_deleted for before image: should be 1 (deleted)
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                    ps.setInt(beforeColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
-                }
-            }
+            // NOTE: Third SELECT reads from table - no parameter binding needed for before-image
+            // The query reads original values from table and overrides temporal columns in SQL
+            // is_deleted and _version are hardcoded in SQL, no manual override needed
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
@@ -413,43 +344,6 @@ public class ReplicationHistoryHandler {
                 primaryKeyValue,
                 record.getCdcOperation()
         );
-    }
-
-    /**
-     * Filters the column index map to only include after image columns (non-prefixed keys).
-     *
-     * @param columnIndexMap The full column-to-index map
-     * @return A new map containing only after image columns
-     */
-    private Map<String, Integer> filterAfterImageColumns(Map<String, Integer> columnIndexMap) {
-        Map<String, Integer> afterColumns = new HashMap<>();
-        for (Map.Entry<String, Integer> entry : columnIndexMap.entrySet()) {
-            String key = entry.getKey();
-            if (!key.startsWith("before_")) {
-                afterColumns.put(key, entry.getValue());
-            }
-        }
-        return afterColumns;
-    }
-
-    /**
-     * Translates the before image columns from "before_columnName" to "columnName"
-     * so they can be used with the standard field mapper.
-     *
-     * @param columnIndexMap The full column-to-index map
-     * @return A new map with translated column names pointing to before image indices
-     */
-    private Map<String, Integer> translateBeforeImageColumns(Map<String, Integer> columnIndexMap) {
-        Map<String, Integer> beforeColumns = new HashMap<>();
-        for (Map.Entry<String, Integer> entry : columnIndexMap.entrySet()) {
-            String key = entry.getKey();
-            if (key.startsWith("before_")) {
-                // Remove "before_" prefix so fieldMapper can match by column name
-                String columnName = key.substring("before_".length());
-                beforeColumns.put(columnName, entry.getValue());
-            }
-        }
-        return beforeColumns;
     }
 
     /**
