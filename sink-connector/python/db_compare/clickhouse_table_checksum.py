@@ -42,6 +42,8 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
         logging.info("Skipping writing to file")
     try:
         for sql in statements:
+            logging.info(f"Executing checksum query for table {table}")
+            logging.debug(f"SQL: {sql}")
             (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
@@ -65,6 +67,9 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
                             cnt = str(line)
 
                     logging.debug(md5_sum)
+                    logging.info(f"Row count from query: {cnt}")
+                    if cnt == '0':
+                        logging.warning(f"Table {table}: Query returned 0 rows - possible WHERE clause issue (check sign column exists)")
                     m = hashlib.md5()
                     m.update(md5_sum.encode('utf-8'))
                     logging.info("Checksum for table "+args.clickhouse_database +
@@ -214,7 +219,42 @@ def get_table_checksum_query(conn, table):
 def fstr(template, partition_expression):
         return eval(f"f'{template}'")
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
+def get_actual_sign_column(conn, table):
+    """
+    Determine which sign column actually exists in the table.
+    Handles the case where MySQL has is_deleted, so ClickHouse creates _is_deleted.
+    """
+    # Check for is_deleted first
+    check_sql = f"""
+        SELECT name FROM system.columns
+        WHERE database = '{args.clickhouse_database}'
+        AND table = '{table}'
+        AND name IN ('is_deleted', '_is_deleted', '_sign')
+        ORDER BY name
+    """
+    (result, count) = execute_sql(conn, check_sql)
+    
+    if count > 0:
+        columns = [row[0] for row in result]
+        logging.info(f"Table {table} has sign columns: {columns}")
+        
+        # Prefer the requested sign column if it exists
+        if args.sign_column in columns:
+            return args.sign_column
+        # If is_deleted was requested but doesn't exist, check for _is_deleted
+        elif 'is_deleted' in args.sign_column.lower() and '_is_deleted' in columns:
+            logging.info(f"Table {table}: Using _is_deleted instead of {args.sign_column}")
+            return '_is_deleted'
+        # Fallback to first found column
+        elif columns:
+            logging.warning(f"Table {table}: {args.sign_column} not found, using {columns[0]}")
+            return columns[0]
+    
+    logging.warning(f"Table {table}: No sign column found, skipping filter")
+    return None
+
+
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clickhouse_user, clickhouse_password):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -226,12 +266,18 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     schema=args.clickhouse_database
     # skip deleted rows
     if args.sign_column != '':
-      # is_deleted uses inverted logic: 0 = not deleted, 1 = deleted
-      if 'is_deleted' in args.sign_column.lower():
-        where+= f" and ({args.sign_column} = 0 OR {args.sign_column} IS NULL) "
-      else:
-        # _sign uses standard logic: > 0 = valid
-        where+= f" and {args.sign_column} > 0 "
+      # Determine which column actually exists
+      conn = get_connection(clickhouse_user, clickhouse_password)
+      actual_sign_column = get_actual_sign_column(conn, table)
+      conn.close()
+      
+      if actual_sign_column:
+        # is_deleted uses inverted logic: 0 = not deleted, 1 = deleted
+        if 'is_deleted' in actual_sign_column.lower():
+          where+= f" and ({actual_sign_column} = 0 OR {actual_sign_column} IS NULL) "
+        else:
+          # _sign uses standard logic: > 0 = valid
+          where+= f" and {actual_sign_column} > 0 "
 
     memory_setting = ""
     max_memory_usage = args.max_memory_usage
@@ -312,7 +358,7 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     (query, select_query, distributed_by,
      external_table_types) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where)
+        table, query, select_query, distributed_by, external_table_types, where, clickhouse_user, clickhouse_password)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
