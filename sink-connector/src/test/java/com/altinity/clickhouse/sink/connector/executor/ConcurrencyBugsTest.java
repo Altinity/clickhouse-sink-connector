@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.Mockito;
 
 import java.sql.Connection;
 import java.util.*;
@@ -259,8 +260,8 @@ public class ConcurrencyBugsTest {
     }
 
     private DbWriter createMockDbWriter() {
-        // Return a mock DbWriter
-        return null; // Simplified for test
+        // Return a mock DbWriter object (ConcurrentHashMap doesn't allow null values)
+        return Mockito.mock(DbWriter.class);
     }
 
     // Simple mock connection for testing

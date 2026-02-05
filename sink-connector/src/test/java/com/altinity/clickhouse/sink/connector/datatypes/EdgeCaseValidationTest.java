@@ -23,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -38,9 +39,7 @@ public class EdgeCaseValidationTest {
     @Mock
     private PreparedStatement mockPs;
 
-    @Mock
-    private ClickHouseSinkConnectorConfig mockConfig;
-
+    private ClickHouseSinkConnectorConfig config;
     private ZoneId serverTimeZone;
 
     @BeforeEach
@@ -48,15 +47,18 @@ public class EdgeCaseValidationTest {
         MockitoAnnotations.openMocks(this);
         serverTimeZone = ZoneId.of("UTC");
         
-        // Setup default configuration
-        when(mockConfig.getString(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString()))
-            .thenReturn("null");
-        when(mockConfig.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_DATE_VALIDATION.toString()))
-            .thenReturn(true);
-        when(mockConfig.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_BIGINT_VALIDATION.toString()))
-            .thenReturn(true);
-        when(mockConfig.getBoolean(ClickHouseSinkConnectorConfigVariables.ALLOW_PRECISION_LOSS.toString()))
-            .thenReturn(false);
+        // Create a real config object with strict validation enabled
+        Map<String, String> props = new HashMap<>();
+        props.put("clickhouse.server.url", "http://localhost");
+        props.put("clickhouse.server.user", "default");
+        props.put("clickhouse.server.password", "");
+        props.put("clickhouse.server.port", "8123");
+        props.put(ClickHouseSinkConnectorConfigVariables.STRICT_DATE_VALIDATION.toString(), "true");
+        props.put(ClickHouseSinkConnectorConfigVariables.STRICT_BIGINT_VALIDATION.toString(), "true");
+        props.put(ClickHouseSinkConnectorConfigVariables.ALLOW_PRECISION_LOSS.toString(), "false");
+        props.put(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString(), "null");
+        
+        config = new ClickHouseSinkConnectorConfig(props);
     }
 
     /**
@@ -79,7 +81,7 @@ public class EdgeCaseValidationTest {
                 epochDays,
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.Date32,
                 serverTimeZone,
                 field
@@ -107,7 +109,7 @@ public class EdgeCaseValidationTest {
                 epochDays,
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.Date32,
                 serverTimeZone,
                 field
@@ -140,7 +142,7 @@ public class EdgeCaseValidationTest {
                 epochDays,
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.Date32,
                 serverTimeZone,
                 field
@@ -154,7 +156,7 @@ public class EdgeCaseValidationTest {
     @Test
     public void testDateRangeValidation_DisabledStrict() throws Exception {
         // When strict validation is disabled, dates outside range should still be processed
-        when(mockConfig.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_DATE_VALIDATION.toString()))
+        when(config.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_DATE_VALIDATION.toString()))
             .thenReturn(false);
         
         LocalDate testDate = LocalDate.of(2300, 1, 1);
@@ -170,7 +172,7 @@ public class EdgeCaseValidationTest {
             epochDays,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Date32,
             serverTimeZone,
             field
@@ -188,7 +190,7 @@ public class EdgeCaseValidationTest {
         Field field = new Field("test_date", 0, SchemaBuilder.int32()
             .name(Date.SCHEMA_NAME).build());
         
-        when(mockConfig.getString(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString()))
+        when(config.getString(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString()))
             .thenReturn("null");
         
         boolean result = ClickHouseDataTypeMapper.convert(
@@ -197,7 +199,7 @@ public class EdgeCaseValidationTest {
             0, // Zero date
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Date32,
             serverTimeZone,
             field
@@ -213,7 +215,7 @@ public class EdgeCaseValidationTest {
         Field field = new Field("test_date", 0, SchemaBuilder.int32()
             .name(Date.SCHEMA_NAME).build());
         
-        when(mockConfig.getString(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString()))
+        when(config.getString(ClickHouseSinkConnectorConfigVariables.ZERO_DATE_BEHAVIOR.toString()))
             .thenReturn("error");
         
         IllegalArgumentException exception = assertThrows(
@@ -224,7 +226,7 @@ public class EdgeCaseValidationTest {
                 0, // Zero date
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.Date32,
                 serverTimeZone,
                 field
@@ -253,7 +255,7 @@ public class EdgeCaseValidationTest {
                 overflowValue,
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.Int64,
                 serverTimeZone,
                 field
@@ -277,7 +279,7 @@ public class EdgeCaseValidationTest {
             validValue,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Int64,
             serverTimeZone,
             field
@@ -290,7 +292,7 @@ public class EdgeCaseValidationTest {
     @Test
     public void testBigIntUnsignedOverflow_DisabledStrict() throws Exception {
         // When strict validation is disabled, overflow values should pass through
-        when(mockConfig.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_BIGINT_VALIDATION.toString()))
+        when(config.getBoolean(ClickHouseSinkConnectorConfigVariables.STRICT_BIGINT_VALIDATION.toString()))
             .thenReturn(false);
         
         Long overflowValue = -1L;
@@ -302,7 +304,7 @@ public class EdgeCaseValidationTest {
             overflowValue,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Int64,
             serverTimeZone,
             field
@@ -343,7 +345,7 @@ public class EdgeCaseValidationTest {
             emojiString,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.String,
             serverTimeZone,
             field
@@ -366,7 +368,7 @@ public class EdgeCaseValidationTest {
             regularString,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.String,
             serverTimeZone,
             field
@@ -389,7 +391,7 @@ public class EdgeCaseValidationTest {
             complexString,
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.String,
             serverTimeZone,
             field
@@ -416,7 +418,7 @@ public class EdgeCaseValidationTest {
                 new HashMap<>(),
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.String,
                 serverTimeZone,
                 field
@@ -440,7 +442,7 @@ public class EdgeCaseValidationTest {
                 new HashMap<>(),
                 1,
                 mockPs,
-                mockConfig,
+                config,
                 ClickHouseDataType.String,
                 serverTimeZone,
                 field
@@ -472,7 +474,7 @@ public class EdgeCaseValidationTest {
             (int) validDate.toEpochDay(),
             1,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Date32,
             serverTimeZone,
             dateField
@@ -487,7 +489,7 @@ public class EdgeCaseValidationTest {
             "Test 🎉",
             2,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.String,
             serverTimeZone,
             stringField
@@ -502,7 +504,7 @@ public class EdgeCaseValidationTest {
             123456789L,
             3,
             mockPs,
-            mockConfig,
+            config,
             ClickHouseDataType.Int64,
             serverTimeZone,
             bigintField
