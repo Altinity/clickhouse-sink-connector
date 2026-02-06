@@ -25,8 +25,10 @@ NC='\033[0m' # No Color
 # Test configuration
 TEST_START_TIME=$(date +%s)
 TEST_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-REPORT_FILE="/reports/test-report.txt"
-LOG_FILE="/logs/comprehensive-test.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$SCRIPT_DIR/logs" "$SCRIPT_DIR/reports"
+REPORT_FILE="$SCRIPT_DIR/reports/test-report.txt"
+LOG_FILE="$SCRIPT_DIR/logs/comprehensive-test.log"
 
 # Phase status tracking
 PHASE1_STATUS="PENDING"
@@ -160,34 +162,34 @@ main() {
     log_info "Report: ${REPORT_FILE}"
     
     # Create necessary directories
-    mkdir -p /dumps /reports /logs
+    mkdir -p "$SCRIPT_DIR/dumps" "$SCRIPT_DIR/reports" "$SCRIPT_DIR/logs"
     
     # Execute test phases
-    execute_phase 1 "Setup" "/scripts/phase1-setup.sh" "PHASE1_STATUS" || {
+    execute_phase 1 "Setup" "$SCRIPT_DIR/phase1-setup.sh" "PHASE1_STATUS" || {
         log_error "Phase 1 failed, aborting test"
         generate_report
         exit 1
     }
     
-    execute_phase 2 "Initial Snapshot" "/scripts/phase2-snapshot.sh" "PHASE2_STATUS" || {
+    execute_phase 2 "Initial Snapshot" "$SCRIPT_DIR/phase2-snapshot.sh" "PHASE2_STATUS" || {
         log_error "Phase 2 failed, aborting test"
         generate_report
         exit 1
     }
     
-    execute_phase 3 "CDC Connector" "/scripts/phase3-cdc.sh" "PHASE3_STATUS" || {
+    execute_phase 3 "CDC Connector" "$SCRIPT_DIR/phase3-cdc.sh" "PHASE3_STATUS" || {
         log_error "Phase 3 failed, aborting test"
         generate_report
         exit 1
     }
     
-    execute_phase 4 "Live DML Operations" "/scripts/phase4-live-dml.sh" "PHASE4_STATUS" || {
+    execute_phase 4 "Live DML Operations" "$SCRIPT_DIR/phase4-live-dml.sh" "PHASE4_STATUS" || {
         log_error "Phase 4 failed, aborting test"
         generate_report
         exit 1
     }
     
-    execute_phase 5 "Validation" "/scripts/phase5-validate.sh" "PHASE5_STATUS" || {
+    execute_phase 5 "Validation" "$SCRIPT_DIR/phase5-validate.sh" "PHASE5_STATUS" || {
         log_error "Phase 5 failed, aborting test"
         generate_report
         exit 1

@@ -53,7 +53,7 @@ def compute_checksum(table, statements, conn):
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
 
     (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
-                                       args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
+                                       args.mysql_database+"' and table_name = '"+table+"' order by column_name")
 
     logging.debug("Excluded columns: "+str(excluded_columns))
     select = ""

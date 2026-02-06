@@ -100,9 +100,18 @@ def get_primary_key_columns(conn, table_schema, table_name):
 def get_table_checksum_query(conn, table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    
+    # Add sign column to excluded columns if specified
+    if args.sign_column != '':
+        actual_sign_column = get_actual_sign_column(conn, table)
+        if actual_sign_column and actual_sign_column not in excluded_columns:
+            excluded_columns.append(actual_sign_column)
+            logging.info(f"Adding sign column {actual_sign_column} to excluded columns")
+    
     logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
-    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
+    # Exclude sign columns directly in the SQL query to ensure alphabetical ordering matches MySQL
+    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' AND name NOT IN (" + excluded_columns_str + ") order by name"
     (rowset, rowcount) = execute_sql(conn, checksum_query)
 
     select = ""
@@ -116,8 +125,9 @@ def get_table_checksum_query(conn, table):
     columns_metadata_map = { r[0]: r for r in columns_metadata }
     # sometimes we have excluded columns like is_deleted and _is_deleted, we would exclude the one prefixed with _
     filtered_columns_metadata = []
-    for row in columns_metadata:   
+    for row in columns_metadata:
         prefixed_column = "_"+row[0]
+        
         if row[0] in excluded_columns and prefixed_column in columns_metadata_map:
             logging.info(f"Not excluding column {row[0]} as {prefixed_column} is also excluded")
         elif row[0] in excluded_columns:
@@ -218,40 +228,6 @@ def get_table_checksum_query(conn, table):
 @staticmethod
 def fstr(template, partition_expression):
         return eval(f"f'{template}'")
-
-def get_actual_sign_column(conn, table):
-    """
-    Determine which sign column actually exists in the table.
-    Handles the case where MySQL has is_deleted, so ClickHouse creates _is_deleted.
-    """
-    # Check for is_deleted first
-    check_sql = f"""
-        SELECT name FROM system.columns
-        WHERE database = '{args.clickhouse_database}'
-        AND table = '{table}'
-        AND name IN ('is_deleted', '_is_deleted', '_sign')
-        ORDER BY name
-    """
-    (result, count) = execute_sql(conn, check_sql)
-    
-    if count > 0:
-        columns = [row[0] for row in result]
-        logging.info(f"Table {table} has sign columns: {columns}")
-        
-        # Prefer the requested sign column if it exists
-        if args.sign_column in columns:
-            return args.sign_column
-        # If is_deleted was requested but doesn't exist, check for _is_deleted
-        elif 'is_deleted' in args.sign_column.lower() and '_is_deleted' in columns:
-            logging.info(f"Table {table}: Using _is_deleted instead of {args.sign_column}")
-            return '_is_deleted'
-        # Fallback to first found column
-        elif columns:
-            logging.warning(f"Table {table}: {args.sign_column} not found, using {columns[0]}")
-            return columns[0]
-    
-    logging.warning(f"Table {table}: No sign column found, skipping filter")
-    return None
 
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clickhouse_user, clickhouse_password):
@@ -403,7 +379,7 @@ def main():
     parser.add_argument('--hex_columns', help='columns to convert to hex', nargs='+', default=[])
     parser.add_argument('--debug', dest='debug', action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
-    parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
+    parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_version'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
     parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
