@@ -17,7 +17,7 @@ done
 # Wait for ClickHouse
 echo "Waiting for ClickHouse to be ready..."
 for i in {1..30}; do
-    if clickhouse-client --host "$CLICKHOUSE_HOST" --port 9000 --query "SELECT 1" > /dev/null 2>&1; then
+    if clickhouse-client --host clickhouse --port 9000 --password clickhouse_pass --query "SELECT 1" > /dev/null 2>&1; then
         echo "✅ ClickHouse is ready"
         break
     fi

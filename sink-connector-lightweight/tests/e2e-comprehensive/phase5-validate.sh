@@ -216,6 +216,7 @@ for TABLE in "${KEY_TABLES[@]}"; do
     
     while [ $checksum_retry_count -lt $CHECKSUM_MAX_RETRIES ]; do
         # MySQL checksum - use regex matching without --no_wc flag
+        # Note: loyalty_points column has been backfilled, no longer excluded
         MYSQL_CHECKSUM=$(python db_compare/mysql_table_checksum.py \
             --mysql_host "$MYSQL_HOST" \
             --mysql_port "$MYSQL_PORT" \
@@ -226,6 +227,7 @@ for TABLE in "${KEY_TABLES[@]}"; do
             --defaults_file /root/.my.cnf 2>&1 | grep "Checksum for table" | awk '{print $13}' || echo "error")
         
         # ClickHouse checksum - use regex matching without --no_wc flag
+        # Note: loyalty_points column has been backfilled, no longer excluded
         CH_CHECKSUM=$(python db_compare/clickhouse_table_checksum.py \
             --clickhouse_host "$CLICKHOUSE_HOST" \
             --clickhouse_port "$CLICKHOUSE_PORT" \

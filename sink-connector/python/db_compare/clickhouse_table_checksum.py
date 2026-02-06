@@ -97,9 +97,31 @@ def get_primary_key_columns(conn, table_schema, table_name):
     return res
 
 
+def get_actual_sign_column(conn, table):
+    """
+    Determine which sign column actually exists in the table.
+    Checks for _sign, is_deleted, and _is_deleted columns.
+    Returns the column name if found, None otherwise.
+    """
+    query = f"""
+    SELECT name
+    FROM system.columns
+    WHERE database = '{args.clickhouse_database}'
+    AND table = '{table}'
+    AND name IN ('_sign', 'is_deleted', '_is_deleted')
+    ORDER BY name
+    LIMIT 1
+    """
+    (rowset, rowcount) = execute_sql(conn, query)
+    
+    if rowcount > 0 and rowset:
+        return rowset[0][0]
+    
+    return None
+
+
 def get_table_checksum_query(conn, table):
-    excluded_columns = "','".join(args.exclude_columns)
-    excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    excluded_columns = list(args.exclude_columns) if args.exclude_columns else []
     
     # Add sign column to excluded columns if specified
     if args.sign_column != '':
