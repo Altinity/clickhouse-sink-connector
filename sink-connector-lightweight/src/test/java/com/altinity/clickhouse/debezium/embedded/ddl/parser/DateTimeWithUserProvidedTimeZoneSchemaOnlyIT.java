@@ -249,7 +249,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         defaultProps.putAll(fileProps);
 
         // **** OVERRIDE set to schema only
-        defaultProps.setProperty("snapshot.mode", "schema_only");
+        defaultProps.setProperty("snapshot.mode", "no_data");
         defaultProps.setProperty("disable.drop.truncate", "true");
         defaultProps.setProperty("auto.create.tables", "false");
         defaultProps.setProperty("enable.snapshot.ddl", "true");

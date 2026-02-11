@@ -106,8 +106,6 @@ else
       "auto.create.tables": true,
       "schema.evolution": false,
 
-      "deduplication.policy": "off",
-
       "metadata.max.age.ms" : 10000,
       "connection.pool.disable": "true"
 

@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.batch.CdcOperation;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.data.ClickHouseUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -61,13 +63,13 @@ public class QueryFormatter {
      * the ones expected by ClickHouse.
      * </p>
      *
-     * @param tableName the name of the ClickHouse table.
-     * @param fields the list of fields from the source schema.
+     * @param tableName               the name of the ClickHouse table.
+     * @param fields                  the list of fields from the source schema.
      * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
-     * @param includeKafkaMetaData flag indicating whether Kafka metadata columns should be included.
-     * @param includeRawData flag indicating whether raw data should be included in the query.
-     * @param rawDataColumn the name of the raw data column.
-     * @param dbName the name of the database.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included in the query.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database.
      * @return a MutablePair containing the generated INSERT query and a map of column names to their indices.
      */
     public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
@@ -77,16 +79,110 @@ public class QueryFormatter {
             boolean includeRawData,
             String rawDataColumn, String dbName) {
 
-        Map<String, Integer> colNameToIndexMap = new HashMap<>();
-        int index = 1;
+        // Create column data structures
+        ColumnData columnData = createColumns(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName);
 
-        StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesToDataTypes = new StringBuilder();
+        if (columnData == null) {
+            return null;
+        }
+
+        // Construct the full insert query
+        String tableWithBackTicks = "`" + tableName + "`";
+        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
+                tableWithBackTicks, columnData.colNamesDelimited, columnData.colNamesDelimited, columnData.colNamesToDataTypes);
+
+        // Return the query and column index map
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
+        response.left = insertQuery;
+        response.right = columnData.colNameToIndexMap;
+
+        return response;
+    }
+
+
+    /**
+     * Helper class to hold the results of column creation.
+     */
+    private static class ColumnData {
+        Map<String, Integer> colNameToIndexMap;
+        StringBuilder colNamesDelimited;
+        StringBuilder colNamesToDataTypes;
+
+        ColumnData(Map<String, Integer> colNameToIndexMap, StringBuilder colNamesDelimited, StringBuilder colNamesToDataTypes) {
+            this.colNameToIndexMap = colNameToIndexMap;
+            this.colNamesDelimited = colNamesDelimited;
+            this.colNamesToDataTypes = colNamesToDataTypes;
+        }
+    }
+
+    /**
+     * Checks if a column is a temporal tracking column used for history.
+     * These columns should use DEFAULT values from the table schema.
+     *
+     * @param colName the name of the column to check.
+     * @return true if the column is a temporal tracking column, false otherwise.
+     */
+    private boolean isTemporalTrackingColumn(String colName) {
+        return colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN) ||
+               colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN);
+    }
+
+    /**
+     * Formats a value for use in SQL based on the ClickHouse data type.
+     * String types are quoted, numeric types are not.
+     *
+     * @param value the value to format
+     * @param dataType the ClickHouse data type
+     * @return the formatted value as a string
+     */
+    private String formatValueForSql(Object value, String dataType) {
+        if (value == null) {
+            return "NULL";
+        }
+        
+        // Check if the data type is a string type
+        String upperDataType = dataType.toUpperCase();
+        if (upperDataType.startsWith("STRING") || 
+            upperDataType.startsWith("FIXEDSTRING") ||
+            upperDataType.startsWith("ENUM") ||
+            upperDataType.startsWith("UUID")) {
+            // Quote string types
+            return "'" + value.toString().replace("'", "''") + "'";
+        }
+        
+        // Numeric and other types don't need quotes
+        return value.toString();
+    }
+
+    /**
+     * Creates column data structures for generating INSERT queries.
+     *
+     * @param tableName               the name of the table (used for error logging).
+     * @param fields                  the list of fields from the source schema.
+     * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database (used for error logging).
+     * @return a ColumnData object containing the column index map and delimited strings, or null if fields is null.
+     */
+    private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
+                                     boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
             return null;
         }
+
+        Map<String, Integer> colNameToIndexMap = new HashMap<>();
+        int index = 1;
+
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesToDataTypes = new StringBuilder();
 
         // Loop over each column to generate the insert query and map data types
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
@@ -128,17 +224,7 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimited);
         removeTrailingComma(colNamesToDataTypes);
 
-        // Construct the full insert query
-        String tableWithBackTicks = "`" + tableName + "`";
-        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
-                tableWithBackTicks, colNamesDelimited, colNamesDelimited, colNamesToDataTypes);
-
-        // Return the query and column index map
-        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
-        response.left = insertQuery;
-        response.right = colNameToIndexMap;
-
-        return response;
+        return new ColumnData(colNameToIndexMap, colNamesDelimited, colNamesToDataTypes);
     }
 
     /**
@@ -159,7 +245,7 @@ public class QueryFormatter {
      * This method constructs an INSERT query based on the provided column names and data types.
      * </p>
      *
-     * @param tableName the name of the ClickHouse table.
+     * @param tableName               the name of the ClickHouse table.
      * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
      * @return the generated INSERT SQL query.
      */
@@ -181,5 +267,137 @@ public class QueryFormatter {
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
+    }
+
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName, List<Field> fields,
+                                          Map<String, String> columnNameToDataTypeMap,
+                                          String primaryKeyColumnName,
+                                          Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          ClickHouseConverter.CDC_OPERATION cdcOperation,
+                                          String serverTimeZone) {
+
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForThirdSelect = new StringBuilder();
+        
+        // Map to track which columns need parameter binding
+        Map<String, Integer> colNameToIndexMap = new HashMap<>();
+        int parameterIndex = 1;
+
+        // Loop over each column to build column list
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = "`" + entry.getKey() + "`";
+            colNamesDelimited.append(columnName).append(",");
+        }
+
+        // First SELECT: Close the existing record (set _valid_to to binlog timestamp)
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String selectExpr;
+            
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                // CLOSE the record by setting _valid_to to binlog timestamp
+                selectExpr = "now()";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                selectExpr = String.format("0 as `%s`", columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+                selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                selectExpr = String.format("%d as `%s`", version, columnName);
+            } else {
+                // Keep original value from existing row
+                selectExpr = "`" + columnName + "`";
+            }
+            colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
+        }
+
+        // Second SELECT: Insert new "after" image (NO FROM clause - just literal values)
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String originalColumnName = columnName;
+            String selectExpr;
+
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                // New record starts at binlog timestamp
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                // New record is open-ended (valid until max time)
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else {
+                // All other columns use parameter binding
+                selectExpr = "? as `" + columnName + "`";
+            }
+            colNameToIndexMap.put(originalColumnName, parameterIndex++);
+            colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
+        }
+
+        // Third SELECT: Cancel the "before" image (for PK updates - uses before values)
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String originalColumnName = columnName;
+            String selectExpr;
+
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                // Mark the before image as NOT deleted (is_deleted = 0)
+                selectExpr = "? as `" + columnName + "`";
+            } else {
+                selectExpr = "? as `" + columnName + "`";
+            }
+            // Use "before_" prefix for third select parameter mapping
+            colNameToIndexMap.put("before_" + originalColumnName, parameterIndex++);
+            colNamesDelimitedForThirdSelect.append(selectExpr).append(",");
+        }
+
+        removeTrailingComma(colNamesDelimited);
+        removeTrailingComma(colNamesDelimitedForFirstSelect);
+        removeTrailingComma(colNamesDelimitedForSecondSelect);
+        removeTrailingComma(colNamesDelimitedForThirdSelect);
+
+        // Get the primary key data type and format the value appropriately
+        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
+        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+
+        String tableWithBackTicks = "`" + tableName + "`";
+        
+        // Build is_deleted condition only if the column exists in the table
+        String isDeletedCondition = columnNameToDataTypeMap.containsKey(
+                ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
+        
+        // Build the query with three SELECTs:
+        // 1. Close existing record (from table with WHERE) - uses FINAL to get merged view
+        // 2. Insert new "after" values (NO FROM clause)
+        // 3. Insert "before" image for PK change tracking (NO FROM clause)
+        String query = String.format(
+            "INSERT INTO %s(%s) " +
+            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
+            "UNION ALL " +
+            "SELECT %s " +  // NO FROM clause for second SELECT
+            "UNION ALL " +
+            "SELECT %s",    // NO FROM clause for third SELECT
+            tableWithBackTicks, 
+            colNamesDelimited, 
+            colNamesDelimitedForFirstSelect, 
+            tableWithBackTicks, 
+            primaryKeyColumnName, 
+            formattedPrimaryKeyValue, 
+            validToMax,
+            serverTimeZone,
+            isDeletedCondition,
+            colNamesDelimitedForSecondSelect,
+            colNamesDelimitedForThirdSelect
+        );
+
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
+        response.left = query;
+        response.right = colNameToIndexMap;
+        return response;
     }
 }

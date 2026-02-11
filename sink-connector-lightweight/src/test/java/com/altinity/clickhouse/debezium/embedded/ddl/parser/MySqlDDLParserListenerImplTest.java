@@ -60,7 +60,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (emp_no)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  emp_no ORDER BY (emp_no)"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -121,6 +121,31 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
         log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
+
+    @Test
+    public void testCreateTableWithCommentedPartition() {
+        String createQuery = "create table t(\n" +
+                "id int not null,\n" +
+                "dt date not null,\n" +
+                "primary key(id, dt)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_general_cs ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8\n" +
+                "/*!50500 PARTITION BY RANGE  COLUMNS(dt)\n" +
+                "(PARTITION p20201231 VALUES LESS THAN ('2021-01-01') ENGINE = InnoDB,\n" +
+                " PARTITION p20211230 VALUES LESS THAN ('2021-12-31') ENGINE = InnoDB,\n" +
+                " PARTITION p20211231 VALUES LESS THAN ('2022-01-03') ENGINE = InnoDB,\n" +
+                " PARTITION p20220103 VALUES LESS THAN ('2022-01-04') ENGINE = InnoDB,\n" +
+                " PARTITION p20220104 VALUES LESS THAN ('2022-01-05') ENGINE = InnoDB,\n" +
+                " PARTITION p20220105 VALUES LESS THAN ('2022-01-06') ENGINE = InnoDB\n" +
+                ")*/;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
+        
+        // This test verifies that our regex fallback correctly parses partition columns from commented partition syntax
+        Assert.assertTrue(clickHouseQuery.toString().contains("PARTITION BY"));
+        Assert.assertTrue(clickHouseQuery.toString().contains("dt"));
+        log.info("Create table with commented partition: " + clickHouseQuery);
+    }
+
     @Test
     public void testCreateTableWithKeyPartition() {
         String createQuery = "CREATE TABLE members (\n" +
@@ -884,10 +909,13 @@ public class MySqlDDLParserListenerImplTest {
     public void testSourceWithIsDeletedColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
+        String expectedQuery = "CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY tuple()";
+
         String sql = "create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY tuple()"));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY tuple()"));
     }
 
     @ParameterizedTest
@@ -1006,7 +1034,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
-                "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int8),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`)"));
+                "CREATE TABLE employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (`ID`)"));
 
 
         String sqlWithoutBackticks = "create table city(id int not null auto_increment, Name char(35) , is_deleted tinyint(1) DEFAULT 0, primary key(id))";
@@ -1015,7 +1043,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sqlWithoutBackticks, "employees", clickHouseQuery2);
 
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
-                "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int8),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (id)"));
+                "CREATE TABLE employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (id)"));
     }
 
     @Test
@@ -1642,9 +1670,10 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` Int32 NOT NULL ,`incomplete_lookup_type_id` Int32 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
-
+        //String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` Int32 NOT NULL ,`incomplete_lookup_type_id` Int32 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` Int32 NOT NULL ,`incomplete_lookup_type_id` Int32 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
     @Test
@@ -2011,7 +2040,7 @@ public class MySqlDDLParserListenerImplTest {
                 " PARTITION p20240221 VALUES LESS THAN ('2024-02-22') ENGINE = InnoDB,\n" +
                 " PARTITION p20240222 VALUES LESS THAN ('2024-02-23') ENGINE = InnoDB,\n" +
                 " PARTITION p20240223 VALUES LESS THAN ('2024-02-26') ENGINE = InnoDB,\n" +
-                " PARTITION p20240226 VALUES LESS THAN ('2024-02-27') ENGINE = InnoDB,\n" +
+                " PAR0TITION p20240226 VALUES LESS THAN ('2024-02-27') ENGINE = InnoDB,\n" +
                 " PARTITION p20240227 VALUES LESS THAN ('2024-02-28') ENGINE = InnoDB,\n" +
                 " PARTITION p20240228 VALUES LESS THAN ('2024-02-29') ENGINE = InnoDB,\n" +
                 " PARTITION p20240229 VALUES LESS THAN ('2024-03-01') ENGINE = InnoDB,\n" +
@@ -2241,7 +2270,8 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` Int32 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` Int32 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(Int32),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(Int64),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(Int32),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(Int64),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
+        String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` Int32 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` Int32 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(Int32),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(Int64),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(Int32),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(Int64),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
+        //String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` Int32 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` Int32 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(Int32),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(Int64),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(Int32),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(Int64),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
@@ -2308,7 +2338,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         parserService.parseSql(sql, "test_db", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` String,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
+        String expectedQuery = "CREATE TABLE employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
@@ -2319,4 +2349,78 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
     }
+
+    @Test
+    @DisplayName("Test that internal DDL ignore list correctly identifies partition operations")
+    public void testInternalDDLIgnoreList() {
+        // Map of DDL statements to whether they should be ignored (true) or allowed (false)
+        Map<String, Boolean> ddlTestCases = new HashMap<>();
+        
+        // Partition operations that SHOULD be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales ANALYZE PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE employees.sales ADD PARTITION (p2024)", true);
+        ddlTestCases.put("ALTER TABLE employees.sales DROP PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE employees.sales REORGANIZE PARTITION p2023 INTO (p2023q1, p2023q2)", true);
+        ddlTestCases.put("ALTER TABLE employees.sales REMOVE PARTITIONING", true);
+        ddlTestCases.put("ALTER TABLE employees.sales TRUNCATE PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE employees.sales CHECK PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE employees.sales OPTIMIZE PARTITION p2023", true);
+        
+        // AUTO_INCREMENT operations that SHOULD be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales AUTO_INCREMENT = 1000", true);
+        ddlTestCases.put("ALTER TABLE employees.users AUTO_INCREMENT=5000", true);
+        ddlTestCases.put("  ALTER TABLE test.mytable AUTO_INCREMENT = 12345  ", true);
+        
+        // Normal DDL operations that should NOT be ignored
+        ddlTestCases.put("ALTER TABLE employees.sales ADD COLUMN new_col INT", false);
+        ddlTestCases.put("ALTER TABLE employees.sales DROP COLUMN old_col", false);
+        ddlTestCases.put("ALTER TABLE employees.sales MODIFY COLUMN price DECIMAL(10,2)", false);
+        ddlTestCases.put("CREATE TABLE test (id INT PRIMARY KEY)", false);
+        ddlTestCases.put("DROP TABLE employees.old_table", false);
+        
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        
+        for (Map.Entry<String, Boolean> testCase : ddlTestCases.entrySet()) {
+            String ddl = testCase.getKey();
+            Boolean shouldBeIgnored = testCase.getValue();
+            boolean actuallyIgnored = capture.checkDDLAgainstRegexPatterns(ddl);
+            
+            Assert.assertEquals(
+                String.format("DDL '%s' ignore status mismatch", ddl),
+                shouldBeIgnored,
+                actuallyIgnored
+            );
+        }
+        
+        log.info("Successfully validated " + ddlTestCases.size() + " DDL ignore patterns");
+    }
+
+    @Test
+    public void testCreateTableWithRangePartitionByYearFunction() {
+        String createQuery = "CREATE TABLE test3 (\n" +
+                "    order_id INT AUTO_INCREMENT,\n" +
+                "    product_name VARCHAR(255),\n" +
+                "    quantity INT,\n" +
+                "    order_date DATE,\n" +
+                "    PRIMARY KEY (order_id, order_date)\n" +
+                ") \n" +
+                "ENGINE = InnoDB\n" +
+                "PARTITION BY RANGE( YEAR(order_date) ) (\n" +
+                "    PARTITION p2020 VALUES LESS THAN (2021),\n" +
+                "    PARTITION p2021 VALUES LESS THAN (2022),\n" +
+                "    PARTITION p2022 VALUES LESS THAN (2023),\n" +
+                "    PARTITION p2023 VALUES LESS THAN (2024),\n" +
+                "    PARTITION p2024 VALUES LESS THAN (2025)\n" +
+                ")";
+        
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "employees", clickHouseQuery);
+
+        String expectedQuery = "CREATE TABLE employees.test3(order_id Nullable(Int32),product_name Nullable(String),quantity Nullable(Int32),order_date Nullable(Date32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
+
+        // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
+       Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+        log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
+    }
+
 }

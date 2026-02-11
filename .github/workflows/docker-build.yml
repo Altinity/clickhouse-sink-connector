@@ -93,9 +93,28 @@ jobs:
           name: clickhouse-sink-connector-lt-${{ env.IMAGE_TAG }}.jar
           path: sink-connector-lightweight/target/clickhouse-debezium-embedded-${{ env.PROJECT_VERSION }}.jar
 
-      - name: Build with Go
+      - name: Build with Go (AMD64)
         working-directory: sink-connector-client
-        run: CGO_ENABLED=0 go build
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o sink-connector-client-amd64
+
+      - name: Build with Go (ARM64)
+        working-directory: sink-connector-client
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o sink-connector-client-arm64
+
+      - name: Upload sink-connector-client binary (AMD64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-sink-connector-client-${{ env.IMAGE_TAG }}.bin
+          path: sink-connector-client/sink-connector-client-amd64
+
+      - name: Upload sink-connector-client binary (ARM64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-sink-connector-client-${{ env.IMAGE_TAG }}-arm64.bin
+          path: sink-connector-client/sink-connector-client-arm64
+
+      - name: Copy default binary for Docker build
+        run: cp sink-connector-client/sink-connector-client-amd64 sink-connector-client/sink-connector-client
 
       - name: Build Docker image (Lightweight)
         run: |

@@ -3,36 +3,21 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
-import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
-import com.altinity.clickhouse.sink.connector.metadata.TableMetaDataWriter;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
-import com.clickhouse.data.ClickHouseColumn;
-import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang3.tuple.MutablePair;
-import org.apache.kafka.connect.data.Field;
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.errors.DataException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.*;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -49,49 +34,17 @@ public class PreparedStatementExecutor {
     private static final Logger log = LogManager.getLogger(PreparedStatementExecutor.class);
 
     /**
-     * Default epoch timestamp in seconds for the deleted_time column (2149-06-06 00:00:00 UTC).
-     * This represents a far-future date used to mark records that are not deleted.
-     */
-    private static final long DEFAULT_DELETED_TIME_EPOCH_SECONDS = 
-            LocalDateTime.of(2149, 6, 6, 0, 0, 0).toEpochSecond(ZoneOffset.UTC);
-
-    /**
-     * The column name used for "delete" operations in the ReplacingMergeTree engine.
-     * This column is used to track deleted records in ClickHouse when using
-     * ReplacingMergeTree with deletion support.
-     */
-    private String replacingMergeTreeDeleteColumn;
-
-    /**
-     * Flag indicating whether the ReplacingMergeTree engine uses an "isDeleted" column.
-     * If true, the engine uses an "isDeleted" column to mark records as deleted instead
-     * of directly using the "delete" column.
-     */
-    private boolean replacingMergeTreeWithIsDeletedColumn;
-
-    /**
-     * The name of the column used for the sign of a record, typically used in the
-     * context of ReplacingMergeTree engines to track changes (e.g., a flag for changes).
-     */
-    private String signColumn;
-
-    /**
-     * The name of the version column, used in ReplacingMergeTree engines to track the
-     * version of records for conflict resolution or replacement logic.
-     */
-    private String versionColumn;
-
-    /**
-     * The server's time zone used for converting timestamps and handling date/time
-     * related operations.
-     */
-    private ZoneId serverTimeZone;
-
-    /**
      * The name of the database being used for the operations in this class.
      * This is typically set when connecting to the ClickHouse instance.
      */
     private String databaseName;
+
+    /**
+     * Field mapper responsible for inserting ClickHouseStruct fields into PreparedStatements.
+     */
+    private PreparedStatementFieldMapper fieldMapper;
+
+    private ZoneId serverTimeZone;
 
     /**
      * Constructor for PreparedStatementExecutor.
@@ -108,12 +61,18 @@ public class PreparedStatementExecutor {
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
                                      String databaseName, ZoneId serverTimeZone) {
-        this.replacingMergeTreeDeleteColumn = replacingMergeTreeDeleteColumn;
-        this.replacingMergeTreeWithIsDeletedColumn = replacingMergeTreeWithIsDeletedColumn;
-        this.signColumn = signColumn;
-        this.versionColumn = versionColumn;
-        this.serverTimeZone = serverTimeZone;
+
         this.databaseName = databaseName;
+        this.serverTimeZone = serverTimeZone;
+        // Initialize the field mapper with the same configuration
+        this.fieldMapper = new PreparedStatementFieldMapper(
+                replacingMergeTreeDeleteColumn,
+                replacingMergeTreeWithIsDeletedColumn,
+                signColumn,
+                versionColumn,
+                databaseName,
+                serverTimeZone
+        );
     }
 
     /**
@@ -148,7 +107,7 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-            if (false == executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+            if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
                     conn, tableName, columnToDataTypeMap, engine)) {
                 log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
                         "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
@@ -202,6 +161,7 @@ public class PreparedStatementExecutor {
             try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 for (ClickHouseStruct record : batch) {
+                    boolean updateRecord = false;
                     if (record.getDatabase() != null)
                         databaseName = record.getDatabase();
 
@@ -219,40 +179,48 @@ public class PreparedStatementExecutor {
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                         true, config, columnToDataTypeMap, engine, tableName);
                                 ps.addBatch();
-                                insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                         false, config, columnToDataTypeMap, engine, tableName);
                         }
                         else {
-                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                        fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                 false, config, columnToDataTypeMap, engine, tableName);
                     } else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
-                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                            insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                    true, config, columnToDataTypeMap, engine, tableName);
-                            ps.addBatch();
-                            insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
-                                    false, config, columnToDataTypeMap, engine, tableName);
-
+                            // Use ReplicationHistoryHandler for SCD Type 2 updates
+                            // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
+                            ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
+                            historyHandler.executeHistoryUpdate(
+                                    conn,
+                                    tableName,
+                                    record,
+                                    columnToDataTypeMap,
+                                    fieldMapper,
+                                    entry.getKey().right,
+                                    config,
+                                    engine
+                            );
+                            updateRecord = true;
                         } else {
-                        insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
+                            fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                     false, config, columnToDataTypeMap, engine, tableName);
                         }
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
-
-                    ps.addBatch();
+                    if(!updateRecord)
+                        ps.addBatch();
                 }
 
                 // Fix BUG-TX-3: Implement exponential backoff retry logic
@@ -325,332 +293,5 @@ public class PreparedStatementExecutor {
         });
 
         return result.get();
-    }
-
-    /**
-     * Inserts the fields of a ClickHouseStruct into the prepared statement for execution.
-     * This method maps the column names from the record to the corresponding prepared
-     * statement indices and handles various data types, including Kafka metadata, sign,
-     * and version columns. It also handles special operations like handling deletes in
-     * ReplacingMergeTree engines.
-     *
-     * @param columnNameToIndexMap A map of column names to their respective index positions
-     *                             in the prepared statement.
-     * @param ps The prepared statement where the values will be set.
-     * @param fields The list of fields from the Kafka record schema.
-     * @param record The ClickHouse struct containing the actual data.
-     * @param struct The Kafka struct representing the record data.
-     * @param beforeSection Flag indicating whether the operation is before or after the change.
-     * @param config The configuration for the ClickHouse Sink connector.
-     * @param columnNameToDataTypeMap A map of column names to their corresponding data types.
-     * @param engine The table engine being used (e.g., COLLAPSING_MERGE_TREE, REPLACING_MERGE_TREE).
-     * @param tableName The name of the target ClickHouse table.
-     * @throws Exception if an error occurs while setting values or executing the prepared statement.
-     */
-    public void insertPreparedStatement(Map<String, Integer> columnNameToIndexMap,
-                                        PreparedStatement ps, List<Field> fields,
-                                        ClickHouseStruct record, Struct struct, boolean beforeSection,
-                                        ClickHouseSinkConnectorConfig config,
-                                        Map<String, String> columnNameToDataTypeMap,
-                                        DBMetadata.TABLE_ENGINE engine, String tableName) throws Exception {
-
-        // Iterate through the column names and map the values to their indices in the prepared statement.
-        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            String colName = entry.getKey();
-
-            // Skip processing if the column name is null.
-            if (colName == null) {
-                continue;
-            }
-
-            // Log error if columnNameToIndexMap is null.
-            if (columnNameToIndexMap == null) {
-                log.error("Column Name to Index map error");
-            }
-
-            // Get the index position of the column in the prepared statement.
-            int index = -1;
-            if (columnNameToIndexMap.containsKey(colName)) {
-                index = columnNameToIndexMap.get(colName);
-            } else {
-                log.error("***** Column index missing for column ****" + colName);
-                continue;
-            }
-
-            //String colName = entry.getKey();
-
-            //ToDO: Setting null to a non-nullable field)
-            // will throw an error.
-            // If the Received column is not a clickhouse column
-            try {
-                Object value = struct.get(colName);
-
-                boolean nonDefault = config.getBoolean(ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString());
-                // if config non.default.value is set, use it.
-                if (nonDefault) {
-                    value = struct.getWithoutDefault(colName);
-                }
-                if (value == null) {
-                    // Fix BUG-DATA-1: Validate NULL values against NOT NULL columns
-                    String columnDataType = entry.getValue();
-                    if (columnDataType != null && !columnDataType.toLowerCase().contains("nullable")) {
-                        // Column is NOT NULL - check if this is a special column that can be skipped
-                        if (!colName.equalsIgnoreCase(versionColumn) &&
-                            !colName.equalsIgnoreCase(signColumn) &&
-                            !colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
-                            log.error(String.format("NULL value for NOT NULL column: Database(%s), Table(%s), Column(%s), Type(%s)",
-                                    databaseName, tableName, colName, columnDataType));
-                            throw new RuntimeException(String.format(
-                                    "NULL value not allowed for NOT NULL column: %s (type: %s)", colName, columnDataType));
-                        }
-                    }
-                    ps.setNull(index, Types.OTHER);
-                    continue;
-                }
-            } catch (DataException e) {
-                // Struct .get throws a DataException
-                // if the field is not present.
-                // If the record was not supplied, we need to set it as null.
-                // Ignore version and sign columns.
-                if (colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
-                        colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
-                    // Ignore version and sign columns
-                } else {
-                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                    }
-                                    }
-                ps.setNull(index, Types.OTHER);
-                continue;
-            }
-
-            // If the column is not in the column data type map, log an error.
-            if (!columnNameToDataTypeMap.containsKey(colName)) {
-                log.error(" ***** ERROR: Column:{} not found in ClickHouse", colName);
-                continue;
-            }
-
-            // Get the field information for the column and handle its data type.
-            Field f = getFieldByColumnName(fields, colName);
-            Schema.Type type = f.schema().type();
-            String schemaName = f.schema().name();
-            Object value = struct.get(f);
-            if (type == Schema.Type.ARRAY) {
-                schemaName = f.schema().valueSchema().type().name();
-            }
-            // This will throw an exception, unknown data type.
-            ClickHouseDataType chDataType = getClickHouseDataType(colName, columnNameToDataTypeMap);
-            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone, f)) {
-                log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
-                        schemaName, colName));
-            }
-        }
-
-        // Handle Kafka metadata columns if configured to store Kafka metadata.
-        for (KafkaMetaData metaDataColumn : KafkaMetaData.values()) {
-            String metaDataColName = metaDataColumn.getColumn();
-            if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString())) {
-                if (columnNameToDataTypeMap.containsKey(metaDataColName)) {
-                    if (columnNameToIndexMap != null && columnNameToIndexMap.containsKey(metaDataColName)) {
-                        TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps);
-                    }
-                }
-            }
-        }
-
-        // Handle Sign column for COLLAPSING_MERGE_TREE engine.
-        if (engine != null && engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() && signColumn != null) {
-            if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
-                int signColumnIndex = columnNameToIndexMap.get(signColumn);
-                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    ps.setInt(signColumnIndex, -1);
-                } else if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                    if (beforeSection) {
-                        ps.setInt(signColumnIndex, -1);
-                    } else {
-                        ps.setInt(signColumnIndex, 1);
-                    }
-                } else {
-                    ps.setInt(signColumnIndex, 1);
-                }
-            }
-        }
-
-        String sourceTimeZone = "UTC";
-
-        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTimeZone = configSourceTimeZone;
-            }
-        }
-
-        // If Replication history is enabled, add the deleted_time column
-        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
-                //if the record is a DELETE or UPDATE, add the deleted_time column
-                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
-                        record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                    // Set the current time (truncate milliseconds for DateTime compatibility)
-                    //long currentTimeMs = System.currentTimeMillis();
-                    //long currentTimeSec = (currentTimeMs / 1000) * 1000; // Truncate milliseconds
-                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), new Timestamp(currentTimeSec));
-                    //ps.setTimestamp(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getDeletedTime());
-                    if(beforeSection) {
-                        // Set default value 2149-06-06
-                        //ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DEFAULT_DELETED_TIME_EPOCH_SECONDS);
-                        // Set to current time.
-                        //long currentTimeMs = System.currentTimeMillis();
-                        //long currentTimeSec = (currentTimeMs / 1000); // Truncate milliseconds
-                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), record.getTsSec());
-                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
-                    }
-                    else {
-                        //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
-                        ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                                DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                        ZoneId.of(sourceTimeZone), serverTimeZone));
-//                        long debeziumTsMs = record.getTs_ms();
-//                        long debeziumTimestampSeconds = debeziumTsMs / 1000;
-//                        ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), debeziumTimestampSeconds);
-                        
-                    }
-                } else {
-                    // Set default value 2149-06-06
-                    //ps.setObject(columnNameToIndexMap.get(DELETED_TIME_COLUMN), DataTypeRange.DATETIME32_MAX_TTL);
-
-                    ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                    ZoneId.of(sourceTimeZone), serverTimeZone));
-
-                }
-            }
-            if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
-                ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
-            }
-        }
-
-        // Handle Version column for REPLACING_MERGE_TREE and REPLICATED_REPLACING_MERGE_TREE engines.
-        Long version=SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
-        if (engine != null &&
-                (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
-                        engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
-                && versionColumn != null) {
-            if (columnNameToDataTypeMap.containsKey(versionColumn)) {
-                    if(columnNameToIndexMap.containsKey(versionColumn)) {
-                        if (record.getGtid() != -1) {
-                            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false));
-                            } else {
-                                ps.setLong(columnNameToIndexMap.get(versionColumn), record.getGtid());
-                            }
-                        } else if (record.getSequenceNumber() != -1) {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getSequenceNumber());
-                        } else {
-                            ps.setLong(columnNameToIndexMap.get(versionColumn),  record.getLsn());
-                        }
-                }
-            }
-        }
-
-        // Handle Sign column to mark deletes in ReplacingMergeTree.
-        if (this.replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
-            if (columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
-                    !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
-                if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                    // if after section and REPLICATION HISTORY ENABLE is set to true in config
-                    if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                        if(!beforeSection){
-                            if (replacingMergeTreeWithIsDeletedColumn)
-                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                            else
-                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
-                        } else {
-                            // before section.
-                            if (replacingMergeTreeWithIsDeletedColumn)
-                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
-                            else
-                                ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                        }
-                    } else {
-                        if (replacingMergeTreeWithIsDeletedColumn)
-                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                        else
-                            ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), -1);
-                    }
-                } else {
-                    if (replacingMergeTreeWithIsDeletedColumn)
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 0);
-                    else
-                        ps.setInt(columnNameToIndexMap.get(replacingMergeTreeDeleteColumn), 1);
-                }
-            }
-        }
-
-        // Store raw data in JSON form if configured.
-        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA.toString())) {
-            String userProvidedColName = config.getString(ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString());
-            String rawDataColumnDataType = columnNameToDataTypeMap.get(userProvidedColName);
-            if (columnNameToDataTypeMap.containsKey(userProvidedColName) && rawDataColumnDataType.contains("String")) {
-                if (columnNameToIndexMap.containsKey(userProvidedColName)) {
-                    TableMetaDataWriter.addRawData(struct, columnNameToIndexMap.get(userProvidedColName), ps);
-                }
-            }
-        }
-    }
-
-    /**
-     * Retrieves a field from a list of fields based on the column name. The search
-     * is case-insensitive.
-     *
-     * @param fields The list of fields to search through.
-     * @param colName The column name to search for.
-     * @return The matching field, or null if no field matches the column name.
-     */
-    private Field getFieldByColumnName(List<Field> fields, String colName) {
-        // ToDo: Change it to a map so that multiple loops are avoided
-        Field matchingField = null;
-        for (Field f : fields) {
-            // Case-insensitive comparison of field name with column name
-            if (f.name().equalsIgnoreCase(colName)) {
-                matchingField = f;
-                break;
-            }
-        }
-        return matchingField;
-    }
-
-    /**
-     * Retrieves the ClickHouse data type for a given column by looking up the
-     * column's data type in the provided map.
-     *
-     * @param columnName The name of the column.
-     * @param columnNameToDataTypeMap A map that contains column names as keys
-     *                                and their corresponding data types as values.
-     * @return The ClickHouse data type for the column, or null if the type is unknown.
-     */
-    public ClickHouseDataType getClickHouseDataType(String columnName,
-                                                    Map<String, String> columnNameToDataTypeMap) {
-
-        ClickHouseDataType chDataType = null;
-        try {
-            // Retrieve the column data type from the map
-            String columnDataType = columnNameToDataTypeMap.get(columnName);
-            // Create a ClickHouse column object based on the column name and type
-            ClickHouseColumn column = ClickHouseColumn.of(columnName, columnDataType);
-
-            // Retrieve the data type from the ClickHouse column if available
-            if (column != null) {
-                chDataType = column.getDataType();
-            }
-        } catch (Exception e) {
-            // Log any error related to unknown data types
-            log.debug("Unknown data type for column: " + columnName, e);
-        }
-
-        return chDataType;
     }
 }

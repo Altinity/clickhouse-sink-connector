@@ -53,7 +53,7 @@ public class BinLogHistory {
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
-    public static final String OPERATION_COLUMN_DATA_TYPE = "String";
+    public static final String OPERATION_COLUMN_DATA_TYPE = "LowCardinality(String)";
     public static final String VERSION_COLUMN = "_version";
     public static final String VERSION_COLUMN_DATA_TYPE = "UInt64";
     public static final String HOST_COLUMN = "host";
@@ -190,6 +190,13 @@ public class BinLogHistory {
      */
     public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, 
     List<ClickHouseStruct> clickHouseStructs, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        // if serverTimeZone is empty, default to UTC.
+        if(serverTimeZone == null || serverTimeZone.isEmpty()) {
+            serverTimeZone = "UTC";
+        }
+        if(sourceTimeZone == null || sourceTimeZone.isEmpty()) {
+            sourceTimeZone = "UTC";
+        }
         try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
             for (ClickHouseStruct struct : clickHouseStructs) {
                 int paramIndex = 1;

@@ -29,9 +29,9 @@ public class DBMetadata {
 
     /**
      * The maximum number of retry attempts for database operations.
-     * Defaults to 2 retries.
+     * Defaults to 10 retries. Can be configured via errors.max.retries.
      */
-    static int MAX_RETRIES = 2;
+    static int MAX_RETRIES = 10;
 
     /**
      * Configuration for the ClickHouse sink connector.

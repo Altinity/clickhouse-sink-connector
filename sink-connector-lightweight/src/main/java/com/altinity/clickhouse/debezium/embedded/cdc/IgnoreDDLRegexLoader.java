@@ -13,7 +13,8 @@ public class IgnoreDDLRegexLoader {
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+TRUNCATE\\s+PARTITION\\s+\\S+",
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+ANALYZE\\s+PARTITION\\s+\\S+",
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+CHECK\\s+PARTITION\\s+\\S+",
-        "(?i)ALTER\\s+TABLE\\s+\\S+\\s+OPTIMIZE\\s+PARTITION\\s+\\S+"
+        "(?i)ALTER\\s+TABLE\\s+\\S+\\s+OPTIMIZE\\s+PARTITION\\s+\\S+",
+        "(?i)^\\s*ALTER\\s+TABLE\\s+\\S+\\s+AUTO_INCREMENT\\s*=\\s*\\d+\\s*$"
     );
 
     public static List<String> loadRegexPatterns() {

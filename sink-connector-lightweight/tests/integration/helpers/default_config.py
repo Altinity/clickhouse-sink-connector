@@ -33,7 +33,7 @@ default_config = {
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8198""",
-    "offset.storage.jdbc.table.delete": "delete from %s where 1=1",
+    "offset.storage.jdbc.table.delete": "select * from %s",
     "schema.history.internal": "io.debezium.storage.jdbc.history.JdbcSchemaHistory",
     "schema.history.internal.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "schema.history.internal.jdbc.user": "root",

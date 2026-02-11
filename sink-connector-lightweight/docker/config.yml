@@ -29,7 +29,7 @@ database.server.name: "ER54"
 
 # database.include.list An optional list of regular expressions that match database names to be monitored;
 # any database name not included in the whitelist will be excluded from monitoring. By default all databases will be monitored.
-database.include.list: sbtest
+database.include.list: test
 
 # table.include.list An optional list of regular expressions that match fully-qualified table identifiers for tables to be monitored;
 #table.include.list: ""
@@ -91,7 +91,7 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192"
 # offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
-offset.storage.jdbc.table.delete: "delete from %s where 1=1"
+offset.storage.jdbc.table.delete: "select * from %s"
 
 offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
 
@@ -203,5 +203,10 @@ database.ssl.mode: "disabled"
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"
 
+# Enable replication mergetree history table.
+replication.history.enable: "true"
+replication.history.table.name: "replication_history"
+replication.history.database.name: "replication_history_db"
+
 # Single threaded mode.
-single.threaded: "true"
+#single.threaded: "true"

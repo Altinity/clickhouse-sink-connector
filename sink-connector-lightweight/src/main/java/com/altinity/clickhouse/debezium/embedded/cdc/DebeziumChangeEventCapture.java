@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
@@ -20,6 +21,7 @@ import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -65,9 +67,21 @@ public class DebeziumChangeEventCapture {
 
     /**
      * Queue to hold records grouped by topic.
-     * Records grouped by Topic Name
+     * Records grouped by Topic Name (used in legacy mode)
      */
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
+
+    /**
+     * Queue to hold routed batches with thread assignment.
+     * Used for hash-based routing to ensure all records for the same table
+     * are processed by the same thread.
+     */
+    private LinkedBlockingQueue<RoutedBatch> routedRecords;
+
+    /**
+     * Number of threads in the thread pool (for hash-based routing).
+     */
+    private int threadPoolSize;
 
     /**
      * Flag indicating if a new replacing merge tree engine is used.
@@ -126,9 +140,10 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Maximum number of retries for Debezium setup.
+     * Maximum number of retries for Debezium setup and other operations.
+     * Default value, can be overridden by errors.max.retries configuration.
      */
-    public static int MAX_RETRIES = 25;
+    public static int MAX_RETRIES = 10;
 
     /**
      * Sleep time (in milliseconds) between retries.
@@ -326,6 +341,7 @@ public class DebeziumChangeEventCapture {
             if (props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
                 Integer maxRetries = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()));
                 DBMetadata.setMaxRetries(maxRetries);
+                MAX_RETRIES = maxRetries;  // Update the static MAX_RETRIES for Debezium setup and DDL operations
             }
         } catch (Exception e) {
             log.error("Error retrieving max retries", e);
@@ -427,6 +443,10 @@ public class DebeziumChangeEventCapture {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
 
+        // if serverTimezone is empty default to UTC.
+//        if(serverTimeZone.isEmpty()) {
+//            serverTimeZone = "UTC";
+//        }
         // If replication histry is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
@@ -445,9 +465,8 @@ public class DebeziumChangeEventCapture {
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-        // Add max retries of 10
-        // Add sleep time of 10 seconds
-        int MAX_DDL_RETRIES = 10;
+        // Use the configured MAX_RETRIES value for DDL operations
+        int MAX_DDL_RETRIES = MAX_RETRIES;
         int SLEEP_TIME = 10000;
         int numRetries = 0;
 
@@ -463,6 +482,17 @@ public class DebeziumChangeEventCapture {
             try {
 
                 executeDDL(clickHouseQuery.toString(), writer, config);
+
+                // Invalidate cached DbWriter for this table so that subsequent inserts
+                // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
+                try {
+                    String tableName = getTableName(sr);
+                    if (tableName != null) {
+                        CacheInvalidationManager.getInstance().invalidateTable(databaseName + "." + tableName);
+                    }
+                } catch (Exception e) {
+                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                }
 
                 try {
                     // if replication history is enabled, add to the binlog history table.
@@ -565,6 +595,27 @@ public class DebeziumChangeEventCapture {
             }
         }
         return "system";
+    }
+
+    /**
+     * Function to get the table name from the SourceRecord.
+     *
+     * @param sr The source record.
+     * @return The table name, or null if not found.
+     */
+    private String getTableName(SourceRecord sr) {
+        if (sr != null && sr.key() instanceof Struct) {
+            try {
+                String tableName = (String) ((Struct) sr.key()).get("tableName");
+                if (tableName != null && !tableName.isEmpty()) {
+                    return tableName;
+                }
+            } catch (Exception e) {
+                // tableName field may not exist in the struct
+                log.debug("tableName field not found in source record key");
+            }
+        }
+        return null;
     }
 
     /**
@@ -815,7 +866,7 @@ public class DebeziumChangeEventCapture {
         return snapshotDDL;
     }
 
-    boolean checkDDLAgainstRegexPatterns(String DDL) {
+    public boolean checkDDLAgainstRegexPatterns(String DDL) {
         IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
         List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
         for (String regex : ignoreDDLRegexList) {
@@ -888,12 +939,34 @@ public class DebeziumChangeEventCapture {
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             log.info("********* Running in Single Threaded mode *********");
             singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap<>());
+            return;
         }
+        
         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-        for (int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
-            this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
-                    0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        this.threadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+        this.executor = new ClickHouseBatchExecutor(this.threadPoolSize, namedThreadFactory);
+        
+        // Use hash-based routing if we have multiple threads
+        if (this.threadPoolSize > 1) {
+            log.info("********* Using hash-based routing with {} threads *********", this.threadPoolSize);
+            int maxQueueSize = config.getInt(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
+            for (int i = 0; i < this.threadPoolSize; i++) {
+                this.executor.scheduleAtFixedRate(
+                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
+                        TimeUnit.MILLISECONDS);
+            }
+        } else {
+            // Single thread - use legacy mode
+            log.info("********* Using legacy mode with single thread *********");
+            for (int i = 0; i < this.threadPoolSize; i++) {
+                this.executor.scheduleAtFixedRate(
+                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        0, 
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), 
+                        TimeUnit.MILLISECONDS);
+            }
         }
     }
 
@@ -907,7 +980,11 @@ public class DebeziumChangeEventCapture {
         // If config is set to single threaded.
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             singleThreadedWriter.persistRecords(convertedRecords);
+        } else if (this.threadPoolSize > 1 && this.routedRecords != null) {
+            // Hash-based routing mode: group records by table and route to specific threads
+            appendToRecordsWithHashRouting(convertedRecords);
         } else {
+            // Legacy mode: single queue
             synchronized (this.records) {
                 try {
                     int remainingCapacity = this.records.remainingCapacity();
@@ -923,6 +1000,55 @@ public class DebeziumChangeEventCapture {
                 }catch(Exception e){
                     log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
                 }
+            }
+        }
+    }
+
+    /**
+     * Appends records using hash-based routing.
+     * Groups records by table and assigns each group to a specific thread.
+     *
+     * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     */
+    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords) {
+        // Group records by routing key (database.table)
+        Map<String, List<ClickHouseStruct>> routingGroups = new HashMap<>();
+        
+        for (ClickHouseStruct record : convertedRecords) {
+            String routingKey = RoutedBatch.createRoutingKey(record.getTopic());
+            routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
+        }
+        
+        // Create a RoutedBatch for each group and add to queue
+        synchronized (this.routedRecords) {
+            try {
+                int remainingCapacity = this.routedRecords.remainingCapacity();
+                int currentSize = this.routedRecords.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Routed queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                }
+                if (remainingCapacity == 0) {
+                    log.warn("Routed queue is full! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                }
+                
+                for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
+                    String routingKey = entry.getKey();
+                    List<ClickHouseStruct> batch = entry.getValue();
+                    
+                    // Calculate which thread should process this table
+                    int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
+                    String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
+                    
+                    // Create routed batch and add to queue
+                    RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
+                    this.routedRecords.put(routedBatch);
+                    
+                    log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
+                }
+            } catch (Exception e) {
+                log.error("An unexpected error occurred while putting batch into routed records queue. Error: {}", e.getMessage(), e);
             }
         }
     }

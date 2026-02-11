@@ -20,7 +20,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
 public class ITCommon {
     // Docker image constants
     public static final String MYSQL_DOCKER_IMAGE = "docker.io/mysql:8.0.36";
-    public static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:latest";
+    public static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:24.8";
 
     static public Connection connectToMySQL(MySQLContainer mySqlContainer) {
         Connection conn = null;
@@ -200,10 +200,10 @@ public class ITCommon {
 
         Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
 
-        props.replace("snapshot.mode", "schema_only");
+        props.replace("snapshot.mode", "no_data");
         props.replace("disable.drop.truncate", "true");
         props.setProperty("disable.ddl", "true");
-        props.setProperty("replica.status.view", "CREATE VIEW IF NOT EXISTS %s.show_replica_status AS SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source,  toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time FROM %s settings final=1");
+        props.setProperty("replica.status.view", "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status (`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), `local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, `record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM (SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC");
         return props;
     }
 
