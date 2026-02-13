@@ -288,18 +288,15 @@ public class VersionHistoryInitialIT {
         
         Thread.sleep(15000);
         
-        // Validate DELETE: Should now have 3 rows showing full history (SCD2 delete = close row + delete marker):
+        // Validate DELETE: No delete marker. Expect 2 rows (original closed by UPDATE, George row closed by DELETE).
         //
-        // Expected history pattern (3 rows):
-        // | Row | emp_no | first_name | _valid_to     | is_deleted | _operation | Description                    |
-        // |-----|--------|------------|---------------|------------|------------|--------------------------------|
-        // | 1   | 10001  | Georgi     | UPDATE_TIME   | 0          | ...        | Original, closed by UPDATE     |
-        // | 2   | 10001  | George     | DELETE_TIME   | 0          | ...        | Updated row, closed by DELETE   |
-        // | 3   | 10001  | George     | 2100          | 1          | D          | Delete marker (open-end)       |
+        // Expected history pattern (2 rows):
+        // | Row | emp_no | first_name | _valid_to     | is_deleted | Description                    |
+        // |-----|--------|------------|---------------|------------|--------------------------------|
+        // | 1   | 10001  | Georgi     | UPDATE_TIME   | 0          | Original, closed by UPDATE     |
+        // | 2   | 10001  | George     | DELETE_TIME   | 0          | Updated row, closed by DELETE   |
         //
-        // Delete marker row must have _valid_to = open_end (2100), is_deleted = 1, _operation = 'D'.
-        
-        log.info("Validating DELETE operation - expecting 3 rows showing full history");
+        log.info("Validating DELETE operation - expecting 2 rows (no delete marker)");
         ResultSet historyRs = ITCommon.executeQueryWithResultSet(
             "SELECT emp_no, first_name, last_name, `_valid_from`, `_valid_to`, `is_deleted`, `_version`, `_operation` " +
             "FROM replication_history_db.employees final WHERE emp_no = 10001 ORDER BY `_version`",
@@ -308,10 +305,6 @@ public class VersionHistoryInitialIT {
         int historyRowCount = 0;
         int rowsWithOriginalName = 0;     // Rows with first_name = 'Georgi' (original state)
         int rowsWithUpdatedName = 0;      // Rows with first_name = 'George' (updated state)
-        int deletedRows = 0;              // Rows with is_deleted = 1
-        boolean hasDeleteOperation = false;
-        boolean deleteMarkerHasValidTo2100 = false;
-        boolean deleteMarkerHasOperationD = false;
         int closedByDeleteCount = 0;       // Rows closed by delete: is_deleted=0, _valid_to != 2100 (George row)
         
         log.info("=== Full History for emp_no 10001 after INSERT -> UPDATE -> DELETE ===");
@@ -329,7 +322,6 @@ public class VersionHistoryInitialIT {
             log.info("Row {}: emp_no={}, first_name='{}', last_name='{}', _valid_from={}, _valid_to={}, is_deleted={}, _version={}, _operation='{}'",
                 historyRowCount, empNo, firstName, lastName, validFrom, validTo, isDeleted, version, operation);
             
-            // Count records by state
             if ("Georgi".equals(firstName)) {
                 rowsWithOriginalName++;
                 log.info("  -> Has ORIGINAL first_name");
@@ -338,23 +330,9 @@ public class VersionHistoryInitialIT {
                 rowsWithUpdatedName++;
                 log.info("  -> Has UPDATED first_name");
             }
-            if (isDeleted == 1) {
-                deletedRows++;
-                log.info("  -> Is DELETED (is_deleted=1)");
-                if (validTo != null && validTo.startsWith("2100")) {
-                    deleteMarkerHasValidTo2100 = true;
-                }
-                if ("D".equals(operation)) {
-                    deleteMarkerHasOperationD = true;
-                }
-            }
             if (isDeleted == 0 && validTo != null && !validTo.startsWith("2100") && "George".equals(firstName)) {
                 closedByDeleteCount++;
                 log.info("  -> Closed by DELETE (is_deleted=0, _valid_to = delete timestamp)");
-            }
-            if ("D".equals(operation)) {
-                hasDeleteOperation = true;
-                log.info("  -> Has DELETE operation");
             }
         }
         
@@ -362,22 +340,15 @@ public class VersionHistoryInitialIT {
         log.info("Total rows: {}", historyRowCount);
         log.info("Rows with original name 'Georgi': {}", rowsWithOriginalName);
         log.info("Rows with updated name 'George': {}", rowsWithUpdatedName);
-        log.info("Deleted rows (is_deleted=1): {}", deletedRows);
         
-        // Validate we have 3 rows showing the full history
-        assertTrue(String.format("Should have 3 history rows for emp_no 10001 (original + updated + deleted marker), but found: %d", historyRowCount),
-            historyRowCount == 3);
+        // Validate we have 2 rows (no delete marker)
+        assertTrue(String.format("Should have 2 history rows for emp_no 10001 (original closed + closed by DELETE), but found: %d", historyRowCount),
+            historyRowCount == 2);
         
-        // Validate history shows both original and updated states
         assertTrue(String.format("Should have at least 1 row with original first_name 'Georgi', but found: %d", rowsWithOriginalName),
             rowsWithOriginalName >= 1);
         assertTrue(String.format("Should have at least 1 row with updated first_name 'George', but found: %d", rowsWithUpdatedName),
             rowsWithUpdatedName >= 1);
-        
-        // Validate delete marker: _valid_to = open_end (2100), is_deleted = 1, _operation = 'D'
-        assertTrue("Delete marker row should have _valid_to = 2100 (open-end)", deleteMarkerHasValidTo2100);
-        assertTrue("Delete marker row should have _operation = 'D'", deleteMarkerHasOperationD);
-        assertTrue("Should have exactly one deleted row (delete marker)", deletedRows == 1);
         
         // Validate closed row from delete: is_deleted = 0, _valid_to = delete timestamp
         assertTrue("Should have one row closed by DELETE (George with is_deleted=0, _valid_to != 2100)", closedByDeleteCount >= 1);
@@ -403,7 +374,7 @@ public class VersionHistoryInitialIT {
         }
         assertTrue("After DELETE, no active records should remain for emp_no 10001 (using FINAL)", !foundActiveAfterDelete);
         
-        log.info("Successfully validated 3-row history pattern for INSERT -> UPDATE -> DELETE operations");
+        log.info("Successfully validated 2-row history pattern for INSERT -> UPDATE -> DELETE operations (no delete marker)");
 
         conn.close();
         executorService.shutdown();
