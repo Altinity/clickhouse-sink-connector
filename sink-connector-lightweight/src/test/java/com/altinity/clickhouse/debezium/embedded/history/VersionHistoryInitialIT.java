@@ -288,17 +288,16 @@ public class VersionHistoryInitialIT {
         
         Thread.sleep(15000);
         
-        // Validate DELETE: Should now have 3 rows showing full history:
-        // 
+        // Validate DELETE: Should now have 3 rows showing full history (SCD2 delete = close row + delete marker):
+        //
         // Expected history pattern (3 rows):
-        // | Row | emp_no | first_name | _valid_to     | is_deleted | Description                    |
-        // |-----|--------|------------|---------------|------------|--------------------------------|
-        // | 1   | 10001  | Georgi     | UPDATE_TIME   | 0          | Original, closed by UPDATE     |
-        // | 2   | 10001  | George     | 2100          | 0          | Updated, active (before DELETE)|
-        // | 3   | 10001  | George     | DELETE_TIME   | 1          | Deleted marker                 |
-        // 
-        // Note: Row 2 and 3 have the same primary key but different _valid_to values,
-        // so they are kept as separate rows by ReplacingMergeTree ORDER BY (emp_no, _valid_to)
+        // | Row | emp_no | first_name | _valid_to     | is_deleted | _operation | Description                    |
+        // |-----|--------|------------|---------------|------------|------------|--------------------------------|
+        // | 1   | 10001  | Georgi     | UPDATE_TIME   | 0          | ...        | Original, closed by UPDATE     |
+        // | 2   | 10001  | George     | DELETE_TIME   | 0          | ...        | Updated row, closed by DELETE   |
+        // | 3   | 10001  | George     | 2100          | 1          | D          | Delete marker (open-end)       |
+        //
+        // Delete marker row must have _valid_to = open_end (2100), is_deleted = 1, _operation = 'D'.
         
         log.info("Validating DELETE operation - expecting 3 rows showing full history");
         ResultSet historyRs = ITCommon.executeQueryWithResultSet(
@@ -311,6 +310,9 @@ public class VersionHistoryInitialIT {
         int rowsWithUpdatedName = 0;      // Rows with first_name = 'George' (updated state)
         int deletedRows = 0;              // Rows with is_deleted = 1
         boolean hasDeleteOperation = false;
+        boolean deleteMarkerHasValidTo2100 = false;
+        boolean deleteMarkerHasOperationD = false;
+        int closedByDeleteCount = 0;       // Rows closed by delete: is_deleted=0, _valid_to != 2100 (George row)
         
         log.info("=== Full History for emp_no 10001 after INSERT -> UPDATE -> DELETE ===");
         while (historyRs.next()) {
@@ -339,6 +341,16 @@ public class VersionHistoryInitialIT {
             if (isDeleted == 1) {
                 deletedRows++;
                 log.info("  -> Is DELETED (is_deleted=1)");
+                if (validTo != null && validTo.startsWith("2100")) {
+                    deleteMarkerHasValidTo2100 = true;
+                }
+                if ("D".equals(operation)) {
+                    deleteMarkerHasOperationD = true;
+                }
+            }
+            if (isDeleted == 0 && validTo != null && !validTo.startsWith("2100") && "George".equals(firstName)) {
+                closedByDeleteCount++;
+                log.info("  -> Closed by DELETE (is_deleted=0, _valid_to = delete timestamp)");
             }
             if ("D".equals(operation)) {
                 hasDeleteOperation = true;
@@ -352,18 +364,23 @@ public class VersionHistoryInitialIT {
         log.info("Rows with updated name 'George': {}", rowsWithUpdatedName);
         log.info("Deleted rows (is_deleted=1): {}", deletedRows);
         
-        // Validate we have 3 rows showing the full history:
-        // Row 1: Original snapshot row (closed by UPDATE)
-        // Row 2: Updated row (still present with _valid_to = 2100)  
-        // Row 3: Deleted marker (inserted by DELETE with _valid_to = DELETE_TIME, is_deleted = 1)
+        // Validate we have 3 rows showing the full history
         assertTrue(String.format("Should have 3 history rows for emp_no 10001 (original + updated + deleted marker), but found: %d", historyRowCount),
-            historyRowCount == 2);
+            historyRowCount == 3);
         
         // Validate history shows both original and updated states
         assertTrue(String.format("Should have at least 1 row with original first_name 'Georgi', but found: %d", rowsWithOriginalName),
             rowsWithOriginalName >= 1);
         assertTrue(String.format("Should have at least 1 row with updated first_name 'George', but found: %d", rowsWithUpdatedName),
             rowsWithUpdatedName >= 1);
+        
+        // Validate delete marker: _valid_to = open_end (2100), is_deleted = 1, _operation = 'D'
+        assertTrue("Delete marker row should have _valid_to = 2100 (open-end)", deleteMarkerHasValidTo2100);
+        assertTrue("Delete marker row should have _operation = 'D'", deleteMarkerHasOperationD);
+        assertTrue("Should have exactly one deleted row (delete marker)", deletedRows == 1);
+        
+        // Validate closed row from delete: is_deleted = 0, _valid_to = delete timestamp
+        assertTrue("Should have one row closed by DELETE (George with is_deleted=0, _valid_to != 2100)", closedByDeleteCount >= 1);
 
 
         

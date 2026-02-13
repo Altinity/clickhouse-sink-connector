@@ -217,3 +217,134 @@ Query id: a7e9675f-9d45-4d51-9502-59437f025c95
 3 rows in set. Elapsed: 0.009 sec. 
 
 
+Troubleshoot query
+```
+select query from system.query_log where current_database='replication_history_db'
+```
+
+DELETE(simplified query)
+```
+INSERT INTO products(productCode, _valid_to, _version, is_deleted, _valid_from, productName, productLine, productScale, productVendor, productDescription, quantityInStock, buyPrice, MSRP, _operation) 
+SELECT 
+    productCode,
+    _valid_to,  -- Keep the same _valid_to value!
+    2021027056510304333 AS _version,  -- Higher version wins
+    0 AS is_deleted,
+    _valid_from,
+    productName,
+    productLine,
+    productScale,
+    productVendor,
+    productDescription,
+    quantityInStock,
+    buyPrice,
+    MSRP,
+    _operation
+FROM products FINAL
+WHERE productCode = 'S24_3969'
+  AND _valid_to = toDateTime('2099-12-31 18:00:00', 'America/Chicago')
+  AND is_deleted = 0;
+  ```
+
+  Full Query:
+  ```
+  INSERT INTO `products`(`productCode`, `productName`, `productLine`, `productScale`, `productVendor`, `productDescription`, `quantityInStock`, `buyPrice`, `MSRP`, `_valid_from`, `_valid_to`, `_operation`, `_version`, `is_deleted`)
+SELECT `productCode`,
+       `productName`,
+       `productLine`,
+       `productScale`,
+       `productVendor`,
+       `productDescription`,
+       `quantityInStock`,
+       `buyPrice`,
+       `MSRP`,
+       `_valid_from`,
+       toDateTime('2026-02-09 14:48:34', 'America/Chicago'),
+       `_operation`,
+       2020963054644101197 AS `_version`,
+       0 AS `is_deleted`
+FROM `products` FINAL
+WHERE `productCode`='S24_4258'
+  AND `_valid_to` >= toDateTime('2099-12-31 00:00:00', 'America/Chicago')
+  AND `is_deleted` = 0
+UNION ALL
+SELECT `productCode`,
+       `productName`,
+       `productLine`,
+       `productScale`,
+       `productVendor`,
+       `productDescription`,
+       `quantityInStock`,
+       `buyPrice`,
+       `MSRP`,
+       `_valid_from`,
+       `_valid_to`,
+       'D' AS `_operation`,
+       2020963054644101199 AS `_version`,
+       1 AS `is_deleted`
+FROM `products` FINAL
+WHERE `productCode`='S24_4258'
+  AND `_valid_to` >= toDateTime('2099-12-31 00:00:00', 'America/Chicago')
+  AND `is_deleted` = 0
+UNION ALL
+SELECT 'S24_4258' AS `productCode`,
+       '1936 Chrysler Airflow' AS `productName`,
+       'Vintage Cars' AS `productLine`,
+       '1:24' AS `productScale`,
+       'Second Gear Diecast' AS `productVendor`,
+       'Features opening trunk,  working steering system. Color dark green.' AS `productDescription`,
+       414 AS `quantityInStock`,
+       CAST(57.46, 'Decimal(10, 2)') AS `buyPrice`,
+       CAST(97.39, 'Decimal(10, 2)') AS `MSRP`,
+       toDateTime('2026-02-09 14:48:34', 'America/Chicago') AS `_valid_from`,
+       toDateTime('2026-02-09 14:48:34', 'America/Chicago') AS `_valid_to`,
+       'D' AS `_operation`,
+       2020963054644101198 AS `_version`,
+       0 AS `is_deleted`
+```
+
+ORDER BY (productCode, _valid_to)
+
+to
+
+_sequence UInt32
+ORDER BY (productCode, _valid_to, _sequence)
+
+1. Reset to zero every second based on binlog timestamp
+2. for current partition the sequence will be zero.
+3. 
+
+first select
+SELECT `productCode`,
+       `productName`,
+       `productLine`,
+       `productScale`,
+       `productVendor`,
+       `productDescription`,
+       `quantityInStock`,
+       `buyPrice`,
+       `MSRP`,
+       `_valid_from`,
+       toDateTime('2026-02-10 16:05:56', 'America/Chicago'),
+       `_operation`,
+       2021344911944581198 AS `_version`,
+       0 AS `is_deleted`,
+       <sequence_number> as _`sequence`
+
+
+Second select
+SELECT 'S24_1937' AS `productCode`,
+       '1939 Chevrolet Deluxe Coupe' AS `productName`,
+       'Vintage Cars' AS `productLine`,
+       '1:24' AS `productScale`,
+       'Motor City Art Classics' AS `productVendor`,
+       'This 1:24 scale die-cast replica of the 1939 Chevrolet Deluxe Coupe has the same classy look as the original. Features opening trunk, hood and doors and a showroom quality baked enamel finish.' AS `productDescription`,
+       7332 AS `quantityInStock`,
+       CAST(22.57, 'Decimal(10, 2)') AS `buyPrice`,
+       CAST(33.19, 'Decimal(10, 2)') AS `MSRP`,
+       toDateTime('2026-02-10 16:05:56', 'America/Chicago') AS `_valid_from`,
+       toDateTime('2026-02-10 16:05:56', 'America/Chicago') AS `_valid_to`,
+       'D' AS `_operation`,
+       2021344911944581199 AS `_version`,
+       0 AS `is_deleted`,
+       0 AS `sequence`

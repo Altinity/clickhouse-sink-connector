@@ -181,16 +181,16 @@ public class PreparedStatementExecutor {
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
                                 ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
-                                historyHandler.executeHistoryDelete(
-                                        conn,
-                                        tableName,
-                                        record,
-                                        columnToDataTypeMap,
-                                        fieldMapper,
-                                        entry.getKey().right,
-                                        config,
-                                        engine
-                                );
+                                historyHandler.executeHistoryUpdate(
+                                    conn,
+                                    tableName,
+                                    record,
+                                    columnToDataTypeMap,
+                                    fieldMapper,
+                                    entry.getKey().right,
+                                    config,
+                                    engine, true
+                            );
                                 updateRecord = true;
                         }
                         else {
@@ -219,7 +219,7 @@ public class PreparedStatementExecutor {
                                     fieldMapper,
                                     entry.getKey().right,
                                     config,
-                                    engine
+                                    engine, false
                             );
                             updateRecord = true;
                         } else {

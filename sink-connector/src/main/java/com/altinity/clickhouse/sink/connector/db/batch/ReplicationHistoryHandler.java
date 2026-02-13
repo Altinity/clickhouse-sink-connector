@@ -5,7 +5,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
-import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
@@ -14,13 +13,13 @@ import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Struct;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.ZoneId;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -96,7 +95,14 @@ public class ReplicationHistoryHandler {
 
         // Get the primary key column name and its value from the record
         String primaryKeyColumnName = record.getPrimaryKey().get(0);
-        Object primaryKeyValue = record.getAfterStruct().get(primaryKeyColumnName);
+
+        Object primaryKeyValue = null;
+        Struct afterStruct = record.getAfterStruct();
+        if(afterStruct == null) {
+            primaryKeyValue = record.getBeforeStruct().get(primaryKeyColumnName);
+        } else {
+            primaryKeyValue = afterStruct.get(primaryKeyColumnName);
+        }
 
         return new UpdateQueryParams(
                 validToMax,
@@ -125,7 +131,6 @@ public class ReplicationHistoryHandler {
 
         return queryFormatter.getInsertQueryForUpdate(
                 tableName,
-                fields,
                 columnToDataTypeMap,
                 params.getPrimaryKeyColumnName(),
                 params.getPrimaryKeyValue(),
@@ -133,6 +138,32 @@ public class ReplicationHistoryHandler {
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
                 params.getCdcOperation(),
+                serverTimeZone.getId()
+        );
+    }
+
+    /**
+     * Generates the 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
+     * No parameter binding is needed; both SELECTs read from the table.
+     *
+     * @param tableName The target table name
+     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
+     * @param params The query parameters
+     * @return A pair containing the query string and empty column-to-index map
+     */
+    public MutablePair<String, Map<String, Integer>> generateDeleteQuery(
+            String tableName,
+            Map<String, String> columnToDataTypeMap,
+            UpdateQueryParams params) {
+
+        return queryFormatter.getInsertQueryForDelete(
+                tableName,
+                columnToDataTypeMap,
+                params.getPrimaryKeyColumnName(),
+                params.getPrimaryKeyValue(),
+                params.getValidToMax(),
+                params.getBinlogRecordTimestamp(),
+                params.getVersion(),
                 serverTimeZone.getId()
         );
     }
@@ -160,191 +191,79 @@ public class ReplicationHistoryHandler {
             PreparedStatementFieldMapper fieldMapper,
             Map<String, Integer> columnIndexMap,
             ClickHouseSinkConnectorConfig config,
-            DBMetadata.TABLE_ENGINE engine ) throws Exception {
+            DBMetadata.TABLE_ENGINE engine, boolean isDelete ) throws Exception {
 
         // Build query parameters from the record
         UpdateQueryParams params = buildUpdateQueryParams(record);
 
-        // Generate the UNION ALL query
-        MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
-                tableName,
-                record.getAfterModifiedFields(),
-                columnToDataTypeMap,
-                params
-        );
+        final String insertQuery;
+        final Map<String, Integer> queryColumnIndexMap;
 
-        String insertQuery = queryResult.left;
-        Map<String, Integer> queryColumnIndexMap = queryResult.right;
-
-        log.debug("Executing replication history update query: {}", insertQuery);
-
-        try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
-            // Populate the prepared statement with after values (second SELECT only)
-            // The third SELECT now reads from the table, so no parameter binding needed for before-image
-            // queryColumnIndexMap only contains entries for the second SELECT data columns
-            // (metadata columns like _version, is_deleted, _operation are hardcoded in SQL)
-            
-            fieldMapper.insertPreparedStatement(
-                    queryColumnIndexMap,  // Only contains second SELECT data columns
-                    ps,
+        if (isDelete) {
+            MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
+                    tableName,
+                    record.getBeforeModifiedFields(),
+                    columnToDataTypeMap,
+                    params
+            );
+            insertQuery = queryResult.left;
+            queryColumnIndexMap = queryResult.right;
+        } else {
+            MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
+                    tableName,
                     record.getAfterModifiedFields(),
-                    record,
-                    record.getAfterStruct(),
-                    false,  // isBeforeSection = false for after image
-                    config,
                     columnToDataTypeMap,
-                    engine,
-                    tableName
+                    params
             );
-
-            // NOTE: Third SELECT reads from table - no parameter binding needed for before-image
-            // The query reads original values from table and overrides temporal columns in SQL
-
-            ps.addBatch();
-            int[] batchResult = ps.executeBatch();
-
-            log.debug("Replication history update executed successfully for table: {}", tableName);
-            return batchResult.length > 0;
+            insertQuery = queryResult.left;
+            queryColumnIndexMap = queryResult.right;
         }
-    }
 
-    /**
-     * Generates the INSERT query with UNION ALL for the replication history delete.
-     *
-     * @param tableName The target table name
-     * @param fields The list of fields to include in the query
-     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
-     * @param params The query parameters
-     * @return A pair containing the query string and the column-to-index map for PreparedStatement
-     */
-    public MutablePair<String, Map<String, Integer>> generateDeleteQuery(
-            String tableName,
-            List<Field> fields,
-            Map<String, String> columnToDataTypeMap,
-            UpdateQueryParams params) {
-
-        return queryFormatter.getInsertQueryForDelete(
-                tableName,
-                fields,
-                columnToDataTypeMap,
-                params.getPrimaryKeyColumnName(),
-                params.getPrimaryKeyValue(),
-                params.getValidToMax(),
-                params.getBinlogRecordTimestamp(),
-                params.getVersion(),
-                params.getCdcOperation(),
-                serverTimeZone.getId()
-        );
-    }
-
-    /**
-     * Executes the replication history delete for a single record.
-     * For DELETE, we close the existing record and mark it as deleted:
-     * - Set _valid_to to now() (close the record)
-     * - Set is_deleted = 1 (mark as deleted)
-     * This preserves history - all previous records remain visible.
-     *
-     * @param conn The database connection
-     * @param tableName The target table name
-     * @param record The CDC record to process
-     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
-     * @param fieldMapper The field mapper for populating the prepared statement
-     * @param columnIndexMap The column-to-index map for the main query
-     * @param config The connector configuration
-     * @param engine The table engine type
-     * @return true if the delete was executed successfully
-     * @throws Exception if an error occurs
-     */
-    public boolean executeHistoryDelete(
-            Connection conn,
-            String tableName,
-            ClickHouseStruct record,
-            Map<String, String> columnToDataTypeMap,
-            PreparedStatementFieldMapper fieldMapper,
-            Map<String, Integer> columnIndexMap,
-            ClickHouseSinkConnectorConfig config,
-            DBMetadata.TABLE_ENGINE engine) throws Exception {
-
-        // Build query parameters from the record (using before values for DELETE)
-        UpdateQueryParams params = buildDeleteQueryParams(record);
-
-        // Generate the DELETE query (UNION ALL with 3 SELECTs - same pattern as UPDATE)
-        MutablePair<String, Map<String, Integer>> queryResult = generateDeleteQuery(
-                tableName,
-                record.getBeforeModifiedFields(),
-                columnToDataTypeMap,
-                params
-        );
-
-        String insertQuery = queryResult.left;
-        Map<String, Integer> queryColumnIndexMap = queryResult.right;
-
-        log.debug("Executing replication history delete query: {}", insertQuery);
+        log.debug("Executing replication history {} query: {}", isDelete ? "delete" : "update", insertQuery);
 
         try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
-            // Populate the prepared statement with second SELECT data columns only
-            // The third SELECT now reads from the table, so no parameter binding needed for before-image
-            // queryColumnIndexMap only contains entries for the second SELECT data columns
-            // (metadata columns like _version, is_deleted, _operation are hardcoded in SQL)
-            
-            // For DELETE, use before values as the data for the second SELECT
-            fieldMapper.insertPreparedStatement(
-                    queryColumnIndexMap,  // Only contains second SELECT data columns
-                    ps,
-                    record.getBeforeModifiedFields(),  // For DELETE, use before values
-                    record,
-                    record.getBeforeStruct(),          // Use before struct for DELETE
-                    false,  // isBeforeSection = false for after image
-                    config,
-                    columnToDataTypeMap,
-                    engine,
-                    tableName
-            );
-
-            // NOTE: Third SELECT reads from table - no parameter binding needed for before-image
-            // The query reads original values from table and overrides temporal columns in SQL
-            // is_deleted and _version are hardcoded in SQL, no manual override needed
+            if (!isDelete)
+            {
+                // Populate the prepared statement with after values (second SELECT only)
+                fieldMapper.insertPreparedStatement(
+                        queryColumnIndexMap,
+                        ps,
+                        record.getAfterModifiedFields(),
+                        record,
+                        record.getAfterStruct(),
+                        false,
+                        config,
+                        columnToDataTypeMap,
+                        engine,
+                        tableName
+                );
+            } else {
+                {
+                    // Populate the prepared statement with after values (second SELECT only)
+                    fieldMapper.insertPreparedStatement(
+                            queryColumnIndexMap,
+                            ps,
+                            record.getBeforeModifiedFields(),
+                            record,
+                            record.getBeforeStruct(),
+                            false,
+                            config,
+                            columnToDataTypeMap,
+                            engine,
+                            tableName
+                    );
+                }
+            }
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
 
-            log.debug("Replication history delete executed successfully for table: {}", tableName);
+            log.debug("Replication history {} executed successfully for table: {}", isDelete ? "delete" : "update", tableName);
             return batchResult.length > 0;
         }
     }
 
-    /**
-     * Generates the parameters needed for the replication history delete query.
-     *
-     * @param record The CDC record containing the change data
-     * @return UpdateQueryParams containing all parameters needed for the query
-     */
-    public UpdateQueryParams buildDeleteQueryParams(ClickHouseStruct record) {
-        // Convert epoch seconds to date strings
-        String validToMax = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
-                DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                sourceTimeZone, serverTimeZone);
 
-        String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(
-                record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                sourceTimeZone, serverTimeZone);
-
-        // Generate unique version using snowflake algorithm
-        long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
-
-        // Get the primary key column name and its value from the before record (for DELETE)
-        String primaryKeyColumnName = record.getPrimaryKey().get(0);
-        Object primaryKeyValue = record.getBeforeStruct().get(primaryKeyColumnName);
-
-        return new UpdateQueryParams(
-                validToMax,
-                binlogRecordTimestamp,
-                version,
-                primaryKeyColumnName,
-                primaryKeyValue,
-                record.getCdcOperation()
-        );
-    }
 
     /**
      * Container class for update query parameters.

@@ -71,7 +71,8 @@ public class VersionHistoryIT {
      * For UPDATE: 
      *   - Old record should be closed (is_deleted=1, _valid_to set to binlog timestamp)
      *   - New record should have open-ended _valid_to (max date)
-     * For DELETE: record should be marked as deleted (is_deleted=1, _valid_to set to binlog timestamp)
+     * For DELETE: (1) close current active row (_valid_to = delete timestamp, is_deleted=0),
+     * (2) insert delete marker row (_valid_from = delete timestamp, _valid_to = open_end, is_deleted=1, _operation='D')
      */
     @DisplayName("Test that validates _valid_to and _valid_from columns for INSERT, UPDATE, DELETE operations")
     @Test
@@ -276,48 +277,60 @@ public class VersionHistoryIT {
         }
         assertTrue("Should find active record with FINAL after UPDATE", foundActiveRecord);
         
-        // Step 3: Delete the record
-        log.info("Performing DELETE operation");
+        // Step 3: Delete the record (SCD2 delete: close current row + insert delete marker row)
+        log.info("Performing DELETE operation (SCD2: close row + delete marker with is_deleted=1, _operation='D')");
         conn.prepareStatement("delete from employees_temporal_test where emp_id = 1").execute();
         
         Thread.sleep(10000);
         
-        // Validate DELETE: The record should be marked as deleted with proper temporal columns
-        // For DELETE: is_deleted = 1, _valid_to should be set to binlog timestamp (not max date)
-        log.info("Validating DELETE operation - checking is_deleted, _valid_from, and _valid_to");
-        ResultSet deleteRs = ITCommon.executeQueryWithResultSet(
-            "SELECT emp_id, name, salary, `_valid_from`, `_valid_to`, `is_deleted`, `_version`, `_operation` FROM binlog_history.employees_temporal_test WHERE _operation='D' ORDER BY `_version` DESC LIMIT 1",
+        // Validate DELETE: After DELETE we expect 2 new rows from the delete:
+        // (a) Closed row: _valid_to = delete timestamp, is_deleted=0
+        // (b) Delete marker row: _valid_from = delete timestamp, _valid_to = 2100, is_deleted=1, _operation='D'
+        log.info("Validating DELETE operation - closed row + delete marker row, no active records remain");
+        
+        ResultSet allDeleteRs = ITCommon.executeQueryWithResultSet(
+            "SELECT emp_id, name, salary, `_valid_from`, `_valid_to`, `is_deleted`, `_version`, `_operation` FROM binlog_history.employees_temporal_test ORDER BY `_version`",
             writer.getConnection());
         
-        // Check if the deleted record is present
-        assertTrue("Deleted record should be present", deleteRs.next());
+        int totalRecordsAfterDelete = 0;
+        int closedRowsAfterDelete = 0;   // Rows with _valid_to != 2100, is_deleted=0 (closed by DELETE)
+        int deleteMarkerRows = 0;      // Rows with is_deleted=1, _operation='D', _valid_to=2100
+        String closedRowValidTo = null;
         
-        // Validate the DELETE record fields
-        int deleteEmpId = deleteRs.getInt("emp_id");
-        int deleteSalary = deleteRs.getInt("salary");
-        String deleteValidFrom = deleteRs.getString("_valid_from");
-        String deleteValidTo = deleteRs.getString("_valid_to");
-        int deleteIsDeleted = deleteRs.getInt("is_deleted");
-        long deleteVersion = deleteRs.getLong("_version");
-        String deleteOperation = deleteRs.getString("_operation");
+        while (allDeleteRs.next()) {
+            totalRecordsAfterDelete++;
+            String operation = allDeleteRs.getString("_operation");
+            String validFrom = allDeleteRs.getString("_valid_from");
+            String validTo = allDeleteRs.getString("_valid_to");
+            int isDeleted = allDeleteRs.getInt("is_deleted");
+            int salary = allDeleteRs.getInt("salary");
+            
+            log.info("After DELETE - Record {}: emp_id={}, salary={}, _valid_from={}, _valid_to={}, is_deleted={}, _operation={}", 
+                totalRecordsAfterDelete, allDeleteRs.getInt("emp_id"), salary, validFrom, validTo, isDeleted, operation);
+            
+            if (isDeleted == 0 && !validTo.startsWith("2100")) {
+                closedRowsAfterDelete++;
+                closedRowValidTo = validTo;
+                log.info("  -> Closed row (_valid_to = delete timestamp)");
+            } else if (isDeleted == 1 && "D".equals(operation) && validTo.startsWith("2100")) {
+                deleteMarkerRows++;
+                log.info("  -> Delete marker row (is_deleted=1, _operation='D', _valid_to=2100)");
+            }
+        }
         
-        log.info("DELETE record - emp_id={}, salary={}, _valid_from={}, _valid_to={}, is_deleted={}, _version={}, _operation={}",
-            deleteEmpId, deleteSalary, deleteValidFrom, deleteValidTo, deleteIsDeleted, deleteVersion, deleteOperation);
+        log.info("After DELETE - Total records: {}, Closed rows: {}, Delete marker rows: {}", 
+            totalRecordsAfterDelete, closedRowsAfterDelete, deleteMarkerRows);
         
-        // Validate is_deleted = 1 for the delete record
-        assertTrue(String.format("DELETE record should have is_deleted = 1, but found: %d", deleteIsDeleted), 
-            deleteIsDeleted == 1);
+        // At least one closed row and one delete marker row from the SCD2 delete
+        assertTrue("Should have at least 1 closed row after DELETE", closedRowsAfterDelete >= 1);
+        assertTrue("Should have at least 1 delete marker row (is_deleted=1, _operation='D')", deleteMarkerRows >= 1);
+        assertTrue("Closed row _valid_to should be set to delete timestamp", closedRowValidTo != null);
+        assertTrue("Closed row _valid_to should not be 2100 (should be binlog delete timestamp)", !closedRowValidTo.startsWith("2100"));
         
-        // Validate _operation = 'D'
-        assertTrue(String.format("DELETE record should have _operation = 'D', but found: %s", deleteOperation), 
-            "D".equals(deleteOperation));
-        
-        // Validate _valid_from is set
-        assertTrue("DELETE record should have _valid_from set", deleteValidFrom != null);
-        
-        // Validate _valid_to is set (could be binlog timestamp or max date depending on implementation)
-        assertTrue("DELETE record should have _valid_to set", deleteValidTo != null);
-        log.info("DELETE record _valid_to = {}", deleteValidTo);
+        // Force merge so the close row replaces the active record (ReplacingMergeTree merges are asynchronous)
+        log.info("Running OPTIMIZE TABLE to force merge");
+        writer.getConnection().createStatement().execute("OPTIMIZE TABLE binlog_history.employees_temporal_test FINAL");
+        Thread.sleep(2000);
         
         // Validate using FINAL that no active records remain after DELETE
         log.info("Validating that no active records remain after DELETE using FINAL");

@@ -1,7 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
-import com.altinity.clickhouse.sink.connector.db.batch.CdcOperation;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.data.ClickHouseUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -9,6 +8,8 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -214,6 +215,46 @@ public class QueryFormatter {
     }
 
     /**
+     * Formats a value as a SQL literal for use in static SELECT expressions (no parameters).
+     * Handles NULL, Decimal (CAST), string types (quoted/escaped), Date/DateTime, and other types.
+     *
+     * @param value    the value (may be null)
+     * @param dataType the ClickHouse data type
+     * @return SQL literal expression (e.g. "NULL", "'x'", "CAST(57.46, 'Decimal(10, 2)')", "toDateTime('2026-02-09 11:26:47', 'America/Chicago')")
+     */
+    private String formatLiteralForSql(Object value, String dataType) {
+        if (value == null) {
+            return "NULL";
+        }
+        if (dataType == null) {
+            return value.toString();
+        }
+        String upperDataType = dataType.toUpperCase();
+        if (upperDataType.contains("DECIMAL")) {
+            String numLiteral = value.toString().replace("'", "''");
+            return "CAST(" + numLiteral + ", '" + dataType + "')";
+        }
+        if (upperDataType.contains("DATETIME64") || upperDataType.contains("DATETIME")) {
+            String ts = value.toString().replace("'", "''");
+            return "toDateTime('" + ts + "')";
+        }
+        if (upperDataType.contains("DATE32") || upperDataType.contains("DATE")) {
+            if (value instanceof Number) {
+                int epochDays = ((Number) value).intValue();
+                String dateStr = LocalDate.ofEpochDay(epochDays).format(DateTimeFormatter.ISO_LOCAL_DATE);
+                return "toDate('" + dateStr + "')";
+            }
+            String d = value.toString().replace("'", "''");
+            return "toDate('" + d + "')";
+        }
+        if (upperDataType.contains("STRING") || upperDataType.contains("FIXEDSTRING")
+                || upperDataType.contains("ENUM") || upperDataType.contains("UUID")) {
+            return "'" + value.toString().replace("'", "''") + "'";
+        }
+        return value.toString();
+    }
+
+    /**
      * Creates column data structures for generating INSERT queries.
      *
      * @param tableName               the name of the table (used for error logging).
@@ -326,8 +367,102 @@ public class QueryFormatter {
         return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
     }
 
-    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName, List<Field> fields,
+    /**
+     * Builds a 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
+     * 1. First SELECT: Close the current active row (_valid_to = delete_timestamp, is_deleted = 0).
+     * 2. Second SELECT: Insert delete marker row (_valid_from = delete_timestamp, _valid_to = open_end,
+     *    is_deleted = 1, _operation = 'D').
+     * Both SELECTs read from the table; no parameter binding is needed.
+     *
+     * @return query and empty column index map (no parameter binding)
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForDelete(String tableName,
                                           Map<String, String> columnNameToDataTypeMap,
+                                          String primaryKeyColumnName,
+                                          Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          String serverTimeZone) {
+        StringBuilder colNamesDelimited = new StringBuilder();
+        StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
+        Map<String, Integer> colNameToIndexMap = new HashMap<>();
+
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = "`" + entry.getKey() + "`";
+            colNamesDelimited.append(columnName).append(",");
+        }
+
+        // First SELECT: Close the current active row
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String selectExpr;
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                selectExpr = "0";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                selectExpr = String.format("%d as `%s`", version, columnName);
+            } else {
+                selectExpr = "`" + columnName + "`";
+            }
+            colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
+        }
+
+        // Second SELECT: Insert delete marker row
+        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+            String columnName = entry.getKey();
+            String selectExpr;
+            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", validToMax, serverTimeZone, columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+                selectExpr = String.format("'D' as `%s`", columnName);
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                selectExpr = "1";
+            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                selectExpr = String.format("%d as `%s`", version + 1, columnName);
+            } else {
+                selectExpr = "`" + columnName + "`";
+            }
+            colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
+        }
+
+        removeTrailingComma(colNamesDelimited);
+        removeTrailingComma(colNamesDelimitedForFirstSelect);
+        removeTrailingComma(colNamesDelimitedForSecondSelect);
+
+        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
+        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+        String tableWithBackTicks = "`" + tableName + "`";
+        String isDeletedCondition = columnNameToDataTypeMap.containsKey(
+                ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
+
+        String whereClause = String.format("WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
+                primaryKeyColumnName, formattedPrimaryKeyValue, validToMax, serverTimeZone, isDeletedCondition);
+
+        String query = String.format(
+            "INSERT INTO %s(%s) SELECT %s FROM %s FINAL %s UNION ALL SELECT %s FROM %s FINAL %s",
+            tableWithBackTicks,
+            colNamesDelimited,
+            colNamesDelimitedForFirstSelect,
+            tableWithBackTicks,
+            whereClause,
+            colNamesDelimitedForSecondSelect,
+            tableWithBackTicks,
+            whereClause
+        );
+
+        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
+        response.left = query;
+        response.right = colNameToIndexMap;
+        return response;
+    }
+
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName,
+                                                                             Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
                                           String validToMax,
@@ -482,152 +617,6 @@ public class QueryFormatter {
             validToMax,
             serverTimeZone,
             isDeletedCondition
-        );
-
-        MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
-        response.left = query;
-        response.right = colNameToIndexMap;
-        return response;
-    }
-
-    /**
-     * Generates an INSERT query for DELETE operations.
-     * For DELETE, we close the existing record and mark it as deleted:
-     * - Set _valid_to to now() (close the record)
-     * - Set is_deleted = 1 (mark as deleted)
-     * This preserves history - all previous records remain visible.
-     *
-     * @param tableName               the name of the ClickHouse table
-     * @param fields                  the list of fields from the source schema
-     * @param columnNameToDataTypeMap a map of column names to their data types
-     * @param primaryKeyColumnName    the name of the primary key column
-     * @param primaryKeyValue         the value of the primary key
-     * @param validToMax              the max valid_to date string
-     * @param binlogRecordTimestamp   the binlog record timestamp
-     * @param version                 the version number
-     * @param cdcOperation            the CDC operation type
-     * @param serverTimeZone          the server timezone
-     * @return a MutablePair containing the query string and an empty column-to-index map
-     */
-    public MutablePair<String, Map<String, Integer>> getInsertQueryForDelete(String tableName, List<Field> fields,
-                                          Map<String, String> columnNameToDataTypeMap,
-                                          String primaryKeyColumnName,
-                                          Object primaryKeyValue,
-                                          String validToMax,
-                                          String binlogRecordTimestamp,
-                                          long version,
-                                          ClickHouseConverter.CDC_OPERATION cdcOperation,
-                                          String serverTimeZone) {
-
-        StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
-        StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
-        
-        // Map to track which columns need parameter binding
-        Map<String, Integer> colNameToIndexMap = new HashMap<>();
-        int parameterIndex = 1;
-
-        // Loop over each column to build column list
-        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            String columnName = "`" + entry.getKey() + "`";
-            colNamesDelimited.append(columnName).append(",");
-        }
-
-        // First SELECT: D history row (reads from table, sets _operation='D', _valid_to=binlog timestamp)
-        // This becomes the DELETE audit record with is_deleted=0, showing the last active period
-        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            String columnName = entry.getKey();
-            String selectExpr;
-            
-            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                // CLOSE the record by setting _valid_to to binlog timestamp (not now())
-                // Using binlog timestamp ensures consistency with source database timing
-                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                // Keep is_deleted = 0 (this is historical D record, not a tombstone)
-                selectExpr = String.format("0 as `%s`", columnName);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                // Use version+1 to ensure this is newer than the active record
-                selectExpr = String.format("%d as `%s`", version + 1, columnName);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
-                // Set operation to 'D' to mark this as a delete audit record
-                selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
-            } else {
-                // Keep original value from existing row (including _valid_from, data columns)
-                selectExpr = "`" + columnName + "`";
-            }
-            colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
-        }
-
-        // Second SELECT: Insert tombstone record (the "current" deleted state)
-        // This record has _valid_to = max date so it becomes the current state with is_deleted = 1
-        // Metadata columns are HARDCODED to ensure correct values
-        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            String columnName = entry.getKey();
-            String dataType = entry.getValue();
-            String selectExpr;
-
-            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                // Tombstone starts at deletion time
-                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
-                colNameToIndexMap.put(columnName, parameterIndex++);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                // Tombstone has _valid_to = MAX DATE so it's the "current" state
-                // This ensures it has a DIFFERENT ORDER BY key than the D history record (First SELECT)
-                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", validToMax, serverTimeZone, columnName);
-                // NO parameter binding - hardcoded to max date
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                // HARDCODE version+1 to ensure correct version
-                selectExpr = String.format("%d as `%s`", version + 1, columnName);
-                // NO parameter binding - hardcoded in SQL
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                // HARDCODE is_deleted = 1 for tombstone
-                selectExpr = String.format("1 as `%s`", columnName);
-                // NO parameter binding - hardcoded in SQL
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
-                // HARDCODE operation type to 'D' for delete
-                selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
-                // NO parameter binding - hardcoded in SQL
-            } else {
-                // Data columns use parameter binding (with CAST for DECIMAL types)
-                selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
-                colNameToIndexMap.put(columnName, parameterIndex++);
-            }
-            colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
-        }
-
-        removeTrailingComma(colNamesDelimited);
-        removeTrailingComma(colNamesDelimitedForFirstSelect);
-        removeTrailingComma(colNamesDelimitedForSecondSelect);
-
-        // Get the primary key data type and format the value appropriately
-        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
-        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
-
-        String tableWithBackTicks = "`" + tableName + "`";
-        
-        // Build is_deleted condition only if the column exists in the table
-        String isDeletedCondition = columnNameToDataTypeMap.containsKey(
-                ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
-
-        // Build the query with two SELECTs:
-        // 1. D history record (from table with WHERE) - marks the deletion with is_deleted=0
-        // 2. Tombstone record (NO FROM clause - uses parameter binding) - deletes active record
-        String query = String.format(
-            "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
-            "UNION ALL " +
-            "SELECT %s",  // NO FROM clause for second SELECT - uses parameters
-            tableWithBackTicks, 
-            colNamesDelimited, 
-            colNamesDelimitedForFirstSelect, 
-            tableWithBackTicks, 
-            primaryKeyColumnName, 
-            formattedPrimaryKeyValue, 
-            validToMax,
-            serverTimeZone,
-            isDeletedCondition,
-            colNamesDelimitedForSecondSelect
         );
 
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
