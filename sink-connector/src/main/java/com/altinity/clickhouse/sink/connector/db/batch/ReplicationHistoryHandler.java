@@ -200,12 +200,8 @@ public class ReplicationHistoryHandler {
         final Map<String, Integer> queryColumnIndexMap;
 
         if (isDelete) {
-            MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
-                    tableName,
-                    record.getBeforeModifiedFields(),
-                    columnToDataTypeMap,
-                    params
-            );
+            MutablePair<String, Map<String, Integer>> queryResult = generateDeleteQuery(tableName, columnToDataTypeMap, params);
+
             insertQuery = queryResult.left;
             queryColumnIndexMap = queryResult.right;
         } else {
@@ -237,22 +233,6 @@ public class ReplicationHistoryHandler {
                         engine,
                         tableName
                 );
-            } else {
-                {
-                    // Populate the prepared statement with after values (second SELECT only)
-                    fieldMapper.insertPreparedStatement(
-                            queryColumnIndexMap,
-                            ps,
-                            record.getBeforeModifiedFields(),
-                            record,
-                            record.getBeforeStruct(),
-                            false,
-                            config,
-                            columnToDataTypeMap,
-                            engine,
-                            tableName
-                    );
-                }
             }
 
             ps.addBatch();

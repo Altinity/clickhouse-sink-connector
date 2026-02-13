@@ -394,36 +394,36 @@ public class QueryFormatter {
             colNamesDelimited.append(columnName).append(",");
         }
 
-        // First SELECT: Close the current active row
+        // First SELECT: Close the current active row (no AS aliases; column names from INSERT list)
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
             String selectExpr;
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = "0";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                selectExpr = String.format("%d as `%s`", version, columnName);
+                selectExpr = String.format("%d", version);
             } else {
                 selectExpr = "`" + columnName + "`";
             }
             colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
         }
 
-        // Second SELECT: Insert delete marker row
+        // Second SELECT: Insert delete marker row (no AS aliases; column names from INSERT list)
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
             String selectExpr;
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", validToMax, serverTimeZone, columnName);
+                selectExpr = String.format("toDateTime('%s', '%s')", validToMax, serverTimeZone);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
-                selectExpr = String.format("'D' as `%s`", columnName);
+                selectExpr = "'D'";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = "1";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                selectExpr = String.format("%d as `%s`", version + 1, columnName);
+                selectExpr = String.format("%d", version + 1);
             } else {
                 selectExpr = "`" + columnName + "`";
             }

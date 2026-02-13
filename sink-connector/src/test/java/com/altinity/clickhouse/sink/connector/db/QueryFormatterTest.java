@@ -320,21 +320,19 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain is_deleted condition",
                 query.contains("`is_deleted` = 0"));
 
-        // First SELECT: close row - is_deleted = 0 (unaliased literal), _valid_to = binlog timestamp
+        // First SELECT: close row - unaliased 0 for is_deleted, _valid_to = binlog timestamp (expression only)
         Assert.assertTrue("First SELECT should have unaliased 0 for is_deleted",
                 query.contains(", 0"));
-        Assert.assertTrue("First SELECT should set _valid_to to binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_to`"));
+        Assert.assertTrue("First SELECT should set _valid_to to binlog timestamp (expression only, no AS)",
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
 
-        // Second SELECT: delete marker - is_deleted = 1 (unaliased literal), _operation = 'D', _valid_from/_valid_to
+        // Second SELECT: delete marker - unaliased 1, 'D', _valid_from/_valid_to as expressions only
         Assert.assertTrue("Second SELECT should have unaliased 1 for is_deleted",
                 query.contains(", 1"));
-        Assert.assertTrue("Second SELECT should have 'D' as _operation",
-                query.contains("'D' as `_operation`"));
-        Assert.assertTrue("Second SELECT should set _valid_from to binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_from`"));
-        Assert.assertTrue("Second SELECT should set _valid_to to open_end",
-                query.contains("toDateTime('2100-01-01 00:00:00', 'UTC') as `_valid_to`"));
+        Assert.assertTrue("Second SELECT should have 'D' for _operation (no AS)",
+                query.contains("'D'"));
+        Assert.assertTrue("Second SELECT should set _valid_to to open_end (expression only)",
+                query.contains("toDateTime('2100-01-01 00:00:00', 'UTC')"));
 
         Assert.assertTrue("Column index map should be empty (no parameter binding)",
                 columnIndexMap.isEmpty());
