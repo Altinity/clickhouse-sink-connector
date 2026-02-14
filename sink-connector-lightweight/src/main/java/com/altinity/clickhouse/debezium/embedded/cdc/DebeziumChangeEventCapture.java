@@ -22,6 +22,7 @@ import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -36,6 +37,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import javax.xml.transform.Source;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -155,6 +157,21 @@ public class DebeziumChangeEventCapture {
      */
     public int numRetries = 0;
 
+    /**
+     * Starting sequence number for versioning.
+     */
+    public static final long SEQUENCE_START = 1000000000;
+
+    /**
+    * Initial starting sequence number.
+    */
+    public static final long SEQUENCE_START_INITIAL = 500000000;
+    
+    /**
+         * Global sequence number.
+    */
+    public static long sequenceNumber = SEQUENCE_START;
+
 
     /**
      * Sets up the Debezium event capture engine using the provided properties,
@@ -204,21 +221,40 @@ public class DebeziumChangeEventCapture {
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter)
                         throws InterruptedException {
-                    List<ClickHouseStruct> batch = new ArrayList<ClickHouseStruct>();
+
+                    if(list.isEmpty()) {
+                        return;
+                    }
+
+                    ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
+                    long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
+                    long sequenceStartTime = debeziumTsMs ;
+                    
+                    List<ClickHouseStruct> batch = new ArrayList<>();
                     for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
                         boolean lastRecordInBatch = false;
                         if (i == list.size() - 1) {
                             lastRecordInBatch = true;
                         }
+                        long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
+                        int diff = (int) ((recordTs - sequenceStartTime) / 1000);
+                        if (diff > 1) {
+                            sequenceNumber = SEQUENCE_START;
+                            sequenceStartTime = recordTs;
+                        } else
+                            sequenceNumber++;
+
+                        long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+
                         ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
-                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch);
+                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
                         if (chStruct != null) {
                             batch.add(chStruct);
                         }
                     }
                     // Add sequence number.
-                    addVersion(batch);
+                    //addVersion(batch);
 
                     if (batch.size() > 0) {
                         appendToRecords(batch, config);
@@ -774,7 +810,8 @@ public class DebeziumChangeEventCapture {
                                                       DebeziumRecordParserService debeziumRecordParserService,
                                                       ClickHouseSinkConnectorConfig config,
                                                       DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
-                                                      boolean lastRecordInBatch) {
+                                                      boolean lastRecordInBatch,
+                                                      long sequenceNumber) {
         ClickHouseStruct chStruct = null;
 
         try {
@@ -805,17 +842,17 @@ public class DebeziumChangeEventCapture {
                     log.info("***** DDL received, Flush all existing records");
                     this.executor.pause();
 
-//                    chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                     Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
                     ClickHouseStruct ddlStruct = new ClickHouseStruct();
                     ddlStruct.setAdditionalMetaData(sourceObjStruct);
-
+                    ddlStruct.setSequenceNumber(sequenceNumber);
                     performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
                     this.executor.resume();
                 }
             } else {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                chStruct.setSequenceNumber(sequenceNumber);
                 try {
                     if (chStruct != null) {
                         ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
@@ -1055,20 +1092,7 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    /**
-     * Starting sequence number for versioning.
-     */
-    public static final long SEQUENCE_START = 1000000000;
 
-    /**
-     * Initial starting sequence number.
-     */
-    public static final long SEQUENCE_START_INITIAL = 500000000;
-
-    /**
-     * Global sequence number.
-     */
-    public static long sequenceNumber = SEQUENCE_START;
 
     /**
      * Adds a version (sequence number) to every record.

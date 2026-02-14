@@ -185,7 +185,30 @@ public class DebeziumConverter {
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
         }
 
+        public static String convertWithoutTimeZoneAdjustmentNanos(long epochNanoseconds,
+                                                                   ClickHouseDataType clickHouseDataType,  ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
+                // DateTime64 supports up to nanosecond precision
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            }
+            Instant instant = Instant.ofEpochSecond(
+                    epochNanoseconds / 1_000_000_000,
+                    epochNanoseconds % 1_000_000_000);
+
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(instant, clickHouseDataType, rangeExceeded);
+            if (rangeExceeded[0]) {
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
+            }
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
+        }
     }
+
+
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
         rangeExceeded[0] = false;
 

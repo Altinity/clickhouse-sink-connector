@@ -525,6 +525,24 @@ public class ClickHouseStruct {
                 .toString();
     }
 
+
+    /**
+     * Gets the Debezium timestamp from the change event.   
+     * @param changeEvent The change event.
+     * @return The Debezium timestamp, or 0 if the change event is null or the value is null.
+     */
+    public static Long getDebeziumTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return 0L;
+        }
+        SourceRecord srd = changeEvent.value();
+        Struct kafkaStruct = (Struct) srd.value();
+        if(kafkaStruct == null) {
+            return 0L;
+        }
+        return (Long) kafkaStruct.get(SinkRecordColumns.TS_MS);
+    }
+
     /**
      * Converts a Kafka Connect Struct to a Map for JSON serialization.
      *

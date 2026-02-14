@@ -209,15 +209,8 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-
-                        Instant now = Instant.now();
-                       // long currentNano = now.getNano();
-                       String convertedDateTime64Time  = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustmentNanos(
-                        now.getEpochSecond(),
-                        now.getNano(),
-                         ClickHouseDataType.DateTime64,
-                            ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
-                            log.debug("convertedDateTime64Time: {}", convertedDateTime64Time);
+                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustmentNanos(struct.getSequenceNumber(), 
+                        ClickHouseDataType.DateTime64,  ZoneId.of(serverTimeZone));
                             ps.setString(paramIndex++, convertedDateTime64Time);
                     } 
                     else {
