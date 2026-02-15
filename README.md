@@ -92,6 +92,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * **DELETE as close-only** – DELETE reuses the same flow as UPDATE: a single close-only row (no tombstone or D audit row); active record is closed with `_valid_to` set to the binlog timestamp and `is_deleted=1`.
 * **Parameter binding for replication history** – DELETE uses the same parameterized timestamp pattern as UPDATE (`toDateTime(?, 'timezone')`) for consistency and safety.
 * **Integration tests** – Version history coverage in `VersionHistoryIT` for INSERT, UPDATE, and close-only DELETE (including FINAL and no active rows after DELETE).
+[2026 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/1233)
 
 ## Help
 
