@@ -166,11 +166,9 @@ public class ReplicationHistoryHandlerTest {
         int unionAllCount = query.split("UNION ALL").length - 1;
         Assert.assertEquals("Query should have two UNION ALL clauses", 2, unionAllCount);
 
-        // Verify column index map has both after and before image columns
+        // Verify column index map has after image columns (third SELECT has no parameter binding)
         Assert.assertTrue("After image column should be in index map", 
                 columnIndexMap.containsKey("employeeNumber"));
-        Assert.assertTrue("Before image column should be in index map with before_ prefix", 
-                columnIndexMap.containsKey("before_employeeNumber"));
 
         System.out.println("Generated Query: " + query);
         System.out.println("Column Index Map: " + columnIndexMap);
@@ -252,8 +250,8 @@ public class ReplicationHistoryHandlerTest {
     }
 
     @Test
-    public void testGenerateUpdateQueryForDelete() {
-        // Test with DELETE operation
+    public void testGenerateDeleteQuery() {
+        // Test DELETE uses generateDeleteQuery (2-SELECT pattern, no delete marker from update query)
         String validToMax = "2100-01-01 00:00:00";
         String binlogRecordTimestamp = "2025-03-01 10:30:00";
         long version = 1234567890L;
@@ -267,21 +265,21 @@ public class ReplicationHistoryHandlerTest {
                 ClickHouseConverter.CDC_OPERATION.DELETE
         );
 
-        // Test generateUpdateQuery with DELETE operation
         ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
-        MutablePair<String, Map<String, Integer>> result = handler.generateUpdateQuery(
+        MutablePair<String, Map<String, Integer>> result = handler.generateDeleteQuery(
                 "test_history.employees",
-                employeeFields,
                 columnToDataTypeMap,
                 params
         );
 
         String query = result.left;
+        Map<String, Integer> columnIndexMap = result.right;
 
-        // Verify the query structure for DELETE
         Assert.assertNotNull("Query should not be null", query);
         Assert.assertTrue("Query should contain INSERT INTO", query.contains("INSERT INTO"));
-        Assert.assertTrue("Query should contain 'D' operation", query.contains("'D' as `_operation`"));
+        Assert.assertTrue("Query should contain 'D' for _operation", query.contains("'D'"));
+        Assert.assertEquals("Delete query should have one UNION ALL (2 SELECTs)", 1, query.split("UNION ALL").length - 1);
+        Assert.assertTrue("Column index map should be empty (no parameter binding)", columnIndexMap.isEmpty());
 
         System.out.println("Generated Query for DELETE: " + query);
     }

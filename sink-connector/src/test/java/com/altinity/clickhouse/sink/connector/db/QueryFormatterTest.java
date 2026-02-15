@@ -322,13 +322,13 @@ public class QueryFormatterTest {
 
         // First SELECT: close row - unaliased 0 for is_deleted, _valid_to = binlog timestamp (expression only)
         Assert.assertTrue("First SELECT should have unaliased 0 for is_deleted",
-                query.contains(", 0"));
+                query.contains(", 0") || query.contains(",0"));
         Assert.assertTrue("First SELECT should set _valid_to to binlog timestamp (expression only, no AS)",
                 query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
 
         // Second SELECT: delete marker - unaliased 1, 'D', _valid_from/_valid_to as expressions only
         Assert.assertTrue("Second SELECT should have unaliased 1 for is_deleted",
-                query.contains(", 1"));
+                query.contains(", 1") || query.contains(",1"));
         Assert.assertTrue("Second SELECT should have 'D' for _operation (no AS)",
                 query.contains("'D'"));
         Assert.assertTrue("Second SELECT should set _valid_to to open_end (expression only)",
