@@ -798,6 +798,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
                 )
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.MEDIUM,
+                        "If enabled, only track binlog position without inserting data to ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()
+                )
+                .define(
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),
                         Type.STRING,
                         "",

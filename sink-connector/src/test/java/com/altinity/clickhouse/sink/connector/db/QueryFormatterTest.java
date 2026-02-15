@@ -146,7 +146,6 @@ public class QueryFormatterTest {
         ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
         MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForUpdate(
                 tableName,
-                employeeFields,
                 employeeColumns,
                 primaryKeyColumnName,
                 primaryKeyValue,
@@ -176,16 +175,16 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain is_deleted condition", 
                 query.contains("`is_deleted` = 0"));
         
-        // First SELECT should CLOSE the record using now() for _valid_to
-        Assert.assertTrue("First SELECT should close record with now()",
-                query.contains("now()"));
+        // First SELECT should CLOSE the record using binlog timestamp for _valid_to
+        Assert.assertTrue("First SELECT should close record with binlog timestamp",
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
         
-        // Verify that second and third SELECTs use placeholders for columns
-        Assert.assertTrue("Second/Third SELECT should contain ? as columnName for regular columns",
+        // Verify that second SELECT uses placeholders for columns
+        Assert.assertTrue("Second SELECT should contain ? as columnName for regular columns",
                 query.contains("? as `employeeNumber`") || query.contains("? as `lastName`") || 
                 query.contains("? as `firstName`") || query.contains("? as `email`"));
         
-        // Second SELECT: after image columns should be in index map
+        // Second SELECT: after image columns should be in index map (third SELECT has no parameter binding)
         Assert.assertTrue("After image column should need parameter binding",
                 columnIndexMap.containsKey("employeeNumber"));
         Assert.assertTrue("After image column should need parameter binding",
@@ -194,14 +193,6 @@ public class QueryFormatterTest {
                 columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
         Assert.assertTrue("After image temporal column should need parameter binding",
                 columnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN));
-        
-        // Third SELECT: before image columns should be in index map with "before_" prefix
-        Assert.assertTrue("Before image column should need parameter binding with before_ prefix",
-                columnIndexMap.containsKey("before_employeeNumber"));
-        Assert.assertTrue("Before image column should need parameter binding with before_ prefix",
-                columnIndexMap.containsKey("before_lastName"));
-        Assert.assertTrue("Before image temporal column should need parameter binding with before_ prefix",
-                columnIndexMap.containsKey("before_" + ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN));
 
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update:");
@@ -239,7 +230,6 @@ public class QueryFormatterTest {
         
         MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForUpdate(
                 tableName,
-                officeFields,
                 officeColumns,
                 primaryKeyColumnName,
                 primaryKeyValue,
@@ -265,23 +255,129 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
                 query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
         
-        // First SELECT should close the record using now()
-        Assert.assertTrue("First SELECT should close record with now()",
-                query.contains("now()"));
+        // First SELECT should close the record using binlog timestamp
+        Assert.assertTrue("First SELECT should close record with binlog timestamp",
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
         
-        // Verify column index map has both after and before image columns
+        // Verify column index map has after image columns (third SELECT has no parameter binding)
         Assert.assertTrue("After image column should be in index map",
                 columnIndexMap.containsKey("officeCode"));
         Assert.assertTrue("After image column should be in index map",
                 columnIndexMap.containsKey("city"));
-        Assert.assertTrue("Before image column should be in index map with before_ prefix",
-                columnIndexMap.containsKey("before_officeCode"));
-        Assert.assertTrue("Before image column should be in index map with before_ prefix",
-                columnIndexMap.containsKey("before_city"));
         
         // Print the generated query for debugging
         System.out.println("Generated Insert Query for Update (String PK):");
         System.out.println(query);
         System.out.println("Column Index Map: " + columnIndexMap);
+    }
+
+    @Test
+    public void testGetInsertQueryForDelete() {
+        QueryFormatter qf = new QueryFormatter();
+
+        Map<String, String> employeeColumns = new HashMap<>();
+        employeeColumns.put("employeeNumber", "Int32");
+        employeeColumns.put("lastName", "String");
+        employeeColumns.put("firstName", "String");
+        employeeColumns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        employeeColumns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        employeeColumns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        employeeColumns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        employeeColumns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+
+        String tableName = "test_history.employees";
+        String primaryKeyColumnName = "employeeNumber";
+        Object primaryKeyValue = 1001;
+        String validToMax = "2100-01-01 00:00:00";
+        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        long version = 1234567890;
+
+        MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForDelete(
+                tableName,
+                employeeColumns,
+                primaryKeyColumnName,
+                primaryKeyValue,
+                validToMax,
+                binlogRecordTimestamp,
+                version,
+                "UTC"
+        );
+
+        String query = result.left;
+        Map<String, Integer> columnIndexMap = result.right;
+
+        Assert.assertTrue("Query should start with INSERT INTO statement",
+                query.contains("INSERT INTO `test_history.employees`"));
+
+        // Exactly one UNION ALL (2 SELECTs)
+        int unionAllCount = query.split("UNION ALL").length - 1;
+        Assert.assertEquals("Query should have one UNION ALL for two SELECTs", 1, unionAllCount);
+
+        Assert.assertTrue("Query should contain WHERE with primary key",
+                query.contains("WHERE `employeeNumber`=1001"));
+        Assert.assertTrue("Query should contain valid_to condition",
+                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
+        Assert.assertTrue("Query should contain is_deleted condition",
+                query.contains("`is_deleted` = 0"));
+
+        // First SELECT: close row - unaliased 0 for is_deleted, _valid_to = binlog timestamp (expression only)
+        Assert.assertTrue("First SELECT should have unaliased 0 for is_deleted",
+                query.contains(", 0") || query.contains(",0"));
+        Assert.assertTrue("First SELECT should set _valid_to to binlog timestamp (expression only, no AS)",
+                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+
+        // Second SELECT: delete marker - unaliased 1, 'D', _valid_from/_valid_to as expressions only
+        Assert.assertTrue("Second SELECT should have unaliased 1 for is_deleted",
+                query.contains(", 1") || query.contains(",1"));
+        Assert.assertTrue("Second SELECT should have 'D' for _operation (no AS)",
+                query.contains("'D'"));
+        Assert.assertTrue("Second SELECT should set _valid_to to open_end (expression only)",
+                query.contains("toDateTime('2100-01-01 00:00:00', 'UTC')"));
+
+        Assert.assertTrue("Column index map should be empty (no parameter binding)",
+                columnIndexMap.isEmpty());
+    }
+
+    @Test
+    public void testGetInsertQueryForDeleteWithStringPrimaryKey() {
+        QueryFormatter qf = new QueryFormatter();
+
+        Map<String, String> officeColumns = new HashMap<>();
+        officeColumns.put("officeCode", "String");
+        officeColumns.put("city", "String");
+        officeColumns.put("phone", "String");
+        officeColumns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        officeColumns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        officeColumns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        officeColumns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        officeColumns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+
+        String tableName = "test_history.offices";
+        String primaryKeyColumnName = "officeCode";
+        Object primaryKeyValue = "NYC01";
+        String validToMax = "2100-01-01 00:00:00";
+        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        long version = 1234567890;
+
+        MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForDelete(
+                tableName,
+                officeColumns,
+                primaryKeyColumnName,
+                primaryKeyValue,
+                validToMax,
+                binlogRecordTimestamp,
+                version,
+                "UTC"
+        );
+
+        String query = result.left;
+        Map<String, Integer> columnIndexMap = result.right;
+
+        Assert.assertTrue("Query should contain quoted string primary key value",
+                query.contains("`officeCode`='NYC01'"));
+        int unionAllCount = query.split("UNION ALL").length - 1;
+        Assert.assertEquals("Query should have one UNION ALL for two SELECTs", 1, unionAllCount);
+        Assert.assertTrue("Column index map should be empty",
+                columnIndexMap.isEmpty());
     }
 }

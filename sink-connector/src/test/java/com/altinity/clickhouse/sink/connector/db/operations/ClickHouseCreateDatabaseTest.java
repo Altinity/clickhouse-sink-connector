@@ -38,24 +38,26 @@ public class ClickHouseCreateDatabaseTest {
     private static ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
             .waitingFor(new HttpWaitStrategy().forPort(8123));
     @BeforeAll
-    static void initialize() {
+    static void initialize() throws Exception {
+        clickHouseContainer.start();
 
         String hostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getMappedPort(8123);
-        String userName = "default";
-        String password = "";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword() != null ? clickHouseContainer.getPassword() : "";
         String systemDb = "system";
         dbName = "test_create_db";
 
         HashMap<String, String> options = new HashMap<>();
         options.put(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(), "5");
         options.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(options );
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(options);
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
         Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 DbWriter.SYSTEM_DB, config);
 
+        Assert.assertNotNull("Connection must not be null; ensure container is running and credentials are correct", conn);
         dbWriter = new DbWriter(hostName, port, "employees", "employees", userName, password, config, null, conn);
     }
 
@@ -74,14 +76,15 @@ public class ClickHouseCreateDatabaseTest {
     @Test
     public void testCreateNewDatabase() throws SQLException, InterruptedException {
         Thread.sleep(10000);
-        ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
+        Assert.assertNotNull("DbWriter must be initialized", dbWriter);
         Connection conn = dbWriter.getConnection();
+        Assert.assertNotNull("DbWriter connection must not be null", conn);
 
+        ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
         try {
             act.createNewDatabase(conn, dbName, false, new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        } catch(SQLException se) {
-            //System.out.println(se.getMessage());
-            Assert.assertTrue(false);
+        } catch (SQLException se) {
+            Assert.fail("createNewDatabase failed: " + se.getMessage());
         }
         Statement stmt = dbWriter.getConnection().createStatement();
         String query = String.format("SELECT name FROM system.databases WHERE name = '%s'", dbName);

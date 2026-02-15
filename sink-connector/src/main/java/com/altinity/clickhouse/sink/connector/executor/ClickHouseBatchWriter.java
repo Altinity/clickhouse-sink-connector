@@ -355,14 +355,22 @@ public class ClickHouseBatchWriter {
         ClickHouseStruct firstRecord = records.get(0);
         String databaseName = firstRecord.getDatabase();
 
-        // If replication history is enabled, set database name to the replication history database name
-        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        // If replication history is enabled or replication_log_only is enabled,
+        // use the replication history database name
+        boolean replicationHistoryEnabled = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+
+        if (replicationHistoryEnabled || replicationLogOnly) {
+            databaseName = config.getString(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
         }
 
         // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(databaseName))
-            databaseName = this.databaseOverrideMap.get(databaseName);
+        if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
+            databaseName = this.databaseOverrideMap.get(
+                    firstRecord.getDatabase());
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);

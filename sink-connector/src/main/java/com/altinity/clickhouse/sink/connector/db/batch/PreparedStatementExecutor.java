@@ -176,14 +176,22 @@ public class PreparedStatementExecutor {
                         continue;
                     }
 
+                    // DELETE --> History Mode.
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                        true, config, columnToDataTypeMap, engine, tableName);
-                                ps.addBatch();
-                                fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
-                                        false, config, columnToDataTypeMap, engine, tableName);
+                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
+                                historyHandler.executeHistoryUpdate(
+                                    conn,
+                                    tableName,
+                                    record,
+                                    columnToDataTypeMap,
+                                    fieldMapper,
+                                    entry.getKey().right,
+                                    config,
+                                    engine, true
+                            );
+                                updateRecord = true;
                         }
                         else {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
@@ -192,7 +200,9 @@ public class PreparedStatementExecutor {
                     } else if (CdcRecordState.CDC_RECORD_STATE_AFTER == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
                                 false, config, columnToDataTypeMap, engine, tableName);
-                    } else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                    }
+                    // UPDATE HISTORY MODE.
+                    else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
@@ -209,7 +219,7 @@ public class PreparedStatementExecutor {
                                     fieldMapper,
                                     entry.getKey().right,
                                     config,
-                                    engine
+                                    engine, false
                             );
                             updateRecord = true;
                         } else {
