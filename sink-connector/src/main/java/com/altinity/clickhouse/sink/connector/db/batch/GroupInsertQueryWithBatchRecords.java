@@ -104,8 +104,18 @@ public class GroupInsertQueryWithBatchRecords {
                 result = updateQueryToRecordsMap(record,
                         record.getAfterModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
-            } else if (CdcRecordState.CDC_RECORD_STATE_BOTH ==
+            }
+            // UPDATE: This creates 2 records, one with before and another one with after.
+            else if (CdcRecordState.CDC_RECORD_STATE_BOTH ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
+                // if replication history is enabled, then dont split to 2 records.
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        result = updateQueryToRecordsMap(record,
+                                record.getAfterModifiedFields(), queryToRecordsMap,
+                                tableName, config, columnNameToDataTypeMap);
+                        return result;
+                }
+                                
                 if (record.getBeforeModifiedFields() != null) {
                     result = updateQueryToRecordsMap(record,
                             record.getBeforeModifiedFields(), queryToRecordsMap,

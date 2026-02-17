@@ -3,14 +3,12 @@ package com.altinity.clickhouse.sink.connector.db;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
-import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
+import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementFieldMapper;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.clickhouse.data.ClickHouseDataType;
-import com.clickhouse.jdbc.ClickHouseConnection;
 import com.clickhouse.jdbc.ClickHouseDataSource;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -25,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -55,7 +54,11 @@ public class DbWriterTest {
         String password = "";
         String tableName = "employees";
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> rawConfig = new HashMap<>();
+
+        rawConfig.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(rawConfig);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, config);
@@ -108,12 +111,16 @@ public class DbWriterTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+                sinkConnectorConfig, null, conn);
         DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
         Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
@@ -125,7 +132,7 @@ public class DbWriterTest {
         Connection conn2 = DbWriter.createConnection(jdbcUrl2, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn2);
+                sinkConnectorConfig, null, conn2);
         Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
@@ -143,31 +150,35 @@ public class DbWriterTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
+                sinkConnectorConfig, null, conn);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(sinkConnectorConfig).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result.getRight().equalsIgnoreCase("_version22"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_test = new DBMetadata(sinkConnectorConfig).getTableEngineUsingShowTable(writer.getConnection(), "test", "employees");
         Assert.assertTrue(result_test.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result_test.getRight().equalsIgnoreCase("_version22"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_employees = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "employees", "employees");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_employees = new DBMetadata(sinkConnectorConfig).getTableEngineUsingShowTable(writer.getConnection(), "employees", "employees");
         Assert.assertTrue(result_employees.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         Assert.assertTrue(result_employees.getRight().equalsIgnoreCase("_version_employees"));
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
+        MutablePair<DBMetadata.TABLE_ENGINE, String> resultProducts = new DBMetadata(sinkConnectorConfig).getTableEngineUsingShowTable(writer.getConnection(), "default", "products");
         Assert.assertTrue(resultProducts.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
         Assert.assertTrue(resultProducts.getRight().equalsIgnoreCase("sign"));
     }
 
     @Test
     @Tag("IntegrationTest")
-    public void testGetEngineTypeUsingSystemTables() {
+    public void testGetEngineTypeUsingSystemTables() throws SQLException {
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
         String database = "test";
@@ -175,25 +186,29 @@ public class DbWriterTest {
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
+                sinkConnectorConfig, null, conn);
+        MutablePair< DBMetadata.TABLE_ENGINE, String> result = new DBMetadata(sinkConnectorConfig).getTableEngineUsingSystemTables(writer.getConnection(),
                 database, "employees");
         Assert.assertTrue(result.getLeft() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_products = new DBMetadata(sinkConnectorConfig).getTableEngineUsingSystemTables(writer.getConnection(),
                 "default", "products");
         Assert.assertTrue(result_products.getLeft() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE);
 
         // Table does not exist.
-        MutablePair<DBMetadata.TABLE_ENGINE, String> result_registration = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> result_registration = new DBMetadata(sinkConnectorConfig).getTableEngineUsingSystemTables(writer.getConnection(),
                 database, "registration");
         Assert.assertNull(result_registration.getLeft());
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> ma_users_registration = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getTableEngineUsingSystemTables(writer.getConnection(),
+        MutablePair<DBMetadata.TABLE_ENGINE, String> ma_users_registration = new DBMetadata(sinkConnectorConfig).getTableEngineUsingSystemTables(writer.getConnection(),
                 "employees2", "ma_users");
         Assert.assertTrue(ma_users_registration.getLeft() == DBMetadata.TABLE_ENGINE.MERGE_TREE);
 
@@ -243,21 +258,23 @@ public class DbWriterTest {
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
 
         //String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(connectionUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, config);
-        DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, config, null, conn);
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
+        DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, sinkConnectorConfig, null, conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
 
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(sinkConnectorConfig);
         boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap, result, config, tableName, database, dbWriter.getConnection(),
+                , queryToRecordsMap, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         Assert.assertTrue(result.isEmpty() == false);
@@ -291,23 +308,24 @@ public class DbWriterTest {
         colNameToDataTypeMap.put("MinDateTime", "DateTime64(3, 'UTC')");
         colNameToDataTypeMap.put("MaxDateTime", "Nullable(DateTime64(3))");
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, config);
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config, null, conn);
-        PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(null,
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, sinkConnectorConfig, null, conn);
+        PreparedStatementFieldMapper fieldMapper = new PreparedStatementFieldMapper(null,
                 false, null, null, database, ZoneId.of("UTC"));
-
-        ClickHouseDataType dt1 = preparedStatementExecutor.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
+        // use the new class FieldMapper to get the ClickHouse data type);
+        ClickHouseDataType dt1 = fieldMapper.getClickHouseDataType("Min_Date", colNameToDataTypeMap);
         Assert.assertTrue(dt1 == ClickHouseDataType.Date);
 
-        ClickHouseDataType dt2 = preparedStatementExecutor.getClickHouseDataType("MinDateTime", colNameToDataTypeMap);
+        ClickHouseDataType dt2 = fieldMapper.getClickHouseDataType("MinDateTime", colNameToDataTypeMap);
         Assert.assertTrue(dt2 == ClickHouseDataType.DateTime64);
 
-        ClickHouseDataType dt3 = preparedStatementExecutor.getClickHouseDataType("MaxDateTime", colNameToDataTypeMap);
+        ClickHouseDataType dt3 = fieldMapper.getClickHouseDataType("MaxDateTime", colNameToDataTypeMap);
         Assert.assertTrue(dt3 == ClickHouseDataType.DateTime64);
-        System.out.println("");
     }
     @Test
     @Tag("IntegrationTest")
@@ -323,11 +341,13 @@ public class DbWriterTest {
         properties.setProperty("client_name", "Test_1");
         properties.setProperty("session_id", "123333");
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, "",
-                BaseDbWriter.SYSTEM_DB, config);
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, "", config,
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, "", sinkConnectorConfig,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);
 
@@ -389,11 +409,13 @@ public class DbWriterTest {
         Properties properties = new Properties();
         properties.setProperty("client_name", "Test_1");
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        HashMap<String, String> config = new HashMap<>();
+        config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, config);
-        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, config,
+                BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
+        DbWriter dbWriter = new DbWriter(hostName, port, database, tableName, userName, password, sinkConnectorConfig,
                 null, conn2);
         String url = dbWriter.getConnectionString(hostName, port, database);
 

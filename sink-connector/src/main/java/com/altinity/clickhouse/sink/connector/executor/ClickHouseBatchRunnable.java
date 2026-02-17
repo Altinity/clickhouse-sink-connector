@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
-import com.alibaba.fastjson.JSONObject;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -13,6 +12,7 @@ import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -44,6 +44,17 @@ public class ClickHouseBatchRunnable implements Runnable {
      * Queue containing batches of ClickHouseStruct records.
      */
     private final LinkedBlockingQueue<List<ClickHouseStruct>> records;
+
+    /**
+     * Queue containing routed batches (for hash-based routing).
+     */
+    private final LinkedBlockingQueue<RoutedBatch> routedRecords;
+
+    /**
+     * Thread ID for this runnable (used for hash-based routing).
+     * -1 means no hash-based routing (legacy mode).
+     */
+    private final int threadId;
 
     /**
      * Connector configuration.
@@ -92,7 +103,7 @@ public class ClickHouseBatchRunnable implements Runnable {
     private static final long ERROR_SLEEP_TIME_MS = 10000;
 
     /**
-     * Constructs a ClickHouseBatchRunnable.
+     * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
      *
      * @param records        the queue of record batches
      * @param config         the connector configuration
@@ -102,7 +113,43 @@ public class ClickHouseBatchRunnable implements Runnable {
             LinkedBlockingQueue<List<ClickHouseStruct>> records,
             ClickHouseSinkConnectorConfig config,
             Map<String, String> topic2TableMap) {
+        this(records, null, -1, config, topic2TableMap);
+    }
+
+    /**
+     * Constructs a ClickHouseBatchRunnable with hash-based routing.
+     *
+     * @param routedRecords  the queue of routed record batches
+     * @param threadId       the thread ID for this runnable
+     * @param config         the connector configuration
+     * @param topic2TableMap a map of topic names to table names
+     */
+    public ClickHouseBatchRunnable(
+            LinkedBlockingQueue<RoutedBatch> routedRecords,
+            int threadId,
+            ClickHouseSinkConnectorConfig config,
+            Map<String, String> topic2TableMap) {
+        this(null, routedRecords, threadId, config, topic2TableMap);
+    }
+
+    /**
+     * Private constructor that initializes all fields.
+     *
+     * @param records        the queue of record batches (legacy mode)
+     * @param routedRecords  the queue of routed record batches (hash-based routing)
+     * @param threadId       the thread ID for this runnable (-1 for legacy mode)
+     * @param config         the connector configuration
+     * @param topic2TableMap a map of topic names to table names
+     */
+    private ClickHouseBatchRunnable(
+            LinkedBlockingQueue<List<ClickHouseStruct>> records,
+            LinkedBlockingQueue<RoutedBatch> routedRecords,
+            int threadId,
+            ClickHouseSinkConnectorConfig config,
+            Map<String, String> topic2TableMap) {
         this.records = records;
+        this.routedRecords = routedRecords;
+        this.threadId = threadId;
         this.config = config;
         if (topic2TableMap == null) {
             this.topic2TableMap = new HashMap();
@@ -121,6 +168,10 @@ public class ClickHouseBatchRunnable implements Runnable {
                                     CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString()));
         } catch (Exception e) {
             log.error("Error parsing database override map" + e);
+        }
+        
+        if (threadId >= 0) {
+            log.info("ClickHouseBatchRunnable initialized with thread ID: {}", threadId);
         }
     }
 
@@ -211,25 +262,6 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Gets the database name from the topic name.
-     * Topic name format is expected to be: server.database.table
-     *
-     * @param topicName The topic name
-     * @return The database name, or null if not found
-     */
-    private String getDatabaseNameFromTopic(String topicName) {
-        if (topicName == null || topicName.isEmpty()) {
-            return null;
-        }
-
-        String[] parts = topicName.split("\\.");
-        if (parts.length >= 3) {
-            return parts[parts.length - 2]; // Second to last part is database name
-        }
-        return null;
-    }
-
-    /**
      * Gets the server name from the topic name.
      * Topic name format is expected to be: server.database.table
      *
@@ -262,98 +294,16 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        
+        // Determine which mode we're in: hash-based routing or legacy
+        boolean useHashRouting = (threadId >= 0 && routedRecords != null);
+        useHashRouting = false;
         try {
-            // Poll from Queue until its empty.
-            while (records.size() > 0 || currentBatch != null) {
-                // If the thread is interrupted, the exit.
-                if (Thread.currentThread().isInterrupted()) {
-                    log.info("Thread is interrupted, exiting - Thread ID: " +
-                            Thread.currentThread().getId());
-                    return;
-                }
-                if (currentBatch == null) {
-                    currentBatch = records.poll();
-                    if (currentBatch == null) {
-                        // No records in the queue.
-                        continue;
-                    }
-                } else {
-                    log.debug("***** RETRYING the same batch again");
-                }
-
-                // If replication history is enabled, add the records to the history table.
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-
-                    // Get Replication History Database Name
-
-                    String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-                    // Get Replication History Table Name
-                    String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
-                    // Get Replication History Topic Name
-
-                    String historyTableName = databaseName + "." + tableName;
-
-                    ClickHouseStruct firstRecord = currentBatch.get(0);
-                    Connection databaseConn = getClickHouseConnection(databaseName);
-                    DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
-                            firstRecord, databaseConn);
-
-                    BinLogHistory binLogHistory = new BinLogHistory();
-                    binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", currentBatch, sourceTimeZone, serverTimeZone);
-                }
-
-                ///// ***** START PROCESSING BATCH **************************
-                // Step 1: Add to Inflight batches.
-                DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
-                log.info("****** Thread: " +
-                        Thread.currentThread().getName() +
-                        " Batch Size: " + currentBatch.size() +
-                        " ******");
-                // Group records by topic name.
-                // Create a new map of topic name to list of records.
-                Map<String, List<ClickHouseStruct>> topicToRecordsMap =
-                        new ConcurrentHashMap<>();
-                currentBatch.forEach(record -> {
-                    String topicName = record.getTopic();
-                    // If the topic name is not present, create a new list and
-                    // add the record.
-                    if (topicToRecordsMap.containsKey(topicName) == false) {
-                        List<ClickHouseStruct> recordsList = new ArrayList<>();
-                        recordsList.add(record);
-                        topicToRecordsMap.put(topicName, recordsList);
-                    } else {
-                        // If the topic name is present, add the record to the list.
-                        List<ClickHouseStruct> recordsList =
-                                topicToRecordsMap.get(topicName);
-                        recordsList.add(record);
-                        topicToRecordsMap.put(topicName, recordsList);
-                    }
-                });
-                boolean result = true;
-                // For each topic, process the records.
-                // topic name syntax is server.database.table
-                for (Map.Entry<String, List<ClickHouseStruct>> entry :
-                        topicToRecordsMap.entrySet()) {
-
-                    result = processRecordsByTopic(entry.getKey(),
-                                entry.getValue());
-
-                    if (result == false) {
-                        log.error("Error processing records for topic: " +
-                                entry.getKey());
-                        break;
-                    }
-                }
-                if (result) {
-                    // Step 2: Check if the batch can be committed.
-                    if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
-                        currentBatch = null;
-                    }
-                }
-                Thread.sleep(config.getLong(
-                        ClickHouseSinkConnectorConfigVariables.
-                                BUFFER_FLUSH_TIME.toString()));
-                ///// ***** END PROCESSING BATCH **************************
+//            if (useHashRouting) {
+//                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+//            } else
+           {
+                runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
             // insert data into error table
@@ -363,6 +313,170 @@ public class ClickHouseBatchRunnable implements Runnable {
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
+        }
+    }
+
+    /**
+     * Run loop for hash-based routing mode.
+     * Only processes batches assigned to this thread.
+     */
+    private void runWithHashRouting(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
+        // Poll from Queue until its empty.
+        while (routedRecords.size() > 0 || currentBatch != null) {
+            // If the thread is interrupted, the exit.
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("Thread {} is interrupted, exiting - Java Thread ID: {}",
+                        threadId, Thread.currentThread().getId());
+                return;
+            }
+            
+            if (currentBatch == null) {
+                RoutedBatch routedBatch = routedRecords.poll();
+                if (routedBatch == null) {
+                    // No records in the queue.
+                    continue;
+                }
+                
+                // Only process if this batch is assigned to this thread
+                if (routedBatch.getAssignedThreadId() == threadId) {
+                    currentBatch = routedBatch.getBatch();
+                    log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
+                } else {
+                    // Put it back for another thread to pick up
+                    routedRecords.put(routedBatch);
+                    Thread.sleep(10); // Small sleep to avoid busy waiting
+                    continue;
+                }
+            } else {
+                log.debug("***** Thread {} RETRYING the same batch again", threadId);
+            }
+
+            // Process the batch (rest of the logic stays the same)
+            processBatch(sourceTimeZone, serverTimeZone);
+        }
+    }
+
+    /**
+     * Run loop for legacy mode (no hash-based routing).
+     */
+    private void runLegacyMode(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
+        // Poll from Queue until its empty.
+        while (records.size() > 0 || currentBatch != null) {
+            // If the thread is interrupted, the exit.
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("Thread is interrupted, exiting - Thread ID: " +
+                        Thread.currentThread().getId());
+                return;
+            }
+            if (currentBatch == null) {
+                currentBatch = records.poll();
+                if (currentBatch == null) {
+                    // No records in the queue.
+                    continue;
+                }
+            } else {
+                log.debug("***** RETRYING the same batch again");
+            }
+
+            // Process the batch (rest of the logic stays the same)
+            processBatch(sourceTimeZone, serverTimeZone);
+        }
+    }
+
+    /**
+     * Common batch processing logic used by both hash-based routing and legacy mode.
+     * 
+     * @param sourceTimeZone Source timezone configuration
+     * @param serverTimeZone Server timezone configuration
+     * @throws Exception if processing fails
+     */
+    private void processBatch(String sourceTimeZone, String serverTimeZone) throws Exception {
+        // If replication history is enabled, add the records to the history table.
+        addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
+
+        ///// ***** START PROCESSING BATCH **************************
+        // Step 1: Add to Inflight batches.
+        DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
+        log.info("****** Thread: " +
+                Thread.currentThread().getName() +
+                " Batch Size: " + currentBatch.size() +
+                " ******");
+        // Group records by topic name.
+        // Create a new map of topic name to list of records.
+        Map<String, List<ClickHouseStruct>> topicToRecordsMap =
+                new ConcurrentHashMap<>();
+        currentBatch.forEach(record -> {
+            String topicName = record.getTopic();
+            // If the topic name is not present, create a new list and
+            // add the record.
+            if (topicToRecordsMap.containsKey(topicName) == false) {
+                List<ClickHouseStruct> recordsList = new ArrayList<>();
+                recordsList.add(record);
+                topicToRecordsMap.put(topicName, recordsList);
+            } else {
+                // If the topic name is present, add the record to the list.
+                List<ClickHouseStruct> recordsList =
+                        topicToRecordsMap.get(topicName);
+                recordsList.add(record);
+                topicToRecordsMap.put(topicName, recordsList);
+            }
+        });
+        boolean result = true;
+        // For each topic, process the records.
+        // topic name syntax is server.database.table
+
+        boolean replicationHistoryEnabled = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+        if(replicationLogOnly && replicationHistoryEnabled)  { 
+            // skip the following for loop and continue to the next step
+            log.debug("Replication log only mode is enabled, skipping the processing of records");
+        } else {
+            for (Map.Entry<String, List<ClickHouseStruct>> entry :
+                    topicToRecordsMap.entrySet()) {
+
+                result = processRecordsByTopic(entry.getKey(),
+                        entry.getValue());
+
+                if (result == false) {
+                    log.error("Error processing records for topic: " +
+                            entry.getKey());
+                    break;
+                }
+            }
+        }
+            
+        
+        if (result) {
+            // Step 2: Check if the batch can be committed.
+            if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
+                currentBatch = null;
+            }
+        }
+        Thread.sleep(config.getLong(
+                ClickHouseSinkConnectorConfigVariables.
+                        BUFFER_FLUSH_TIME.toString()));
+        ///// ***** END PROCESSING BATCH **************************
+    }
+
+    /**
+     * Function to persist records to binlog history table when replication history mode is enabled.
+     * @param records
+     * @param sourceTimeZone
+     * @param serverTimeZone
+     * @throws SQLException
+     */
+    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+            String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+            Connection databaseConn = getClickHouseConnection(databaseName);
+            DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
+                    records.get(0), databaseConn);
+
+            BinLogHistory binLogHistory = new BinLogHistory();
+            binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
         }
     }
 
@@ -399,8 +513,15 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         Connection connection) {
         DbWriter writer = null;
         if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-            return writer;
+            // Check if this table needs cache invalidation after DDL
+            String fullyQualifiedTableName = databaseName + "." + tableName;
+            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
+                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
+                this.topicToDbWriterMap.remove(topicName);
+            } else {
+                writer = this.topicToDbWriterMap.get(topicName);
+                return writer;
+            }
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,

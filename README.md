@@ -83,6 +83,15 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 
 ## Roadmap 
 
+[2025 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/401)  
+[2025 merged PRs summary](doc/2025_merged_prs_summary.md) (from git history; for issues closed in 2025 use [GitHub search](https://github.com/Altinity/clickhouse-sink-connector/issues?q=is%3Aissue+is%3Aclosed+closed%3A2025-01-01..2025-12-31))
+
+### 2025 completed (high level)
+
+* **Replication History (SCD Type 2)** – Full support for INSERT, UPDATE, and DELETE with `_valid_from`, `_valid_to`, `_operation`, `_version`, and `is_deleted`. See [Version History](doc/version_history.md) and [Version History Implementation](doc/version_history_implementation.md).
+* **DELETE as close-only** – DELETE reuses the same flow as UPDATE: a single close-only row (no tombstone or D audit row); active record is closed with `_valid_to` set to the binlog timestamp and `is_deleted=1`.
+* **Parameter binding for replication history** – DELETE uses the same parameterized timestamp pattern as UPDATE (`toDateTime(?, 'timezone')`) for consistency and safety.
+* **Integration tests** – Version history coverage in `VersionHistoryIT` for INSERT, UPDATE, and close-only DELETE (including FINAL and no active rows after DELETE).
 [2026 Roadmap](https://github.com/Altinity/clickhouse-sink-connector/issues/1233)
 
 ## Help

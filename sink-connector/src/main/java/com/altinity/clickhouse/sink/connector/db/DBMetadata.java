@@ -29,9 +29,9 @@ public class DBMetadata {
 
     /**
      * The maximum number of retry attempts for database operations.
-     * Defaults to 2 retries.
+     * Defaults to 10 retries. Can be configured via errors.max.retries.
      */
-    static int MAX_RETRIES = 2;
+    static int MAX_RETRIES = 10;
 
     /**
      * Configuration for the ClickHouse sink connector.
@@ -137,11 +137,11 @@ public class DBMetadata {
      * @param tableName The name of the table.
      * @return A MutablePair containing the table engine type and the associated column information.
      */
-    public MutablePair<TABLE_ENGINE, String> getTableEngine(Connection conn, String databaseName, String tableName) {
+    public MutablePair<TABLE_ENGINE, String> getTableEngine(Connection conn, String databaseName, String tableName) throws SQLException {
         MutablePair<TABLE_ENGINE, String> result;
-        result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
-
-        if (result.left == null) {
+        try {
+            result = getTableEngineUsingSystemTables(conn, databaseName, tableName);
+        } catch(SQLException sq) {
             result = getTableEngineUsingShowTable(conn, databaseName, tableName);
         }
 
@@ -335,7 +335,7 @@ public class DBMetadata {
      * @return A pair containing the engine type and associated column information.
      */
     public MutablePair<TABLE_ENGINE, String> getTableEngineUsingSystemTables(final Connection conn, final String database,
-                                                                             final String tableName) {
+                                                                             final String tableName) throws SQLException {
         MutablePair<TABLE_ENGINE, String> result = new MutablePair<>();
 
         try {
@@ -358,6 +358,7 @@ public class DBMetadata {
             }
         } catch (Exception e) {
             log.debug("getTableEngineUsingSystemTables exception", e);
+            throw e;
         }
 
         return result;

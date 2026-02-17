@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.model;
 
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -188,6 +189,14 @@ public class ClickHouseStruct {
     @Getter
     @Setter
     private long tsSec = UNINITIALIZED_VALUE;
+
+    /**
+     * Version number for ReplacingMergeTree engines.
+     * This is calculated based on gtid, sequenceNumber, or lsn.
+     */
+    @Getter
+    @Setter
+    private long version = UNINITIALIZED_VALUE;
 
     // Inheritance doesn't work because of different package
     // error, composition.
@@ -516,6 +525,24 @@ public class ClickHouseStruct {
                 .toString();
     }
 
+
+    /**
+     * Gets the Debezium timestamp from the change event.   
+     * @param changeEvent The change event.
+     * @return The Debezium timestamp, or 0 if the change event is null or the value is null.
+     */
+    public static Long getDebeziumTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return 0L;
+        }
+        SourceRecord srd = changeEvent.value();
+        Struct kafkaStruct = (Struct) srd.value();
+        if(kafkaStruct == null) {
+            return 0L;
+        }
+        return (Long) kafkaStruct.get(SinkRecordColumns.TS_MS);
+    }
+
     /**
      * Converts a Kafka Connect Struct to a Map for JSON serialization.
      *
@@ -742,6 +769,26 @@ public class ClickHouseStruct {
             }
         } catch (Exception e) {
             log.error("Error parsing ts_sec from sourceOffset", e);
+        }
+    }
+
+    /**
+     * Calculates and sets the version based on gtid, sequenceNumber, or lsn.
+     * Uses SnowFlakeId algorithm if useSnowflakeId is true and gtid is available.
+     *
+     * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
+     */
+    public void calculateVersion(boolean useSnowflakeId) {
+        if (this.gtid != UNINITIALIZED_VALUE) {
+            if (useSnowflakeId) {
+                this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
+            } else {
+                this.version = this.gtid;
+            }
+        } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
+            this.version = this.sequenceNumber;
+        } else if (this.lsn != UNINITIALIZED_VALUE) {
+            this.version = this.lsn;
         }
     }
 }

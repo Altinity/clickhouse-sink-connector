@@ -126,7 +126,16 @@ public class BaseDbWriter {
             }
         } catch (Exception e) {
             int maxRetries = 0;
-            final int MAX_RETRIES = 5;
+            // Get max retries from configuration, default to 10
+            int MAX_RETRIES = 10;
+            try {
+                if (config.getInt(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
+                    MAX_RETRIES = config.getInt(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString());
+                }
+            } catch (Exception ex) {
+                log.warn("Error retrieving errors.max.retries configuration, using default: " + MAX_RETRIES);
+            }
+            
             log.error("Error creating Database: " + databaseName);
 
             // Retry creating the database until max retries is reached.
@@ -254,12 +263,20 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            // URL encode the username and password
-            String encodedUserName = URLEncoder.encode(userName, "UTF-8");
-            String encodedPassword = URLEncoder.encode(password, "UTF-8");
+            String encodedUserName = null;
+            String encodedPassword = null;
 
-            // Append username and password to the URL
-            url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
+            // if username is empty don't encode it
+            if(userName != null && !userName.isEmpty()) {
+                encodedUserName = URLEncoder.encode(userName, "UTF-8");
+            }
+            if(password != null && !password.isEmpty()) {
+                encodedPassword = URLEncoder.encode(password, "UTF-8");
+            }
+            if(encodedUserName != null && encodedPassword != null) {
+                url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
+            }
+            
             SinkConnectorDataSource dataSource =
                     new SinkConnectorDataSource(url, properties);
 

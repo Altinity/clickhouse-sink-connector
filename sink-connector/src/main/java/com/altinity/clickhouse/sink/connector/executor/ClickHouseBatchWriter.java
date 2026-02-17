@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
@@ -284,8 +285,15 @@ public class ClickHouseBatchWriter {
                                         Connection connection) {
         DbWriter writer = null;
         if (this.topicToDbWriterMap.containsKey(topicName)) {
-            writer = this.topicToDbWriterMap.get(topicName);
-            return writer;
+            // Check if this table needs cache invalidation after DDL
+            String fullyQualifiedTableName = databaseName + "." + tableName;
+            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
+                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
+                this.topicToDbWriterMap.remove(topicName);
+            } else {
+                writer = this.topicToDbWriterMap.get(topicName);
+                return writer;
+            }
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
@@ -346,6 +354,19 @@ public class ClickHouseBatchWriter {
         // for all records.
         ClickHouseStruct firstRecord = records.get(0);
         String databaseName = firstRecord.getDatabase();
+
+        // If replication history is enabled or replication_log_only is enabled,
+        // use the replication history database name
+        boolean replicationHistoryEnabled = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+
+        if (replicationHistoryEnabled || replicationLogOnly) {
+            databaseName = config.getString(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
         // Check if user has overridden the database name.
         if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
             databaseName = this.databaseOverrideMap.get(
