@@ -51,17 +51,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Pull test images
-        if: ${{ !inputs.prerelease && !inputs.draft}}
-        run: |
-          docker pull altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka
-
-      - name: Tag and push Kafka image
-        if: ${{ !inputs.prerelease && !inputs.draft}}
-        run: |
-          docker image tag altinityinfra/clickhouse-sink-connector:$release_tag-test-kafka altinity/clickhouse-sink-connector:$release_tag-kafka
-          docker push altinity/clickhouse-sink-connector:$release_tag-kafka
-
       - name: Tag and push Lightweight multi-arch image (ARM64 + AMD64)
         if: ${{ !inputs.prerelease && !inputs.draft }}
         run: |
@@ -85,12 +74,6 @@ jobs:
           prerelease: ${{ inputs.prerelease }}
           draft: ${{ inputs.draft }}
           body_path: ${{ github.workspace }}/release-notes/${{ env.release_tag }}.md
-
-      #- name: Download Kafka jar artifact
-      #  uses: actions/download-artifact@v4
-      #  with:
-      #    name: clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
-      #    path: ./artifacts/kafka
 
       - name: Download Lightweight jar artifact
         uses: actions/download-artifact@v4
@@ -118,30 +101,20 @@ jobs:
           asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}.bin/sink-connector-client-amd64
           asset_content_type: application/octet-stream
 
-#      - name: Zip jar files
-#        run: |
-#          zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar.zip clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar
-#          zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar.zip clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
-#
-#      - name: Upload jar file to release (Kafka)
-#        uses: actions/upload-release-asset@v1
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        with:
-#          upload_url: ${{ steps.create_release.outputs.upload_url }}
-#          asset_name: clickhouse-sink-connector-kafka-${{ env.release_tag }}.jar.zip
-#          asset_path: clickhouse-sink-connector-kafka-${{ env.release_tag }}-test.jar.zip
-#          asset_content_type: application/zip
-#
-#      - name: Upload jar file to release (Lightweight)
-#        uses: actions/upload-release-asset@v1
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        with:
-#          upload_url: ${{ steps.create_release.outputs.upload_url }}
-#          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
-#          asset_path: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar.zip
-#          asset_content_type: application/zip
+      - name: Zip Lightweight jar
+        run: |
+          zip ./artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip \
+            ./artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+
+      - name: Upload Lightweight jar to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
+          asset_path: ./artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip
+          asset_content_type: application/zip
 
       - name: Zip and tar source code
         run: |
