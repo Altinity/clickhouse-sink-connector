@@ -137,6 +137,8 @@ public class BinLogHistoryIT {
         // Validate DELETE operations are recorded in history
         validateDeleteOperationPresent(writer.getConnection());
 
+        // Validate _time is in seconds and matches ts_sec (same as ts_ms/1000)
+        validateTimeColumnMatchesTsSec(writer.getConnection());
 
         Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
@@ -325,5 +327,16 @@ public class BinLogHistoryIT {
         while (opsRs.next()) {
             log.info("Operation found: {}", opsRs.getString("_operation"));
         }
+    }
+
+    /** Validates _time is in seconds and matches ts_sec from source offset (ts_ms/1000). */
+    private void validateTimeColumnMatchesTsSec(Connection clickhouseConn) throws Exception {
+        String query = "SELECT toUnixTimestamp(_time) as epoch_sec, JSONExtractUInt(_raw, 'sourceOffset', 'ts_sec') as ts_sec " +
+            "FROM binlog_history.history WHERE _raw != '' AND JSONExtractUInt(_raw, 'sourceOffset', 'ts_sec') > 0 LIMIT 1";
+        ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
+        assertTrue("Expected at least 1 history row with _raw and ts_sec to validate _time", rs.next());
+        long epochSec = rs.getLong("epoch_sec");
+        long tsSec = rs.getLong("ts_sec");
+        assertTrue("_time (epoch_sec=" + epochSec + ") should equal ts_sec (" + tsSec + ") from source offset", epochSec == tsSec);
     }
 }

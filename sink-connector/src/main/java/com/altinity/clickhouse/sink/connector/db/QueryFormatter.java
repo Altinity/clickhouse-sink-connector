@@ -231,8 +231,11 @@ public class QueryFormatter {
         }
         String upperDataType = dataType.toUpperCase();
         if (upperDataType.contains("DECIMAL")) {
-            String numLiteral = value.toString().replace("'", "''");
-            return "CAST(" + numLiteral + ", '" + dataType + "')";
+            String numLiteral = (value instanceof java.math.BigDecimal)
+                ? ((java.math.BigDecimal) value).toPlainString()
+                : value.toString();
+            numLiteral = numLiteral.replace("'", "''");
+            return "CAST('" + numLiteral + "', '" + dataType + "')";
         }
         if (upperDataType.contains("DATETIME64") || upperDataType.contains("DATETIME")) {
             String ts = value.toString().replace("'", "''");
