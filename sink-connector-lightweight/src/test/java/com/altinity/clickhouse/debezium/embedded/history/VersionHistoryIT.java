@@ -360,6 +360,102 @@ public class VersionHistoryIT {
         ClickHouseDebeziumEmbeddedApplication.stop();
         HikariDbSource.close();
     }
+
+    /**
+     * Test that validates Decimal values are stored exactly after an UPDATE,
+     * specifically that buyPrice=33.30 is not corrupted to 33.29 due to float precision.
+     */
+    @DisplayName("Test that Decimal columns preserve exact precision after UPDATE")
+    @Test
+    public void testDecimalPrecisionOnUpdate() throws Exception {
+
+        Injector injector = Guice.createInjector(new AppInjector());
+
+        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+        props.setProperty("snapshot.mode", "no_data");
+        props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
+        props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
+        props.setProperty("database.include.list", "employees");
+        props.setProperty("replication.history.enable", "true");
+
+        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
+                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture(), new Properties());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Thread.sleep(25000);
+
+        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+
+        // Create a products table with Decimal columns (mirrors real classicmodels schema)
+        conn.prepareStatement(
+            "CREATE TABLE `products` (" +
+            "  `productCode` varchar(15) NOT NULL," +
+            "  `productName` varchar(70) NOT NULL," +
+            "  `quantityInStock` smallint NOT NULL," +
+            "  `buyPrice` decimal(10,2) NOT NULL," +
+            "  `MSRP` decimal(10,2) NOT NULL," +
+            "  PRIMARY KEY (`productCode`)" +
+            ") ENGINE=InnoDB"
+        ).execute();
+
+        // Insert a product with Decimal values that are susceptible to float precision loss
+        conn.prepareStatement(
+            "INSERT INTO products VALUES ('S72_3212', 'Pont Yacht', 413, 33.30, 54.60)"
+        ).execute();
+
+        Thread.sleep(10000);
+
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        // Validate INSERT: buyPrice should be exactly 33.30
+        ResultSet insertRs = ITCommon.executeQueryWithResultSet(
+            "SELECT productCode, buyPrice, MSRP, _valid_to, is_deleted FROM binlog_history.products FINAL WHERE productCode='S72_3212'",
+            writer.getConnection());
+        assertTrue("Should find inserted product row", insertRs.next());
+        java.math.BigDecimal insertBuyPrice = insertRs.getBigDecimal("buyPrice");
+        log.info("After INSERT - buyPrice={}, MSRP={}", insertBuyPrice, insertRs.getBigDecimal("MSRP"));
+        assertTrue("After INSERT, buyPrice should be exactly 33.30, not " + insertBuyPrice,
+            new java.math.BigDecimal("33.30").compareTo(insertBuyPrice) == 0);
+
+        // UPDATE: only change quantityInStock — buyPrice and MSRP must remain exactly 33.30 / 54.60
+        conn.prepareStatement("UPDATE products SET quantityInStock=413 WHERE productCode='S72_3212'").execute();
+
+        Thread.sleep(10000);
+
+        // Validate UPDATE: the new active record must have buyPrice = 33.30 exactly
+        ResultSet updateRs = ITCommon.executeQueryWithResultSet(
+            "SELECT productCode, quantityInStock, buyPrice, MSRP, _valid_to, is_deleted " +
+            "FROM binlog_history.products FINAL " +
+            "WHERE productCode='S72_3212' AND is_deleted = 0 AND _valid_to > now()",
+            writer.getConnection());
+
+        assertTrue("Should find active product row after UPDATE", updateRs.next());
+        java.math.BigDecimal updatedBuyPrice = updateRs.getBigDecimal("buyPrice");
+        java.math.BigDecimal updatedMSRP = updateRs.getBigDecimal("MSRP");
+        int updatedQty = updateRs.getInt("quantityInStock");
+        log.info("After UPDATE - quantityInStock={}, buyPrice={}, MSRP={}", updatedQty, updatedBuyPrice, updatedMSRP);
+
+        assertTrue("After UPDATE, buyPrice must be exactly 33.30 (not 33.29 due to float precision), but got: " + updatedBuyPrice,
+            new java.math.BigDecimal("33.30").compareTo(updatedBuyPrice) == 0);
+        assertTrue("After UPDATE, MSRP must be exactly 54.60, but got: " + updatedMSRP,
+            new java.math.BigDecimal("54.60").compareTo(updatedMSRP) == 0);
+        assertTrue("After UPDATE, quantityInStock should be 413, but got: " + updatedQty, updatedQty == 413);
+
+        log.info("Successfully validated Decimal precision: buyPrice={}, MSRP={}", updatedBuyPrice, updatedMSRP);
+
+        conn.close();
+        executorService.shutdown();
+        ClickHouseDebeziumEmbeddedApplication.stop();
+        HikariDbSource.close();
+    }
 }
 
 
