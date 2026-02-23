@@ -20,12 +20,10 @@ def is_binary_datatype(datatype):
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
         host=mysql_host, user=mysql_user, passwd=mysql_passwd, port=int(mysql_port), db=mysql_database)
-    # Ensure session wait_timeout is large enough for long-running flushes
-    engine = create_engine(url, connect_args={"init_command": "SET SESSION wait_timeout=28000"})
+    engine = create_engine(url)
     conn = engine.connect()
     return conn
 
-  
 def get_tables_from_regex_sql(conn, no_wc,  mysql_database, include_tables_regex, exclude_tables_regex=None, non_partitioned_tables_only=False, include_partitions_regex=None):
     schema = mysql_database
     exclude_regex_clause = ""
@@ -54,35 +52,20 @@ def get_tables_from_regex(conn, no_wc,  mysql_database, include_tables_regex, ex
     return x
 
 
-def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclude_tables_regex=None, include_partitions_regex=None, non_partitioned_tables_only=False, limit=None):
+def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclude_tables_regex=None, include_partitions_regex=None, non_partitioned_tables_only=False):
     
     table_sql =  get_tables_from_regex_sql(conn, False,  mysql_database, include_tables_regex, exclude_tables_regex=exclude_tables_regex, non_partitioned_tables_only=non_partitioned_tables_only)
     
     include_regex_clause = ""
     if include_partitions_regex is not None:
          include_regex_clause = f"and partition_name rlike '{include_partitions_regex}'"
-    
-    limit_clause = ""
-    if limit:
-        limit_clause = f"limit {limit}"
-    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name, PARTITION_NAME as partition_name, PARTITION_EXPRESSION as partition_expression from information_schema.partitions where table_schema = '{mysql_database}' {include_regex_clause} and (table_schema, table_name) IN ({table_sql}) order by 1,2,3 {limit_clause}"
+         
+    strCommand = f"select TABLE_SCHEMA as table_schema, TABLE_NAME as table_name, PARTITION_NAME as partition_name, PARTITION_EXPRESSION as partition_expression from information_schema.partitions where table_schema = '{mysql_database}' {include_regex_clause} and (table_schema, table_name) IN ({table_sql}) order by 1,2,3"
     (rowset, rowcount) = execute_mysql(conn, strCommand)
     x = rowset
 
     return x
 
-
-def get_table_partition_key(conn, database, table):
-    partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
-    partitions = partitions.fetchall()
-    if len(partitions) > 0:
-        for partition in partitions:
-            partition_name = partition['partition_name']
-            partition_expression = partition['partition_expression']
-            if partition_name is not None:
-                return partition_expression
-    return None
-            
 
 def mysql_execute_df(conn, sql):
     logging.debug(sql)
