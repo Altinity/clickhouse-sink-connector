@@ -323,7 +323,7 @@ WHERE 1=1
 ```yaml
 source:
   postgres:
-    host: fpif1-postgresl1.jumpisolated.com
+    host: fpif1-postgresl1.host
     port: 5432
     database: awacs-qa
     schema: public
@@ -337,7 +337,7 @@ source:
 
 replicas:
   - clickhouse:
-      host: fpif-dbachl4.jumpisolated.com
+      host: fpif-dbachl4.host
       port: 9000
       database: awacs_qa            # CH database name (underscore, not dash)
       config_file: ./clickhouse-client.xml
@@ -980,7 +980,7 @@ cp sink-connector/python/db_compare/awacs_qa_checksum.yaml.example \
 # Edit with actual hostnames, credentials path, connector_name
 
 # 4. Create ~/.pgpass for passwordless PG auth (mode 600 required)
-echo "fpif1-postgresl1.jumpisolated.com:5432:awacs-qa:replicator:<password>" \
+echo "fpif1-postgresl1.host:5432:awacs-qa:replicator:<password>" \
     >> ~/.pgpass
 chmod 600 ~/.pgpass
 
@@ -1052,7 +1052,7 @@ Full annotated example (`awacs_qa_checksum.yaml`):
 
 source:
   postgres:
-    host: fpif1-postgresl1.jumpisolated.com
+    host: fpif1-postgresl1.host
     port: 5432
     database: awacs-qa
     schema: public
@@ -1066,7 +1066,7 @@ source:
 
 replicas:
   - clickhouse:
-      host: fpif-dbachl4.jumpisolated.com
+      host: fpif-dbachl4.host
       port: 9000
       database: awacs_qa
       config_file: ./clickhouse-client.xml
