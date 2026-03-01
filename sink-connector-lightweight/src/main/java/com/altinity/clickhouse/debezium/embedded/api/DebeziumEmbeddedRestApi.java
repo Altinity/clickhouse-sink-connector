@@ -6,7 +6,8 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperatio
 import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
@@ -75,8 +76,9 @@ public class DebeziumEmbeddedRestApi {
                                     Properties userProperties) {
         String cliPort = props.getProperty(
                 SinkConnectorLightWeightConfig.CLI_PORT);
-        MySQLDDLParserService sqlddlParserService = new MySQLDDLParserService();
-        sqlddlParserService = new MySQLDDLParserService(
+        DDLParserService sqlddlParserService = DDLParserFactory.getParser(
+                props,
+                null,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 "employees");
         if (cliPort == null || cliPort.isEmpty()) {
@@ -263,7 +265,7 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication....");
         });
 
-        MySQLDDLParserService finalSqlddlParserService = sqlddlParserService;
+        DDLParserService finalSqlddlParserService = sqlddlParserService;
         app.post("/ddl-translate", ctx -> {
             String ddl = ctx.body();
             log.info(String.format("Received DDL for translation %s", ddl));
