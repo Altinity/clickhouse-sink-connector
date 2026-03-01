@@ -1,7 +1,7 @@
 # Plan 13 — Checksum Live Test Results & Active TZ Bug Report
 
 **Date**: 2026-03-01  
-**Environment**: `awacs-qa` PostgreSQL → ClickHouse CDC replication on `fpif-dbachl4`  
+**Environment**: `awacs-qa` PostgreSQL → ClickHouse CDC replication on `clickhouse`  
 **Test script**: `sink-connector/python/db_compare/validate_checksums_local.py`  
 **Run from**: local machine (direct TCP to PG:5435, HTTP to CH:8123)
 
@@ -76,7 +76,7 @@ For every failing table, **CH timestamps are exactly 6 hours behind PG timestamp
 | `alerts_alert` (recent 50) | all 50 | `2026-03-01 09:18:38` | `2026-03-01 03:18:38` | **−6 h** |
 | `alerts_tagcache` | id=1370513 | `2020-01-13 13:51:34.347687` | `2020-01-13 07:51:34.347687` | **−6 h** |
 
-The offset is exactly **UTC−6 = US/Central Standard Time (CST)** — the timezone of the `fpif-dbachl4` host and the `fpif1-postgresl1` PG server.
+The offset is exactly **UTC−6 = US/Central Standard Time (CST)** — the timezone of the `clickhouse` host and the `postgres` PG server.
 
 ### Root cause
 
@@ -207,7 +207,7 @@ The following normalizations were verified to produce identical hashes (row-by-r
 ## 8. Next Steps
 
 1. **Fix the sink connector TZ bug** — investigate JVM timezone and Debezium `timestamptz` handling. Target: all 7 failing tables should PASS after fix.
-2. **Deploy fixed scripts to fpif-dbachl4** — copy updated `postgres_table_checksum.py` and `top_level_postgres_checksum.py` to server once Teleport access is restored.
+2. **Deploy fixed scripts to clickhouse** — copy updated `postgres_table_checksum.py` and `top_level_postgres_checksum.py` to server once Teleport access is restored.
 3. **Enable cron job** — `postgres_checksum_runner.sh` is ready; enable via crontab once scripts are deployed.
 4. **Add alerting** — integrate FAIL results into monitoring (PagerDuty / Slack) so TZ bugs are caught immediately in future.
 5. **Backfill corrupted rows** — after fixing the connector, corrupted CH rows need to be re-ingested from PG to correct the stored timestamps.
@@ -364,7 +364,7 @@ Fix: use `col::text` on PG side → `{a,b,c}` to match CH.
 
 ### 10.2 Fixes Applied
 
-Files patched on `fpif-dbachl4` (backed up with `.bak.YYYYMMDDHHMMSS`):
+Files patched on `clickhouse` (backed up with `.bak.YYYYMMDDHHMMSS`):
 
 | File | Fix |
 |------|-----|
@@ -728,7 +728,7 @@ RESULT: PASS — all 36 tables match
 
 ### 11.12 Conclusion
 
-The PostgreSQL → ClickHouse CDC pipeline for `awacs-qa` on `fpif-dbachl4` is **fully verified**:
+The PostgreSQL → ClickHouse CDC pipeline for `awacs-qa` on `clickhouse` is **fully verified**:
 
 - **96M+ rows** replicated (71M in `alerts_alertevent`, 24M in `alerts_alertincident`)
 - **36/36 tables PASS** checksum verification (counts + row-level MD5 hash sums)
