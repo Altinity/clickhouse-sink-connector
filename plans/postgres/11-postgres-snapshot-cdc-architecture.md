@@ -466,12 +466,12 @@ psql -h pg.awacs-qa.internal -U replicator -d awacs \
 | Component | Host | Port | Details |
 |-----------|------|------|---------|
 | PostgreSQL | `postgres` | `5435` | database `awacs-qa` |
-| ClickHouse | `clickhouse` | `9000` (native) / `8123` (HTTP) | database `awacs_qa` |
+| ClickHouse | `clickhouse` | `9000` (native) / `8123` (HTTP) | database `db_name` |
 | Connector service | `clickhouse` | — | systemd user service: `sink-connector-awacs-qa-sink-dev` |
 | Connector config | `clickhouse` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/config/config.yml` |
 | Connector log | `clickhouse` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/logs/sink-connector.log` |
 | Connector name | — | — | `sink-connector-awacs-qa-sink-dev` |
-| CH offset table | — | — | `altinity_sink_connector.replica_source_info_awacs_qa_dev` |
+| CH offset table | — | — | `altinity_sink_connector.replica_source_info_db_name_dev` |
 | Helper scripts | `clickhouse` | — | `~/.ch.sh <server> default -q "<sql>"` / `~/.postgres.sh postgres 5435 awacs-qa postgres -c "<sql>"` |
 
 ### Step 1 — Stop the connector (on clickhouse)
@@ -511,18 +511,18 @@ grep snapshot.mode \
   /home/clickhouse/sink-connector/awacs-qa-sink-dev/config/config.yml
 ```
 
-### Step 3 — Drop and recreate awacs_qa in ClickHouse (clean slate)
+### Step 3 — Drop and recreate db_name in ClickHouse (clean slate)
 
 ```bash
 # Check current row counts for reference
 ~/.ch.sh clickhouse default -q \
-  "SELECT table, sum(rows) rows FROM system.parts WHERE database='awacs_qa' AND active GROUP BY table ORDER BY rows DESC"
+  "SELECT table, sum(rows) rows FROM system.parts WHERE database='db_name' AND active GROUP BY table ORDER BY rows DESC"
 
 # Drop entire database (this destroys all current data — only do after confirming connector is stopped)
-~/.ch.sh clickhouse default -q "DROP DATABASE IF EXISTS awacs_qa"
+~/.ch.sh clickhouse default -q "DROP DATABASE IF EXISTS db_name"
 
 # Recreate empty database
-~/.ch.sh clickhouse default -q "CREATE DATABASE awacs_qa"
+~/.ch.sh clickhouse default -q "CREATE DATABASE db_name"
 ```
 
 ### Step 4 — Run Python snapshot (on clickhouse or any host with psql + clickhouse-client)
@@ -543,10 +543,10 @@ python db_dump/postgres_dumper.py \
   --pg_schema public \
   --ch_host clickhouse \
   --ch_port 9000 \
-  --ch_database awacs_qa \
+  --ch_database db_name \
   --ch_user default \
   --threads 8 \
-  --offset_table altinity_sink_connector.replica_source_info_awacs_qa_dev \
+  --offset_table altinity_sink_connector.replica_source_info_db_name_dev \
   --connector_name sink-connector-awacs-qa-sink-dev \
   --schema_only \
   --dry_run
@@ -560,10 +560,10 @@ python db_dump/postgres_dumper.py \
   --pg_schema public \
   --ch_host clickhouse \
   --ch_port 9000 \
-  --ch_database awacs_qa \
+  --ch_database db_name \
   --ch_user default \
   --threads 8 \
-  --offset_table altinity_sink_connector.replica_source_info_awacs_qa_dev \
+  --offset_table altinity_sink_connector.replica_source_info_db_name_dev \
   --connector_name sink-connector-awacs-qa-sink-dev \
   2>&1 | tee /tmp/awacs-qa-snapshot-$(date +%Y%m%d-%H%M%S).log
 ```
@@ -584,7 +584,7 @@ python db_dump/postgres_dumper.py \
   "SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' ORDER BY relname" \
   | while read table count; do
     ch_count=$(~/.ch.sh clickhouse default -q \
-      "SELECT count() FROM awacs_qa.\`$table\` FINAL" 2>/dev/null || echo "N/A")
+      "SELECT count() FROM db_name.\`$table\` FINAL" 2>/dev/null || echo "N/A")
     printf "%-50s  PG=%-12s  CH=%s\n" "$table" "$count" "$ch_count"
   done
 
@@ -592,12 +592,12 @@ python db_dump/postgres_dumper.py \
 ~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT COUNT(*) FROM public.alerts_rule"
 ~/.ch.sh clickhouse default -q \
-  "SELECT count() FROM awacs_qa.alerts_rule FINAL"
+  "SELECT count() FROM db_name.alerts_rule FINAL"
 
 ~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT COUNT(*) FROM public.alerts_rulehistoryentry"
 ~/.ch.sh clickhouse default -q \
-  "SELECT count() FROM awacs_qa.alerts_rulehistoryentry FINAL"
+  "SELECT count() FROM db_name.alerts_rulehistoryentry FINAL"
 ```
 
 ### Step 6 — Verify LSN offset was written correctly
@@ -605,7 +605,7 @@ python db_dump/postgres_dumper.py \
 ```bash
 ~/.ch.sh clickhouse default -q \
   "SELECT id, offset_key, offset_val, record_insert_ts
-   FROM altinity_sink_connector.replica_source_info_awacs_qa_dev
+   FROM altinity_sink_connector.replica_source_info_db_name_dev
    ORDER BY record_insert_ts DESC LIMIT 5"
 ```
 
@@ -648,7 +648,7 @@ tail -f /home/clickhouse/sink-connector/awacs-qa-sink-dev/logs/sink-connector.lo
 ~/.ch.sh clickhouse default -q \
   "SELECT event_time, database, table, rows_inserted
    FROM system.part_log
-   WHERE database='awacs_qa' AND event_type='NewPart'
+   WHERE database='db_name' AND event_type='NewPart'
    ORDER BY event_time DESC LIMIT 20"
 ```
 

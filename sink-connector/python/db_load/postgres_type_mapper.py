@@ -436,7 +436,7 @@ def build_offset_insert(offset_table: str, lsn_int: int,
     Parameters
     ----------
     offset_table   : fully-qualified table name,
-                     e.g. 'altinity_sink_connector.replica_source_info_awacs_qa_dev'
+                     e.g. 'altinity_sink_connector.replica_source_info_db_name_dev'
     lsn_int        : LOW-32-BIT integer LSN value (as returned by get_current_lsn()).
                      Debezium stores only the hex value right of "/" in the LSN string,
                      e.g. "0/1A3F000" → 0x1A3F000 = 27516928.

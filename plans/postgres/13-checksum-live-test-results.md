@@ -220,7 +220,7 @@ The following normalizations were verified to produce identical hashes (row-by-r
 **Fix**: Added `-Duser.timezone=UTC` to JVM ExecStart in systemd service file
 **Re-dump**: Full bulk snapshot via `postgres_dumper.py` (~96.3M rows, ~6m30s)
 **New LSN**: `9C2/48053260` (lsn_proc=1208300128)
-**Checksum tool**: `top_level_postgres_checksum.py --config config_postgres_awacs_qa.yml` (on-server)
+**Checksum tool**: `top_level_postgres_checksum.py --config config_postgres_db_name.yml` (on-server)
 
 ### 9.1 Service File Change
 
@@ -568,7 +568,7 @@ For the `awacs-qa` database: PG server TZ = `US/Central` (detected at dump time 
 After all patches applied:
 1. Connector stopped (already inactive)
 2. `awacs-qa` CH database dropped and recreated (clean state)
-3. Debezium offset table `altinity_sink_connector.replica_source_info_awacs_qa_dev` truncated
+3. Debezium offset table `altinity_sink_connector.replica_source_info_db_name_dev` truncated
 4. `postgres_dumper.py` re-run with updated type mapper → log at `/tmp/postgres_dumper_run3.log`
 5. Connector restarted at 05:52 UTC (PIDs 89727/89728) with `database.connectionTimeZone: "UTC"` active
 6. Full 36-table checksum re-run — see Run 10 below
