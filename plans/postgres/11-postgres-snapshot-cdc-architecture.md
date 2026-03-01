@@ -465,16 +465,16 @@ psql -h pg.awacs-qa.internal -U replicator -d awacs \
 
 | Component | Host | Port | Details |
 |-----------|------|------|---------|
-| PostgreSQL | `fpif1-postgresl1` | `5435` | database `awacs-qa` |
-| ClickHouse | `fpif-dbachl4` | `9000` (native) / `8123` (HTTP) | database `awacs_qa` |
-| Connector service | `fpif-dbachl4` | — | systemd user service: `sink-connector-awacs-qa-sink-dev` |
-| Connector config | `fpif-dbachl4` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/config/config.yml` |
-| Connector log | `fpif-dbachl4` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/logs/sink-connector.log` |
+| PostgreSQL | `postgres` | `5435` | database `awacs-qa` |
+| ClickHouse | `clickhouse` | `9000` (native) / `8123` (HTTP) | database `awacs_qa` |
+| Connector service | `clickhouse` | — | systemd user service: `sink-connector-awacs-qa-sink-dev` |
+| Connector config | `clickhouse` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/config/config.yml` |
+| Connector log | `clickhouse` | — | `/home/clickhouse/sink-connector/awacs-qa-sink-dev/logs/sink-connector.log` |
 | Connector name | — | — | `sink-connector-awacs-qa-sink-dev` |
 | CH offset table | — | — | `altinity_sink_connector.replica_source_info_awacs_qa_dev` |
-| Helper scripts | `fpif-dbachl4` | — | `~/.ch.sh <server> default -q "<sql>"` / `~/.postgres.sh fpif1-postgresl1 5435 awacs-qa postgres -c "<sql>"` |
+| Helper scripts | `clickhouse` | — | `~/.ch.sh <server> default -q "<sql>"` / `~/.postgres.sh postgres 5435 awacs-qa postgres -c "<sql>"` |
 
-### Step 1 — Stop the connector (on fpif-dbachl4)
+### Step 1 — Stop the connector (on clickhouse)
 
 ```bash
 # Check current status first
@@ -491,7 +491,7 @@ sudo -u clickhouse XDG_RUNTIME_DIR=/run/user/1000 \
 # Expected: inactive
 ```
 
-### Step 2 — Configure CDC-only mode (on fpif-dbachl4)
+### Step 2 — Configure CDC-only mode (on clickhouse)
 
 Edit `/home/clickhouse/sink-connector/awacs-qa-sink-dev/config/config.yml`:
 
@@ -515,17 +515,17 @@ grep snapshot.mode \
 
 ```bash
 # Check current row counts for reference
-~/.ch.sh fpif-dbachl4 default -q \
+~/.ch.sh clickhouse default -q \
   "SELECT table, sum(rows) rows FROM system.parts WHERE database='awacs_qa' AND active GROUP BY table ORDER BY rows DESC"
 
 # Drop entire database (this destroys all current data — only do after confirming connector is stopped)
-~/.ch.sh fpif-dbachl4 default -q "DROP DATABASE IF EXISTS awacs_qa"
+~/.ch.sh clickhouse default -q "DROP DATABASE IF EXISTS awacs_qa"
 
 # Recreate empty database
-~/.ch.sh fpif-dbachl4 default -q "CREATE DATABASE awacs_qa"
+~/.ch.sh clickhouse default -q "CREATE DATABASE awacs_qa"
 ```
 
-### Step 4 — Run Python snapshot (on fpif-dbachl4 or any host with psql + clickhouse-client)
+### Step 4 — Run Python snapshot (on clickhouse or any host with psql + clickhouse-client)
 
 ```bash
 # Ensure Python dependencies are installed
@@ -536,12 +536,12 @@ cd /home/minguyen/workspace/clickhouse-sink-connector/sink-connector/python
 
 # Dry run first — shows DDL without executing
 python db_dump/postgres_dumper.py \
-  --pg_host fpif1-postgresl1 \
+  --pg_host postgres \
   --pg_port 5435 \
   --pg_database awacs-qa \
   --pg_user postgres \
   --pg_schema public \
-  --ch_host fpif-dbachl4 \
+  --ch_host clickhouse \
   --ch_port 9000 \
   --ch_database awacs_qa \
   --ch_user default \
@@ -553,12 +553,12 @@ python db_dump/postgres_dumper.py \
 
 # Full snapshot (parallel, 8 threads, ~70-80M rows total across 36 tables)
 python db_dump/postgres_dumper.py \
-  --pg_host fpif1-postgresl1 \
+  --pg_host postgres \
   --pg_port 5435 \
   --pg_database awacs-qa \
   --pg_user postgres \
   --pg_schema public \
-  --ch_host fpif-dbachl4 \
+  --ch_host clickhouse \
   --ch_port 9000 \
   --ch_database awacs_qa \
   --ch_user default \
@@ -570,7 +570,7 @@ python db_dump/postgres_dumper.py \
 
 > **Note on `--pg_password`:** If the `postgres` user uses peer auth inside Docker, you may need
 > to exec into the container and run `pg_dump` from there. Alternatively set `~/.pgpass` for
-> `fpif1-postgresl1:5435:awacs-qa:postgres:<password>`.
+> `postgres:5435:awacs-qa:postgres:<password>`.
 
 > **Note on `interval` tables:** `alerts_rule` and `alerts_rulehistoryentry` have `ttl interval`
 > columns. The Python dumper correctly maps `interval → String` — these tables will be created
@@ -580,30 +580,30 @@ python db_dump/postgres_dumper.py \
 
 ```bash
 # Quick PG vs CH count comparison for all 36 tables
-~/.postgres.sh fpif1-postgresl1 5435 awacs-qa postgres -c \
+~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' ORDER BY relname" \
   | while read table count; do
-    ch_count=$(~/.ch.sh fpif-dbachl4 default -q \
+    ch_count=$(~/.ch.sh clickhouse default -q \
       "SELECT count() FROM awacs_qa.\`$table\` FINAL" 2>/dev/null || echo "N/A")
     printf "%-50s  PG=%-12s  CH=%s\n" "$table" "$count" "$ch_count"
   done
 
 # Spot-check the two previously broken tables
-~/.postgres.sh fpif1-postgresl1 5435 awacs-qa postgres -c \
+~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT COUNT(*) FROM public.alerts_rule"
-~/.ch.sh fpif-dbachl4 default -q \
+~/.ch.sh clickhouse default -q \
   "SELECT count() FROM awacs_qa.alerts_rule FINAL"
 
-~/.postgres.sh fpif1-postgresl1 5435 awacs-qa postgres -c \
+~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT COUNT(*) FROM public.alerts_rulehistoryentry"
-~/.ch.sh fpif-dbachl4 default -q \
+~/.ch.sh clickhouse default -q \
   "SELECT count() FROM awacs_qa.alerts_rulehistoryentry FINAL"
 ```
 
 ### Step 6 — Verify LSN offset was written correctly
 
 ```bash
-~/.ch.sh fpif-dbachl4 default -q \
+~/.ch.sh clickhouse default -q \
   "SELECT id, offset_key, offset_val, record_insert_ts
    FROM altinity_sink_connector.replica_source_info_awacs_qa_dev
    ORDER BY record_insert_ts DESC LIMIT 5"
@@ -615,7 +615,7 @@ id                                   offset_key                                 
 <uuid>  ["sink-connector-awacs-qa-sink-dev",{"server":"embeddedconnector"}]   {"transaction_id":null,"lsn_proc":<N>,"lsn":<N>,"ts_usec":<T>}   2026-02-28 ...
 ```
 
-### Step 7 — Start CDC-only connector (on fpif-dbachl4)
+### Step 7 — Start CDC-only connector (on clickhouse)
 
 ```bash
 # Confirm snapshot.mode=never is in config before starting
@@ -640,12 +640,12 @@ sudo -u clickhouse XDG_RUNTIME_DIR=/run/user/1000 \
 tail -f /home/clickhouse/sink-connector/awacs-qa-sink-dev/logs/sink-connector.log
 
 # Replication slot WAL lag on PostgreSQL
-~/.postgres.sh fpif1-postgresl1 5435 awacs-qa postgres -c \
+~/.postgres.sh postgres 5435 awacs-qa postgres -c \
   "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS lag
    FROM pg_replication_slots WHERE plugin='pgoutput'"
 
 # ClickHouse ingestion rate
-~/.ch.sh fpif-dbachl4 default -q \
+~/.ch.sh clickhouse default -q \
   "SELECT event_time, database, table, rows_inserted
    FROM system.part_log
    WHERE database='awacs_qa' AND event_type='NewPart'

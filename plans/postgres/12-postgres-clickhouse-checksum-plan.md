@@ -1,6 +1,6 @@
 # Plan 12 — PostgreSQL / ClickHouse Periodic Checksum Verification
 
-**Target pipeline:** `awacs-qa` (PostgreSQL on `fpif1-postgresl1`) → `awacs-qa` (ClickHouse on `fpif-dbachl4`)  
+**Target pipeline:** `awacs-qa` (PostgreSQL on `postgres`) → `awacs-qa` (ClickHouse on `clickhouse`)  
 **Transport:** Altinity Debezium sink-connector (CDC, ReplacingMergeTree)  
 **Plan status:** Draft — for review before implementation
 
@@ -16,7 +16,7 @@
 6. [PostgreSQL Query Patterns for Stable Reads](#6-postgresql-query-patterns)
 7. [Replication Lag Detection](#7-replication-lag-detection)
 8. [Output Format and Result Reporting](#8-output-format)
-9. [Cron Setup on fpif-dbachl4](#9-cron-setup)
+9. [Cron Setup on clickhouse](#9-cron-setup)
 10. [Alert Thresholds and Failure Modes](#10-alert-thresholds)
 11. [YAML Configuration File Schema](#11-yaml-configuration)
 12. [Implementation Checklist](#12-implementation-checklist)
@@ -323,7 +323,7 @@ WHERE 1=1
 ```yaml
 source:
   postgres:
-    host: fpif1-postgresl1.host
+    host: postgres.host
     port: 5432
     database: awacs-qa
     schema: public
@@ -337,7 +337,7 @@ source:
 
 replicas:
   - clickhouse:
-      host: fpif-dbachl4.host
+      host: clickhouse.host
       port: 9000
       database: awacs_qa            # CH database name (underscore, not dash)
       config_file: ./clickhouse-client.xml
@@ -498,7 +498,7 @@ def run_config(config):
 #!/usr/bin/env bash
 # -- ===========================================================================
 # -- FileName    : postgres_checksum_runner.sh
-# -- Summary     : Cron wrapper for PG→CH periodic checksum on fpif-dbachl4
+# -- Summary     : Cron wrapper for PG→CH periodic checksum on clickhouse
 # -- Usage       : ./postgres_checksum_runner.sh [--config config.yaml] [--debug]
 # -- Cron        : 0 * * * * /opt/sink-connector/python/db_compare/postgres_checksum_runner.sh
 # -- ===========================================================================
@@ -945,7 +945,7 @@ Logs are written to `/var/log/pg_ch_checksum/awacs_qa_<YYYYMMDD>.log`.  Recommen
 
 ---
 
-## 9. Cron Setup on fpif-dbachl4
+## 9. Cron Setup on clickhouse
 
 ### Recommended Cron Schedule
 
@@ -963,7 +963,7 @@ Logs are written to `/var/log/pg_ch_checksum/awacs_qa_<YYYYMMDD>.log`.  Recommen
     >> /var/log/pg_ch_checksum/daily_$(date +\%Y\%m\%d).log 2>&1
 ```
 
-### Installation Steps on fpif-dbachl4
+### Installation Steps on clickhouse
 
 ```bash
 # 1. Ensure the Python virtualenv has all required packages
@@ -980,7 +980,7 @@ cp sink-connector/python/db_compare/awacs_qa_checksum.yaml.example \
 # Edit with actual hostnames, credentials path, connector_name
 
 # 4. Create ~/.pgpass for passwordless PG auth (mode 600 required)
-echo "fpif1-postgresl1.host:5432:awacs-qa:replicator:<password>" \
+echo "postgres.host:5432:awacs-qa:replicator:<password>" \
     >> ~/.pgpass
 chmod 600 ~/.pgpass
 
@@ -1052,7 +1052,7 @@ Full annotated example (`awacs_qa_checksum.yaml`):
 
 source:
   postgres:
-    host: fpif1-postgresl1.host
+    host: postgres.host
     port: 5432
     database: awacs-qa
     schema: public
@@ -1066,7 +1066,7 @@ source:
 
 replicas:
   - clickhouse:
-      host: fpif-dbachl4.host
+      host: clickhouse.host
       port: 9000
       database: awacs_qa
       config_file: ./clickhouse-client.xml
@@ -1124,7 +1124,7 @@ checksum:
 [ ] Integration test: run against awacs-qa / awacs_qa with tables_regex='^django_migrations$'
 [ ] Integration test: run against a medium table (Tier-2)
 [ ] Integration test: run against alerts_alertevent (Tier-3, 71M rows)
-[ ] Install crontab on fpif-dbachl4
+[ ] Install crontab on clickhouse
 [ ] Set up logrotate for /var/log/pg_ch_checksum/
 [ ] Document known column exclusions for awacs-qa (e.g. JSON columns, array columns)
 ```

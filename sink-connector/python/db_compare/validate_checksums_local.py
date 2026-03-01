@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Local validation script: runs corrected PG+CH checksums directly from this machine
-against the live awacs-qa replication, WITHOUT needing SSH to fpif-dbachl4.
+against the live awacs-qa replication, WITHOUT needing SSH to clickhouse.
 
-PG:  fpif1-postgresl1:5435  (direct TCP accessible)
-CH:  fpif-dbachl4:8123      (HTTP interface accessible)
+PG:  postgres:5435  (direct TCP accessible)
+CH:  clickhouse:8123      (HTTP interface accessible)
 
 Key fixes being validated:
   1. TimeZone=UTC on PG connection (timestamptz → UTC strings matching CH)
@@ -31,14 +31,14 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 # Connection params
 # ---------------------------------------------------------------------------
-PG_HOST = 'fpif1-postgresl1'
+PG_HOST = 'postgres'
 PG_PORT = 5435
 PG_USER = 'sink_connector_user'
 PG_PASS = '<REDACTED>'
 PG_DB   = 'awacs-qa'
 PG_SCHEMA = 'public'
 
-CH_HOST = 'fpif-dbachl4'
+CH_HOST = 'clickhouse'
 CH_PORT = 8123
 CH_USER = 'sink_connector_user'
 CH_PASS = '<REDACTED>'

@@ -16,13 +16,13 @@
 # --
 # -- Usage example:
 # --   python postgres_dumper.py \
-# --       --pg_host fpif1-postgresl1.host \
+# --       --pg_host postgres.host \
 # --       --pg_port 5435 \
 # --       --pg_database awacs-qa \
 # --       --pg_user replicator \
 # --       --pg_password secret \
 # --       --pg_schema public \
-# --       --ch_host fpif-dbachl4.host \
+# --       --ch_host clickhouse.host \
 # --       --ch_port 9000 \
 # --       --ch_database awacs_qa \
 # --       --ch_user default \

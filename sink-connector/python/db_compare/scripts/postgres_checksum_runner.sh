@@ -2,7 +2,7 @@
 # -- ===========================================================================
 # -- FileName    : postgres_checksum_runner.sh
 # -- Summary     : Cron-compatible shell wrapper for PostgreSQL→ClickHouse
-# --               periodic checksum verification on fpif-dbachl4.
+# --               periodic checksum verification on clickhouse.
 # --
 # -- Usage       : ./postgres_checksum_runner.sh [config.yml] [extra args...]
 # --               ./postgres_checksum_runner.sh                        # uses default config
@@ -128,7 +128,7 @@ if [[ "$EXIT_CODE" -ne 0 ]]; then
     #   -H "Content-Type: application/json" \
     #   -d "{\"routing_key\": \"${PAGERDUTY_KEY}\", \"event_action\": \"trigger\", \
     #        \"payload\": {\"summary\": \"PG→CH checksum FAILED: awacs-qa\", \
-    #                      \"severity\": \"critical\", \"source\": \"fpif-dbachl4\"}}"
+    #                      \"severity\": \"critical\", \"source\": \"clickhouse\"}}"
 fi
 
 exit "$EXIT_CODE"
