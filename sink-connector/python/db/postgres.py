@@ -13,7 +13,11 @@ import os
 import configparser
 import psycopg2
 import psycopg2.extras
-import pandas as pd
+try:
+    import pandas as pd
+    _PANDAS_AVAILABLE = True
+except ImportError:
+    _PANDAS_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # PostgreSQL binary / special-case types that need explicit handling
@@ -135,16 +139,21 @@ PG_TO_CH_BASE = {
 }
 
 
-def pg_type_to_ch(pg_type: str, precision=None, scale=None, nullable=False) -> str:
+def pg_type_to_ch(pg_type: str, precision=None, scale=None, nullable=False,
+                 pg_server_timezone: str = None) -> str:
     """
     Map a single PostgreSQL column type to a ClickHouse type string.
 
     Parameters
     ----------
-    pg_type   : full PostgreSQL type name, e.g. "character varying", "numeric"
-    precision : numeric precision (for numeric/decimal columns)
-    scale     : numeric scale
-    nullable  : if True, wrap result in Nullable(...)
+    pg_type            : full PostgreSQL type name, e.g. "character varying", "numeric"
+    precision          : numeric precision (for numeric/decimal columns)
+    scale              : numeric scale
+    nullable           : if True, wrap result in Nullable(...)
+    pg_server_timezone : explicit PG server timezone (e.g. 'America/Chicago').
+                         Used for 'timestamp without time zone' columns so that
+                         the CH DateTime64 column has an unambiguous timezone annotation.
+                         If None, falls back to bare DateTime64(6).
 
     Returns
     -------
@@ -174,11 +183,17 @@ def pg_type_to_ch(pg_type: str, precision=None, scale=None, nullable=False) -> s
             return f'Nullable({ch})' if nullable else ch
 
     # timestamp / timestamptz with precision  e.g. "timestamp(6) with time zone"
-    if 'timestamp' in base and 'time zone' in base:
-        ch = "DateTime64(6, 'UTC')"
-        return f'Nullable({ch})' if nullable else ch
+    # NOTE: 'with time zone' check must be explicit — 'timestamp without time zone'
+    # also contains the substring 'time zone', so we check 'with time zone' or 'timestamptz'.
     if 'timestamp' in base:
-        ch = "DateTime64(6)"
+        if 'with time zone' in base or base == 'timestamptz':
+            ch = "DateTime64(6, 'UTC')"
+        else:
+            # Use explicit PG server timezone so the stored epoch is unambiguous.
+            if pg_server_timezone:
+                ch = f"DateTime64(6, '{pg_server_timezone}')"
+            else:
+                ch = "DateTime64(6)"
         return f'Nullable({ch})' if nullable else ch
 
     # time with/without time zone
@@ -273,7 +288,18 @@ def get_tables(conn, pg_schema, include_regex=None, exclude_regex=None):
     return [r['table_name'] for r in rows]
 
 
-def get_table_columns(conn, pg_schema, table_name):
+def get_server_timezone(conn) -> str:
+    """
+    Return the PostgreSQL server timezone string (e.g. 'America/Chicago', 'UTC').
+    Queries 'SHOW timezone' via the existing connection.
+    """
+    rows = execute_pg(conn, 'SHOW timezone')
+    if rows:
+        return rows[0]['TimeZone']
+    return 'UTC'
+
+
+def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None):
     """
     Return an ordered list of dicts describing every column in *table_name*:
       column_name, pg_type, ordinal_position, is_nullable,
@@ -303,6 +329,7 @@ def get_table_columns(conn, pg_schema, table_name):
             precision=r['numeric_precision'],
             scale=r['numeric_scale'],
             nullable=nullable,
+            pg_server_timezone=pg_server_timezone,
         )
         result.append({
             'column_name':      r['column_name'],

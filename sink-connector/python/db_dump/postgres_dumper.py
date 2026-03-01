@@ -56,6 +56,7 @@ from db.postgres import (
     get_table_pk,
     get_table_row_count,
     get_current_lsn,
+    get_server_timezone,
     build_ch_create_table_ddl,
 )
 from db.clickhouse import clickhouse_connection, clickhouse_execute_conn
@@ -238,6 +239,7 @@ def load_table(
     ch_host, ch_port, ch_user, ch_password, ch_database,
     ch_config_file=None, ch_secure=False,
     dry_run=False, batch_size=None,
+    pg_server_timezone=None,
 ):
     """
     Stream one table from PostgreSQL COPY to ClickHouse INSERT via a shell pipe.
@@ -250,7 +252,7 @@ def load_table(
         # We need a fresh PG connection per thread (psycopg2 is not thread-safe)
         pg_conn = get_postgres_connection(pg_host, pg_user, pg_password,
                                           pg_port, pg_database)
-        columns_meta = get_table_columns(pg_conn, pg_schema, table_name)
+        columns_meta = get_table_columns(pg_conn, pg_schema, table_name, pg_server_timezone=pg_server_timezone)
         pk_cols = get_table_pk(pg_conn, pg_schema, table_name)
         approx_rows = get_table_row_count(pg_conn, pg_schema, table_name)
         pg_conn.close()
@@ -462,6 +464,10 @@ def main():
         (lsn_str, lsn_int) = get_current_lsn(pg_conn_main)
         logging.info(f"Pre-snapshot LSN: {lsn_str}  (integer: {lsn_int})")
 
+        # Detect PG server timezone once for explicit CH column type annotation
+        pg_server_timezone = get_server_timezone(pg_conn_main)
+        logging.info(f"PG server timezone detected: {pg_server_timezone}")
+
         # --------------------------------------------------------------------
         # Step 2: Discover tables
         # --------------------------------------------------------------------
@@ -520,7 +526,8 @@ def main():
                         args.pg_port, args.pg_database
                     )
                     columns_meta = get_table_columns(
-                        pg_conn_t, args.pg_schema, table_name
+                        pg_conn_t, args.pg_schema, table_name,
+                        pg_server_timezone=pg_server_timezone,
                     )
                     pk_cols = get_table_pk(
                         pg_conn_t, args.pg_schema, table_name
@@ -563,6 +570,7 @@ def main():
                         ch_secure=args.ch_secure,
                         dry_run=args.dry_run,
                         batch_size=args.batch_size,
+                        pg_server_timezone=pg_server_timezone,
                     ): table_name
                     for table_name in tables
                 }

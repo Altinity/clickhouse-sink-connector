@@ -52,3 +52,6 @@ tests/image/cache
 
 # Visual studio code
 .vscode/
+
+sink-connector-lightweight/deployment
+sink-connector/python/db_compare/__tmp
