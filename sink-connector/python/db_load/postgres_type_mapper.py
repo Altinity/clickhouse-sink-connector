@@ -14,7 +14,9 @@
 # --   timestamp         → DateTime64(6)
 # --   uuid              → String
 # --   bytea             → String
-# --   numeric (no prec) → String
+# --   numeric (no prec) → Decimal(18, 6)  (safe default; matches Java connector)
+# --   numeric(p)        → Decimal(p, 0)
+# --   numeric(p,s)      → Decimal(p, s)
 # --   arrays            → String
 # --   _version          → Nullable(UInt64)  (snapshot rows have NULL _version)
 # --   is_deleted        → UInt8 DEFAULT 0
@@ -153,11 +155,42 @@ _STRIP_PREFIXES = (
 )
 
 
+def _normalize_type(pg_type: str):
+    """
+    Split a parametric PostgreSQL type string into its base name and optional
+    precision / scale modifiers.
+
+    Examples
+    --------
+    >>> _normalize_type('numeric(10,2)')
+    ('numeric', '10', '2')
+    >>> _normalize_type('numeric(18)')
+    ('numeric', '18', None)
+    >>> _normalize_type('numeric')
+    ('numeric', None, None)
+    >>> _normalize_type('varchar(255)')
+    ('varchar', '255', None)
+    >>> _normalize_type('double precision')
+    ('double precision', None, None)
+
+    Returns
+    -------
+    tuple[str, str | None, str | None]
+        (base_type, precision, scale)  — precision and scale are strings or None.
+    """
+    pg_type = pg_type.strip().lower()
+    m = re.match(r'^([a-z][a-z ]*?)\s*\(\s*(\d+)(?:\s*,\s*(\d+))?\s*\)$', pg_type)
+    if m:
+        return m.group(1).strip(), m.group(2), m.group(3)
+    return pg_type, None, None
+
+
 def map_pg_type(
     pg_type: str,
     numeric_precision=None,
     numeric_scale=None,
     nullable: bool = False,
+    pg_server_timezone: str = None,
 ) -> str:
     """
     Map a PostgreSQL column data_type string to a ClickHouse type string.
@@ -165,16 +198,43 @@ def map_pg_type(
     Parameters
     ----------
     pg_type           : PostgreSQL type as returned by information_schema.columns
-                        e.g. "character varying", "numeric", "timestamp with time zone"
-    numeric_precision : INTEGER precision (for numeric/decimal only)
+                        OR the full parametric text from the ANTLR parse tree,
+                        e.g. "character varying", "numeric", "numeric(10,2)",
+                        "timestamp with time zone", "varchar(255)"
+    numeric_precision : INTEGER precision (for numeric/decimal only).
+                        When provided explicitly (e.g. from information_schema),
+                        takes precedence over any modifiers embedded in pg_type.
     numeric_scale     : INTEGER scale     (for numeric/decimal only)
     nullable          : wrap result in Nullable(…) if True
+    pg_server_timezone: explicit PG server timezone (e.g. 'America/Chicago').
+                        When set, used as the timezone annotation for
+                        "timestamp without time zone" columns in CH so that
+                        the stored DateTime64 epoch is unambiguous.
+                        If None, falls back to bare DateTime64(6).
 
     Returns
     -------
     str  — a valid ClickHouse type string
+
+    Numeric / Decimal mapping rules
+    --------------------------------
+    Explicit params take priority; otherwise the modifier is parsed from pg_type:
+      numeric(p,s)  / decimal(p,s)  →  Decimal(p, s)
+      numeric(p)    / decimal(p)    →  Decimal(p, 0)
+      numeric       / decimal       →  Decimal(18, 6)   (safe default)
     """
-    base = pg_type.lower().strip()
+    # -----------------------------------------------------------------------
+    # 0. Normalize — parse precision/scale out of the type string when they
+    #    are embedded (e.g. "numeric(10,2)" from the ANTLR listener).
+    #    Explicit caller-supplied numeric_precision / numeric_scale win.
+    # -----------------------------------------------------------------------
+    parsed_base, parsed_precision, parsed_scale = _normalize_type(pg_type)
+    base = parsed_base  # lower-cased, stripped, no modifiers
+
+    # Resolve effective precision / scale:
+    #   explicit args (information_schema callers) beat embedded modifiers.
+    eff_precision = numeric_precision if numeric_precision is not None else parsed_precision
+    eff_scale = numeric_scale if numeric_scale is not None else parsed_scale
 
     # -----------------------------------------------------------------------
     # 1. Arrays  →  String
@@ -184,24 +244,31 @@ def map_pg_type(
         return f'Nullable({ch})' if nullable else ch
 
     # -----------------------------------------------------------------------
-    # 2. numeric / decimal  →  Decimal(p,s) when precision is known
+    # 2. numeric / decimal  →  Decimal(p,s)
     # -----------------------------------------------------------------------
     if base in ('numeric', 'decimal'):
-        if numeric_precision is not None:
-            s = int(numeric_scale) if numeric_scale is not None else 0
-            ch = f'Decimal({int(numeric_precision)}, {s})'
+        if eff_precision is not None:
+            s = int(eff_scale) if eff_scale is not None else 0
+            ch = f'Decimal({int(eff_precision)}, {s})'
         else:
-            ch = 'String'   # unbounded numeric: use String to avoid overflow
+            ch = 'Decimal(18, 6)'   # bare numeric/decimal: safe default
         return f'Nullable({ch})' if nullable else ch
 
     # -----------------------------------------------------------------------
     # 3. Timestamp variants  (must come before generic "time" check)
     # -----------------------------------------------------------------------
     if 'timestamp' in base:
-        if 'time zone' in base:
+        # 'timestamp with time zone' / 'timestamptz'  →  UTC (absolute epoch)
+        # 'timestamp without time zone' / 'timestamp'  →  PG server TZ (local time)
+        if 'with time zone' in base or base == 'timestamptz':
             ch = "DateTime64(6, 'UTC')"
         else:
-            ch = "DateTime64(6)"
+            # Use explicit PG server timezone so the stored epoch is unambiguous.
+            # Without this, DateTime64(6) renders in CH server TZ by default.
+            if pg_server_timezone:
+                ch = f"DateTime64(6, '{pg_server_timezone}')"
+            else:
+                ch = "DateTime64(6)"
         return f'Nullable({ch})' if nullable else ch
 
     # -----------------------------------------------------------------------

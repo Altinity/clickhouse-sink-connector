@@ -72,3 +72,4 @@ env/
 .pytest_cache/
 .mypy_cache/
 .env
+sink-connector-lightweight/deployment
