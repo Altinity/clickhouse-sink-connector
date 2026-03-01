@@ -2,8 +2,10 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
+import com.altinity.clickhouse.debezium.embedded.postgres.schema.PostgresSchemaChangeDetector;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -146,6 +148,12 @@ public class DebeziumChangeEventCapture {
     BaseDbWriter writer;
 
     /**
+     * Schema drift detector for PostgreSQL connectors.
+     * Null when the connector is not PostgreSQL (MySQL/MariaDB).
+     */
+    private PostgresSchemaChangeDetector postgresSchemaChangeDetector;
+
+    /**
      * Connection to the system database.
      */
     Connection systemDbConnection;
@@ -244,6 +252,7 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
+        initPostgresSchemaChangeDetector(props, config);
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
         }
@@ -462,10 +471,9 @@ public class DebeziumChangeEventCapture {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
                     Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
-
                     engine.run();
                 } catch (Exception e) {
-                    log.error("Debezium event capture starting Exception", e);
+                    log.error("Debezium event thread: engine.run() threw exception", e);
                 }
             });
         } catch (Exception e) {
@@ -744,8 +752,8 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+        DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
+        ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
@@ -789,8 +797,15 @@ public class DebeziumChangeEventCapture {
                         }
                     }
                     for (String tableName : getTableNamesFromDDL(sr, DDL)) {
-                        CacheInvalidationManager.getInstance()
-                                .invalidateTable(invalidationDatabaseName + "." + tableName);
+                        String tableKey = invalidationDatabaseName + "." + tableName;
+                        CacheInvalidationManager.getInstance().invalidateTable(tableKey);
+                        // Also invalidate the schema-drift detector cache so the next DML event
+                        // re-fetches the updated ClickHouse schema immediately, without waiting
+                        // for the TTL to expire.
+                        if (postgresSchemaChangeDetector != null) {
+                            postgresSchemaChangeDetector.invalidateCache(tableKey);
+                            log.debug("Schema-drift cache invalidated for {} after DDL: {}", tableKey, DDL);
+                        }
                     }
                 } catch (Exception e) {
                     log.warn("Error invalidating cache for DDL: " + DDL, e);
@@ -944,6 +959,29 @@ public class DebeziumChangeEventCapture {
                 + "startup will continue but ClickHouse operations will fail",
                 SYSTEM_DB_CONNECT_ATTEMPTS);
         return conn;
+    }
+
+    /**
+     * Initialises the {@link PostgresSchemaChangeDetector} for PostgreSQL connectors.
+     * Must be called after {@link #setSystemDbConnection} so that {@link #writer} is
+     * already set.
+     *
+     * @param props  connector properties (used to detect connector type via
+     *               {@code connector.class})
+     * @param config the connector configuration forwarded to the detector
+     */
+    private void initPostgresSchemaChangeDetector(Properties props,
+                                                   ClickHouseSinkConnectorConfig config) {
+        String connectorClass = props != null ? props.getProperty("connector.class", "") : "";
+        if (com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory
+                .isPostgresConnector(connectorClass)) {
+            this.postgresSchemaChangeDetector =
+                    new PostgresSchemaChangeDetector(writer, config);
+            log.info("PostgresSchemaChangeDetector initialised for connector class '{}'", connectorClass);
+        } else {
+            this.postgresSchemaChangeDetector = null;
+            log.debug("PostgresSchemaChangeDetector not activated (connector class: '{}')", connectorClass);
+        }
     }
 
     /**
@@ -1129,6 +1167,65 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>For PostgreSQL, the topic format is:
+     * {@code {topic.prefix}.{schema}.{table}}
+     * The table name is the last dot-separated segment.
+     *
+     * @param topic Kafka topic string from a {@link SourceRecord}
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic) {
+        if (topic == null || topic.isEmpty()) {
+            return null;
+        }
+        int lastDot = topic.lastIndexOf('.');
+        if (lastDot < 0 || lastDot == topic.length() - 1) {
+            return topic; // no dot → the whole topic is treated as the table name
+        }
+        return topic.substring(lastDot + 1);
+    }
+
+    /**
+     * Extracts the ClickHouse target database name from a DML {@link SourceRecord}.
+     *
+     * <p>The database name is read from the {@code source} struct embedded in the
+     * record value.  For PostgreSQL the relevant field is {@code db}.
+     * Falls back to the existing {@link #getDatabaseName(SourceRecord)} logic
+     * (which reads from the key struct – used for DDL records).
+     *
+     * @param sr the DML source record
+     * @return the database name, or {@code null} if it cannot be determined
+     */
+    private String extractDatabaseNameFromRecord(SourceRecord sr) {
+        // Try to read from the value's 'source' struct (standard Debezium envelope).
+        try {
+            if (sr.value() instanceof Struct) {
+                Struct valueStruct = (Struct) sr.value();
+                Object sourceObj = valueStruct.get("source");
+                if (sourceObj instanceof Struct) {
+                    Struct sourceStruct = (Struct) sourceObj;
+                    // PostgreSQL uses "db" field; MySQL uses "db" as well.
+                    try {
+                        String db = (String) sourceStruct.get("db");
+                        if (db != null && !db.isEmpty()) {
+                            return db;
+                        }
+                    } catch (Exception ignore) {
+                        // field may not exist
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not extract database name from source struct: {}", e.getMessage());
+        }
+        // Fall back to key-based extraction (used by DDL path).
+        String fallback = getDatabaseName(sr);
+        return "system".equals(fallback) ? null : fallback;
+    }
+
+    /**
      * Executes the given DDL query by splitting it into individual queries
      * and executing each one.
      *
@@ -1250,6 +1347,21 @@ public class DebeziumChangeEventCapture {
                     this.executor.resume();
                 }
             } else {
+                // Schema drift detection: check before writing to ClickHouse so that
+                // any newly-added PostgreSQL columns are present in ClickHouse first.
+                if (postgresSchemaChangeDetector != null) {
+                    try {
+                        String dmlTopic = sr.topic();
+                        String dmlTable = extractTableNameFromTopic(dmlTopic);
+                        String dmlDatabase = extractDatabaseNameFromRecord(sr);
+                        if (dmlTable != null && dmlDatabase != null) {
+                            postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);
+                        }
+                    } catch (Exception schemaEx) {
+                        log.warn("Schema drift detection threw unexpectedly; continuing replication. Cause: {}",
+                                schemaEx.getMessage(), schemaEx);
+                    }
+                }
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                 chStruct.setSequenceNumber(sequenceNumber);
                 try {

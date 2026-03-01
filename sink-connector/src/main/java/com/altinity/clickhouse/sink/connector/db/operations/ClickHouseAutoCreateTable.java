@@ -142,18 +142,9 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(colName).append("`")
                     .append(" ").append(dataType);
 
-            // Ignore setting NULL/NOT NULL for JSON and Array types.
-            if (dataType != null
-                    && (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name())
-                    || dataType.contains(ClickHouseDataType.Array.name()))) {
-                // Do not append null constraints.
-            } else {
-                if (isNull) {
-                    createTableSyntax.append(" ").append(NULL);
-                } else {
-                    createTableSyntax.append(" ").append(NOT_NULL);
-                }
-            }
+            // Do not append NULL/NOT NULL — ClickHouse does not support NOT NULL as a
+            // column constraint keyword. Non-nullable columns are expressed as bare types;
+            // nullable columns are wrapped in Nullable(...) in the type string itself.
             createTableSyntax.append(",");
         }
 

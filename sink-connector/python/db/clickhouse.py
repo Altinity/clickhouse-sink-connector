@@ -10,7 +10,7 @@ def clickhouse_connection(host, database='default', user='default',  password=''
                           secure=False):
     conn = connect(host=host,
                    user=user,
-                   password=password,
+                   password=password or "",
                    port=port,
                    database=database,
                    connect_timeout=20,
