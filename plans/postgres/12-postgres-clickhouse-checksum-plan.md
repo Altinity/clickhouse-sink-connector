@@ -339,9 +339,9 @@ replicas:
   - clickhouse:
       host: clickhouse.host
       port: 9000
-      database: awacs_qa            # CH database name (underscore, not dash)
+      database: db_name            # CH database name (underscore, not dash)
       config_file: ./clickhouse-client.xml
-      offset_table: altinity_sink_connector.replica_source_info_awacs_qa_dev
+      offset_table: altinity_sink_connector.replica_source_info_db_name_dev
       connector_name: sink-connector-awacs-qa-sink-dev
 
 checksum:
@@ -357,7 +357,7 @@ checksum:
     - is_deleted
     - _is_deleted
   alert_count_delta_pct: 0.01      # alert if |PG_cnt - CH_cnt| / PG_cnt > 1%
-  log_file: /var/log/pg_ch_checksum/awacs_qa.log
+  log_file: /var/log/pg_ch_checksum/db_name.log
 ```
 
 **LSN wait implementation:**
@@ -507,8 +507,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="/var/log/pg_ch_checksum"
-LOG_FILE="${LOG_DIR}/awacs_qa_$(date +%Y%m%d).log"
-CONFIG_FILE="${SCRIPT_DIR}/awacs_qa_checksum.yaml"
+LOG_FILE="${LOG_DIR}/db_name_$(date +%Y%m%d).log"
+CONFIG_FILE="${SCRIPT_DIR}/db_name_checksum.yaml"
 VENV="${PYTHON_DIR}/.venv"
 
 mkdir -p "$LOG_DIR"
@@ -700,10 +700,10 @@ Every CH query in this toolset must use `FINAL` to dedup the CDC change stream. 
 
 ```sql
 -- CORRECT: deduplicated read
-SELECT count(*) FROM awacs_qa.alerts_alertevent FINAL WHERE is_deleted = 0;
+SELECT count(*) FROM db_name.alerts_alertevent FINAL WHERE is_deleted = 0;
 
 -- WRONG: counts raw CDC events, not logical rows
-SELECT count(*) FROM awacs_qa.alerts_alertevent WHERE is_deleted = 0;
+SELECT count(*) FROM db_name.alerts_alertevent WHERE is_deleted = 0;
 ```
 
 ### Performance Setting for FINAL
@@ -735,12 +735,12 @@ ClickHouse `ReplacingMergeTree` with `is_deleted` semantics:
 
 ```sql
 -- Count logical (non-deleted) rows that should exist in PG:
-SELECT count(*) FROM awacs_qa.<table> FINAL
+SELECT count(*) FROM db_name.<table> FINAL
 WHERE is_deleted = 0
 SETTINGS do_not_merge_across_partitions_select_final = 1;
 
 -- Sanity check: rows that WERE deleted in PG should show is_deleted=1 in CH:
-SELECT count(*) FROM awacs_qa.<table> FINAL
+SELECT count(*) FROM db_name.<table> FINAL
 WHERE is_deleted = 1
 SETTINGS do_not_merge_across_partitions_select_final = 1;
 ```
@@ -753,7 +753,7 @@ SELECT
     offset_key,
     toInt64(offset_val) AS lsn_int,
     _timestamp
-FROM altinity_sink_connector.replica_source_info_awacs_qa_dev
+FROM altinity_sink_connector.replica_source_info_db_name_dev
 WHERE offset_key LIKE '%sink-connector-awacs-qa-sink-dev%'
 ORDER BY _timestamp DESC
 LIMIT 1;
@@ -931,7 +931,7 @@ Exit code: 1
 
 ### Log File Rotation
 
-Logs are written to `/var/log/pg_ch_checksum/awacs_qa_<YYYYMMDD>.log`.  Recommend 30-day retention via `logrotate`:
+Logs are written to `/var/log/pg_ch_checksum/db_name_<YYYYMMDD>.log`.  Recommend 30-day retention via `logrotate`:
 
 ```
 /var/log/pg_ch_checksum/*.log {
@@ -953,12 +953,12 @@ Logs are written to `/var/log/pg_ch_checksum/awacs_qa_<YYYYMMDD>.log`.  Recommen
 # PostgreSQL → ClickHouse periodic checksum verification
 # Run hourly, at minute 5 past the hour (avoids top-of-hour contention)
 5 * * * * /opt/sink-connector/python/db_compare/postgres_checksum_runner.sh \
-    --config /opt/sink-connector/python/db_compare/awacs_qa_checksum.yaml \
+    --config /opt/sink-connector/python/db_compare/db_name_checksum.yaml \
     >> /var/log/pg_ch_checksum/cron.log 2>&1
 
 # Optional: daily full summary with debug output (runs at 02:05 UTC)
 5 2 * * * /opt/sink-connector/python/db_compare/postgres_checksum_runner.sh \
-    --config /opt/sink-connector/python/db_compare/awacs_qa_checksum.yaml \
+    --config /opt/sink-connector/python/db_compare/db_name_checksum.yaml \
     --debug \
     >> /var/log/pg_ch_checksum/daily_$(date +\%Y\%m\%d).log 2>&1
 ```
@@ -975,8 +975,8 @@ sudo mkdir -p /var/log/pg_ch_checksum
 sudo chown $(whoami) /var/log/pg_ch_checksum
 
 # 3. Create the YAML config file
-cp sink-connector/python/db_compare/awacs_qa_checksum.yaml.example \
-   /opt/sink-connector/python/db_compare/awacs_qa_checksum.yaml
+cp sink-connector/python/db_compare/db_name_checksum.yaml.example \
+   /opt/sink-connector/python/db_compare/db_name_checksum.yaml
 # Edit with actual hostnames, credentials path, connector_name
 
 # 4. Create ~/.pgpass for passwordless PG auth (mode 600 required)
@@ -998,7 +998,7 @@ chmod +x /opt/sink-connector/python/db_compare/postgres_checksum_runner.sh
 # 7. Test a dry run
 cd /opt/sink-connector/python
 python db_compare/top_level_postgres_checksum.py \
-    --config_file db_compare/awacs_qa_checksum.yaml \
+    --config_file db_compare/db_name_checksum.yaml \
     --tables_regex '^django_migrations$' \
     --debug
 
@@ -1043,7 +1043,7 @@ The script expects the virtualenv at `../python/.venv` relative to `db_compare/`
 
 ## 11. YAML Configuration File Schema
 
-Full annotated example (`awacs_qa_checksum.yaml`):
+Full annotated example (`db_name_checksum.yaml`):
 
 ```yaml
 # PostgreSQL → ClickHouse checksum configuration
@@ -1068,15 +1068,15 @@ replicas:
   - clickhouse:
       host: clickhouse.host
       port: 9000
-      database: awacs_qa
+      database: db_name
       config_file: ./clickhouse-client.xml
       secure: false
       # Debezium offset table to poll for LSN catch-up:
-      offset_table: altinity_sink_connector.replica_source_info_awacs_qa_dev
+      offset_table: altinity_sink_connector.replica_source_info_db_name_dev
       # Must match "name" in the Java connector's config.yml exactly:
       connector_name: sink-connector-awacs-qa-sink-dev
       # Optional: override CH database per source database
-      # database_override_map: "awacs-qa:awacs_qa"
+      # database_override_map: "awacs-qa:db_name"
 
 checksum:
   # LSN wait settings:
@@ -1101,7 +1101,7 @@ checksum:
   alert_lag_warn_seconds: 300        # 5 min lag → WARN
   alert_lag_fail_seconds: 1800       # 30 min lag + count mismatch → FAIL
   # Logging:
-  log_file: /var/log/pg_ch_checksum/awacs_qa.log
+  log_file: /var/log/pg_ch_checksum/db_name.log
   # Type handling:
   include_floating_point_columns: false
   include_json_columns: false        # JSON column ordering is non-deterministic
@@ -1117,11 +1117,11 @@ checksum:
 [ ] Create sink-connector/python/db_compare/postgres_table_checksum.py
 [ ] Create sink-connector/python/db_compare/top_level_postgres_checksum.py
 [ ] Create sink-connector/python/db_compare/postgres_checksum_runner.sh
-[ ] Create sink-connector/python/db_compare/awacs_qa_checksum.yaml.example
+[ ] Create sink-connector/python/db_compare/db_name_checksum.yaml.example
 [ ] Unit test: verify Tier-1 PG checksum matches CH checksum for a known small table
 [ ] Unit test: verify count comparison works with FINAL
 [ ] Unit test: verify LSN wait logic (mock CH offset table)
-[ ] Integration test: run against awacs-qa / awacs_qa with tables_regex='^django_migrations$'
+[ ] Integration test: run against awacs-qa / db_name with tables_regex='^django_migrations$'
 [ ] Integration test: run against a medium table (Tier-2)
 [ ] Integration test: run against alerts_alertevent (Tier-3, 71M rows)
 [ ] Install crontab on clickhouse

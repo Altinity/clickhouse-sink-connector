@@ -24,13 +24,13 @@
 # --       --pg_schema public \
 # --       --ch_host clickhouse.host \
 # --       --ch_port 9000 \
-# --       --ch_database awacs_qa \
+# --       --ch_database db_name \
 # --       --ch_user default \
 # --       --ch_password secret \
 # --       --threads 8 \
 # --       --tables '.' \
 # --       --exclude_tables 'django_migrations|django_session' \
-# --       --offset_table altinity_sink_connector.replica_source_info_awacs_qa_dev
+# --       --offset_table altinity_sink_connector.replica_source_info_db_name_dev
 # --
 """
 
@@ -379,7 +379,7 @@ def main():
     parser.add_argument('--offset_table', required=False, default=None,
                         help=(
                             'Fully-qualified ClickHouse offset table, e.g. '
-                            'altinity_sink_connector.replica_source_info_awacs_qa_dev. '
+                            'altinity_sink_connector.replica_source_info_db_name_dev. '
                             'When set, the pre-snapshot WAL LSN is written here '
                             'after all tables are loaded.'
                         ))
