@@ -615,7 +615,7 @@ def main():
             logging.info("=== Step 5: Writing WAL LSN offset to ClickHouse ===")
             ch_conn_offset = clickhouse_connection(
                 args.ch_host,
-                database='default',
+                database='altinity_sink_connector',
                 user=ch_user,
                 password=ch_password,
                 port=args.ch_port,
