@@ -456,11 +456,17 @@ def build_offset_insert(offset_table: str, lsn_int: int,
     snapshot skipping is controlled exclusively by snapshot.mode=never in config.yml.
     """
     import time as _time
+    import json as _json
     ts_usec = int(_time.time() * 1_000_000)
-    # Escape the connector_name for the JSON key — the Java getOffsetKey() wraps
-    # the name in escaped quotes: [\"<name>\",{"server":"embeddedconnector"}]
-    # i.e. the stored string is literally:  ["name",{"server":"embeddedconnector"}]
-    offset_key = f'[\\"{connector_name}\\",{{"server":"embeddedconnector"}}]'
+    # Construct the offset key to exactly match what the Java connector writes.
+    # Java DebeziumOffsetStorage.getOffsetKey() (line 58):
+    #   String.format("[\"%s\",{\"server\":\"embeddedconnector\"}]", connectorName)
+    # which produces:  ["<name>",{"server":"embeddedconnector"}]  (no backslashes).
+    # Using json.dumps with separators=(',',':') produces the identical byte sequence.
+    offset_key = _json.dumps(
+        [connector_name, {"server": "embeddedconnector"}],
+        separators=(',', ':'),
+    )
 
     payload = (
         '{'
