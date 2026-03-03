@@ -55,3 +55,32 @@ tests/image/cache
 
 sink-connector-lightweight/deployment
 sink-connector/python/db_compare/__tmp
+
+# ─── Python build artifacts (ch-sink-tools package) ───
+sink-connector/python/dist/
+sink-connector/python/build/
+*.egg-info/
+*.egg
+*.whl
+
+# ─── Python compiled files ───
+*.py[cod]
+
+# ─── Python egg download cache ───
+.eggs/
+
+# ─── Virtual environments ───
+.venv/
+env/
+
+# ─── Editor swap/backup files ───
+*.swp
+*.swo
+*~
+
+# ─── Python tool caches ───
+.pytest_cache/
+.mypy_cache/
+
+# ─── Environment variable files (may contain secrets) ───
+.env

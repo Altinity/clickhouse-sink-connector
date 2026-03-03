@@ -226,11 +226,11 @@ The following normalizations were verified to produce identical hashes (row-by-r
 
 ```
 # Before:
-ExecStart=/bin/bash -c '/jump/software/platform/java-17-openjdk/bin/java \
+ExecStart=/bin/bash -c '/usr/lib/jvm/java-17-openjdk/bin/java \
   -agentlib:jdwp=...
 
 # After:
-ExecStart=/bin/bash -c '/jump/software/platform/java-17-openjdk/bin/java -Duser.timezone=UTC \
+ExecStart=/bin/bash -c '/usr/lib/jvm/java-17-openjdk/bin/java -Duser.timezone=UTC \
   -agentlib:jdwp=...
 ```
 
