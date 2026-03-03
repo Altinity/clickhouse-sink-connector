@@ -266,23 +266,6 @@ public class ClickHouseStruct {
     boolean lastRecordInBatch;
 
     /**
-     * Cached JSON for _raw column (sourceRecord). Null until first serialization; may remain null if sourceRecord is null.
-     */
-    private transient String cachedRawJson;
-    /**
-     * True when cachedRawJson has been computed (so null can mean "sourceRecord was null").
-     */
-    private transient boolean cachedRawJsonSet;
-    /**
-     * Cached JSON for before column. Null until first serialization.
-     */
-    private transient String cachedBeforeJson;
-    /**
-     * Cached JSON for after column. Null until first serialization.
-     */
-    private transient String cachedAfterJson;
-
-    /**
      * Constructs a ClickHouseStruct with commit info.
      *
      * @param kafkaOffset  Offset in Kafka.
@@ -598,12 +581,7 @@ public class ClickHouseStruct {
      * @return JSON string representation of the sourceRecord, or null if sourceRecord is null
      */
     public String sourceRecordToJson() {
-        if (cachedRawJsonSet) {
-            return cachedRawJson;
-        }
         if (sourceRecord == null) {
-            cachedRawJsonSet = true;
-            cachedRawJson = null;
             return null;
         }
         try {
@@ -641,14 +619,9 @@ public class ClickHouseStruct {
                     jsonNode.put("timestamp", record.timestamp());
                 }
             }
-            String result = JSON_MAPPER.writeValueAsString(jsonNode);
-            cachedRawJson = result;
-            cachedRawJsonSet = true;
-            return result;
+            return JSON_MAPPER.writeValueAsString(jsonNode);
         } catch (Exception e) {
             log.error("Error serializing sourceRecord to JSON", e);
-            cachedRawJsonSet = true;
-            cachedRawJson = null;
             return null;
         }
     }
@@ -659,11 +632,7 @@ public class ClickHouseStruct {
      * @return JSON string representation of the beforeModifiedFields, or null if beforeModifiedFields is null
      */
     public String beforeModifiedFieldsToJson() {
-        if (cachedBeforeJson != null) {
-            return cachedBeforeJson;
-        }
         if (beforeModifiedFields == null) {
-            cachedBeforeJson = "";
             return "";
         }
         try {
@@ -697,12 +666,9 @@ public class ClickHouseStruct {
                 }
                 jsonArray.add(fieldNode);
             }
-            String result = JSON_MAPPER.writeValueAsString(jsonArray);
-            cachedBeforeJson = result;
-            return result;
+            return JSON_MAPPER.writeValueAsString(jsonArray);
         } catch (Exception e) {
             log.error("Error serializing beforeModifiedFields to JSON", e);
-            cachedBeforeJson = "";
             return "";
         }
     }
@@ -713,11 +679,7 @@ public class ClickHouseStruct {
      * @return JSON string representation of the afterModifiedFields, or null if afterModifiedFields is null
      */
     public String afterModifiedFieldsToJson() {
-        if (cachedAfterJson != null) {
-            return cachedAfterJson;
-        }
         if (afterModifiedFields == null) {
-            cachedAfterJson = "";
             return "";
         }
         try {
@@ -751,12 +713,9 @@ public class ClickHouseStruct {
                 }
                 jsonArray.add(fieldNode);
             }
-            String result = JSON_MAPPER.writeValueAsString(jsonArray);
-            cachedAfterJson = result;
-            return result;
+            return JSON_MAPPER.writeValueAsString(jsonArray);
         } catch (Exception e) {
             log.error("Error serializing afterModifiedFields to JSON", e);
-            cachedAfterJson = "";
             return "";
         }
     }
