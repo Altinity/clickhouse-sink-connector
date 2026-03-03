@@ -805,11 +805,13 @@ The PostgreSQL ANTLR4 grammar must support parsing the following DDL operations 
 
 **Grammar Files Location**:
 ```
-sink-connector-lightweight/src/main/antlr4/com/altinity/clickhouse/debezium/embedded/parser/
-├── MySqlLexer.g4           (existing)
-├── MySqlParser.g4          (existing)
-├── PostgreSQLLexer.g4      (NEW - PostgreSQL lexer)
-└── PostgreSQLParser.g4     (NEW - PostgreSQL parser)
+sink-connector-lightweight/src/main/antlr4/
+├── mysql/
+│   ├── MySqlLexer.g4           (existing)
+│   └── MySqlParser.g4          (existing)
+└── postgres/
+    ├── PostgreSQLLexer.g4      (NEW - PostgreSQL lexer)
+    └── PostgreSQLParser.g4     (NEW - PostgreSQL parser)
 ```
 
 **Maven ANTLR4 Plugin Configuration**:
