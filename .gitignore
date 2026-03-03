@@ -96,3 +96,5 @@ env/
 .mypy_cache/
 # ─── Environment variable files (may contain secrets) ───
 .env
+# Internal deployment documentation (not for open-source)
+plans/postgres/__internal/
