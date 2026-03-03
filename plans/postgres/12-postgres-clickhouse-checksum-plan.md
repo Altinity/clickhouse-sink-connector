@@ -1,6 +1,6 @@
 # Plan 12 — PostgreSQL / ClickHouse Periodic Checksum Verification
 
-**Target pipeline:** `awacs-qa` (PostgreSQL on `postgres`) → `awacs-qa` (ClickHouse on `clickhouse`)  
+**Target pipeline:** `staging` (PostgreSQL on `postgres`) → `staging` (ClickHouse on `clickhouse`)  
 **Transport:** Altinity Debezium sink-connector (CDC, ReplacingMergeTree)  
 **Plan status:** Draft — for review before implementation
 
@@ -294,7 +294,7 @@ WHERE 1=1
 **Output format (mirrors MySQL version):**
 
 ```
-2026-03-01 07:00:01 - INFO - MainThread - Count for table awacs-qa.public.alerts_alertevent = 71234567
+2026-03-01 07:00:01 - INFO - MainThread - Count for table staging.public.app_events = 71234567
 ```
 
 ---
@@ -325,14 +325,14 @@ source:
   postgres:
     host: postgres.host
     port: 5432
-    database: awacs-qa
+    database: staging
     schema: public
     pgpass_file: ~/.pgpass          # optional, default ~/.pgpass
-    table_include_list: "awacs-qa.public.alerts_alertevent,awacs-qa.public.users"  # optional CSV
+    table_include_list: "staging.public.app_events,staging.public.users"  # optional CSV
     ignored_columns:
-      - awacs-qa.public.alerts_alertevent.some_noisy_column
+      - staging.public.app_events.some_noisy_column
     tables:                         # per-table where overrides
-      - awacs-qa.public.alerts_alertevent:
+      - staging.public.app_events:
           where: "created_at > '2024-01-01'"
 
 replicas:
@@ -342,7 +342,7 @@ replicas:
       database: db_name            # CH database name (underscore, not dash)
       config_file: ./clickhouse-client.xml
       offset_table: altinity_sink_connector.replica_source_info_db_name_dev
-      connector_name: sink-connector-awacs-qa-sink-dev
+      connector_name: sink-connector-dev
 
 checksum:
   lag_tolerance_seconds: 300       # max seconds to wait for CH to catch up
@@ -532,7 +532,7 @@ EXIT_CODE=${PIPESTATUS[0]}
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo "CHECKSUM FAILED (exit=$EXIT_CODE) — see $LOG_FILE" >&2
     # Optional: send alert via email or PagerDuty
-    # mail -s "PG→CH checksum FAILED: awacs-qa" ops@example.com < "$LOG_FILE"
+    # mail -s "PG→CH checksum FAILED: staging" ops@example.com < "$LOG_FILE"
 fi
 
 echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) PG→CH checksum finished (exit=$EXIT_CODE) ===" >> "$LOG_FILE"
@@ -684,7 +684,7 @@ WHERE is_deleted = 0
 SETTINGS do_not_merge_across_partitions_select_final = 1
 ```
 
-**Note on `alerts_alertevent` (71M rows):** This table falls into Tier-3.  
+**Note on `app_events` (71M rows):** This table falls into Tier-3.  
 The plan should monitor:
 - Count delta (most sensitive signal)
 - `max(id)` alignment (catches truncation at the tail)
@@ -700,10 +700,10 @@ Every CH query in this toolset must use `FINAL` to dedup the CDC change stream. 
 
 ```sql
 -- CORRECT: deduplicated read
-SELECT count(*) FROM db_name.alerts_alertevent FINAL WHERE is_deleted = 0;
+SELECT count(*) FROM db_name.app_events FINAL WHERE is_deleted = 0;
 
 -- WRONG: counts raw CDC events, not logical rows
-SELECT count(*) FROM db_name.alerts_alertevent WHERE is_deleted = 0;
+SELECT count(*) FROM db_name.app_events WHERE is_deleted = 0;
 ```
 
 ### Performance Setting for FINAL
@@ -754,7 +754,7 @@ SELECT
     toInt64(offset_val) AS lsn_int,
     _timestamp
 FROM altinity_sink_connector.replica_source_info_db_name_dev
-WHERE offset_key LIKE '%sink-connector-awacs-qa-sink-dev%'
+WHERE offset_key LIKE '%sink-connector-dev%'
 ORDER BY _timestamp DESC
 LIMIT 1;
 ```
@@ -789,7 +789,7 @@ tables = get_tables(
     conn,
     pg_schema='public',
     include_regex=args.tables_regex,   # e.g. '.' for all
-    exclude_regex=args.exclude_regex,  # e.g. 'django_migrations|django_session'
+    exclude_regex=args.exclude_regex,  # e.g. 'framework_migrations|framework_sessions'
 )
 ```
 
@@ -809,7 +809,7 @@ ORDER BY table_name;
 
 ```python
 # Reuse get_table_pk() from db/postgres.py:
-pk_cols = get_table_pk(conn, pg_schema='public', table_name='alerts_alertevent')
+pk_cols = get_table_pk(conn, pg_schema='public', table_name='app_events')
 # Returns e.g. ['id']
 ```
 
@@ -817,7 +817,7 @@ pk_cols = get_table_pk(conn, pg_schema='public', table_name='alerts_alertevent')
 
 ```python
 # Reuse get_table_row_count() from db/postgres.py:
-approx_rows = get_table_row_count(conn, pg_schema='public', table_name='alerts_alertevent')
+approx_rows = get_table_row_count(conn, pg_schema='public', table_name='app_events')
 # Returns n_live_tup from pg_stat_user_tables — no full scan needed
 ```
 
@@ -905,7 +905,7 @@ lag_seconds = (pg_max_ts - ch_max_ts).total_seconds()
 Each table prints a single INFO-level log line (matching the MySQL orchestrator format):
 
 ```
-2026-03-01 07:00:15 - INFO  - MainThread - [alerts_alertevent] TIER=3 PG=71234567 CH=71234567 DELTA=0 MAX_PK=PG:71234999/CH:71234999 UPDATED_AT_LAG=2.3s STATUS=PASS
+2026-03-01 07:00:15 - INFO  - MainThread - [app_events] TIER=3 PG=71234567 CH=71234567 DELTA=0 MAX_PK=PG:71234999/CH:71234999 UPDATED_AT_LAG=2.3s STATUS=PASS
 2026-03-01 07:00:16 - INFO  - MainThread - [users]             TIER=1 PG=12450    CH=12450    DELTA=0 CHECKSUM=PG:a3f8b2c1d4e5/CH:a3f8b2c1d4e5 STATUS=PASS
 2026-03-01 07:00:17 - WARNING - MainThread - [webhook_events]  TIER=2 PG=543210   CH=543196   DELTA=-14 DELTA_PCT=0.003% CHECKSUM=MISMATCH STATUS=FAIL
 ```
@@ -913,17 +913,17 @@ Each table prints a single INFO-level log line (matching the MySQL orchestrator 
 ### Summary Table (printed at end of run)
 
 ```
-=== PostgreSQL → ClickHouse Checksum Summary (awacs-qa) ===
+=== PostgreSQL → ClickHouse Checksum Summary (staging) ===
 Target LSN: 0/1A3F000  CH lag at start: 0 bytes (fully caught up)
 Run time  : 2026-03-01T07:00:00Z → 2026-03-01T07:03:45Z (225s)
 
 Table                          Tier  PG Count    CH Count    Delta   Delta%   Checksum  Status
 ------------------------------ ----  ----------  ----------  ------  -------  --------  ------
-alerts_alertevent              3     71,234,567  71,234,567       0   0.000%  N/A       PASS
-alerts_incidentevent           3      8,123,456   8,123,456       0   0.000%  N/A       PASS
+app_events              3     71,234,567  71,234,567       0   0.000%  N/A       PASS
+app_incident_events           3      8,123,456   8,123,456       0   0.000%  N/A       PASS
 users                          1         12,450      12,450       0   0.000%  MATCH     PASS
 webhook_events                 2        543,210     543,196     -14   0.003%  MISMATCH  FAIL
-django_migrations              1             87          87       0   0.000%  MATCH     PASS
+framework_migrations              1             87          87       0   0.000%  MATCH     PASS
 
 RESULT: FAIL — 1 of 5 tables have mismatches
 Exit code: 1
@@ -980,7 +980,7 @@ cp sink-connector/python/db_compare/db_name_checksum.yaml.example \
 # Edit with actual hostnames, credentials path, connector_name
 
 # 4. Create ~/.pgpass for passwordless PG auth (mode 600 required)
-echo "postgres.host:5432:awacs-qa:replicator:<password>" \
+echo "postgres.host:5432:staging:replicator:<password>" \
     >> ~/.pgpass
 chmod 600 ~/.pgpass
 
@@ -999,7 +999,7 @@ chmod +x /opt/sink-connector/python/db_compare/postgres_checksum_runner.sh
 cd /opt/sink-connector/python
 python db_compare/top_level_postgres_checksum.py \
     --config_file db_compare/db_name_checksum.yaml \
-    --tables_regex '^django_migrations$' \
+    --tables_regex '^framework_migrations$' \
     --debug
 
 # 8. Install the crontab
@@ -1054,7 +1054,7 @@ source:
   postgres:
     host: postgres.host
     port: 5432
-    database: awacs-qa
+    database: staging
     schema: public
     pgpass_file: ~/.pgpass             # credentials resolved from .pgpass
     # Optional table filter (CSV of "database.schema.table" regex patterns):
@@ -1074,9 +1074,9 @@ replicas:
       # Debezium offset table to poll for LSN catch-up:
       offset_table: altinity_sink_connector.replica_source_info_db_name_dev
       # Must match "name" in the Java connector's config.yml exactly:
-      connector_name: sink-connector-awacs-qa-sink-dev
+      connector_name: sink-connector-dev
       # Optional: override CH database per source database
-      # database_override_map: "awacs-qa:db_name"
+      # database_override_map: "staging:db_name"
 
 checksum:
   # LSN wait settings:
@@ -1121,12 +1121,12 @@ checksum:
 [ ] Unit test: verify Tier-1 PG checksum matches CH checksum for a known small table
 [ ] Unit test: verify count comparison works with FINAL
 [ ] Unit test: verify LSN wait logic (mock CH offset table)
-[ ] Integration test: run against awacs-qa / db_name with tables_regex='^django_migrations$'
+[ ] Integration test: run against staging / db_name with tables_regex='^framework_migrations$'
 [ ] Integration test: run against a medium table (Tier-2)
-[ ] Integration test: run against alerts_alertevent (Tier-3, 71M rows)
+[ ] Integration test: run against app_events (Tier-3, 71M rows)
 [ ] Install crontab on clickhouse
 [ ] Set up logrotate for /var/log/pg_ch_checksum/
-[ ] Document known column exclusions for awacs-qa (e.g. JSON columns, array columns)
+[ ] Document known column exclusions for staging (e.g. JSON columns, array columns)
 ```
 
 ---
@@ -1165,7 +1165,7 @@ The biggest challenge is making PG and CH produce identical text representations
 
 ### Decision 4: Tier-3 for Large Tables (> 10M rows)
 
-`alerts_alertevent` has 71M rows.  A full MD5 would require reading all 71M rows from both PG and CH, which at typical read speeds would take 15–30 minutes.  For an hourly cron job this is not acceptable.
+`app_events` has 71M rows.  A full MD5 would require reading all 71M rows from both PG and CH, which at typical read speeds would take 15–30 minutes.  For an hourly cron job this is not acceptable.
 
 **Tier-3** uses `COUNT + max(id) + max(updated_at)` which executes in seconds using index scans.  It catches:
 - Row count divergence (most common failure mode)

@@ -79,7 +79,7 @@ PG_TO_CH_BASE = {
     'timestamp without time zone':   "DateTime64(6)",
     'timestamp with time zone':      "DateTime64(6, 'UTC')",
     'timestamptz':                   "DateTime64(6, 'UTC')",
-    'interval':                      'String',    # ← the bug that broke awacs-qa
+    'interval':                      'String',    # ← the bug that broke staging
 
     # --- JSON ---
     'json':              'String',

@@ -17,10 +17,10 @@
 > | Batch snapshot tools | 🔴 **Do not exist** | ✅ **Implemented** (3 Python modules) |
 > | `interval` type DDL parser crash | 🔴 Crash (TABLE METADATA not retrieved) | ✅ Fixed (`interval → String` in type mapper) |
 > | `snapshot.mode: initial` OOM crashes | 🔴 Active blocker | ✅ Replaced with `snapshot.mode: never` + Python snapshot |
-> | awacs-qa production migration | 🔴 Blocked | ✅ Runbook complete (Plan 11) |
+> | staging production migration | 🔴 Blocked | ✅ Runbook complete (Plan 11) |
 >
 > **Authoritative documents**:
-> - [`plans/postgres/11-postgres-snapshot-cdc-architecture.md`](plans/postgres/11-postgres-snapshot-cdc-architecture.md) — complete two-phase architecture + awacs-qa runbook (2026-02-28)
+> - [`plans/postgres/11-postgres-snapshot-cdc-architecture.md`](plans/postgres/11-postgres-snapshot-cdc-architecture.md) — complete two-phase architecture + staging runbook (2026-02-28)
 > - [`sink-connector/python/db_dump/postgres_dumper.py`](sink-connector/python/db_dump/postgres_dumper.py) — parallel snapshot orchestrator (636 lines, implemented)
 > - [`sink-connector/python/db_load/postgres_type_mapper.py`](sink-connector/python/db_load/postgres_type_mapper.py) — ClickHouse DDL generator + LSN offset writer (407 lines, implemented)
 > - [`sink-connector/python/db/postgres.py`](sink-connector/python/db/postgres.py) — PostgreSQL connection helpers (426 lines, implemented)

@@ -13,7 +13,7 @@ collection of scripts with fragile import paths (`sys.path.append()` hacks,
 `PYTHONPATH` overrides, wildcard imports).  This document designs a proper
 Python package so that:
 
-1. A single `pip install` on the target server (`fpif-dbachl4`) replaces the
+1. A single `pip install` on the target server (`ch-server`) replaces the
    current `rsync + PYTHONPATH` deployment.
 2. CLI entry points (`ch-checksum`, `ch-dump`, `ch-count`, etc.) become
    first-class commands.
@@ -26,10 +26,10 @@ Python package so that:
 | Constraint | Value |
 |---|---|
 | Target Python version | **≥ 3.6** (no f-strings in new code) |
-| Target server | `fpif-dbachl4` |
+| Target server | `ch-server` |
 | Deployment method | `scp` wheel → `pip install *.whl` |
-| Current deploy path | `/home/clickhouse/python-dump/` |
-| Virtualenv location | `/home/clickhouse/python-dump/.venv` |
+| Current deploy path | `/opt/sink-tools/` |
+| Virtualenv location | `/opt/sink-tools/.venv` |
 
 ---
 
@@ -103,9 +103,9 @@ pandas
 ### 2.4 Current Deployment Workflow
 
 ```
-developer laptop                          fpif-dbachl4
+developer laptop                          ch-server
 ─────────────────                         ─────────────
-edit files in                             /home/clickhouse/python-dump/
+edit files in                             /opt/sink-tools/
   sink-connector/python/                    ├── db/
       │                                     ├── db_compare/
       │  rsync / scp                        ├── db_dump/
@@ -113,7 +113,7 @@ edit files in                             /home/clickhouse/python-dump/
                                             .venv/  ← pip install -r requirements.txt
 
 # Run via:
-cd /home/clickhouse/python-dump
+cd /opt/python-dump
 python db_compare/top_level_postgres_checksum.py --config ...
 python db_dump/postgres_dumper.py --config ...
 ```
@@ -340,8 +340,8 @@ After `pip install ch_sink_tools-*.whl`, the following commands are available:
 
 ```bash
 # BEFORE (current)
-cd /home/clickhouse/python-dump
-export PYTHONPATH=/home/clickhouse/python-dump
+cd /opt/python-dump
+export PYTHONPATH=/opt/python-dump
 python db_compare/top_level_postgres_checksum.py --config config.yml
 
 # AFTER (packaged)
@@ -359,7 +359,7 @@ flowchart LR
     A[Edit code in\nsink-connector/python/] --> B[Run build_wheel.sh]
     B --> C[python -m build --wheel]
     C --> D[dist/ch_sink_tools-0.2.0-py3-none-any.whl]
-    D --> E[scp wheel to fpif-dbachl4]
+    D --> E[scp wheel to ch-server]
     E --> F[pip install --force-reinstall *.whl]
     F --> G[ch-checksum --config ...]
 ```
@@ -374,9 +374,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-TARGET_HOST="${CH_DEPLOY_HOST:-fpif-dbachl4}"
+TARGET_HOST="${CH_DEPLOY_HOST:-ch-server}"
 TARGET_USER="${CH_DEPLOY_USER:-clickhouse}"
-TARGET_VENV="${CH_DEPLOY_VENV:-/home/clickhouse/python-dump/.venv}"
+TARGET_VENV="${CH_DEPLOY_VENV:-/opt/sink-tools/.venv}"
 
 echo "=== Building wheel ==="
 python -m build --wheel --outdir dist/
@@ -400,10 +400,10 @@ fi
 # On developer machine:
 cd sink-connector/python
 python -m build --wheel
-scp dist/ch_sink_tools-0.2.0-py3-none-any.whl clickhouse@fpif-dbachl4:/tmp/
+scp dist/ch_sink_tools-0.2.0-py3-none-any.whl clickhouse@ch-server:/tmp/
 
-# On fpif-dbachl4:
-source /home/clickhouse/python-dump/.venv/bin/activate
+# On ch-server:
+source /opt/sink-tools/.venv/bin/activate
 pip install --force-reinstall /tmp/ch_sink_tools-0.2.0-py3-none-any.whl
 ch-checksum --config /path/to/config.yml
 ```
@@ -428,7 +428,7 @@ because `if __name__ == "__main__": main()` blocks are preserved.
 This means direct `python db_compare/top_level_postgres_checksum.py` execution
 requires the package to be installed (which it will be, via pip).
 
-### 8.2 Migration Checklist for `fpif-dbachl4`
+### 8.2 Migration Checklist for `ch-server`
 
 1. Install the wheel into the existing venv
 2. Verify `ch-checksum --config config.yml` works
@@ -592,7 +592,7 @@ pip install "ch_sink_tools-0.2.0-py3-none-any.whl[all]"
 
 ### Phase 4: Deploy
 
-- `scp` wheel to `fpif-dbachl4`
+- `scp` wheel to `ch-server`
 - `pip install --force-reinstall` in target venv
 - Run `ch-checksum --config config.yml` and compare output
 - Update cron jobs and shell wrappers
