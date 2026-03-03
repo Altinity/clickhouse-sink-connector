@@ -715,7 +715,6 @@
             </plugin>
 
             <!-- License Compliance Plugin -->
-            <!--
             <plugin>
                 <groupId>org.honton.chas</groupId>
                 <artifactId>license-maven-plugin</artifactId>
@@ -756,7 +755,6 @@
                     <scopes>compile,runtime,provided</scopes>
                 </configuration>
             </plugin>
-            -->
         </plugins>
     </build>
     <profiles>
