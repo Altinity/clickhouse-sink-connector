@@ -331,7 +331,7 @@ if auto_diff_enabled:
 checksum_diff_<table_name>_<YYYYMMDD_HHMMSS>.json
 ```
 
-Example: `checksum_diff_alerts_alertevent_20260303_075600.json`
+Example: `checksum_diff_app_events_20260303_075600.json`
 
 Placed in the directory specified by `auto_diff.output_dir` (default: current working directory).
 
@@ -340,14 +340,14 @@ Placed in the directory specified by `auto_diff.output_dir` (default: current wo
 ```json
 {
   "metadata": {
-    "table": "alerts_alertevent",
+    "table": "app_events",
     "schema": "public",
-    "database_pg": "awacs-qa",
-    "database_ch": "awacs-qa",
+    "database_pg": "staging",
+    "database_ch": "staging",
     "run_timestamp": "2026-03-03T07:56:00Z",
     "diff_timestamp": "2026-03-03T08:05:30Z",
     "pk_column": "id",
-    "pk_range": [309239357, 426968068],
+    "pk_range": [100007, 100008],
     "row_count_pg": 72382183,
     "row_count_ch": 72382183,
     "checksum_pg": "a1b2c3d4e5f6...",
@@ -367,12 +367,12 @@ Placed in the directory specified by `auto_diff.output_dir` (default: current wo
   },
   "divergent_rows": [
     {
-      "pk_value": 365768857,
+      "pk_value": 100001,
       "diff_type": "modified",
       "pg_row_hash": "abc123...",
       "ch_row_hash": "def456...",
       "columns": {
-        "id":    {"pg": "365768857", "ch": "365768857", "match": true},
+        "id":    {"pg": "100001", "ch": "100001", "match": true},
         "tags":  {"pg": "...info '1'...", "ch": "...info \\'1\\'...", "match": false},
         "until": {"pg": "4000-01-01 00:00:00.000000", "ch": "2299-12-31 23:00:00.000000", "match": false}
       }
@@ -415,19 +415,19 @@ Placed in the directory specified by `auto_diff.output_dir` (default: current wo
 When `output_format: text`, the output mirrors the format from the [Run 25-26 report](18-binary-search-divergent-rows-report.md):
 
 ```
-=== Auto-Diff Report: alerts_alertevent ===
+=== Auto-Diff Report: app_events ===
 Run: 2026-03-03T07:56:00Z
-PK Range: [309239357, 426968068]
+PK Range: [100007, 100008]
 PG Count: 72,382,183  CH Count: 72,382,183
 
 Divergent Rows Found: 6
 
---- Row 1: id=365768857 (modified) ---
+--- Row 1: id=100001 (modified) ---
   tags:   PG=[...info '1'...]  CH=[...info \'1\'...]  ✗
   until:  PG=[4000-01-01 00:00:00.000000]  CH=[2299-12-31 23:00:00.000000]  ✗
   (14 columns match)
 
---- Row 2: id=365995738 (modified) ---
+--- Row 2: id=100002 (modified) ---
   ...
 ```
 
@@ -515,8 +515,8 @@ Create [`auto_diff.py`](../../sink-connector/python/db_compare/auto_diff.py) wit
 
 ### Phase 3: Config & Testing
 
-- [ ] Add `auto_diff` section to [`config_postgres_awacs_qa.yml`](../../sink-connector-lightweight/deployment/awacs-qa/config_postgres_awacs_qa.yml:67) (disabled by default)
-- [ ] Manual test: run checksum with `auto_diff.enabled: true` against a table with known divergent rows (e.g. `alerts_alertevent` with `tags`/`until` columns included)
+- [ ] Add `auto_diff` section to [`config_postgres.yml`](../../sink-connector-lightweight/deployment/config_postgres.yml:67) (disabled by default)
+- [ ] Manual test: run checksum with `auto_diff.enabled: true` against a table with known divergent rows (e.g. `app_events` with `tags`/`until` columns included)
 - [ ] Verify diff file output matches expected format
 - [ ] Verify WAL resume and connector resume still happen cleanly
 - [ ] Test timeout behaviour
@@ -535,7 +535,7 @@ The existing script ([`binary_search_divergent_rows.py`](../../sink-connector/py
 
 | Aspect | Existing prototype | New auto_diff.py |
 |--------|-------------------|------------------|
-| Table support | Hardcoded to `alerts_alertevent` | Dynamic — works for any table |
+| Table support | Hardcoded to `app_events` | Dynamic — works for any table |
 | Column list | Hardcoded COLUMNS array | Dynamic from `get_table_columns()` + `get_ch_columns_meta()` |
 | Normalisation | Manual type hints per column | Reuses `build_pg_select_expression()` / `_build_ch_col_expr()` |
 | Connection | subprocess psql/clickhouse-client | Native psycopg2 + clickhouse-driver |
@@ -565,8 +565,8 @@ The existing script ([`binary_search_divergent_rows.py`](../../sink-connector/py
 ### 10.1 Run 27 — First Live Test (Failed)
 
 **Date**: 2026-03-03
-**Config**: `auto_diff.enabled: true`, removed `tags` and `until` from `alerts_alertevent` skip_columns to intentionally trigger a FAIL
-**Log**: `/tmp/checksum_run27_autodiff.log`
+**Config**: `auto_diff.enabled: true`, removed `tags` and `until` from `app_events` skip_columns to intentionally trigger a FAIL
+**Log**: `/tmp/checksum_autodiff.log`
 
 The checksum phase completed normally (34/36 PASS, 2/36 FAIL), but the auto-diff phase **crashed** with:
 
@@ -582,25 +582,25 @@ Code: 386. DB::Exception: Column `id` is ambiguous
 
 **Date**: 2026-03-03
 **Config**: Same as Run 27 but with fixed [`auto_diff.py`](../../sink-connector/python/db_compare/auto_diff.py)
-**Log**: `/tmp/checksum_run28_autodiff.log`
+**Log**: `/tmp/checksum_autodiff.log`
 
-**Result**: 34/36 PASS, 2/36 FAIL (`alerts_alert`, `alerts_alertevent`)
+**Result**: 34/36 PASS, 2/36 FAIL (`app_records`, `app_events`)
 
 Auto-diff triggered for both FAIL tables:
 
 | Table | Auto-Diff Result | Divergent Rows | Duration |
 |-------|-----------------|----------------|----------|
-| `alerts_alert` | triggered | — | — |
-| `alerts_alertevent` | **6 divergent rows found** | 6 | 115 seconds |
+| `app_records` | triggered | — | — |
+| `app_events` | **6 divergent rows found** | 6 | 115 seconds |
 
-**`alerts_alertevent` divergent rows**: All 6 rows diverge **only** on the `until` column:
+**`app_events` divergent rows**: All 6 rows diverge **only** on the `until` column:
 - PG value: `4000-01-01 00:00:00`
 - CH value: `2299-12-31 23:00:00`
 - Root cause: DateTime64 overflow clamping — ClickHouse max representable year is 2299
 
-**Diff file**: `/tmp/checksum_diffs/checksum_diff_alerts_alertevent_20260303_085428.json`
+**Diff file**: `/tmp/checksum_diffs/checksum_diff_app_events_20260303_085428.json`
 
-**`alerts_alert` FAIL**: Unexpected — caused by `alert_description` not being in `skip_columns` for this table during the test (it was only configured for `alerts_alertevent`). Same empty-string→NULL conversion issue.
+**`app_records` FAIL**: Unexpected — caused by `alert_description` not being in `skip_columns` for this table during the test (it was only configured for `app_events`). Same empty-string→NULL conversion issue.
 
 ### 10.3 Performance
 

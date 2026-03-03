@@ -5,7 +5,7 @@
 # -- FileName     : top_level_postgres_checksum
 # -- Date         :
 # -- Summary      : Orchestrate PostgreSQL → ClickHouse periodic checksum
-# --                verification for the awacs-qa CDC replication pipeline.
+# --                verification for the staging CDC replication pipeline.
 # --
 # --                Mirrors top_level_table_checksum.py (MySQL version) but:
 # --                  - Source is PostgreSQL (psycopg2 via db.postgres)
@@ -1089,11 +1089,11 @@ def run_config(config: dict, args) -> None:
     # --- Per-table skip_columns: columns excluded from checksum (not count) ---
     # Config format (dict keyed by table name):
     #   skip_columns:
-    #     alerts_alerttemplate:
+    #     app_templates:
     #       - highlighted_tags
     # OR the newer config key:
     #   skip_table_columns:
-    #     alerts_alerttemplate:
+    #     app_templates:
     #       - highlighted_tags
     # Also supports skip_columns as a list (global column exclusions) — in that
     # case per-table lookups return None.

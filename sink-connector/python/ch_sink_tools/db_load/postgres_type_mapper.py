@@ -441,14 +441,14 @@ def build_offset_insert(offset_table: str, lsn_int: int,
                      Debezium stores only the hex value right of "/" in the LSN string,
                      e.g. "0/1A3F000" → 0x1A3F000 = 27516928.
     connector_name : the connector "name" property from config.yml
-                     (e.g. "sink-connector-awacs-qa-sink-dev").
+                     (e.g. "sink-connector-dev").
 
     OFFSET KEY FORMAT (from DebeziumOffsetStorage.getOffsetKey):
         [\"<connectorName>\",{"server":"embeddedconnector"}]
     The Java code does:
         String.format("[\\\"%s\\\",{\\\"server\\\":\\\"embeddedconnector\\\"}]", connectorName)
     which produces e.g.:
-        ["sink-connector-awacs-qa-sink-dev",{"server":"embeddedconnector"}]
+        ["sink-connector-dev",{"server":"embeddedconnector"}]
 
     OFFSET VAL FORMAT (from DebeziumOffsetStorage table comment + updateLsnInformation):
         {"transaction_id":null,"lsn_proc":<lsn_int>,"lsn":<lsn_int>,"ts_usec":<epoch_us>}

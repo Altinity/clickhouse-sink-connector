@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>Environment requirements (Podman socket):
  * <pre>
- *   export DOCKER_HOST=unix:///home/minguyen/.podman/podman.sock
+ *   export DOCKER_HOST=unix:///home/user/.podman/podman.sock
  *   export TESTCONTAINERS_RYUK_DISABLED=true
  * </pre>
  * </p>

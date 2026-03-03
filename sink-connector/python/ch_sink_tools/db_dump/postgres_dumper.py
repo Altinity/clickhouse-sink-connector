@@ -17,8 +17,8 @@
 # -- Usage example:
 # --   python postgres_dumper.py \
 # --       --pg_host postgres.host \
-# --       --pg_port 5435 \
-# --       --pg_database awacs-qa \
+# --       --pg_port 5432 \
+# --       --pg_database staging \
 # --       --pg_user replicator \
 # --       --pg_password secret \
 # --       --pg_schema public \
@@ -29,7 +29,7 @@
 # --       --ch_password secret \
 # --       --threads 8 \
 # --       --tables '.' \
-# --       --exclude_tables 'django_migrations|django_session' \
+# --       --exclude_tables 'framework_migrations|framework_sessions' \
 # --       --offset_table altinity_sink_connector.replica_source_info_db_name_dev
 # --
 """
@@ -305,7 +305,7 @@ def write_lsn_offset(ch_conn, offset_table, lsn_int, connector_name, dry_run=Fal
     the Java CDC connector can start from the correct WAL position.
 
     connector_name must match the "name" property in the Java connector's config.yml,
-    e.g. "sink-connector-awacs-qa-sink-dev".  The Java DebeziumOffsetStorage.getOffsetKey()
+    e.g. "sink-connector-dev".  The Java DebeziumOffsetStorage.getOffsetKey()
     uses it to construct the lookup key:
         [\"<connector_name>\",{"server":"embeddedconnector"}]
     If the key does not match, the Java connector will not find the offset and will
@@ -385,7 +385,7 @@ def main():
                         help=(
                             'The "name" property from the Java connector config.yml. '
                             'Used to build the correct offset_key for the CDC hand-off. '
-                            'E.g. "sink-connector-awacs-qa-sink-dev". '
+                            'E.g. "sink-connector-dev". '
                             'Must match exactly or the Java connector will re-snapshot.'
                         ))
 

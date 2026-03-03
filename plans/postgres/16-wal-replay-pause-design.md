@@ -13,7 +13,7 @@
 |------|------|
 | [`top_level_postgres_checksum.py`](../../sink-connector/python/db_compare/top_level_postgres_checksum.py) | Orchestrator: `run_config()` at line 866 — Phase A/B logic, LSN catch-up |
 | [`db/postgres.py`](../../sink-connector/python/db/postgres.py) | `get_standby_lsn()` at line 405 — reads `pg_last_wal_replay_lsn()` |
-| [`config_postgres_awacs_qa.yml`](../../sink-connector-lightweight/deployment/awacs-qa/config_postgres_awacs_qa.yml) | Deployment config — new `wal_replay_pause` key goes here |
+| [`config_postgres.yml`](../../sink-connector-lightweight/deployment/config_postgres.yml) | Deployment config — new `wal_replay_pause` key goes here |
 
 ---
 
@@ -49,13 +49,13 @@ New WAL records are replayed on the standby. The CDC pipeline (Debezium → Kafk
 
 | Table | Delta | % | Direction |
 |-------|-------|---|-----------|
-| `alerts_alertincident` | −765 | 0.003% | PG > CH — events still in CDC pipeline |
-| `alerts_alertevent` | +119 | 0.0002% | CH > PG — soft-deleted rows not yet merged |
-| `alerts_alert` | −1 | 0.0003% | CDC timing |
-| `alerts_alertattachment` | −1 | 0.004% | CDC timing |
-| `alerts_oncall` | +2 | 0.002% | CDC timing |
+| `app_incidents` | −765 | 0.003% | PG > CH — events still in CDC pipeline |
+| `app_events` | +119 | 0.0002% | CH > PG — soft-deleted rows not yet merged |
+| `app_records` | −1 | 0.0003% | CDC timing |
+| `app_attachments` | −1 | 0.004% | CDC timing |
+| `app_schedule` | +2 | 0.002% | CDC timing |
 
-The 6th failure (`alerts_tagcache` +40,417 / 8.63%) is a **genuine connector gap**, not timing.
+The 6th failure (`app_cache` +40,417 / 8.63%) is a **genuine connector gap**, not timing.
 
 ---
 
@@ -318,7 +318,7 @@ flowchart LR
 
 ### 6.1 New Config Key
 
-Add to the `checksum:` section of [`config_postgres_awacs_qa.yml`](../../sink-connector-lightweight/deployment/awacs-qa/config_postgres_awacs_qa.yml):
+Add to the `checksum:` section of [`config_postgres.yml`](../../sink-connector-lightweight/deployment/config_postgres.yml):
 
 ```yaml
 checksum:
@@ -488,18 +488,18 @@ Enhanced logging for operational visibility:
 
 | Table | Run 17 Delta | Expected Delta | Rationale |
 |-------|-------------|----------------|-----------|
-| `alerts_alertincident` | −765 | **0** | No new WAL events during checksum = no drift |
-| `alerts_alertevent` | +119 | **0** | Same |
-| `alerts_alert` | −1 | **0** | Same |
-| `alerts_alertattachment` | −1 | **0** | Same |
-| `alerts_oncall` | +2 | **0** | Same |
-| `alerts_tagcache` | +40,417 | **+40,417** | Genuine connector gap — unaffected by timing |
+| `app_incidents` | −765 | **0** | No new WAL events during checksum = no drift |
+| `app_events` | +119 | **0** | Same |
+| `app_records` | −1 | **0** | Same |
+| `app_attachments` | −1 | **0** | Same |
+| `app_schedule` | +2 | **0** | Same |
+| `app_cache` | +40,417 | **+40,417** | Genuine connector gap — unaffected by timing |
 
-**Expected result:** 35/36 PASS, 1/36 FAIL (only `alerts_tagcache`).
+**Expected result:** 35/36 PASS, 1/36 FAIL (only `app_cache`).
 
 ### 8.2 Diagnostic Value
 
-If `alerts_tagcache` still fails with WAL pause, it **conclusively proves** the 40K row delta is a genuine connector data gap (stale `_version=0` snapshot rows never cleaned by CDC deletes), not a timing artifact.
+If `app_cache` still fails with WAL pause, it **conclusively proves** the 40K row delta is a genuine connector data gap (stale `_version=0` snapshot rows never cleaned by CDC deletes), not a timing artifact.
 
 If any of the other 5 tables still fail with WAL pause, it indicates a deeper issue beyond CDC timing (e.g., a genuine missed event, Debezium bug, or sink connector processing error).
 
@@ -563,7 +563,7 @@ SELECT pg_is_wal_replay_paused() AS paused,
 These are the concrete code changes required:
 
 1. **Add helper functions** to [`db/postgres.py`](../../sink-connector/python/db/postgres.py): `pause_wal_replay()`, `resume_wal_replay()`, `is_wal_replay_paused()`
-2. **Add `wal_replay_pause` config key** to [`config_postgres_awacs_qa.yml`](../../sink-connector-lightweight/deployment/awacs-qa/config_postgres_awacs_qa.yml) (default `false`)
+2. **Add `wal_replay_pause` config key** to [`config_postgres.yml`](../../sink-connector-lightweight/deployment/config_postgres.yml) (default `false`)
 3. **Read new config key** in [`run_config()`](../../sink-connector/python/db_compare/top_level_postgres_checksum.py:956) alongside `snapshot_mode`
 4. **Implement Step 0** (WAL pause) in the `snapshot_mode=True` branch of [`run_config()`](../../sink-connector/python/db_compare/top_level_postgres_checksum.py:977) — before the existing Step 1
 5. **Wrap Steps 1-7** in `try`/`finally` with WAL resume in the `finally` block
