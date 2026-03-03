@@ -65,6 +65,11 @@ public class DebeziumChangeEventCapture {
             DebeziumChangeEventCapture.class);
 
     /**
+     * Property key for the Debezium connector class configuration.
+     */
+    private static final String CONNECTOR_CLASS_KEY = "connector.class";
+
+    /**
      * Executor for scheduling batch tasks.
      */
     private ClickHouseBatchExecutor executor;
@@ -673,9 +678,8 @@ public class DebeziumChangeEventCapture {
      */
     private void initPostgresSchemaChangeDetector(Properties props,
                                                    ClickHouseSinkConnectorConfig config) {
-        String connectorClass = props != null ? props.getProperty("connector.class", "") : "";
-        if (com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory
-                .isPostgresConnector(connectorClass)) {
+        String connectorClass = props != null ? props.getProperty(CONNECTOR_CLASS_KEY, "") : "";
+        if (DDLParserFactory.isPostgresConnector(connectorClass)) {
             this.postgresSchemaChangeDetector =
                     new PostgresSchemaChangeDetector(writer, config);
             log.info("PostgresSchemaChangeDetector initialised for connector class '{}'", connectorClass);
@@ -790,8 +794,8 @@ public class DebeziumChangeEventCapture {
                         if (db != null && !db.isEmpty()) {
                             return db;
                         }
-                    } catch (Exception ignore) {
-                        // field may not exist
+                    } catch (Exception e) {
+                        log.trace("'db' field not present in source struct: {}", e.getMessage());
                     }
                 }
             }

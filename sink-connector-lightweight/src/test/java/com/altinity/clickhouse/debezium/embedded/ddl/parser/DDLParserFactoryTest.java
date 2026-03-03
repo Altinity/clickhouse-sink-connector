@@ -46,15 +46,15 @@ class DDLParserFactoryTest {
     }
 
     @Test
-    @DisplayName("Factory returns MySQLDDLParserService for MariaDbConnector class name")
-    void testFactoryReturnsMySQLParserForMariaDbConnector() {
+    @DisplayName("Factory returns MySQLDDLParserService for MySqlConnector class name (duplicate check)")
+    void testFactoryReturnsMySQLParserForMySQLConnectorDuplicate() {
         DDLParserService parser = DDLParserFactory.getParser(
-                DDLParserFactory.MARIADB_CONNECTOR_CLASS,
+                DDLParserFactory.MYSQL_CONNECTOR_CLASS,
                 null, null, "testdb");
 
         assertNotNull(parser, "Parser must not be null");
         assertInstanceOf(MySQLDDLParserService.class, parser,
-                "Expected MySQLDDLParserService for MariaDB connector");
+                "Expected MySQLDDLParserService for MySQL connector");
     }
 
     @Test

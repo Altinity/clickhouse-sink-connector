@@ -28,6 +28,7 @@ import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.Parser;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.TokenStream;
+import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.util.List;
 
@@ -128,18 +129,18 @@ public abstract class PostgreSQLParserBase extends Parser {
     public String GetRoutineBodyString(PostgreSQLParser.SconstContext rule) {
         PostgreSQLParser.AnysconstContext anysconst = rule.anysconst();
 
-        org.antlr.v4.runtime.tree.TerminalNode stringConstant = anysconst.StringConstant();
+        TerminalNode stringConstant = anysconst.StringConstant();
         if (stringConstant != null) return unquote(TrimQuotes(stringConstant.getText()));
 
-        org.antlr.v4.runtime.tree.TerminalNode unicodeEscape = anysconst.UnicodeEscapeStringConstant();
+        TerminalNode unicodeEscape = anysconst.UnicodeEscapeStringConstant();
         if (unicodeEscape != null) return TrimQuotes(unicodeEscape.getText());
 
-        org.antlr.v4.runtime.tree.TerminalNode escapeString = anysconst.EscapeStringConstant();
+        TerminalNode escapeString = anysconst.EscapeStringConstant();
         if (escapeString != null) return TrimQuotes(escapeString.getText());
 
         StringBuilder result = new StringBuilder();
-        List<org.antlr.v4.runtime.tree.TerminalNode> dollarTexts = anysconst.DollarText();
-        for (org.antlr.v4.runtime.tree.TerminalNode s : dollarTexts) {
+        List<TerminalNode> dollarTexts = anysconst.DollarText();
+        for (TerminalNode s : dollarTexts) {
             result.append(s.getText());
         }
         return result.toString();
