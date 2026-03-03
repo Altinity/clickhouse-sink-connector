@@ -9,6 +9,7 @@ import com.altinity.clickhouse.debezium.embedded.postgres.schema.PostgresSchemaC
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -64,10 +65,6 @@ public class DebeziumChangeEventCapture {
     private static final Logger log = LogManager.getLogger(
             DebeziumChangeEventCapture.class);
 
-    /**
-     * Property key for the Debezium connector class configuration.
-     */
-    private static final String CONNECTOR_CLASS_KEY = "connector.class";
 
     /**
      * Executor for scheduling batch tasks.
@@ -678,7 +675,9 @@ public class DebeziumChangeEventCapture {
      */
     private void initPostgresSchemaChangeDetector(Properties props,
                                                    ClickHouseSinkConnectorConfig config) {
-        String connectorClass = props != null ? props.getProperty(CONNECTOR_CLASS_KEY, "") : "";
+       String connectorClass = props != null
+               ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
+               : "";
         if (DDLParserFactory.isPostgresConnector(connectorClass)) {
             this.postgresSchemaChangeDetector =
                     new PostgresSchemaChangeDetector(writer, config);
@@ -1008,7 +1007,7 @@ public class DebeziumChangeEventCapture {
                 if (postgresSchemaChangeDetector != null) {
                     try {
                         String dmlTopic = sr.topic();
-                        String dmlTable = extractTableNameFromTopic(dmlTopic);
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic);
                         String dmlDatabase = extractDatabaseNameFromRecord(sr);
                         if (dmlTable != null && dmlDatabase != null) {
                             postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);
