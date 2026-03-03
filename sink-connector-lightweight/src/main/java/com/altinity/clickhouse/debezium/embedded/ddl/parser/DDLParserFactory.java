@@ -1,13 +1,20 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import io.debezium.metadata.ConnectorDescriptor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
  * Factory class that creates the appropriate {@link DDLParserService} implementation
  * based on the source connector type (MySQL/MariaDB or PostgreSQL).
+ *
+ * <p>Connector identification is delegated to Debezium's
+ * {@link ConnectorDescriptor#getIdForConnectorClass(String)} so that adding
+ * new connector types does not require maintaining hardcoded fully-qualified
+ * class names here.</p>
  *
  * <p>Usage example:
  * <pre>
@@ -20,20 +27,8 @@ public class DDLParserFactory {
 
     private static final Logger log = LogManager.getLogger(DDLParserFactory.class);
 
-    /**
-     * Fully-qualified class name used by the Debezium PostgreSQL connector.
-     */
-    public static final String POSTGRES_CONNECTOR_CLASS = "io.debezium.connector.postgresql.PostgresConnector";
-
-    /**
-     * Fully-qualified class name used by the Debezium MySQL connector.
-     */
-    public static final String MYSQL_CONNECTOR_CLASS = "io.debezium.connector.mysql.MySqlConnector";
-
-    /**
-     * Fully-qualified class name used by the Debezium MariaDB connector.
-     */
-    public static final String MARIADB_CONNECTOR_CLASS = "io.debezium.connector.mariadb.MariaDbConnector";
+    /** Connector-id value returned by Debezium for PostgreSQL connectors. */
+    private static final String POSTGRES_ID = "postgres";
 
     /** Private constructor – this is a static factory class. */
     private DDLParserFactory() {
@@ -42,7 +37,8 @@ public class DDLParserFactory {
     /**
      * Returns the appropriate {@link DDLParserService} for the given connector class name.
      *
-     * <p>If the connector class name contains "postgres" (case-insensitive) a
+     * <p>Uses {@link ConnectorDescriptor#getIdForConnectorClass(String)} to resolve
+     * the connector identity.  If the resolved id contains "postgres" a
      * {@link PostgreSQLDDLParserService} is returned; otherwise a
      * {@link MySQLDDLParserService} is returned (covering MySQL and MariaDB).</p>
      *
@@ -80,7 +76,9 @@ public class DDLParserFactory {
                                              BaseDbWriter writer,
                                              ClickHouseSinkConnectorConfig config,
                                              String databaseName) {
-        String connectorClass = props != null ? props.getProperty("connector.class", "") : "";
+        String connectorClass = props != null
+                ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
+                : "";
         return getParser(connectorClass, writer, config, databaseName);
     }
 
@@ -88,13 +86,22 @@ public class DDLParserFactory {
      * Returns {@code true} if the given connector class name identifies a
      * PostgreSQL connector.
      *
-     * @param connectorClass the connector class name.
+     * <p>Delegates to {@link ConnectorDescriptor#getIdForConnectorClass(String)}
+     * for reliable identification rather than relying on substring matching
+     * against hardcoded class names.</p>
+     *
+     * @param connectorClass the fully-qualified connector class name.
      * @return {@code true} for PostgreSQL connectors.
      */
     public static boolean isPostgresConnector(String connectorClass) {
         if (connectorClass == null || connectorClass.isEmpty()) {
             return false;
         }
-        return connectorClass.toLowerCase().contains("postgres");
+        String id = ConnectorDescriptor.getIdForConnectorClass(connectorClass);
+        if (id != null) {
+            return id.toLowerCase().contains(POSTGRES_ID);
+        }
+        // Fallback: if Debezium cannot resolve the class, use simple substring match
+        return connectorClass.toLowerCase().contains(POSTGRES_ID);
     }
 }

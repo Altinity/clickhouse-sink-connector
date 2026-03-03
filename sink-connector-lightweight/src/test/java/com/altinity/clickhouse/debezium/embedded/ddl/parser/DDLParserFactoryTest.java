@@ -17,6 +17,18 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("DDLParserFactory - Unit Tests")
 class DDLParserFactoryTest {
 
+    /** Fully-qualified class name of the Debezium PostgreSQL connector. */
+    private static final String POSTGRES_CONNECTOR_CLASS =
+            "io.debezium.connector.postgresql.PostgresConnector";
+
+    /** Fully-qualified class name of the Debezium MySQL connector. */
+    private static final String MYSQL_CONNECTOR_CLASS =
+            "io.debezium.connector.mysql.MySqlConnector";
+
+    /** Fully-qualified class name of the Debezium MariaDB connector. */
+    private static final String MARIADB_CONNECTOR_CLASS =
+            "io.debezium.connector.mariadb.MariaDbConnector";
+
     // -----------------------------------------------------------------------
     // String-based overload: getParser(String, BaseDbWriter, config, dbName)
     // -----------------------------------------------------------------------
@@ -25,7 +37,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory returns PostgreSQLDDLParserService for PostgresConnector class name")
     void testFactoryReturnsPostgresParserForPostgresConnector() {
         DDLParserService parser = DDLParserFactory.getParser(
-                DDLParserFactory.POSTGRES_CONNECTOR_CLASS,
+                POSTGRES_CONNECTOR_CLASS,
                 null, null, "testdb");
 
         assertNotNull(parser, "Parser must not be null");
@@ -37,7 +49,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory returns MySQLDDLParserService for MySqlConnector class name")
     void testFactoryReturnsMySQLParserForMySQLConnector() {
         DDLParserService parser = DDLParserFactory.getParser(
-                DDLParserFactory.MYSQL_CONNECTOR_CLASS,
+                MYSQL_CONNECTOR_CLASS,
                 null, null, "testdb");
 
         assertNotNull(parser, "Parser must not be null");
@@ -49,7 +61,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory returns MySQLDDLParserService for MySqlConnector class name (duplicate check)")
     void testFactoryReturnsMySQLParserForMySQLConnectorDuplicate() {
         DDLParserService parser = DDLParserFactory.getParser(
-                DDLParserFactory.MYSQL_CONNECTOR_CLASS,
+                MYSQL_CONNECTOR_CLASS,
                 null, null, "testdb");
 
         assertNotNull(parser, "Parser must not be null");
@@ -102,7 +114,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory (Properties overload) returns PostgreSQLDDLParserService for PostgresConnector")
     void testFactoryPropertiesOverloadReturnsPostgresParser() {
         Properties props = new Properties();
-        props.setProperty("connector.class", DDLParserFactory.POSTGRES_CONNECTOR_CLASS);
+        props.setProperty("connector.class", POSTGRES_CONNECTOR_CLASS);
 
         DDLParserService parser = DDLParserFactory.getParser(props, null, null, "testdb");
 
@@ -115,7 +127,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory (Properties overload) returns MySQLDDLParserService for MySqlConnector")
     void testFactoryPropertiesOverloadReturnsMySQLParser() {
         Properties props = new Properties();
-        props.setProperty("connector.class", DDLParserFactory.MYSQL_CONNECTOR_CLASS);
+        props.setProperty("connector.class", MYSQL_CONNECTOR_CLASS);
 
         DDLParserService parser = DDLParserFactory.getParser(props, null, null, "testdb");
 
@@ -128,7 +140,7 @@ class DDLParserFactoryTest {
     @DisplayName("Factory (Properties overload) returns MySQLDDLParserService for MariaDbConnector")
     void testFactoryPropertiesOverloadReturnsMySQLParserForMariaDb() {
         Properties props = new Properties();
-        props.setProperty("connector.class", DDLParserFactory.MARIADB_CONNECTOR_CLASS);
+        props.setProperty("connector.class", MARIADB_CONNECTOR_CLASS);
 
         DDLParserService parser = DDLParserFactory.getParser(props, null, null, "testdb");
 
@@ -168,19 +180,19 @@ class DDLParserFactoryTest {
     @Test
     @DisplayName("isPostgresConnector - returns true for official PostgresConnector class")
     void testIsPostgresConnectorTrueForOfficialClass() {
-        assertTrue(DDLParserFactory.isPostgresConnector(DDLParserFactory.POSTGRES_CONNECTOR_CLASS));
+        assertTrue(DDLParserFactory.isPostgresConnector(POSTGRES_CONNECTOR_CLASS));
     }
 
     @Test
     @DisplayName("isPostgresConnector - returns false for MySqlConnector class")
     void testIsPostgresConnectorFalseForMySQL() {
-        assertFalse(DDLParserFactory.isPostgresConnector(DDLParserFactory.MYSQL_CONNECTOR_CLASS));
+        assertFalse(DDLParserFactory.isPostgresConnector(MYSQL_CONNECTOR_CLASS));
     }
 
     @Test
     @DisplayName("isPostgresConnector - returns false for MariaDbConnector class")
     void testIsPostgresConnectorFalseForMariaDb() {
-        assertFalse(DDLParserFactory.isPostgresConnector(DDLParserFactory.MARIADB_CONNECTOR_CLASS));
+        assertFalse(DDLParserFactory.isPostgresConnector(MARIADB_CONNECTOR_CLASS));
     }
 
     @Test
@@ -201,30 +213,5 @@ class DDLParserFactoryTest {
         assertTrue(DDLParserFactory.isPostgresConnector("io.debezium.connector.POSTGRESQL.SomeConnector"));
         assertTrue(DDLParserFactory.isPostgresConnector("com.example.PostgresConnector"));
         assertTrue(DDLParserFactory.isPostgresConnector("POSTGRES"));
-    }
-
-    // -----------------------------------------------------------------------
-    // Constant value tests
-    // -----------------------------------------------------------------------
-
-    @Test
-    @DisplayName("POSTGRES_CONNECTOR_CLASS constant has expected value")
-    void testPostgresConnectorClassConstant() {
-        assertEquals("io.debezium.connector.postgresql.PostgresConnector",
-                DDLParserFactory.POSTGRES_CONNECTOR_CLASS);
-    }
-
-    @Test
-    @DisplayName("MYSQL_CONNECTOR_CLASS constant has expected value")
-    void testMySQLConnectorClassConstant() {
-        assertEquals("io.debezium.connector.mysql.MySqlConnector",
-                DDLParserFactory.MYSQL_CONNECTOR_CLASS);
-    }
-
-    @Test
-    @DisplayName("MARIADB_CONNECTOR_CLASS constant has expected value")
-    void testMariaDbConnectorClassConstant() {
-        assertEquals("io.debezium.connector.mariadb.MariaDbConnector",
-                DDLParserFactory.MARIADB_CONNECTOR_CLASS);
     }
 }
