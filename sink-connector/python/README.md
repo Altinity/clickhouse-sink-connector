@@ -60,8 +60,8 @@ python -m build --wheel
 ./build_wheel.sh --deploy
 
 # Or manually:
-scp dist/ch_sink_tools-*.whl user@ch-server:/tmp/
-ssh user@ch-server '/opt/python-dump/.venv/bin/pip install --force-reinstall /tmp/ch_sink_tools-*.whl'
+scp dist/ch_sink_tools-*.whl clickhouse@fpif-dbachl4:/tmp/
+ssh clickhouse@fpif-dbachl4 '/home/clickhouse/python-dump/.venv/bin/pip install --force-reinstall /tmp/ch_sink_tools-*.whl'
 ```
 
 ## Dependencies

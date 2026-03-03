@@ -81,23 +81,9 @@ def build_pg_select_expression(col_name, pg_type, is_nullable, udt_name,
             logging.info(f"Excluding json column {col_name} of type {pg_type}")
             return (None, True)
 
-    # Bug 84.2-2 fix: Skip array columns entirely.
-    # Debezium CDC serializes PG arrays as JSON format (["val1","val2"]) while
-    # PG casts arrays to text as {val1,val2}. These incompatible representations
-    # cause false checksum mismatches. Additionally, Debezium has a known data
-    # corruption issue with array serialization (Java Object.toString()).
-    if udt_lower.startswith('_') or pg_type_lower.endswith('[]') or 'array' in pg_type_lower:
-        logging.info(f"Excluding array column {col_name} of type {pg_type} (Debezium array format mismatch)")
-        return (None, True)
-
     # Boolean → '0'/'1' to match CH UInt8 toString()
     if pg_type_lower in ('boolean', 'bool'):
-        if is_nullable:
-            # Preserve NULL so that the outer coalesce(..., '') gives ''
-            # matching the CH side's if(isNull(col), NULL, ...) + coalesce
-            expr = f"CASE WHEN {q} IS NULL THEN NULL WHEN {q} THEN '1' ELSE '0' END"
-        else:
-            expr = f"CASE WHEN {q} THEN '1' ELSE '0' END"
+        expr = f"CASE WHEN {q} THEN '1' ELSE '0' END"
 
     # Timestamps → microsecond-precision UTC string matching CH toString(toTimeZone(col, 'UTC'))
     # timestamptz (with time zone): normalise to UTC first so both sides produce the same string

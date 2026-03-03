@@ -79,7 +79,7 @@ PG_TO_CH_BASE = {
     'timestamp without time zone':   "DateTime64(6)",
     'timestamp with time zone':      "DateTime64(6, 'UTC')",
     'timestamptz':                   "DateTime64(6, 'UTC')",
-    'interval':                      'String',    # ← the bug that broke staging
+    'interval':                      'String',    # ← the bug that broke awacs-qa
 
     # --- JSON ---
     'json':              'String',
@@ -263,36 +263,6 @@ def pg_execute_df(conn, sql, params=None):
 # Schema introspection
 # ---------------------------------------------------------------------------
 
-def get_schemas(pg_conn, include_regex=None, exclude_regex=None):
-    """Discover PostgreSQL schemas, optionally filtered by regex patterns.
-
-    Args:
-        pg_conn: PostgreSQL connection
-        include_regex: Optional regex pattern — only schemas matching are included
-        exclude_regex: Optional regex pattern — schemas matching are excluded
-
-    Returns:
-        List of schema names
-    """
-    query = """
-        SELECT schema_name
-        FROM information_schema.schemata
-        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1')
-    """
-    params = []
-    if include_regex:
-        query += " AND schema_name ~ %s"
-        params.append(include_regex)
-    if exclude_regex:
-        query += " AND schema_name !~ %s"
-        params.append(exclude_regex)
-    query += " ORDER BY schema_name"
-
-    with pg_conn.cursor() as cur:
-        cur.execute(query, params)
-        return [row[0] for row in cur.fetchall()]
-
-
 def get_tables(conn, pg_schema, include_regex=None, exclude_regex=None):
     """
     Return a list of table names in *pg_schema* matching *include_regex*
@@ -329,22 +299,11 @@ def get_server_timezone(conn) -> str:
     return 'UTC'
 
 
-def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
-                      override_config=None, pg_database="*"):
+def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None):
     """
     Return an ordered list of dicts describing every column in *table_name*:
       column_name, pg_type, ordinal_position, is_nullable,
       character_maximum_length, numeric_precision, numeric_scale
-
-    Parameters
-    ----------
-    conn               : psycopg2 connection
-    pg_schema          : PostgreSQL schema name
-    table_name         : PostgreSQL table name
-    pg_server_timezone : explicit PG server timezone for DateTime64 annotation
-    override_config    : optional ColumnTypeOverrideConfig — when provided,
-                         direct overrides replace the mapped CH type for matching columns
-    pg_database        : PostgreSQL database name (used for override lookups)
     """
     sql = f"""
         SELECT
@@ -372,14 +331,6 @@ def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
             nullable=nullable,
             pg_server_timezone=pg_server_timezone,
         )
-        # Apply direct override if configured
-        if override_config:
-            direct_type = override_config.get_direct_override(
-                pg_database, pg_schema, table_name, r['column_name']
-            )
-            if direct_type:
-                ch_type = direct_type
-
         result.append({
             'column_name':      r['column_name'],
             'pg_type':          r['pg_type'],
@@ -395,22 +346,17 @@ def get_table_pk(conn, pg_schema, table_name):
     """
     Return a list of primary-key column names for *table_name* in ordinal order.
     Returns [] if no PK is defined.
-
-    Uses pg_index / pg_attribute system catalogs instead of information_schema
-    because information_schema.table_constraints is not visible to users who
-    lack SELECT privilege on the constraint catalog (e.g. replication-only users).
     """
     sql = f"""
-        SELECT a.attname AS column_name
-        FROM pg_index i
-        JOIN pg_class c ON c.oid = i.indrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        JOIN pg_attribute a ON a.attrelid = i.indrelid
-                           AND a.attnum = ANY(i.indkey)
-        WHERE i.indisprimary
-          AND n.nspname = '{pg_schema}'
-          AND c.relname = '{table_name}'
-        ORDER BY array_position(i.indkey, a.attnum)
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema    = kcu.table_schema
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema    = '{pg_schema}'
+          AND tc.table_name      = '{table_name}'
+        ORDER BY kcu.ordinal_position
     """
     rows = execute_pg(conn, sql)
     return [r['column_name'] for r in rows]
@@ -548,47 +494,18 @@ def is_wal_replay_paused(conn):
     return result
 
 
-def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
-                              ch_database, override_config=None, pg_database="*"):
+def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns, ch_database):
     """
     Generate a ClickHouse CREATE TABLE IF NOT EXISTS … DDL string that mirrors
     what the Altinity sink-connector would auto-create, including:
       - _version Nullable(UInt64)   ← snapshot rows have NULL _version
       - is_deleted UInt8 DEFAULT 0
       ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY (pk...)
-
-    Parameters
-    ----------
-    pg_schema       : PostgreSQL schema name
-    table_name      : table name
-    columns         : list of column dicts with 'column_name' and 'ch_type'
-    pk_columns      : list of PK column name strings
-    ch_database     : target ClickHouse database name
-    override_config : optional ColumnTypeOverrideConfig for type overrides
-    pg_database     : PostgreSQL database name (used for override lookups)
     """
     col_defs = []
     for col in columns:
         ch_type = col['ch_type']
-        col_name = col['column_name']
-
-        # Apply direct override if configured
-        if override_config:
-            direct_type = override_config.get_direct_override(
-                pg_database, pg_schema, table_name, col_name
-            )
-            if direct_type:
-                ch_type = direct_type
-
-        col_defs.append(f"    `{col_name}` {ch_type}")
-
-    # Append ALIAS column definitions before virtual columns
-    if override_config:
-        alias_overrides = override_config.get_alias_overrides(pg_database, pg_schema, table_name)
-        for ao in alias_overrides:
-            col_defs.append(
-                f"    `{ao.alias_column_name}` {ao.alias_type} ALIAS {ao.expression}"
-            )
+        col_defs.append(f"    `{col['column_name']}` {ch_type}")
 
     col_defs.append("    `_version` UInt64 DEFAULT 0")
     col_defs.append("    `is_deleted` UInt8 DEFAULT 0")

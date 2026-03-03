@@ -135,10 +135,6 @@ def _build_ch_row_concat(columns_meta, skip_columns, include_floating_point,
                                 'int4range', 'int8range', 'numrange'):
             continue
 
-        # Bug 84.2-2 fix: Skip array columns (Debezium JSON vs PG text format mismatch)
-        if udt_name.startswith('_') or pg_type_lower.endswith('[]') or 'array' in pg_type_lower:
-            continue
-
         expr = _build_ch_col_expr_fn(col_name, pg_type, is_nullable)
         col_exprs.append(expr)
         included_cols.append(col_name)
@@ -537,9 +533,6 @@ def _fetch_full_rows(pg_conn, ch_conn, table_name, pk_column,
                 or udt_name in ('tstzrange', 'tsrange', 'daterange',
                                 'int4range', 'int8range', 'numrange'):
             continue
-        # Bug 84.2-2 fix: Skip array columns (Debezium JSON vs PG text format mismatch)
-        if udt_name.startswith('_') or pg_type.endswith('[]') or 'array' in pg_type:
-            continue
         fetch_cols.append(col)
 
     results = []
@@ -619,10 +612,6 @@ def _fetch_full_rows(pg_conn, ch_conn, table_name, pk_column,
                         or udt_name in ('tstzrange', 'tsrange', 'daterange',
                                         'int4range', 'int8range', 'numrange'):
                     continue
-                # Bug 84.2-2 fix: Skip array columns
-                if udt_name.startswith('_') or pg_type_lower.endswith('[]') \
-                        or 'array' in pg_type_lower:
-                    continue
 
                 expr = _build_ch_col_expr_fn(col_name, pg_type, is_nullable)
                 ch_select_parts.append(
@@ -663,10 +652,6 @@ def _fetch_full_rows(pg_conn, ch_conn, table_name, pk_column,
                                   'int4range', 'int8range', 'numrange') \
                                 or un in ('tstzrange', 'tsrange', 'daterange',
                                           'int4range', 'int8range', 'numrange'):
-                            continue
-                        # Bug 84.2-2 fix: Skip array columns
-                        if un.startswith('_') or pt.endswith('[]') \
-                                or 'array' in pt:
                             continue
                         actual_ch_cols.append(cn)
 

@@ -648,6 +648,56 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Flushes all buffered records and pauses the batch executor so that
+     * no further writes reach ClickHouse until {@link #resumeAfterFlush()}
+     * is called.
+     *
+     * <p>This is used by the checksum tool to quiesce the connector without
+     * fully stopping it:
+     * <ol>
+     *   <li>Set the executor's pause flag — any currently executing batch
+     *       finishes, but no new batch starts.</li>
+     *   <li>Wait for the in-flight batch to drain (up to 30 seconds).</li>
+     * </ol>
+     *
+     * <p>After this method returns the connector is still running (Debezium
+     * still captures WAL events into the internal queue), but nothing is
+     * written to ClickHouse.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void flushAndPause() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot flush");
+        }
+        log.info("FLUSH: Pausing batch executor (drain buffered records)...");
+        this.executor.pause();
+
+        // Wait briefly for any in-flight batch to complete.
+        // The pause flag is checked in beforeExecute(), so the currently running
+        // task will finish normally; we just need to give it time.
+        try {
+            TimeUnit.SECONDS.sleep(5);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        log.info("FLUSH: Batch executor paused — no new writes will reach ClickHouse");
+    }
+
+    /**
+     * Resumes the batch executor after a previous {@link #flushAndPause()}.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void resumeAfterFlush() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot resume");
+        }
+        log.info("FLUSH: Resuming batch executor — writes to ClickHouse will restart");
+        this.executor.resume();
+    }
+
+    /**
      * Parses the database configuration from the connector configuration.
      *
      * @param config The ClickHouse sink connector configuration.

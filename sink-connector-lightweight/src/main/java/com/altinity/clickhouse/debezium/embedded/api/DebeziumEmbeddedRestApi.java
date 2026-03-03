@@ -317,6 +317,32 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication....");
         });
 
+        // --- Flush: drain buffered records and pause writes to ClickHouse ---
+        app.get("/flush", ctx -> {
+            try {
+                log.info("REST /flush: flushing and pausing batch executor");
+                debeziumChangeEventCapture.flushAndPause();
+                ctx.result("{\"status\":\"flushed\"}");
+            } catch (Exception e) {
+                log.error("REST /flush: error", e);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                ctx.result("{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        });
+
+        // --- Resume: resume writes to ClickHouse after a flush ---
+        app.get("/resume", ctx -> {
+            try {
+                log.info("REST /resume: resuming batch executor");
+                debeziumChangeEventCapture.resumeAfterFlush();
+                ctx.result("{\"status\":\"resumed\"}");
+            } catch (Exception e) {
+                log.error("REST /resume: error", e);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                ctx.result("{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        });
+
         DDLParserService finalSqlddlParserService = sqlddlParserService;
         app.post("/ddl-translate", ctx -> {
             String ddl = ctx.body();

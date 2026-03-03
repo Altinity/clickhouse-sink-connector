@@ -5,7 +5,7 @@
 # -- FileName     : top_level_postgres_checksum
 # -- Date         :
 # -- Summary      : Orchestrate PostgreSQL → ClickHouse periodic checksum
-# --                verification for the staging CDC replication pipeline.
+# --                verification for the awacs-qa CDC replication pipeline.
 # --
 # --                Mirrors top_level_table_checksum.py (MySQL version) but:
 # --                  - Source is PostgreSQL (psycopg2 via db.postgres)
@@ -228,156 +228,6 @@ def wait_for_ch_lsn(ch_conn, offset_db: str, offset_table: str,
         f"Running checksum anyway — results may show false positives."
     )
     return False
-
-
-# ---------------------------------------------------------------------------
-# Connector caught-up check (used when WAL replay is paused)
-# ---------------------------------------------------------------------------
-
-def _derive_replica_status_view(offset_db: str, offset_table: str) -> str:
-    """
-    Derive the ``show_replica_status`` view name from the offset table name.
-
-    Convention: if ``offset_table`` is ``replica_source_info_<suffix>``,
-    the corresponding view is ``show_replica_status_<suffix>`` in the same
-    database.
-
-    Examples
-    --------
-    >>> _derive_replica_status_view('altinity_sink_connector',
-    ...     'replica_source_info_litellm_prod')
-    'altinity_sink_connector.show_replica_status_litellm_prod'
-    """
-    prefix = 'replica_source_info_'
-    if offset_table.startswith(prefix):
-        suffix = offset_table[len(prefix):]
-        view_name = f"show_replica_status_{suffix}"
-    else:
-        # Fallback: just replace 'replica_source_info' with
-        # 'show_replica_status' wherever it appears.
-        view_name = offset_table.replace(
-            'replica_source_info', 'show_replica_status'
-        )
-    return f"{offset_db}.{view_name}"
-
-
-def _wait_for_connector_caught_up(
-    ch_conn,
-    offset_db: str,
-    offset_table: str,
-    max_wait: int = 120,
-    poll_interval: int = 5,
-    settle_time: int = 30,
-) -> bool:
-    """
-    Wait until the CDC connector reports ``Seconds_Behind_Source = 0``.
-
-    This is used **instead of** LSN-based waiting when WAL replay is paused
-    on the PG standby.  Physical WAL LSN and logical replication LSN are
-    fundamentally different streams, so comparing them produces a permanent
-    gap that can never close.  When the standby is frozen we only need to
-    confirm that the connector has finished processing all *logical* changes.
-
-    Strategy
-    --------
-    1. Query the ``show_replica_status_*`` view for
-       ``Seconds_Behind_Source``.
-    2. If the view exists and ``Seconds_Behind_Source = 0``, return True
-       immediately.
-    3. If the view is not found or the query fails, fall back to sleeping
-       for ``settle_time`` seconds (configurable, default 30 s).
-
-    Parameters
-    ----------
-    ch_conn : clickhouse_driver.Client
-        Active ClickHouse connection.
-    offset_db : str
-        Database containing the offset / replica-status views.
-    offset_table : str
-        Offset table name (used to derive the view name).
-    max_wait : int
-        Maximum seconds to poll before giving up (default 120).
-    poll_interval : int
-        Seconds between polls (default 5).
-    settle_time : int
-        Fallback sleep when the view is unavailable (default 30).
-
-    Returns
-    -------
-    bool
-        Always ``True`` — the connector is considered caught up either by
-        confirmed zero lag or by a conservative settle-time wait.
-    """
-    view_fqn = _derive_replica_status_view(offset_db, offset_table)
-    logging.info(
-        "WAL_REPLAY_PAUSE: Checking connector status via %s", view_fqn
-    )
-
-    deadline = time.time() + max_wait
-    view_available = True
-
-    # -- First attempt: probe whether the view exists -----------------------
-    try:
-        probe_sql = f"SELECT 1 FROM {view_fqn} LIMIT 0"
-        execute_sql(ch_conn, probe_sql)
-    except Exception as exc:
-        logging.warning(
-            "WAL_REPLAY_PAUSE: replica-status view %s not queryable (%s). "
-            "Falling back to settle-time wait of %d s.",
-            view_fqn, exc, settle_time,
-        )
-        view_available = False
-
-    if not view_available:
-        logging.info(
-            "WAL_REPLAY_PAUSE: Sleeping %d s (settle time) to let "
-            "connector finish flushing.", settle_time
-        )
-        time.sleep(settle_time)
-        logging.info("WAL_REPLAY_PAUSE: Settle time elapsed — proceeding.")
-        return True
-
-    # -- Poll loop: wait for Seconds_Behind_Source = 0 ----------------------
-    while time.time() < deadline:
-        try:
-            sql = (
-                f"SELECT Seconds_Behind_Source "
-                f"FROM {view_fqn} "
-                f"LIMIT 1"
-            )
-            (rows, cnt) = execute_sql(ch_conn, sql)
-            if cnt > 0 and rows[0][0] is not None:
-                lag = int(rows[0][0])
-                if lag == 0:
-                    logging.info(
-                        "WAL_REPLAY_PAUSE: Connector caught up "
-                        "(Seconds_Behind_Source = 0)."
-                    )
-                    return True
-                else:
-                    logging.info(
-                        "WAL_REPLAY_PAUSE: Connector still catching up "
-                        "(Seconds_Behind_Source = %d), waiting…", lag
-                    )
-            else:
-                logging.info(
-                    "WAL_REPLAY_PAUSE: No rows returned from %s — "
-                    "connector may not be running.", view_fqn
-                )
-        except Exception as exc:
-            logging.warning(
-                "WAL_REPLAY_PAUSE: Error querying %s: %s", view_fqn, exc
-            )
-
-        time.sleep(poll_interval)
-
-    # -- Timeout: treat as caught up (standby is frozen, conservative) ------
-    logging.warning(
-        "WAL_REPLAY_PAUSE: Timed out after %d s waiting for "
-        "Seconds_Behind_Source = 0.  Proceeding anyway — standby is "
-        "frozen so data should be consistent.", max_wait,
-    )
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -975,9 +825,6 @@ def compare_table(table_name: str,
                     if pg_t in ('tstzrange', 'tsrange', 'daterange', 'int4range', 'int8range', 'numrange') \
                             or udt_n in ('tstzrange', 'tsrange', 'daterange', 'int4range', 'int8range', 'numrange'):
                         continue
-                    # Bug 84.2-2 fix: Skip array columns (Debezium JSON vs PG text format mismatch)
-                    if udt_n.startswith('_') or pg_t.endswith('[]') or 'array' in pg_t:
-                        continue
                     pg_included_cols.append(c['column_name'])
 
                 # Build columns_meta for only the included columns so CH can
@@ -1242,11 +1089,11 @@ def run_config(config: dict, args) -> None:
     # --- Per-table skip_columns: columns excluded from checksum (not count) ---
     # Config format (dict keyed by table name):
     #   skip_columns:
-    #     app_templates:
+    #     alerts_alerttemplate:
     #       - highlighted_tags
     # OR the newer config key:
     #   skip_table_columns:
-    #     app_templates:
+    #     alerts_alerttemplate:
     #       - highlighted_tags
     # Also supports skip_columns as a list (global column exclusions) — in that
     # case per-table lookups return None.
@@ -1265,40 +1112,6 @@ def run_config(config: dict, args) -> None:
         wal_pause_enabled = bool(cksum_cfg.get('wal_replay_pause', False))
         wal_was_paused_by_us = False
         wal_control_conn = None
-
-        # -----------------------------------------------------------------
-        # pg_wal_pause_host: direct pod IP/hostname for the frozen standby.
-        #
-        # BUG FIX (Phase 82): When pg_host is a Kubernetes service LB that
-        # load-balances across multiple standby pods (e.g. litellm-db-11
-        # and litellm-db-12), each get_postgres_connection() call may be
-        # routed to a DIFFERENT pod.  This means:
-        #   - wal_control_conn may pause WAL on pod A
-        #   - pg_snapshot_conn may read data from pod B (NOT paused)
-        # causing PG counts to grow during the checksum window.
-        #
-        # Fix: when wal_replay_pause is enabled and pg_wal_pause_host is
-        # set, ALL PG connections (WAL control + snapshot data) use the
-        # direct pod IP instead of the service LB.  This guarantees that
-        # data queries hit the SAME standby where WAL replay was paused.
-        #
-        # Config:
-        #   checksum:
-        #     pg_wal_pause_host: "10.x.y.z"   # direct pod IP
-        # -----------------------------------------------------------------
-        pg_wal_pause_host = cksum_cfg.get('pg_wal_pause_host', None)
-        pg_wal_pause_port = int(cksum_cfg.get('pg_wal_pause_port', pg_port))
-
-        if wal_pause_enabled and pg_wal_pause_host:
-            logging.info(
-                "WAL_REPLAY_PAUSE: pg_wal_pause_host is set — overriding "
-                f"pg_host from '{pg_host}' to '{pg_wal_pause_host}' "
-                f"(port {pg_wal_pause_port}) for ALL PG connections "
-                "(WAL control + snapshot data) to ensure queries hit the "
-                "same standby pod where WAL replay is paused."
-            )
-            pg_host = pg_wal_pause_host
-            pg_port = pg_wal_pause_port
 
         # -----------------------------------------------------------------
         # Sink connector flush/resume setup (opt-in via checksum.flush_connector)
@@ -1478,56 +1291,42 @@ def run_config(config: dict, args) -> None:
             )
 
             if offset_table and lsn_int > 0:
-                if wal_was_paused_by_us:
-                    # ---------------------------------------------------------
-                    # Phase 82.4: Physical WAL LSN ≠ logical replication LSN.
-                    # The standby's pg_last_wal_replay_lsn() includes VACUUM,
-                    # index ops, etc. that never appear in the logical stream.
-                    # This creates a permanent ~82 MB gap that can never close.
-                    # Instead, verify the connector is caught up by checking
-                    # the show_replica_status view (Seconds_Behind_Source = 0).
-                    # ---------------------------------------------------------
-                    logging.info(
-                        "WAL_REPLAY_PAUSE: Skipping LSN-based wait (physical "
-                        "WAL LSN ≠ logical replication LSN).  Standby is "
-                        "frozen — checking connector status instead."
-                    )
-                    caught_up = _wait_for_connector_caught_up(
-                        ch_conn, offset_db, offset_table,
-                        max_wait=max(lsn_wait_timeout, 120),
-                    )
-                    # caught_up is always True from the helper (it falls back
-                    # to settle-time sleep if the view is unavailable).
-                    logging.info(
-                        f"WAL_REPLAY_PAUSE: Connector caught-up check done — "
-                        f"using FINAL WHERE is_deleted=0 (no _version filter)"
-                    )
-                else:
-                    # Normal mode (no WAL pause): use LSN-based wait.
-                    logging.info(
-                        f"Waiting for CH offset table {offset_db}.{offset_table} "
-                        f"to reach PG snapshot LSN {lsn_int} ({lsn_str})"
-                    )
-                    lsn_tolerance = 0
-                    effective_wait = lsn_wait_timeout
-                    caught_up = wait_for_ch_lsn(
-                        ch_conn, offset_db, offset_table, lsn_int,
-                        max_wait_seconds=effective_wait,
-                        poll_interval=lsn_poll_interval,
-                        tolerance_bytes=lsn_tolerance,
-                    )
-                    if not caught_up:
+                logging.info(
+                    f"Waiting for CH offset table {offset_db}.{offset_table} "
+                    f"to reach PG snapshot LSN {lsn_int} ({lsn_str})"
+                )
+                # When WAL replay is paused, allow a small tolerance because
+                # pg_last_wal_replay_lsn() (physical) can be slightly ahead of
+                # the CDC logical replication slot's consumed position.
+                # 8 KB tolerance is safe: the standby is frozen, so PG queries
+                # reflect a fixed point-in-time regardless of this small gap.
+                lsn_tolerance = 8192 if wal_was_paused_by_us else 0
+                caught_up = wait_for_ch_lsn(
+                    ch_conn, offset_db, offset_table, lsn_int,
+                    max_wait_seconds=lsn_wait_timeout,
+                    poll_interval=lsn_poll_interval,
+                    tolerance_bytes=lsn_tolerance,
+                )
+                if not caught_up:
+                    if wal_was_paused_by_us:
+                        logging.error(
+                            "LSN wait timed out with wal_replay_pause=true — aborting. "
+                            "WAL replay will be resumed in finally block."
+                        )
+                        ch_conn.close()
+                        pg_snapshot_conn.rollback()
+                        pg_snapshot_conn.close()
+                        sys.exit(1)
+                    else:
                         logging.warning(
                             "Proceeding with checksum despite LSN timeout — "
-                            "results may contain false positives if CH is "
-                            "still catching up"
+                            "results may contain false positives if CH is still catching up"
                         )
-                    else:
-                        logging.info(
-                            f"snapshot_mode=True: CH caught up to "
-                            f"pg_snap_lsn={lsn_str} — using FINAL WHERE "
-                            f"is_deleted=0 (no _version filter)"
-                        )
+                else:
+                    logging.info(
+                        f"snapshot_mode=True: CH caught up to pg_snap_lsn={lsn_str} — "
+                        f"using FINAL WHERE is_deleted=0 (no _version filter)"
+                    )
             else:
                 logging.warning("LSN wait skipped (no offset_table configured or LSN=0)")
 
@@ -1722,12 +1521,6 @@ def run_config(config: dict, args) -> None:
                                         or udt_n in ('tstzrange', 'tsrange',
                                                      'daterange', 'int4range',
                                                      'int8range', 'numrange'):
-                                    continue
-
-                                # Bug 84.2-2 fix: Skip array columns
-                                # (Debezium JSON vs PG text format mismatch)
-                                if udt_n.startswith('_') or pg_t.endswith('[]') \
-                                        or 'array' in pg_t:
                                     continue
 
                                 included_cols.append(col_name)

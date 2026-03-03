@@ -7,14 +7,14 @@
 # -- Usage       : ./postgres_checksum_runner.sh [config.yml] [extra args...]
 # --               ./postgres_checksum_runner.sh                        # uses default config
 # --               ./postgres_checksum_runner.sh config_postgres_system.yml --no-checksum
-# --               ./postgres_checksum_runner.sh config_postgres_system.yml --table app_rules
+# --               ./postgres_checksum_runner.sh config_postgres_system.yml --table alerts_rule
 # --
 # -- Cron        : # Run hourly (at minute 5 past the hour — avoids top-of-hour contention)
-# --               5 * * * * /opt/python-dump/db_compare/postgres_checksum_runner.sh \
+# --               5 * * * * /home/clickhouse/python-dump/db_compare/postgres_checksum_runner.sh \
 # --                   >> /var/log/pg_ch_checksum/cron.log 2>&1
 # --
 # --               # Optional: daily full run with debug output
-# --               5 2 * * * /opt/python-dump/db_compare/postgres_checksum_runner.sh \
+# --               5 2 * * * /home/clickhouse/python-dump/db_compare/postgres_checksum_runner.sh \
 # --                   --debug >> /var/log/pg_ch_checksum/daily_$(date +\%Y\%m\%d).log 2>&1
 # --
 # -- Exit code   : 0  → all tables PASS
@@ -120,14 +120,14 @@ if [[ "$EXIT_CODE" -ne 0 ]]; then
 
     # Uncomment to send email alert:
     # if command -v mail &>/dev/null; then
-    #     tail -50 "$LOG_FILE" | mail -s "PG→CH checksum FAILED: staging (exit=${EXIT_CODE})" ops@example.com
+    #     tail -50 "$LOG_FILE" | mail -s "PG→CH checksum FAILED: awacs-qa (exit=${EXIT_CODE})" ops@example.com
     # fi
 
     # Uncomment to call a webhook (e.g. PagerDuty):
     # curl -s -X POST https://events.pagerduty.com/v2/enqueue \
     #   -H "Content-Type: application/json" \
     #   -d "{\"routing_key\": \"${PAGERDUTY_KEY}\", \"event_action\": \"trigger\", \
-    #        \"payload\": {\"summary\": \"PG→CH checksum FAILED: staging\", \
+    #        \"payload\": {\"summary\": \"PG→CH checksum FAILED: awacs-qa\", \
     #                      \"severity\": \"critical\", \"source\": \"clickhouse\"}}"
 fi
 

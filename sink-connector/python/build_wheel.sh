@@ -11,9 +11,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-TARGET_HOST="${CH_DEPLOY_HOST:-ch-server}"
+TARGET_HOST="${CH_DEPLOY_HOST:-fpif-dbachl4}"
 TARGET_USER="${CH_DEPLOY_USER:-clickhouse}"
-TARGET_VENV="${CH_DEPLOY_VENV:-/opt/python-dump/.venv}"
+TARGET_VENV="${CH_DEPLOY_VENV:-/home/clickhouse/python-dump/.venv}"
 
 # ---------------------------------------------------------------------------
 # Clean previous builds

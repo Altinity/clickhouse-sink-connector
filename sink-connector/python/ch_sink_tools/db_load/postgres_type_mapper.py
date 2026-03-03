@@ -75,8 +75,8 @@ _BASE_MAP = {
     'time without time zone':      'String',
     'time with time zone':         'String',
     'timetz':                      'String',
-    'timestamp':                   "DateTime64(6, 'UTC')",
-    'timestamp without time zone': "DateTime64(6, 'UTC')",
+    'timestamp':                   "DateTime64(6)",
+    'timestamp without time zone': "DateTime64(6)",
     'timestamp with time zone':    "DateTime64(6, 'UTC')",
     'timestamptz':                 "DateTime64(6, 'UTC')",
     # ↓ THE critical mapping — PostgreSQL `interval` must become String
@@ -258,11 +258,17 @@ def map_pg_type(
     # 3. Timestamp variants  (must come before generic "time" check)
     # -----------------------------------------------------------------------
     if 'timestamp' in base:
-        # All timestamp variants use explicit UTC timezone to prevent
-        # DST-related corruption when the CH server timezone is a
-        # DST-observing zone like America/Chicago.  See Phase 85 plan:
-        # plans/postgres/21-dst-timestamp-fix-plan.md
-        ch = "DateTime64(6, 'UTC')"
+        # 'timestamp with time zone' / 'timestamptz'  →  UTC (absolute epoch)
+        # 'timestamp without time zone' / 'timestamp'  →  PG server TZ (local time)
+        if 'with time zone' in base or base == 'timestamptz':
+            ch = "DateTime64(6, 'UTC')"
+        else:
+            # Use explicit PG server timezone so the stored epoch is unambiguous.
+            # Without this, DateTime64(6) renders in CH server TZ by default.
+            if pg_server_timezone:
+                ch = f"DateTime64(6, '{pg_server_timezone}')"
+            else:
+                ch = "DateTime64(6)"
         return f'Nullable({ch})' if nullable else ch
 
     # -----------------------------------------------------------------------
@@ -315,45 +321,16 @@ def map_udt_type(udt_name: str, nullable: bool = False) -> str:
 # DDL generation helpers
 # ---------------------------------------------------------------------------
 
-def build_column_defs(columns, override_config=None, schema=None, table=None,
-                      database=None) -> list:
+def build_column_defs(columns) -> list:
     """
     Given a list of column dicts (as returned by db.postgres.get_table_columns),
     return a list of SQL column definition strings for ClickHouse CREATE TABLE.
 
     Each dict must have keys: column_name, ch_type
-
-    Parameters
-    ----------
-    columns         : list of column dicts
-    override_config : optional ColumnTypeOverrideConfig — when provided,
-                      direct overrides replace the mapped CH type for matching columns
-    schema          : PG schema name (needed for override lookups)
-    table           : PG table name  (needed for override lookups)
-    database        : PG database name (needed for override lookups)
     """
     defs = []
-    db = database or "*"
     for col in columns:
-        ch_type = col['ch_type']
-        col_name = col['column_name']
-
-        # Apply direct override if configured
-        if override_config and schema and table:
-            direct_type = override_config.get_direct_override(db, schema, table, col_name)
-            if direct_type:
-                ch_type = direct_type
-
-        defs.append(f"`{col_name}` {ch_type}")
-
-    # Append ALIAS column definitions before virtual columns
-    if override_config and schema and table:
-        alias_overrides = override_config.get_alias_overrides(db, schema, table)
-        for ao in alias_overrides:
-            defs.append(
-                f"`{ao.alias_column_name}` {ao.alias_type} ALIAS {ao.expression}"
-            )
-
+        defs.append(f"`{col['column_name']}` {col['ch_type']}")
     # Altinity sink-connector virtual columns
     defs.append("`_version` UInt64 DEFAULT 0")
     defs.append("`is_deleted` UInt8 DEFAULT 0")
@@ -365,9 +342,6 @@ def build_create_table(
     table_name: str,
     columns,
     pk_columns,
-    override_config=None,
-    schema=None,
-    database=None,
 ) -> str:
     """
     Build a complete ClickHouse CREATE TABLE IF NOT EXISTS … statement that
@@ -375,25 +349,16 @@ def build_create_table(
 
     Parameters
     ----------
-    ch_database     : target ClickHouse database name
-    table_name      : table name (no schema prefix)
-    columns         : list of dicts with 'column_name' and 'ch_type'
-    pk_columns      : list of PK column name strings
-    override_config : optional ColumnTypeOverrideConfig for type overrides
-    schema          : PG schema name (needed for override lookups)
-    database        : PG database name (needed for override lookups)
+    ch_database : target ClickHouse database name
+    table_name  : table name (no schema prefix)
+    columns     : list of dicts with 'column_name' and 'ch_type'
+    pk_columns  : list of PK column name strings
 
     Returns
     -------
     str — complete DDL ready to execute
     """
-    col_defs = build_column_defs(
-        columns,
-        override_config=override_config,
-        schema=schema,
-        table=table_name,
-        database=database,
-    )
+    col_defs = build_column_defs(columns)
     cols_sql = ",\n    ".join(col_defs)
 
     if pk_columns:
@@ -449,14 +414,9 @@ def build_select_columns(columns) -> str:
             parts.append(f'toDate32OrNull("{name}")')
         elif bare == 'UInt8' and col.get('pg_type', '').lower() in ('boolean', 'bool'):
             # CSV will have 't'/'f' from PostgreSQL, convert to 0/1
-            # For Nullable columns, preserve NULL (don't convert to 0)
-            bool_expr = f"multiIf(\"{name}\" = 't', 1, \"{name}\" = 'true', 1, \"{name}\" = '1', 1, 0)"
-            if ch_type.startswith('Nullable'):
-                parts.append(
-                    f"if(isNull(\"{name}\"), null, {bool_expr})"
-                )
-            else:
-                parts.append(bool_expr)
+            parts.append(
+                f"multiIf(\"{name}\" = 't', 1, \"{name}\" = 'true', 1, \"{name}\" = '1', 1, 0)"
+            )
         else:
             parts.append(f'"{name}"')
     return ", ".join(parts)
@@ -481,14 +441,14 @@ def build_offset_insert(offset_table: str, lsn_int: int,
                      Debezium stores only the hex value right of "/" in the LSN string,
                      e.g. "0/1A3F000" → 0x1A3F000 = 27516928.
     connector_name : the connector "name" property from config.yml
-                     (e.g. "sink-connector-dev").
+                     (e.g. "sink-connector-awacs-qa-sink-dev").
 
     OFFSET KEY FORMAT (from DebeziumOffsetStorage.getOffsetKey):
         [\"<connectorName>\",{"server":"embeddedconnector"}]
     The Java code does:
         String.format("[\\\"%s\\\",{\\\"server\\\":\\\"embeddedconnector\\\"}]", connectorName)
     which produces e.g.:
-        ["sink-connector-dev",{"server":"embeddedconnector"}]
+        ["sink-connector-awacs-qa-sink-dev",{"server":"embeddedconnector"}]
 
     OFFSET VAL FORMAT (from DebeziumOffsetStorage table comment + updateLsnInformation):
         {"transaction_id":null,"lsn_proc":<lsn_int>,"lsn":<lsn_int>,"ts_usec":<epoch_us>}
@@ -497,7 +457,6 @@ def build_offset_insert(offset_table: str, lsn_int: int,
     """
     import time as _time
     import json as _json
-    import uuid as _uuid
     ts_usec = int(_time.time() * 1_000_000)
     # Construct the offset key to exactly match what the Java connector writes.
     # Java DebeziumOffsetStorage.getOffsetKey() (line 58):
@@ -508,12 +467,6 @@ def build_offset_insert(offset_table: str, lsn_int: int,
         [connector_name, {"server": "embeddedconnector"}],
         separators=(',', ':'),
     )
-
-    # Use a deterministic UUID (v3/MD5) derived from the offset_key so that
-    # all updates for the same connector produce the same `id` value.
-    # This matches the Java fix in DebeziumOffsetStorage.updateDebeziumStorageRow()
-    # which uses UUID.nameUUIDFromBytes(offsetKey.getBytes(UTF-8)) — also UUID v3/MD5.
-    deterministic_id = str(_uuid.uuid3(_uuid.NAMESPACE_URL, offset_key))
 
     payload = (
         '{'
@@ -527,6 +480,6 @@ def build_offset_insert(offset_table: str, lsn_int: int,
         f"INSERT INTO {offset_table} "
         f"(id, offset_key, offset_val, record_insert_ts, record_insert_seq) "
         f"VALUES "
-        f"('{deterministic_id}', '{offset_key}', '{payload}', now(), 1)"
+        f"(generateUUIDv4(), '{offset_key}', '{payload}', now(), 1)"
     )
     return sql
