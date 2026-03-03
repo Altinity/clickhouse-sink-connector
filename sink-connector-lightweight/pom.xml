@@ -698,7 +698,7 @@
                 </executions>
             </plugin>
 
-            <!-- License Compliance Plugin - TEMPORARILY DISABLED due to Java version incompatibility -->
+            <!-- License Compliance Plugin -->
             <!--
             <plugin>
                 <groupId>org.honton.chas</groupId>
@@ -712,7 +712,9 @@
                     </execution>
                 </executions>
                 <configuration>
+                    <!-- Add explicit licenses for libraries with non-standard license declarations -->
                     <acceptableLicenses>
+                        <!-- Eclipse licenses for JTS library -->
                         <license>
                             <name>Eclipse Public License, Version 2\.0</name>
                             <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EPLv2\.txt</url>
@@ -721,16 +723,20 @@
                             <name>Eclipse Distribution License - v 1\.0</name>
                             <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EDLv1\.txt</url>
                         </license>
+                        <!-- BSD License for ANTLR -->
                         <license>
                             <name>The BSD License</name>
                             <url>https?://(www\.)?antlr\.org/license\.html</url>
                         </license>
+                        <!-- CDDL+GPL dual license for javax.json -->
                         <license>
                             <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
                             <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
                         </license>
                     </acceptableLicenses>
+                    <!-- Use OSI permissive licenses as acceptable licenses -->
                     <acceptableLicenseResources>osi-permissive</acceptableLicenseResources>
+                    <!-- Check compile, runtime, and provided scopes (exclude test) -->
                     <scopes>compile,runtime,provided</scopes>
                 </configuration>
             </plugin>
