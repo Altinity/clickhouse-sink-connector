@@ -46,8 +46,8 @@ class PostgreSQLDDLParserServiceTest {
         assertTrue(ch.contains("CREATE TABLE IF NOT EXISTS"), "Should use CREATE TABLE IF NOT EXISTS");
         assertTrue(ch.contains("`testdb`.`users`"), "Should qualify table name with database");
         assertTrue(ch.contains("ENGINE = ReplacingMergeTree"), "Should use ReplacingMergeTree engine");
-        assertTrue(ch.contains("`_sign` Int8"), "Should include CDC _sign column");
-        assertTrue(ch.contains("`_version` UInt64"), "Should include CDC _version column");
+        assertTrue(ch.contains("`_version` Nullable(UInt64)"), "Should include CDC _version column");
+        assertTrue(ch.contains("`is_deleted` UInt8"), "Should include CDC is_deleted column");
     }
 
     @Test
@@ -64,10 +64,9 @@ class PostgreSQLDDLParserServiceTest {
         // Non-PK column must be wrapped in Nullable()
         assertTrue(ch.contains("Nullable(Decimal(10, 2))"), "Non-PK column should be Nullable");
 
-        // Primary key and order by clauses
-        assertTrue(ch.contains("PRIMARY KEY"), "Should contain PRIMARY KEY clause");
+        // Order-by clause (the listener emits ORDER BY only, not a separate PRIMARY KEY clause)
         assertTrue(ch.contains("ORDER BY"), "Should contain ORDER BY clause");
-        assertTrue(ch.contains("`id`"), "PK clause should reference the id column");
+        assertTrue(ch.contains("`id`"), "ORDER BY clause should reference the id column");
     }
 
     @Test
@@ -246,7 +245,7 @@ class PostgreSQLDDLParserServiceTest {
     }
 
     @Test
-    @DisplayName("ALTER TABLE ADD COLUMN - strips NOT NULL constraint from type")
+    @DisplayName("ALTER TABLE ADD COLUMN - NOT NULL column uses bare type (not Nullable)")
     void testAlterTableAddColumnNotNull() {
         PostgreSQLDDLParserService svc = parser("db");
         String pg = "ALTER TABLE t ADD COLUMN status TEXT NOT NULL DEFAULT 'active'";
@@ -254,8 +253,8 @@ class PostgreSQLDDLParserServiceTest {
 
         assertTrue(ch.contains("ADD COLUMN IF NOT EXISTS"), "Should use ADD COLUMN IF NOT EXISTS");
         assertTrue(ch.contains("`status`"), "Should include column name");
-        assertTrue(ch.contains("Nullable(String)"), "Added column should be Nullable(String)");
-        assertFalse(ch.contains("NOT NULL"), "NOT NULL should be stripped");
+        assertTrue(ch.contains("`status` String"), "NOT NULL column should use bare type String");
+        assertFalse(ch.contains("Nullable(String)"), "NOT NULL column must not be Nullable");
         assertFalse(ch.contains("DEFAULT"), "DEFAULT clause should be stripped");
     }
 
