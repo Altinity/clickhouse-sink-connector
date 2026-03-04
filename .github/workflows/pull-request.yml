@@ -76,3 +76,19 @@ jobs:
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+
+  publish-lightweight-jar:
+    needs: [build-kafka-lightweight]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Lightweight jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt-${{ github.event.number }}-${{ github.sha }}.jar
+          path: ./artifacts
+
+      - name: Upload Lightweight jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt.jar
+          path: ./artifacts/*.jar
