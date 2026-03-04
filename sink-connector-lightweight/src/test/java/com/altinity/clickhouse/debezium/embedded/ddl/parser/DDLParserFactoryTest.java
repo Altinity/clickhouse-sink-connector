@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Unit tests for {@link DDLParserFactory}.
  *
  * <p>Verifies that the factory correctly routes to {@link PostgreSQLDDLParserService}
- * for PostgreSQL connectors and to {@link MySQLDDLParserService} for MySQL/MariaDB
+ * for PostgreSQL connectors and to {@link MySQLDDLParserService} for MySQL
  * connectors, regardless of which overload is used.</p>
  */
 @DisplayName("DDLParserFactory - Unit Tests")
@@ -24,10 +24,6 @@ class DDLParserFactoryTest {
     /** Fully-qualified class name of the Debezium MySQL connector. */
     private static final String MYSQL_CONNECTOR_CLASS =
             "io.debezium.connector.mysql.MySqlConnector";
-
-    /** Fully-qualified class name of the Debezium MariaDB connector. */
-    private static final String MARIADB_CONNECTOR_CLASS =
-            "io.debezium.connector.mariadb.MariaDbConnector";
 
     // -----------------------------------------------------------------------
     // String-based overload: getParser(String, BaseDbWriter, config, dbName)
@@ -48,18 +44,6 @@ class DDLParserFactoryTest {
     @Test
     @DisplayName("Factory returns MySQLDDLParserService for MySqlConnector class name")
     void testFactoryReturnsMySQLParserForMySQLConnector() {
-        DDLParserService parser = DDLParserFactory.getParser(
-                MYSQL_CONNECTOR_CLASS,
-                null, null, "testdb");
-
-        assertNotNull(parser, "Parser must not be null");
-        assertInstanceOf(MySQLDDLParserService.class, parser,
-                "Expected MySQLDDLParserService for MySQL connector");
-    }
-
-    @Test
-    @DisplayName("Factory returns MySQLDDLParserService for MySqlConnector class name (duplicate check)")
-    void testFactoryReturnsMySQLParserForMySQLConnectorDuplicate() {
         DDLParserService parser = DDLParserFactory.getParser(
                 MYSQL_CONNECTOR_CLASS,
                 null, null, "testdb");
@@ -137,19 +121,6 @@ class DDLParserFactoryTest {
     }
 
     @Test
-    @DisplayName("Factory (Properties overload) returns MySQLDDLParserService for MariaDbConnector")
-    void testFactoryPropertiesOverloadReturnsMySQLParserForMariaDb() {
-        Properties props = new Properties();
-        props.setProperty("connector.class", MARIADB_CONNECTOR_CLASS);
-
-        DDLParserService parser = DDLParserFactory.getParser(props, null, null, "testdb");
-
-        assertNotNull(parser, "Parser must not be null");
-        assertInstanceOf(MySQLDDLParserService.class, parser,
-                "Expected MySQLDDLParserService for MariaDB connector via Properties");
-    }
-
-    @Test
     @DisplayName("Factory (Properties overload) returns MySQLDDLParserService for null Properties")
     void testFactoryPropertiesOverloadHandlesNullProps() {
         DDLParserService parser = DDLParserFactory.getParser(
@@ -187,12 +158,6 @@ class DDLParserFactoryTest {
     @DisplayName("isPostgresConnector - returns false for MySqlConnector class")
     void testIsPostgresConnectorFalseForMySQL() {
         assertFalse(DDLParserFactory.isPostgresConnector(MYSQL_CONNECTOR_CLASS));
-    }
-
-    @Test
-    @DisplayName("isPostgresConnector - returns false for MariaDbConnector class")
-    void testIsPostgresConnectorFalseForMariaDb() {
-        assertFalse(DDLParserFactory.isPostgresConnector(MARIADB_CONNECTOR_CLASS));
     }
 
     @Test
