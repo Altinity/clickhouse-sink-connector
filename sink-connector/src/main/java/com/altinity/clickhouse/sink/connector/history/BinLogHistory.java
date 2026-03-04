@@ -49,7 +49,7 @@ public class BinLogHistory {
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(0, 'UTC')";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(9, 'UTC')";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
@@ -128,7 +128,7 @@ public class BinLogHistory {
                     String dataType = entry.getValue();
                     // Add timezone to TIME_COLUMN with DateTime64 for second precision
                     if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
-                        dataType = "DateTime64(0, '" + serverTimeZone + "')";
+                        dataType = "DateTime64(9, '" + serverTimeZone + "')";
                     }
                     return "`" + entry.getKey() + "` " + dataType;
                 })
