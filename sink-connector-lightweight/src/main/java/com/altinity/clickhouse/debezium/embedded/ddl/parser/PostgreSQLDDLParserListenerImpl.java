@@ -117,17 +117,25 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
 
             PostgreSQLParser.OpttableelementlistContext elemList = ctx.opttableelementlist();
             if (elemList != null && elemList.tableelementlist() != null) {
+                // Pass 1: collect ALL primary key columns first (from both
+                // inline column constraints and table-level constraints) so
+                // that processColumnDef can determine nullable/non-nullable
+                // status correctly.
                 for (PostgreSQLParser.TableelementContext elem
                         : elemList.tableelementlist().tableelement()) {
-
-                    // ── regular column ─────────────────────────────────────
                     if (elem.columnDef() != null) {
-                        processColumnDef(elem.columnDef(), columnDdl, primaryKeys);
+                        collectInlinePrimaryKey(elem.columnDef(), primaryKeys);
                     }
-
-                    // ── table-level PRIMARY KEY constraint ─────────────────
                     if (elem.tableconstraint() != null) {
                         collectPrimaryKeysFromTableConstraint(elem.tableconstraint(), primaryKeys);
+                    }
+                }
+
+                // Pass 2: process column definitions with full PK knowledge.
+                for (PostgreSQLParser.TableelementContext elem
+                        : elemList.tableelementlist().tableelement()) {
+                    if (elem.columnDef() != null) {
+                        processColumnDef(elem.columnDef(), columnDdl, primaryKeys);
                     }
                 }
             }
@@ -159,9 +167,22 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
     }
 
     /**
+     * Collects inline PRIMARY KEY column names from a single {@code columnDef}
+     * context without generating any DDL.  Used in the first pass to build the
+     * complete set of PK columns before any column DDL is emitted.
+     */
+    private static void collectInlinePrimaryKey(PostgreSQLParser.ColumnDefContext col,
+                                                List<String> primaryKeys) {
+        if (isPrimaryKeyConstraint(col.colquallist())) {
+            primaryKeys.add(unquoteId(col.colid().getText()));
+        }
+    }
+
+    /**
      * Processes a single {@code columnDef} context, appending the ClickHouse
-     * column DDL fragment to {@code columnDdl} and recording any primary-key
-     * column in {@code primaryKeys}.
+     * column DDL fragment to {@code columnDdl}.  The {@code primaryKeys} list
+     * must already be fully populated (from both inline and table-level
+     * constraints) before this method is called.
      */
     private void processColumnDef(PostgreSQLParser.ColumnDefContext col,
                                    List<String> columnDdl,
@@ -170,10 +191,9 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
         String pgType   = extractTypeName(col.typename());
         String chType   = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(pgType);
         boolean notNull = isNotNullConstraint(col.colquallist());
-        boolean isPk    = isPrimaryKeyConstraint(col.colquallist());
+        boolean isPk    = primaryKeys.contains(colName);
 
         if (isPk) {
-            primaryKeys.add(colName);
             // PK columns are inherently NOT NULL — store without Nullable wrapper
             columnDdl.add("`" + colName + "` " + chType);
         } else {
