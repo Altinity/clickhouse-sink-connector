@@ -124,7 +124,7 @@ public class ClickHouseAutoCreateTable
         StringBuilder createTableSyntax = new StringBuilder();
 
         createTableSyntax.append(CREATE_TABLE).append(" ")
-                .append(databaseName).append(".")
+                .append("`").append(databaseName).append("`").append(".")
                 .append("`").append(tableName).append("`");
         if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");

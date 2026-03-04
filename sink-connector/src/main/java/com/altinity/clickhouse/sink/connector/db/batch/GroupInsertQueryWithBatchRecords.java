@@ -163,7 +163,7 @@ public class GroupInsertQueryWithBatchRecords {
                 .equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE
                         .getOperation())) {
             MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
-            mp.setLeft(String.format("TRUNCATE TABLE %s", tableName));
+            mp.setLeft(String.format("TRUNCATE TABLE `%s`", tableName));
             mp.setRight(new HashMap<String, Integer>());
             ArrayList<ClickHouseStruct> records = new ArrayList<>();
             records.add(record);

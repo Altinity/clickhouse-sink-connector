@@ -229,8 +229,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(newTableName);
         } else {
-            this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
-                    .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
+            this.query.append(Constants.CREATE_TABLE).append(" ").append("`").append(databaseName).append("`").append(".").append(originalTableName).append(" ")
+                    .append(Constants.AS).append(" ").append("`").append(databaseName).append("`").append(".").append(newTableName);
         }
     }
 
@@ -477,9 +477,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (tableName.contains(".")) {
                     // Split tableName into databaseName and tableName
                     String[] tableNameSplit = tableName.split("\\.");
-                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    this.query.append("`").append(this.databaseName).append("`").append(".").append(tableNameSplit[1]);
                 } else {
-                    this.query.append(databaseName).append(".").append(tree.getText());
+                    this.query.append("`").append(databaseName).append("`").append(".").append(tree.getText());
                 }
 
                 // If it's ReplicatedReplacingMergeTree, add ON CLUSTER {cluster} to the query.
@@ -907,7 +907,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (tableName.contains(".")) {
             this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
         } else {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
+            this.query.append(String.format("ALTER TABLE `%s`.%s RENAME COLUMN %s to %s", databaseName, tableName, oldCol, newCol));
         }
     }
 
@@ -922,9 +922,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (this.tableName.contains(".")) {
                     // Split database and table name.
                     String[] tableNameSplit = this.tableName.split("\\.");
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName+ "`." + tableNameSplit[1]));
                 } else {
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName + "`." + this.tableName));
                 }
             }
 
@@ -1001,7 +1001,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     (Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
         } else {
             this.query.delete(0, this.query.toString().length()).append(String.format
-                    (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
+                    (Constants.ALTER_RENAME_TABLE, "`" + databaseName + "`." + originalTableName, "`" + databaseName + "`." + newTableName));
         }
     }
 
@@ -1113,7 +1113,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
-                this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + child.getText()));
+                this.query.append(String.format(Constants.TRUNCATE_TABLE, "`" + databaseName + "`." + child.getText()));
             }
         }
     }

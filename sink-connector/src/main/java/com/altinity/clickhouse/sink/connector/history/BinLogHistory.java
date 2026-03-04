@@ -117,7 +117,7 @@ public class BinLogHistory {
 
         StringBuilder sb = new StringBuilder();
         sb.append(CREATE_TABLE).append(" ").append(IF_NOT_EXISTS)
-                .append(' ').append(databaseName)
+                .append(' ').append("`").append(databaseName).append("`")
                 .append(".`").append(historyTableName).append("`(");
 
         // Iterate through all history columns (LinkedHashMap preserves insertion order)

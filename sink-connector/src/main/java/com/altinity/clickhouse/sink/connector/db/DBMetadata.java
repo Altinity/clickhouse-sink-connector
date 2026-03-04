@@ -721,7 +721,7 @@ public class DBMetadata {
         PreparedStatement ps = null;
         while(retryCount < MAX_RETRIES) {
             try {
-                ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                ps = conn.prepareStatement("TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`");
                 ps.execute();
                 break;
             } catch (SQLException e) {

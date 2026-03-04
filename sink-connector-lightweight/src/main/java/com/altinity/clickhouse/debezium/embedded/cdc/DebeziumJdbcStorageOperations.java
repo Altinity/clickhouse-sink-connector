@@ -236,7 +236,7 @@ public class DebeziumJdbcStorageOperations {
         String databaseName = tableNameDatabaseName.getRight();
         DBCredentials dbCredentials = parseDBConfiguration(config);
         String debeziumStorageStatusQuery = String.format(
-                "select * from %s limit 1", databaseName + "." + tableName);
+                "select * from `%s`.`%s` limit 1", databaseName, tableName);
         DBMetadata metadata = new DBMetadata(config);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
                 debeziumStorageStatusQuery, conn);
