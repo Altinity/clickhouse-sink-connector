@@ -1,0 +1,153 @@
+name: E2E Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'sink-connector-lightweight/src/**'
+      - 'sink-connector/src/**'
+      - '.github/workflows/e2e-integration-tests.yml'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'sink-connector-lightweight/src/**'
+      - 'sink-connector/src/**'
+      - '.github/workflows/e2e-integration-tests.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-e2e-tests:
+    name: PostgreSQL E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project (compile only)
+        run: mvn -pl sink-connector-lightweight -am compile test-compile -DskipTests -q
+
+      - name: Run PostgreSQL E2E tests
+        run: >
+          mvn -pl sink-connector-lightweight test
+          -Dgroups=e2e
+          -Dtest="PostgresSnapshotInitialE2EIT,PostgresDataTypesE2EIT,PostgresDDLCdcE2EIT"
+          -Dfailsafe.timeout=600
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-e2e-test-reports
+          path: sink-connector-lightweight/target/surefire-reports/
+          retention-days: 14
+
+  mysql-e2e-tests:
+    name: MySQL E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project (compile only)
+        run: mvn -pl sink-connector-lightweight -am compile test-compile -DskipTests -q
+
+      - name: Run MySQL E2E tests
+        run: >
+          mvn -pl sink-connector-lightweight test
+          -Dgroups=e2e
+          -Dtest="MySQLSnapshotInitialE2EIT,MySQLDataTypesE2EIT,MySQLDDLCdcE2EIT"
+          -Dfailsafe.timeout=600
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-e2e-test-reports
+          path: sink-connector-lightweight/target/surefire-reports/
+          retention-days: 14
+
+  bulk-load-e2e-tests:
+    name: Bulk Load E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project (compile only)
+        run: mvn -pl sink-connector-lightweight -am compile test-compile -DskipTests -q
+
+      - name: Run Bulk Load E2E tests
+        run: >
+          mvn -pl sink-connector-lightweight test
+          -Dgroups=e2e
+          -Dtest="PostgresSnapshotNeverBulkLoadE2EIT,MySQLSnapshotNeverBulkLoadE2EIT"
+          -Dfailsafe.timeout=600
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-load-e2e-test-reports
+          path: sink-connector-lightweight/target/surefire-reports/
+          retention-days: 14
+
+  e2e-summary:
+    name: E2E Tests Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - postgres-e2e-tests
+      - mysql-e2e-tests
+      - bulk-load-e2e-tests
+    steps:
+      - name: Check test results
+        run: |
+          echo "## E2E Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PostgreSQL E2E Tests | ${{ needs.postgres-e2e-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| MySQL E2E Tests | ${{ needs.mysql-e2e-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bulk Load E2E Tests | ${{ needs.bulk-load-e2e-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if any test job failed
+        if: >
+          needs.postgres-e2e-tests.result == 'failure' ||
+          needs.mysql-e2e-tests.result == 'failure' ||
+          needs.bulk-load-e2e-tests.result == 'failure'
+        run: exit 1
