@@ -5,6 +5,11 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -20,174 +25,74 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 public class ClickHouseDataTypeMapperDDLTest {
 
     // ------------------------------------------------------------------
-    // Primitive Kafka-Connect base types
+    // Primitive Kafka-Connect base types (map-driven)
     // ------------------------------------------------------------------
 
-    @Test
-    @DisplayName("INT8  → Nullable(Int8)")
-    public void testInt8() {
-        Schema s = SchemaBuilder.int8().optional().build();
-        assertEquals("Nullable(Int8)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
+    static Stream<Arguments> primitiveTypes() {
+        return Stream.of(
+                Arguments.of("INT8",    SchemaBuilder.int8().optional().build(),    "Nullable(Int8)"),
+                Arguments.of("INT16",   SchemaBuilder.int16().optional().build(),   "Nullable(Int16)"),
+                Arguments.of("INT32",   SchemaBuilder.int32().optional().build(),   "Nullable(Int32)"),
+                Arguments.of("INT64",   SchemaBuilder.int64().optional().build(),   "Nullable(Int64)"),
+                Arguments.of("FLOAT32", SchemaBuilder.float32().optional().build(), "Nullable(Float32)"),
+                Arguments.of("FLOAT64", SchemaBuilder.float64().optional().build(), "Nullable(Float64)"),
+                Arguments.of("BOOLEAN", SchemaBuilder.bool().optional().build(),    "Nullable(UInt8)"),
+                Arguments.of("STRING",  SchemaBuilder.string().optional().build(),  "Nullable(String)"),
+                Arguments.of("BYTES",   SchemaBuilder.bytes().optional().build(),   "Nullable(String)")
+        );
     }
 
-    @Test
-    @DisplayName("INT16 → Nullable(Int16)")
-    public void testInt16() {
-        Schema s = SchemaBuilder.int16().optional().build();
-        assertEquals("Nullable(Int16)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("INT32 → Nullable(Int32)")
-    public void testInt32() {
-        Schema s = SchemaBuilder.int32().optional().build();
-        assertEquals("Nullable(Int32)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("INT64 → Nullable(Int64)")
-    public void testInt64() {
-        Schema s = SchemaBuilder.int64().optional().build();
-        assertEquals("Nullable(Int64)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("FLOAT32 → Nullable(Float32)")
-    public void testFloat32() {
-        Schema s = SchemaBuilder.float32().optional().build();
-        assertEquals("Nullable(Float32)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("FLOAT64 → Nullable(Float64)")
-    public void testFloat64() {
-        Schema s = SchemaBuilder.float64().optional().build();
-        assertEquals("Nullable(Float64)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("BOOLEAN → Nullable(UInt8)")
-    public void testBoolean() {
-        Schema s = SchemaBuilder.bool().optional().build();
-        assertEquals("Nullable(UInt8)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("STRING → Nullable(String)")
-    public void testString() {
-        Schema s = SchemaBuilder.string().optional().build();
-        assertEquals("Nullable(String)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("BYTES → Nullable(String)")
-    public void testBytes() {
-        Schema s = SchemaBuilder.bytes().optional().build();
-        assertEquals("Nullable(String)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
+    @ParameterizedTest(name = "{0} → {2}")
+    @MethodSource("primitiveTypes")
+    @DisplayName("Primitive Kafka-Connect base types")
+    public void testPrimitiveTypes(String label, Schema schema, String expectedCHType) {
+        assertEquals(expectedCHType, ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(schema));
     }
 
     // ------------------------------------------------------------------
-    // Debezium logical types (identified by schema name)
+    // Debezium logical types (map-driven)
     // ------------------------------------------------------------------
 
-    @Test
-    @DisplayName("io.debezium.time.MicroTimestamp → Nullable(DateTime64(6))")
-    public void testMicroTimestamp() {
-        Schema s = SchemaBuilder.int64()
-                .name("io.debezium.time.MicroTimestamp")
-                .optional()
-                .build();
-        assertEquals("Nullable(DateTime64(6))", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
+    static Stream<Arguments> debeziumLogicalTypes() {
+        return Stream.of(
+                Arguments.of("io.debezium.time.MicroTimestamp",
+                        SchemaBuilder.int64().name("io.debezium.time.MicroTimestamp").optional().build(),
+                        "Nullable(DateTime64(6))"),
+                Arguments.of("io.debezium.time.Timestamp",
+                        SchemaBuilder.int64().name("io.debezium.time.Timestamp").optional().build(),
+                        "Nullable(DateTime64(3))"),
+                Arguments.of("io.debezium.time.NanoTimestamp",
+                        SchemaBuilder.int64().name("io.debezium.time.NanoTimestamp").optional().build(),
+                        "Nullable(DateTime64(9))"),
+                Arguments.of("io.debezium.time.ZonedTimestamp",
+                        SchemaBuilder.string().name("io.debezium.time.ZonedTimestamp").optional().build(),
+                        "Nullable(DateTime64(6, 'UTC'))"),
+                Arguments.of("io.debezium.time.Date",
+                        SchemaBuilder.int32().name("io.debezium.time.Date").optional().build(),
+                        "Nullable(Date32)"),
+                Arguments.of("io.debezium.time.MicroTime",
+                        SchemaBuilder.int64().name("io.debezium.time.MicroTime").optional().build(),
+                        "Nullable(Int64)"),
+                Arguments.of("io.debezium.data.Uuid",
+                        SchemaBuilder.string().name("io.debezium.data.Uuid").optional().build(),
+                        "Nullable(UUID)"),
+                Arguments.of("io.debezium.data.Json",
+                        SchemaBuilder.string().name("io.debezium.data.Json").optional().build(),
+                        "Nullable(String)"),
+                Arguments.of("io.debezium.data.Enum",
+                        SchemaBuilder.string().name("io.debezium.data.Enum").optional().build(),
+                        "Nullable(String)"),
+                Arguments.of("io.debezium.data.Bits",
+                        SchemaBuilder.bytes().name("io.debezium.data.Bits").optional().build(),
+                        "Nullable(String)")
+        );
     }
 
-    @Test
-    @DisplayName("io.debezium.time.Timestamp → Nullable(DateTime64(3))")
-    public void testTimestamp() {
-        Schema s = SchemaBuilder.int64()
-                .name("io.debezium.time.Timestamp")
-                .optional()
-                .build();
-        assertEquals("Nullable(DateTime64(3))", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.time.NanoTimestamp → Nullable(DateTime64(9))")
-    public void testNanoTimestamp() {
-        Schema s = SchemaBuilder.int64()
-                .name("io.debezium.time.NanoTimestamp")
-                .optional()
-                .build();
-        assertEquals("Nullable(DateTime64(9))", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.time.ZonedTimestamp → Nullable(DateTime64(6, 'UTC'))")
-    public void testZonedTimestamp() {
-        Schema s = SchemaBuilder.string()
-                .name("io.debezium.time.ZonedTimestamp")
-                .optional()
-                .build();
-        assertEquals("Nullable(DateTime64(6, 'UTC'))", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.time.Date → Nullable(Date32)")
-    public void testDate() {
-        Schema s = SchemaBuilder.int32()
-                .name("io.debezium.time.Date")
-                .optional()
-                .build();
-        assertEquals("Nullable(Date32)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.time.MicroTime → Nullable(Int64)")
-    public void testMicroTime() {
-        Schema s = SchemaBuilder.int64()
-                .name("io.debezium.time.MicroTime")
-                .optional()
-                .build();
-        assertEquals("Nullable(Int64)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.data.Uuid → Nullable(UUID)")
-    public void testUuid() {
-        Schema s = SchemaBuilder.string()
-                .name("io.debezium.data.Uuid")
-                .optional()
-                .build();
-        assertEquals("Nullable(UUID)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.data.Json → Nullable(String)")
-    public void testJson() {
-        Schema s = SchemaBuilder.string()
-                .name("io.debezium.data.Json")
-                .optional()
-                .build();
-        assertEquals("Nullable(String)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.data.Enum → Nullable(String)")
-    public void testEnum() {
-        Schema s = SchemaBuilder.string()
-                .name("io.debezium.data.Enum")
-                .optional()
-                .build();
-        assertEquals("Nullable(String)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
-    }
-
-    @Test
-    @DisplayName("io.debezium.data.Bits → Nullable(String)")
-    public void testBits() {
-        Schema s = SchemaBuilder.bytes()
-                .name("io.debezium.data.Bits")
-                .optional()
-                .build();
-        assertEquals("Nullable(String)", ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(s));
+    @ParameterizedTest(name = "{0} → {2}")
+    @MethodSource("debeziumLogicalTypes")
+    @DisplayName("Debezium logical types")
+    public void testDebeziumLogicalTypes(String schemaName, Schema schema, String expectedCHType) {
+        assertEquals(expectedCHType, ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL(schema));
     }
 
     // ------------------------------------------------------------------
