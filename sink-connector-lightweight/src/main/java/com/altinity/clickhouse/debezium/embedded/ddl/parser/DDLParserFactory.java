@@ -97,9 +97,14 @@ public class DDLParserFactory {
         if (connectorClass == null || connectorClass.isEmpty()) {
             return false;
         }
-        String id = ConnectorDescriptor.getIdForConnectorClass(connectorClass);
-        if (id != null) {
-            return id.toLowerCase().contains(POSTGRES_ID);
+        try {
+            String id = ConnectorDescriptor.getIdForConnectorClass(connectorClass);
+            if (id != null) {
+                return id.toLowerCase().contains(POSTGRES_ID);
+            }
+        } catch (RuntimeException e) {
+            // ConnectorDescriptor throws RuntimeException for unrecognized connector classes;
+            // fall through to substring-based matching.
         }
         // Fallback: if Debezium cannot resolve the class, use simple substring match
         return connectorClass.toLowerCase().contains(POSTGRES_ID);
