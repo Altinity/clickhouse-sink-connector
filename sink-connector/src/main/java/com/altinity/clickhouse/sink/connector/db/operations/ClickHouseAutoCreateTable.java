@@ -141,12 +141,18 @@ public class ClickHouseAutoCreateTable
             // not already wrapped.  ClickHouse does NOT support Nullable()
             // around composite types such as Array, Map, or Tuple, so those
             // must be left as-is.
+            // System/engine columns (_version, _sign, is_deleted) must stay
+            // non-nullable because ClickHouse requires them as bare integer
+            // types for ReplacingMergeTree / CollapsingMergeTree engines.
             if (f.schema().isOptional()
                     && dataType != null
                     && !dataType.startsWith("Nullable(")
                     && !dataType.startsWith("Array(")
                     && !dataType.startsWith("Map(")
-                    && !dataType.startsWith("Tuple(")) {
+                    && !dataType.startsWith("Tuple(")
+                    && !colName.equals(VERSION_COLUMN)
+                    && !colName.equals(SIGN_COLUMN)
+                    && !colName.equals(IS_DELETED_COLUMN)) {
                 dataType = "Nullable(" + dataType + ")";
             }
 
