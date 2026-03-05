@@ -14,6 +14,11 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.SIGN_COLUMN;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.IS_DELETED_COLUMN;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 
@@ -162,10 +167,16 @@ public class ClickHouseTableOperationsBase {
                 // Nullable type and can accept NULL values from CDC events.
                 // ClickHouse does NOT support Nullable() around composite types
                 // such as Array, Map, or Tuple, so those must be left as-is.
+                // System/engine columns (_version, _sign, is_deleted) must stay
+                // non-nullable because ClickHouse requires them as bare integer
+                // types for ReplacingMergeTree / CollapsingMergeTree engines.
                 if (isOptional && !chType.startsWith("Nullable(")
                         && !chType.startsWith("Array(")
                         && !chType.startsWith("Map(")
-                        && !chType.startsWith("Tuple(")) {
+                        && !chType.startsWith("Tuple(")
+                        && !colName.equals(VERSION_COLUMN)
+                        && !colName.equals(SIGN_COLUMN)
+                        && !colName.equals(IS_DELETED_COLUMN)) {
                     chType = "Nullable(" + chType + ")";
                 }
                 columnToDataTypesMap.put(colName, chType);
