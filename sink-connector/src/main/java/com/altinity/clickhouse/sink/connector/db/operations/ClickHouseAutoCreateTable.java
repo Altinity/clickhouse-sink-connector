@@ -135,16 +135,23 @@ public class ClickHouseAutoCreateTable
         for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
-            boolean isNull = false;
-            if (f.schema().isOptional() == true) {
-                isNull = true;
+
+            // Wrap the data type in Nullable() if the source schema marks the
+            // field as optional (i.e. nullable in PostgreSQL) and the type is
+            // not already wrapped.  ClickHouse does NOT support Nullable()
+            // around composite types such as Array, Map, or Tuple, so those
+            // must be left as-is.
+            if (f.schema().isOptional()
+                    && dataType != null
+                    && !dataType.startsWith("Nullable(")
+                    && !dataType.startsWith("Array(")
+                    && !dataType.startsWith("Map(")
+                    && !dataType.startsWith("Tuple(")) {
+                dataType = "Nullable(" + dataType + ")";
             }
+
             createTableSyntax.append("`").append(colName).append("`")
                     .append(" ").append(dataType);
-
-            // Do not append NULL/NOT NULL — ClickHouse does not support NOT NULL as a
-            // column constraint keyword. Non-nullable columns are expressed as bare types;
-            // nullable columns are wrapped in Nullable(...) in the type string itself.
             createTableSyntax.append(",");
         }
 

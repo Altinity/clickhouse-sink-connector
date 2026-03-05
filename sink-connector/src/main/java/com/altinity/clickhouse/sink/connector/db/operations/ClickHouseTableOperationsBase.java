@@ -95,6 +95,7 @@ public class ClickHouseTableOperationsBase {
             String colName = f.name();
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
+            boolean isOptional = f.schema().isOptional();
 
             if (type == Schema.Type.ARRAY) {
                 schemaName = f.schema().valueSchema().type().name();
@@ -129,6 +130,7 @@ public class ClickHouseTableOperationsBase {
                     mapper.getClickHouseDataType(type, schemaName);
 
             if (dataType != null) {
+                String chType;
                 if (dataType == ClickHouseDataType.Decimal) {
                     // Get Scale, precision from parameters.
                     Map<String, String> params = f.schema().parameters();
@@ -136,26 +138,14 @@ public class ClickHouseTableOperationsBase {
                     // Postgres numeric data type has no scale/precision.
                     if (schemaName.equalsIgnoreCase(
                             VariableScaleDecimal.LOGICAL_NAME)) {
-                        columnToDataTypesMap.put(
-                                colName,
-                                DECIMAL_64_18
-                        );
-                        continue;
-                    }
-
-                    if (params != null
+                        chType = DECIMAL_64_18;
+                    } else if (params != null
                             && params.containsKey(SCALE)
                             && params.containsKey(PRECISION)) {
-                        columnToDataTypesMap.put(
-                                colName,
-                                "Decimal(" + params.get(PRECISION) + ","
-                                        + params.get(SCALE) + ")"
-                        );
+                        chType = "Decimal(" + params.get(PRECISION) + ","
+                                + params.get(SCALE) + ")";
                     } else {
-                        columnToDataTypesMap.put(
-                                colName,
-                                DEFAULT_DECIMAL_TYPE
-                        );
+                        chType = DEFAULT_DECIMAL_TYPE;
                     }
                 } else if (dataType == ClickHouseDataType.DateTime64) {
                     // Timestamp (with milliseconds scale),
@@ -163,7 +153,7 @@ public class ClickHouseTableOperationsBase {
                     if (f.schema().type() == Schema.INT64_SCHEMA.type()
                             && f.schema().name().equalsIgnoreCase(
                             Timestamp.SCHEMA_NAME)) {
-                        columnToDataTypesMap.put(colName, DATETIME64_3);
+                        chType = DATETIME64_3;
                     } else if (
                             (f.schema().type() == Schema.INT64_SCHEMA.type()
                                     && f.schema().name().equalsIgnoreCase(
@@ -176,13 +166,27 @@ public class ClickHouseTableOperationsBase {
                         // DATETIME(3 -6) -> DateTime64(6)
                         // TIMESTAMP(1..6) -> ZONEDTIMESTAMP(Debezium)
                         // -> DateTime64(6)
-                        columnToDataTypesMap.put(colName, DATETIME64_6);
+                        chType = DATETIME64_6;
                     } else {
-                        columnToDataTypesMap.put(colName, dataType.name());
+                        chType = dataType.name();
                     }
                 } else {
-                    columnToDataTypesMap.put(colName, dataType.name());
+                    chType = dataType.name();
                 }
+
+                // Wrap the type in Nullable() if the source schema marks the
+                // field as optional (i.e. nullable in PostgreSQL/MySQL) so that
+                // auto-created tables and ALTER TABLE statements use the correct
+                // Nullable type and can accept NULL values from CDC events.
+                // ClickHouse does NOT support Nullable() around composite types
+                // such as Array, Map, or Tuple, so those must be left as-is.
+                if (isOptional && !chType.startsWith("Nullable(")
+                        && !chType.startsWith("Array(")
+                        && !chType.startsWith("Map(")
+                        && !chType.startsWith("Tuple(")) {
+                    chType = "Nullable(" + chType + ")";
+                }
+                columnToDataTypesMap.put(colName, chType);
             } else {
                 log.error(" **** DATA TYPE MAPPING not found: TYPE:"
                         + type.getName() + "SCHEMA NAME:" + schemaName);
