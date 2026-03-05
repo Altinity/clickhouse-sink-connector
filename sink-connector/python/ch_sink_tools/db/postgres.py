@@ -346,17 +346,22 @@ def get_table_pk(conn, pg_schema, table_name):
     """
     Return a list of primary-key column names for *table_name* in ordinal order.
     Returns [] if no PK is defined.
+
+    Uses pg_index / pg_attribute system catalogs instead of information_schema
+    because information_schema.table_constraints is not visible to users who
+    lack SELECT privilege on the constraint catalog (e.g. replication-only users).
     """
     sql = f"""
-        SELECT kcu.column_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name
-         AND tc.table_schema    = kcu.table_schema
-        WHERE tc.constraint_type = 'PRIMARY KEY'
-          AND tc.table_schema    = '{pg_schema}'
-          AND tc.table_name      = '{table_name}'
-        ORDER BY kcu.ordinal_position
+        SELECT a.attname AS column_name
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = i.indrelid
+                           AND a.attnum = ANY(i.indkey)
+        WHERE i.indisprimary
+          AND n.nspname = '{pg_schema}'
+          AND c.relname = '{table_name}'
+        ORDER BY array_position(i.indkey, a.attnum)
     """
     rows = execute_pg(conn, sql)
     return [r['column_name'] for r in rows]
