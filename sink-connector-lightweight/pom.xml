@@ -6,7 +6,7 @@
 
     <groupId>com.altinity</groupId>
     <artifactId>clickhouse-debezium-embedded</artifactId>
-    <version>0.0.4</version>
+    <version>0.0.9</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
