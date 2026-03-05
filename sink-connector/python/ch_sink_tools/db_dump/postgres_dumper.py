@@ -94,18 +94,22 @@ def check_program_exists(name):
 def run_command(cmd):
     """
     # -- ======================================================================
-    # -- run the command that is passed as cmd and return True or False
+    # -- run the command that is passed as cmd and return True or False.
+    # -- Uses /bin/bash so that 'set -o pipefail' works when callers
+    # -- prepend it to detect failures in pipe left-hand sides.
     # -- ======================================================================
     """
     logging.debug("cmd " + cmd)
     process = subprocess.Popen(cmd,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT,
-                               shell=True)
+                               shell=True,
+                               executable='/bin/bash')
     for line in process.stdout:
         logging.info(line.decode().strip())
         time.sleep(0.02)
-    rc = str(process.poll())
+    process.wait()
+    rc = str(process.returncode)
     logging.debug("return code = " + str(rc))
     return rc
 
@@ -158,22 +162,40 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     """
     Build the psql command that streams CSV rows for *table_name* to stdout.
     NULL values are represented as \\N (standard CSV NULL sentinel).
+
+    NOTE: The COPY SQL is written to a temp file and passed via -f to avoid
+    shell quoting issues with double-quoted identifiers.  When the COPY SQL
+    was embedded in -c "...", the shell stripped the inner double-quotes,
+    causing PostgreSQL to case-fold mixed-case table names to lowercase
+    (e.g. "LiteLLM_AccessGroupTable" → litellm_accessgrouptable) and fail
+    with 'relation does not exist'.
+
+    Returns (cmd, tmp_file_path) — the caller must clean up the temp file.
     """
+    import tempfile
     col_list = ", ".join(f'"{c}"' for c in column_names)
     copy_sql = (
         f"COPY (SELECT {col_list} FROM \"{pg_schema}\".\"{table_name}\") "
         f"TO STDOUT WITH (FORMAT CSV, HEADER false, NULL '\\\\N')"
     )
-    # PGPASSWORD is set in the environment by the calling shell command
+
+    # Write COPY SQL to a temp file to preserve double-quote identifiers
+    qfile = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.sql', prefix='pg_copy_',
+        delete=False, dir='/tmp'
+    )
+    qfile.write(copy_sql)
+    qfile.close()
+
     cmd = (
         f"PGPASSWORD='{pg_password}' psql"
         f" -h {pg_host}"
         f" -p {pg_port}"
         f" -U {pg_user}"
         f" -d \"{pg_database}\""
-        f" -c \"{copy_sql}\""
+        f" -f {qfile.name}"
     )
-    return cmd
+    return cmd, qfile.name
 
 
 def build_ch_insert_cmd(ch_host, ch_port, ch_user, ch_password,
@@ -256,7 +278,7 @@ def load_table(
 
         column_names = [c['column_name'] for c in columns_meta]
 
-        psql_cmd = build_psql_copy_cmd(
+        psql_cmd, pg_tmp_file = build_psql_copy_cmd(
             pg_host, pg_port, pg_user, pg_password,
             pg_database, pg_schema, table_name, column_names, batch_size,
         )
@@ -266,12 +288,23 @@ def load_table(
             ch_config_file=ch_config_file, ch_secure=ch_secure,
         )
 
-        pipe_cmd = f"{psql_cmd} | {ch_cmd}"
+        # Use 'set -o pipefail' so that a failure in psql (left side of
+        # the pipe) propagates as the exit code.  Without this, only the
+        # exit code of the last command (clickhouse-client) is returned,
+        # masking psql COPY errors.
+        pipe_cmd = f"set -o pipefail; {psql_cmd} | {ch_cmd}"
         logging.info(f"[{table_name}] Starting load (~{approx_rows:,} rows)")
         logging.debug(f"[{table_name}] pipe cmd: {pipe_cmd}")
 
         if not dry_run:
-            rc = run_command(pipe_cmd)
+            try:
+                rc = run_command(pipe_cmd)
+            finally:
+                # Clean up the psql temp SQL file
+                try:
+                    os.unlink(pg_tmp_file)
+                except OSError:
+                    pass
             if rc != "0":
                 raise RuntimeError(
                     f"Pipe command failed for {table_name} (rc={rc})"
@@ -298,6 +331,57 @@ def load_table(
 # ---------------------------------------------------------------------------
 # LSN offset writer
 # ---------------------------------------------------------------------------
+
+def ensure_offset_database_and_table(ch_conn, offset_table, dry_run=False):
+    """
+    Ensure the offset database and table exist in ClickHouse before writing
+    the LSN offset.  Parses the database name from the fully-qualified
+    offset_table argument (e.g. 'altinity_sink_connector.replica_source_info_x').
+
+    The table schema matches what the Java CDC connector expects
+    (DebeziumOffsetStorage).
+    """
+    parts = offset_table.split('.', 1)
+    if len(parts) == 2:
+        offset_db = parts[0]
+        table_only = parts[1]
+    else:
+        # No database prefix — nothing to auto-create
+        logging.warning(
+            f"offset_table '{offset_table}' has no database prefix; "
+            f"skipping auto-create of database/table"
+        )
+        return
+
+    # 1. Create the offset database
+    create_db_sql = f"CREATE DATABASE IF NOT EXISTS `{offset_db}`"
+    logging.info(f"Ensuring offset database exists: {create_db_sql}")
+    if not dry_run:
+        try:
+            clickhouse_execute_conn(ch_conn, create_db_sql)
+        except Exception as e:
+            logging.error(f"Failed to create offset database '{offset_db}': {e}")
+            raise
+
+    # 2. Create the offset table with the schema the Java connector expects
+    create_tbl_sql = (
+        f"CREATE TABLE IF NOT EXISTS `{offset_db}`.`{table_only}` (\n"
+        f"    `id` String,\n"
+        f"    `offset_key` String,\n"
+        f"    `offset_val` String,\n"
+        f"    `record_insert_ts` DateTime,\n"
+        f"    `record_insert_seq` UInt64\n"
+        f") ENGINE = ReplacingMergeTree(record_insert_seq)\n"
+        f"ORDER BY id"
+    )
+    logging.info(f"Ensuring offset table exists: {create_tbl_sql}")
+    if not dry_run:
+        try:
+            clickhouse_execute_conn(ch_conn, create_tbl_sql)
+        except Exception as e:
+            logging.error(f"Failed to create offset table '{offset_table}': {e}")
+            raise
+
 
 def write_lsn_offset(ch_conn, offset_table, lsn_int, connector_name, dry_run=False):
     """
@@ -607,18 +691,25 @@ def main():
         # --------------------------------------------------------------------
         # Step 5: Write LSN offset so CDC connector starts from right position
         # NOTE: clickhouse_driver Connection is NOT a context manager.
+        # Connect to 'default' first because the offset database may not
+        # exist yet — we create it (and the offset table) before writing.
         # --------------------------------------------------------------------
         if args.offset_table and not args.schema_only:
             logging.info("=== Step 5: Writing WAL LSN offset to ClickHouse ===")
             ch_conn_offset = clickhouse_connection(
                 args.ch_host,
-                database='altinity_sink_connector',
+                database='default',
                 user=ch_user,
                 password=ch_password,
                 port=args.ch_port,
                 secure=args.ch_secure,
             )
             try:
+                ensure_offset_database_and_table(
+                    ch_conn_offset,
+                    args.offset_table,
+                    dry_run=args.dry_run,
+                )
                 write_lsn_offset(
                     ch_conn_offset,
                     args.offset_table,
