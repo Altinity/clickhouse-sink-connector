@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.postgres.schema;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
@@ -71,8 +72,9 @@ public class PostgresSchemaReconciler {
             String chType = mapDebeziumTypeToClickHouse(fieldSchema);
 
             String ddl = String.format(
-                    "ALTER TABLE `%s`.`%s` ADD COLUMN IF NOT EXISTS `%s` %s",
-                    database, table, columnName, chType);
+                    "%s `%s`.`%s` %s IF NOT EXISTS `%s` %s",
+                    ClickHouseDbConstants.ALTER_TABLE, database, table,
+                    ClickHouseDbConstants.ALTER_TABLE_ADD_COLUMN, columnName, chType);
 
             try {
                 log.info("Schema drift reconciliation – executing DDL: {}", ddl);
