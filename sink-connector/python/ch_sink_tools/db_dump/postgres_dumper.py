@@ -504,6 +504,273 @@ def ensure_heartbeat_table(pg_conn, pg_user):
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL privilege validation
+# ---------------------------------------------------------------------------
+
+def validate_postgres_privileges(pg_conn, pg_user, schema, tables, config):
+    """
+    Validate that the PostgreSQL user has all the privileges required for the
+    sink connector to operate correctly.
+
+    Parameters
+    ----------
+    pg_conn  : psycopg2 connection to PostgreSQL
+    pg_user  : str — the PostgreSQL user name
+    schema   : str — the source schema (e.g. 'public')
+    tables   : list[str] — table names that will be dumped
+    config   : dict — additional config keys:
+                  'connector_name' — Java connector name (for replication slot lookup)
+
+    Returns
+    -------
+    bool — True if all *critical* privileges are present, False otherwise.
+    """
+    logger = logging.getLogger(__name__)
+    cur = pg_conn.cursor()
+    critical_missing = []
+    warnings_list = []
+
+    # ── 1. wal_level must be 'logical' ────────────────────────────────────
+    try:
+        cur.execute("SHOW wal_level")
+        wal_level = cur.fetchone()[0]
+        if wal_level == "logical":
+            logger.info("✓ wal_level = 'logical' — OK")
+        else:
+            msg = (
+                f"wal_level is '{wal_level}', must be 'logical' for CDC. "
+                f"Set wal_level = logical in postgresql.conf and restart."
+            )
+            logger.error(f"✗ wal_level — MISSING: {msg}")
+            critical_missing.append(msg)
+    except Exception as e:
+        msg = f"Could not check wal_level: {e}"
+        logger.error(f"✗ wal_level — ERROR: {msg}")
+        critical_missing.append(msg)
+        pg_conn.rollback()
+
+    # ── 2. LOGIN role attribute ───────────────────────────────────────────
+    try:
+        cur.execute(
+            "SELECT rolcanlogin FROM pg_roles WHERE rolname = %s",
+            (pg_user,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            msg = f"Role '{pg_user}' not found in pg_roles"
+            logger.error(f"✗ LOGIN — MISSING: {msg}")
+            critical_missing.append(msg)
+        elif row[0]:
+            logger.info("✓ LOGIN role attribute — OK")
+        else:
+            msg = (
+                f"Role '{pg_user}' does not have LOGIN. "
+                f"Run: ALTER ROLE \"{pg_user}\" LOGIN;"
+            )
+            logger.error(f"✗ LOGIN — MISSING: {msg}")
+            critical_missing.append(msg)
+    except Exception as e:
+        msg = f"Could not check LOGIN attribute: {e}"
+        logger.error(f"✗ LOGIN — ERROR: {msg}")
+        critical_missing.append(msg)
+        pg_conn.rollback()
+
+    # ── 3. REPLICATION role attribute ─────────────────────────────────────
+    try:
+        cur.execute(
+            "SELECT rolreplication FROM pg_roles WHERE rolname = %s",
+            (pg_user,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            msg = f"Role '{pg_user}' not found in pg_roles"
+            logger.error(f"✗ REPLICATION — MISSING: {msg}")
+            critical_missing.append(msg)
+        elif row[0]:
+            logger.info("✓ REPLICATION role attribute — OK")
+        else:
+            msg = (
+                f"Role '{pg_user}' does not have REPLICATION. "
+                f"Run: ALTER ROLE \"{pg_user}\" REPLICATION;"
+            )
+            logger.error(f"✗ REPLICATION — MISSING: {msg}")
+            critical_missing.append(msg)
+    except Exception as e:
+        msg = f"Could not check REPLICATION attribute: {e}"
+        logger.error(f"✗ REPLICATION — ERROR: {msg}")
+        critical_missing.append(msg)
+        pg_conn.rollback()
+
+    # ── 4. USAGE on schema ────────────────────────────────────────────────
+    try:
+        cur.execute(
+            "SELECT has_schema_privilege(%s, %s, 'USAGE')",
+            (pg_user, schema)
+        )
+        has_usage = cur.fetchone()[0]
+        if has_usage:
+            logger.info(f"✓ USAGE on schema '{schema}' — OK")
+        else:
+            msg = (
+                f"Role '{pg_user}' lacks USAGE on schema '{schema}'. "
+                f"Run: GRANT USAGE ON SCHEMA \"{schema}\" TO \"{pg_user}\";"
+            )
+            logger.error(f"✗ USAGE on schema — MISSING: {msg}")
+            critical_missing.append(msg)
+    except Exception as e:
+        msg = f"Could not check USAGE on schema '{schema}': {e}"
+        logger.error(f"✗ USAGE on schema — ERROR: {msg}")
+        critical_missing.append(msg)
+        pg_conn.rollback()
+
+    # ── 5. SELECT on each table to be dumped ──────────────────────────────
+    tables_missing_select = []
+    for table_name in tables:
+        fq_table = f'"{schema}"."{table_name}"'
+        try:
+            cur.execute(
+                "SELECT has_table_privilege(%s, %s, 'SELECT')",
+                (pg_user, f"{schema}.{table_name}")
+            )
+            has_sel = cur.fetchone()[0]
+            if has_sel:
+                logger.info(f"✓ SELECT on {fq_table} — OK")
+            else:
+                tables_missing_select.append(table_name)
+                logger.error(
+                    f"✗ SELECT on {fq_table} — MISSING"
+                )
+        except Exception as e:
+            tables_missing_select.append(table_name)
+            logger.error(
+                f"✗ SELECT on {fq_table} — ERROR: {e}"
+            )
+            pg_conn.rollback()
+
+    if tables_missing_select:
+        msg = (
+            f"Role '{pg_user}' lacks SELECT on {len(tables_missing_select)} table(s): "
+            f"{tables_missing_select}. "
+            f"Run: GRANT SELECT ON ALL TABLES IN SCHEMA \"{schema}\" TO \"{pg_user}\";"
+        )
+        critical_missing.append(msg)
+
+    # ── 6. CREATE on schema (optional — heartbeat table) ──────────────────
+    try:
+        cur.execute(
+            "SELECT has_schema_privilege(%s, %s, 'CREATE')",
+            (pg_user, schema)
+        )
+        has_create = cur.fetchone()[0]
+        if has_create:
+            logger.info(f"✓ CREATE on schema '{schema}' — OK")
+        else:
+            msg = (
+                f"Role '{pg_user}' lacks CREATE on schema '{schema}'. "
+                f"The heartbeat table cannot be auto-created. "
+                f"Run: GRANT CREATE ON SCHEMA \"{schema}\" TO \"{pg_user}\";"
+            )
+            logger.warning(f"✗ CREATE on schema — WARNING: {msg}")
+            warnings_list.append(msg)
+    except Exception as e:
+        msg = f"Could not check CREATE on schema '{schema}': {e}"
+        logger.warning(f"✗ CREATE on schema — WARNING: {msg}")
+        warnings_list.append(msg)
+        pg_conn.rollback()
+
+    # ── 7. SELECT on pg_catalog tables ────────────────────────────────────
+    pg_catalog_tables = ['pg_index', 'pg_attribute', 'pg_class', 'pg_namespace']
+    for cat_table in pg_catalog_tables:
+        try:
+            cur.execute(
+                "SELECT has_table_privilege(%s, %s, 'SELECT')",
+                (pg_user, f"pg_catalog.{cat_table}")
+            )
+            has_sel = cur.fetchone()[0]
+            if has_sel:
+                logger.info(f"✓ SELECT on pg_catalog.{cat_table} — OK")
+            else:
+                msg = (
+                    f"Role '{pg_user}' lacks SELECT on pg_catalog.{cat_table}. "
+                    f"This is needed for primary key discovery."
+                )
+                logger.error(f"✗ SELECT on pg_catalog.{cat_table} — MISSING: {msg}")
+                critical_missing.append(msg)
+        except Exception as e:
+            msg = f"Could not check SELECT on pg_catalog.{cat_table}: {e}"
+            logger.error(f"✗ SELECT on pg_catalog.{cat_table} — ERROR: {msg}")
+            critical_missing.append(msg)
+            pg_conn.rollback()
+
+    # ── 8. Replication slot existence ─────────────────────────────────────
+    try:
+        cur.execute(
+            "SELECT slot_name, active FROM pg_replication_slots"
+        )
+        slots = cur.fetchall()
+        if slots:
+            slot_info = ", ".join(
+                f"{s[0]} (active={s[1]})" for s in slots
+            )
+            logger.info(f"✓ Replication slot(s) found: {slot_info}")
+        else:
+            msg = (
+                "No replication slots found. The connector will attempt to "
+                "create one (requires REPLICATION privilege, checked above)."
+            )
+            logger.info(f"ℹ Replication slots — {msg}")
+    except Exception as e:
+        msg = f"Could not query pg_replication_slots: {e}"
+        logger.warning(f"✗ Replication slots — WARNING: {msg}")
+        warnings_list.append(msg)
+        pg_conn.rollback()
+
+    # ── 9. Publication existence ──────────────────────────────────────────
+    try:
+        cur.execute("SELECT pubname FROM pg_publication")
+        pubs = [row[0] for row in cur.fetchall()]
+        if pubs:
+            logger.info(f"✓ Publication(s) found: {pubs}")
+        else:
+            msg = (
+                "No publications found. Debezium requires a publication for "
+                "logical replication. Create one with: "
+                "CREATE PUBLICATION dbz_publication FOR ALL TABLES;"
+            )
+            logger.warning(f"✗ Publication — WARNING: {msg}")
+            warnings_list.append(msg)
+    except Exception as e:
+        msg = f"Could not query pg_publication: {e}"
+        logger.warning(f"✗ Publication — WARNING: {msg}")
+        warnings_list.append(msg)
+        pg_conn.rollback()
+
+    cur.close()
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    if critical_missing:
+        logger.error(
+            "Privilege validation FAILED — %d critical issue(s):",
+            len(critical_missing),
+        )
+        for i, issue in enumerate(critical_missing, 1):
+            logger.error("  %d. %s", i, issue)
+    if warnings_list:
+        logger.warning(
+            "Privilege validation produced %d warning(s):",
+            len(warnings_list),
+        )
+        for i, w in enumerate(warnings_list, 1):
+            logger.warning("  %d. %s", i, w)
+    if not critical_missing and not warnings_list:
+        logger.info("All privilege checks passed.")
+    elif not critical_missing:
+        logger.info("All critical privilege checks passed (with warnings above).")
+
+    return len(critical_missing) == 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -645,10 +912,6 @@ def main():
         (lsn_str, lsn_int) = get_standby_lsn(pg_conn_main)
         logging.info(f"Pre-snapshot LSN: {lsn_str}  (integer: {lsn_int})")
 
-        # Create the heartbeat table on the source PostgreSQL database
-        logging.info("=== Step 1b: Ensuring heartbeat table exists ===")
-        ensure_heartbeat_table(pg_conn_main, pg_user)
-
         # Detect PG server timezone once for explicit CH column type annotation
         pg_server_timezone = get_server_timezone(pg_conn_main)
         logging.info(f"PG server timezone detected: {pg_server_timezone}")
@@ -663,16 +926,42 @@ def main():
             include_regex=args.tables,
             exclude_regex=args.exclude_tables,
         )
-        pg_conn_main.close()
 
         if not tables:
             logging.error(
                 f"No tables found in schema '{args.pg_schema}' "
                 f"matching '{args.tables}'"
             )
+            pg_conn_main.close()
             sys.exit(1)
 
         logging.info(f"Tables to process ({len(tables)}): {tables}")
+
+        # --------------------------------------------------------------------
+        # Step 2b: Validate PostgreSQL user privileges
+        # --------------------------------------------------------------------
+        logging.info("=== Step 2b: Validating PostgreSQL user privileges ===")
+        privs_ok = validate_postgres_privileges(
+            pg_conn_main,
+            pg_user,
+            args.pg_schema,
+            tables,
+            config={'connector_name': args.connector_name},
+        )
+        if not privs_ok:
+            logging.error(
+                "Aborting: PostgreSQL user '%s' is missing critical privileges. "
+                "See errors above for details.",
+                pg_user,
+            )
+            pg_conn_main.close()
+            sys.exit(1)
+
+        # Create the heartbeat table on the source PostgreSQL database
+        logging.info("=== Step 2c: Ensuring heartbeat table exists ===")
+        ensure_heartbeat_table(pg_conn_main, pg_user)
+
+        pg_conn_main.close()
 
         # --------------------------------------------------------------------
         # Step 3: Create ClickHouse database and tables
