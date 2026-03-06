@@ -48,6 +48,7 @@ from subprocess import Popen, PIPE
 
 from ch_sink_tools.db.postgres import (
     get_postgres_connection,
+    get_schemas,
     get_tables,
     get_table_columns,
     get_table_pk,
@@ -57,6 +58,7 @@ from ch_sink_tools.db.postgres import (
     build_ch_create_table_ddl,
 )
 from ch_sink_tools.db.clickhouse import clickhouse_connection, clickhouse_execute_conn
+from ch_sink_tools.db_dump.naming import validate_template, resolve_ch_names
 from ch_sink_tools.db_load.postgres_type_mapper import (
     build_create_table,
     build_insert_structure,
@@ -131,6 +133,30 @@ def run_quick_command(cmd):
     if rc != "0":
         logging.error("command failed : terminating")
     return rc, stdout
+
+
+# ---------------------------------------------------------------------------
+# Table regex filtering
+# ---------------------------------------------------------------------------
+
+def filter_tables_by_regex(tables, include_pattern=None, exclude_pattern=None):
+    """Filter a list of table names by include/exclude regex patterns.
+
+    Args:
+        tables: List of table name strings.
+        include_pattern: Optional regex — only tables matching are kept.
+        exclude_pattern: Optional regex — tables matching are removed.
+
+    Returns:
+        Filtered list of table names.
+    """
+    if include_pattern:
+        include_re = re.compile(include_pattern)
+        tables = [t for t in tables if include_re.search(t)]
+    if exclude_pattern:
+        exclude_re = re.compile(exclude_pattern)
+        tables = [t for t in tables if not exclude_re.search(t)]
+    return tables
 
 
 # ---------------------------------------------------------------------------
@@ -278,11 +304,23 @@ def load_table(
     ch_config_file=None, ch_secure=False,
     dry_run=False, batch_size=None,
     pg_server_timezone=None,
+    ch_table_name=None,
 ):
     """
     Stream one table from PostgreSQL COPY to ClickHouse INSERT via a shell pipe.
-    Returns (table_name, rows_estimated, elapsed_seconds, success).
+    Returns (label, rows_estimated, elapsed_seconds, success).
+
+    Parameters
+    ----------
+    table_name     : PG table name (used for COPY from PostgreSQL)
+    ch_table_name  : ClickHouse destination table name.  Defaults to *table_name*
+                     when not provided (backward compatible pass-through).
     """
+    # Resolve CH table name — default to PG table name for backward compat
+    if ch_table_name is None:
+        ch_table_name = table_name
+    label = ch_table_name
+
     t_start = time.time()
     success = False
 
@@ -303,7 +341,7 @@ def load_table(
         )
         ch_cmd = build_ch_insert_cmd(
             ch_host, ch_port, ch_user, ch_password,
-            ch_database, table_name, column_names, columns_meta,
+            ch_database, ch_table_name, column_names, columns_meta,
             ch_config_file=ch_config_file, ch_secure=ch_secure,
         )
 
@@ -312,8 +350,8 @@ def load_table(
         # exit code of the last command (clickhouse-client) is returned,
         # masking psql COPY errors.
         pipe_cmd = f"set -o pipefail; {psql_cmd} | {ch_cmd}"
-        logging.info(f"[{table_name}] Starting load (~{approx_rows:,} rows)")
-        logging.debug(f"[{table_name}] pipe cmd: {pipe_cmd}")
+        logging.info(f"[{label}] Starting load (~{approx_rows:,} rows)")
+        logging.debug(f"[{label}] pipe cmd: {pipe_cmd}")
 
         if not dry_run:
             try:
@@ -326,13 +364,13 @@ def load_table(
                     pass
             if rc != "0":
                 raise RuntimeError(
-                    f"Pipe command failed for {table_name} (rc={rc})"
+                    f"Pipe command failed for {label} (rc={rc})"
                 )
 
         elapsed = time.time() - t_start
         rate = approx_rows / elapsed if elapsed > 0 else 0
         logging.info(
-            f"[{table_name}] Done in {elapsed:.1f}s "
+            f"[{label}] Done in {elapsed:.1f}s "
             f"(~{approx_rows:,} rows, ~{rate:,.0f} rows/s)"
         )
         success = True
@@ -340,11 +378,11 @@ def load_table(
     except Exception as e:
         elapsed = time.time() - t_start
         logging.error(
-            f"[{table_name}] FAILED after {elapsed:.1f}s: {e}"
+            f"[{label}] FAILED after {elapsed:.1f}s: {e}"
         )
         logging.error(traceback.format_exc())
 
-    return (table_name, approx_rows, time.time() - t_start, success)
+    return (label, approx_rows, time.time() - t_start, success)
 
 
 # ---------------------------------------------------------------------------
@@ -771,6 +809,167 @@ def validate_postgres_privileges(pg_conn, pg_user, schema, tables, config):
 
 
 # ---------------------------------------------------------------------------
+# Config file loading
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+
+def _debezium_list_to_regex(value: str) -> str:
+    """Convert a Debezium comma-separated list to a regex pattern.
+
+    If the value looks like a plain comma-separated list (no regex metacharacters),
+    convert 'a,b,c' to 'a|b|c'. For fully-qualified names like 'schema.table',
+    extract the table part.
+
+    If the value already contains regex metacharacters, return as-is.
+    """
+    regex_chars = {'.*', '^', '$', '[', ']', '(', ')', '+', '?'}
+    if any(ch in value for ch in regex_chars):
+        return value  # Already a regex
+
+    # Split by comma, strip whitespace
+    parts = [p.strip() for p in value.split(',') if p.strip()]
+
+    # If parts contain dots (schema.table), extract the last component
+    extracted = []
+    for part in parts:
+        if '.' in part:
+            extracted.append(part.split('.')[-1])  # Take table name only
+        else:
+            extracted.append(part)
+
+    return '|'.join(extracted)
+
+
+def _debezium_schema_list_to_regex(value: str) -> str:
+    """Convert a Debezium comma-separated schema list to a regex pattern.
+
+    Similar to _debezium_list_to_regex but keeps full values since
+    schema names are simple identifiers (no dotted notation).
+
+    If the value already contains regex metacharacters, return as-is.
+    """
+    regex_chars = {'.*', '^', '$', '[', ']', '(', ')', '+', '?'}
+    if any(ch in value for ch in regex_chars):
+        return value  # Already a regex
+
+    # Split by comma, strip whitespace
+    parts = [p.strip() for p in value.split(',') if p.strip()]
+    return '|'.join(parts)
+
+
+def parse_sink_connector_config(config: dict) -> dict:
+    """Parse a sink-connector YAML config and map to dumper CLI arg names.
+
+    The sink-connector config uses Java property-style keys like 'database.hostname'.
+    This maps them to the Python dumper's argparse namespace keys.
+    """
+    mapping = {}
+
+    # PostgreSQL connection
+    if 'database.hostname' in config:
+        mapping['pg_host'] = config['database.hostname']
+    if 'database.port' in config:
+        mapping['pg_port'] = int(config['database.port'])
+    if 'database.dbname' in config:
+        mapping['pg_database'] = config['database.dbname']
+    if 'database.user' in config:
+        mapping['pg_user'] = config['database.user']
+    if 'database.password' in config:
+        mapping['pg_password'] = config['database.password']
+
+    # ClickHouse connection
+    if 'clickhouse.server.url' in config:
+        mapping['ch_host'] = config['clickhouse.server.url']
+    if 'clickhouse.server.port' in config:
+        mapping['ch_port'] = int(config['clickhouse.server.port'])
+    if 'clickhouse.server.user' in config:
+        mapping['ch_user'] = config['clickhouse.server.user']
+    if 'clickhouse.server.password' in config:
+        mapping['ch_password'] = config['clickhouse.server.password']
+
+    # Database/schema/table naming
+    if 'clickhouse.server.database' in config:
+        db_value = config['clickhouse.server.database']
+        # If it contains {{ }}, treat as a template; otherwise as literal ch_database
+        if '{{' in str(db_value) and '}}' in str(db_value):
+            mapping['ch_database_template'] = db_value
+        else:
+            mapping['ch_database'] = db_value
+
+    # Schema filtering
+    if 'schema.include.list' in config:
+        mapping['pg_schema_include'] = _debezium_schema_list_to_regex(
+            str(config['schema.include.list']))
+    if 'schema.exclude.list' in config:
+        mapping['pg_schema_exclude'] = _debezium_schema_list_to_regex(
+            str(config['schema.exclude.list']))
+
+    # Table filtering
+    if 'table.include.list' in config:
+        mapping['pg_table_include'] = _debezium_list_to_regex(
+            str(config['table.include.list']))
+    if 'table.exclude.list' in config:
+        mapping['pg_table_exclude'] = _debezium_list_to_regex(
+            str(config['table.exclude.list']))
+
+    # Database filtering
+    if 'database.include.list' in config:
+        mapping['pg_database_include'] = _debezium_list_to_regex(
+            str(config['database.include.list']))
+    if 'database.exclude.list' in config:
+        mapping['pg_database_exclude'] = _debezium_list_to_regex(
+            str(config['database.exclude.list']))
+
+    # Connector name (used for offset table)
+    if 'database.server.name' in config:
+        mapping['connector_name'] = config['database.server.name']
+
+    # Offset storage
+    if 'offset.storage.jdbc.offset.table.name' in config:
+        mapping['offset_table'] = config['offset.storage.jdbc.offset.table.name']
+
+    return mapping
+
+
+def load_config_file(config_path: str) -> dict:
+    """Load a YAML config file and return as a dumper-compatible dict.
+
+    Auto-detects if the file is a sink-connector config (with keys like
+    'database.hostname') or a dumper-specific config (with keys like 'pg_host').
+    Sink-connector configs are mapped to dumper CLI arg names.
+    """
+    import yaml
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    if not config:
+        return {}
+
+    # Auto-detect: if config has sink-connector style keys, parse them
+    sink_connector_keys = {'database.hostname', 'database.port', 'database.dbname',
+                           'clickhouse.server.url', 'database.server.name'}
+    if sink_connector_keys & set(config.keys()):
+        logger.info("Detected sink-connector config format, mapping to dumper parameters")
+        return parse_sink_connector_config(config)
+
+    # Otherwise treat as dumper-native config
+    return config
+
+
+def merge_config_with_args(args, config: dict):
+    """Merge config file values into args namespace.
+    CLI arguments take precedence over config file values.
+    Only set config values for args that are still at their default (None).
+    """
+    for key, value in config.items():
+        # Only apply config value if CLI arg was not explicitly provided
+        if hasattr(args, key) and getattr(args, key) is None:
+            setattr(args, key, value)
+    return args
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -791,16 +990,22 @@ def main():
                         help='PostgreSQL user')
     parser.add_argument('--pg_password', required=False, default=None,
                         help='PostgreSQL password (discouraged; prefer ~/.pgpass)')
-    parser.add_argument('--pg_schema', required=False, default='public',
-                        help='PostgreSQL schema (default: public)')
+    parser.add_argument('--pg_schema', type=str, nargs='+', default=['public'],
+                        help='PostgreSQL schema(s) to dump (default: public)')
+
+    # -- Schema filtering -----------------------------------------------------
+    parser.add_argument('--pg_schema_include', type=str, default=None,
+                        help='Regex pattern to include schemas (e.g., "public|analytics")')
+    parser.add_argument('--pg_schema_exclude', type=str, default=None,
+                        help='Regex pattern to exclude schemas (e.g., "pg_.*|information_schema")')
 
     # -- ClickHouse connection ------------------------------------------------
     parser.add_argument('--ch_host', required=True,
                         help='ClickHouse host')
     parser.add_argument('--ch_port', type=int, default=9000,
                         help='ClickHouse native port (default: 9000)')
-    parser.add_argument('--ch_database', required=True,
-                        help='ClickHouse target database')
+    parser.add_argument('--ch_database', required=False, default=None,
+                        help='ClickHouse target database (overrides --ch_database_template if set)')
     parser.add_argument('--ch_user', required=False, default='default',
                         help='ClickHouse user (default: default)')
     parser.add_argument('--ch_password', required=False, default=None,
@@ -816,6 +1021,20 @@ def main():
                         help='Regex to include tables (default: all)')
     parser.add_argument('--exclude_tables', required=False, default=None,
                         help='Regex to exclude tables')
+    parser.add_argument('--pg_table_include', type=str, default=None,
+                        help='Regex pattern to include tables (e.g., "users|orders")')
+    parser.add_argument('--pg_table_exclude', type=str, default=None,
+                        help='Regex pattern to exclude tables (e.g., "temp_.*|_backup$")')
+
+    # -- Naming templates -----------------------------------------------------
+    parser.add_argument('--ch_database_template', type=str, default='{{ database }}',
+                        help='Jinja-style template for ClickHouse database name (default: "{{ database }}" = pass-through)')
+    parser.add_argument('--ch_table_template', type=str, default='{{ table }}',
+                        help='Jinja-style template for ClickHouse table name (default: "{{ table }}" = pass-through)')
+
+    # -- Config file ----------------------------------------------------------
+    parser.add_argument('--config', type=str, default=None,
+                        help='Path to YAML config file (CLI args override config file values)')
 
     # -- Load options ---------------------------------------------------------
     parser.add_argument('--threads', type=int, default=4,
@@ -856,6 +1075,12 @@ def main():
     global args
     args = parser.parse_args()
 
+    # -- Config file loading (CLI args override config values) ----------------
+    if args.config:
+        config = load_config_file(args.config)
+        logger.info(f"Loaded {len(config)} parameters from config file: {args.config}")
+        merge_config_with_args(args, config)
+
     # -- Logging setup (mirrors mysql_dumper.py) ------------------------------
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -870,6 +1095,11 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    # -- Template validation --------------------------------------------------
+    validate_template(args.ch_database_template, 'ch_database_template')
+    validate_template(args.ch_table_template, 'ch_table_template',
+                      required_vars=frozenset({'table'}))
 
     # -- Dependency checks ----------------------------------------------------
     assert check_program_exists('psql'), \
@@ -917,54 +1147,118 @@ def main():
         logging.info(f"PG server timezone detected: {pg_server_timezone}")
 
         # --------------------------------------------------------------------
-        # Step 2: Discover tables
+        # Step 2: Discover schemas
         # --------------------------------------------------------------------
-        logging.info("=== Step 2: Discovering tables ===")
-        tables = get_tables(
-            pg_conn_main,
-            args.pg_schema,
-            include_regex=args.tables,
-            exclude_regex=args.exclude_tables,
-        )
+        logging.info("=== Step 2: Discovering schemas ===")
+        if args.pg_schema_include or args.pg_schema_exclude:
+            # Use regex discovery from DB
+            schemas = get_schemas(pg_conn_main,
+                                  include_regex=args.pg_schema_include,
+                                  exclude_regex=args.pg_schema_exclude)
+            logging.info(f"Schemas discovered via regex ({len(schemas)}): {schemas}")
+        else:
+            # Use explicit list from --pg_schema (default: ['public'])
+            schemas = args.pg_schema
+            logging.info(f"Schemas from --pg_schema ({len(schemas)}): {schemas}")
 
-        if not tables:
+        if not schemas:
+            logging.error("No schemas found matching the specified criteria")
+            pg_conn_main.close()
+            sys.exit(1)
+
+        # --------------------------------------------------------------------
+        # Step 2b: Discover tables per schema and build work items
+        # --------------------------------------------------------------------
+        logging.info("=== Step 2b: Discovering tables per schema ===")
+        # work_items: list of (schema_name, table_name, ch_database, ch_table)
+        work_items = []
+        for schema_name in schemas:
+            # Discover tables for this schema using legacy --tables/--exclude_tables
+            schema_tables = get_tables(
+                pg_conn_main,
+                schema_name,
+                include_regex=args.tables,
+                exclude_regex=args.exclude_tables,
+            )
+            # Apply additional --pg_table_include / --pg_table_exclude regex filters
+            schema_tables = filter_tables_by_regex(
+                schema_tables,
+                include_pattern=args.pg_table_include,
+                exclude_pattern=args.pg_table_exclude,
+            )
+
+            for table_name in schema_tables:
+                # Resolve ClickHouse database name
+                if args.ch_database:
+                    # Explicit --ch_database flag takes highest priority (backward compat)
+                    ch_database = args.ch_database
+                else:
+                    ch_database, _ = resolve_ch_names(
+                        args.pg_database, schema_name, table_name,
+                        args.ch_database_template, args.ch_table_template,
+                    )
+
+                # Resolve ClickHouse table name
+                _, ch_table = resolve_ch_names(
+                    args.pg_database, schema_name, table_name,
+                    args.ch_database_template, args.ch_table_template,
+                )
+
+                logging.info(
+                    f"Mapping PG {args.pg_database}.{schema_name}.{table_name} "
+                    f"\u2192 CH {ch_database}.{ch_table}"
+                )
+                work_items.append((schema_name, table_name, ch_database, ch_table))
+
+        if not work_items:
             logging.error(
-                f"No tables found in schema '{args.pg_schema}' "
+                f"No tables found in schemas {schemas} "
                 f"matching '{args.tables}'"
             )
             pg_conn_main.close()
             sys.exit(1)
 
-        logging.info(f"Tables to process ({len(tables)}): {tables}")
+        logging.info(f"Total tables to process: {len(work_items)}")
+
+        # Collect unique (schema, tables) pairs for privilege validation
+        schema_tables_map = {}
+        for schema_name, table_name, _, _ in work_items:
+            schema_tables_map.setdefault(schema_name, []).append(table_name)
 
         # --------------------------------------------------------------------
-        # Step 2b: Validate PostgreSQL user privileges
+        # Step 2c: Validate PostgreSQL user privileges (per schema)
         # --------------------------------------------------------------------
-        logging.info("=== Step 2b: Validating PostgreSQL user privileges ===")
-        privs_ok = validate_postgres_privileges(
-            pg_conn_main,
-            pg_user,
-            args.pg_schema,
-            tables,
-            config={'connector_name': args.connector_name},
-        )
-        if not privs_ok:
-            logging.error(
-                "Aborting: PostgreSQL user '%s' is missing critical privileges. "
-                "See errors above for details.",
+        logging.info("=== Step 2c: Validating PostgreSQL user privileges ===")
+        for schema_name, tables_in_schema in schema_tables_map.items():
+            privs_ok = validate_postgres_privileges(
+                pg_conn_main,
                 pg_user,
+                schema_name,
+                tables_in_schema,
+                config={'connector_name': args.connector_name},
             )
-            pg_conn_main.close()
-            sys.exit(1)
+            if not privs_ok:
+                logging.error(
+                    "Aborting: PostgreSQL user '%s' is missing critical privileges "
+                    "for schema '%s'. See errors above for details.",
+                    pg_user, schema_name,
+                )
+                pg_conn_main.close()
+                sys.exit(1)
 
         # Create the heartbeat table on the source PostgreSQL database
-        logging.info("=== Step 2c: Ensuring heartbeat table exists ===")
+        logging.info("=== Step 2d: Ensuring heartbeat table exists ===")
         ensure_heartbeat_table(pg_conn_main, pg_user)
 
         pg_conn_main.close()
 
+        # Collect unique CH database names that need to be created
+        ch_databases_needed = sorted(set(
+            ch_db for _, _, ch_db, _ in work_items
+        ))
+
         # --------------------------------------------------------------------
-        # Step 3: Create ClickHouse database and tables
+        # Step 3: Create ClickHouse database(s) and tables
         # NOTE: clickhouse_driver Connection is NOT a context manager — do NOT
         # use "with clickhouse_connection(...) as ch_conn:" — it has no __enter__.
         # Always call .close() explicitly in a finally block.
@@ -980,50 +1274,55 @@ def main():
                 secure=args.ch_secure,
             )
             try:
-                ensure_ch_database(ch_conn_default, args.ch_database,
-                                   dry_run=args.dry_run)
+                for ch_db in ch_databases_needed:
+                    ensure_ch_database(ch_conn_default, ch_db,
+                                       dry_run=args.dry_run)
             finally:
                 ch_conn_default.close()
 
-            ch_conn_schema = clickhouse_connection(
-                args.ch_host,
-                database=args.ch_database,
-                user=ch_user,
-                password=ch_password,
-                port=args.ch_port,
-                secure=args.ch_secure,
-            )
-            try:
-                for table_name in tables:
-                    pg_conn_t = get_postgres_connection(
-                        args.pg_host, pg_user, pg_password,
-                        args.pg_port, args.pg_database
-                    )
-                    columns_meta = get_table_columns(
-                        pg_conn_t, args.pg_schema, table_name,
-                        pg_server_timezone=pg_server_timezone,
-                    )
-                    pk_cols = get_table_pk(
-                        pg_conn_t, args.pg_schema, table_name
-                    )
-                    pg_conn_t.close()
-                    create_ch_table(
-                        ch_conn_schema,
-                        args.ch_database,
-                        table_name,
-                        columns_meta,
-                        pk_cols,
-                        dry_run=args.dry_run,
-                    )
-            finally:
-                ch_conn_schema.close()
+            # Create tables in each CH database
+            for ch_db in ch_databases_needed:
+                ch_conn_schema = clickhouse_connection(
+                    args.ch_host,
+                    database=ch_db,
+                    user=ch_user,
+                    password=ch_password,
+                    port=args.ch_port,
+                    secure=args.ch_secure,
+                )
+                try:
+                    for schema_name, table_name, item_ch_db, ch_table in work_items:
+                        if item_ch_db != ch_db:
+                            continue
+                        pg_conn_t = get_postgres_connection(
+                            args.pg_host, pg_user, pg_password,
+                            args.pg_port, args.pg_database
+                        )
+                        columns_meta = get_table_columns(
+                            pg_conn_t, schema_name, table_name,
+                            pg_server_timezone=pg_server_timezone,
+                        )
+                        pk_cols = get_table_pk(
+                            pg_conn_t, schema_name, table_name
+                        )
+                        pg_conn_t.close()
+                        create_ch_table(
+                            ch_conn_schema,
+                            ch_db,
+                            ch_table,
+                            columns_meta,
+                            pk_cols,
+                            dry_run=args.dry_run,
+                        )
+                finally:
+                    ch_conn_schema.close()
 
         # --------------------------------------------------------------------
         # Step 4: Load data in parallel
         # --------------------------------------------------------------------
         if not args.schema_only:
             logging.info(
-                f"=== Step 4: Loading {len(tables)} tables "
+                f"=== Step 4: Loading {len(work_items)} tables "
                 f"with {args.threads} threads ==="
             )
             results = []
@@ -1036,17 +1335,18 @@ def main():
                         table_name,
                         args.pg_host, args.pg_port,
                         pg_user, pg_password,
-                        args.pg_database, args.pg_schema,
+                        args.pg_database, schema_name,
                         args.ch_host, args.ch_port,
                         ch_user, ch_password,
-                        args.ch_database,
+                        ch_database,
                         ch_config_file=args.ch_config_file,
                         ch_secure=args.ch_secure,
                         dry_run=args.dry_run,
                         batch_size=args.batch_size,
                         pg_server_timezone=pg_server_timezone,
-                    ): table_name
-                    for table_name in tables
+                        ch_table_name=ch_table,
+                    ): (schema_name, table_name, ch_database, ch_table)
+                    for schema_name, table_name, ch_database, ch_table in work_items
                 }
 
                 for future in concurrent.futures.as_completed(futures):
@@ -1054,10 +1354,11 @@ def main():
                         result = future.result()
                         results.append(result)
                     except Exception as exc:
-                        tbl = futures[future]
-                        logging.error(f"[{tbl}] raised an exception: {exc}")
+                        item = futures[future]
+                        tbl_label = f"{item[0]}.{item[1]}"
+                        logging.error(f"[{tbl_label}] raised an exception: {exc}")
                         logging.error(traceback.format_exc())
-                        results.append((tbl, -1, 0, False))
+                        results.append((tbl_label, -1, 0, False))
 
             # Summary report
             logging.info("=== Load Summary ===")
@@ -1113,7 +1414,7 @@ def main():
             finally:
                 ch_conn_offset.close()
             logging.info(
-                f"LSN offset written: {lsn_str} (low32={lsn_int}) → {args.offset_table}. "
+                f"LSN offset written: {lsn_str} (low32={lsn_int}) \u2192 {args.offset_table}. "
                 f"connector_name='{args.connector_name}'. "
                 f"Start the Java connector with snapshot.mode=never in config.yml"
             )
