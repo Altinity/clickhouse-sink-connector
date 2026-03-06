@@ -47,7 +47,7 @@ data:
     database.dbname: "public"
     clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
     metrics.enable: "true"
-    replica.status.view: "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status
+    replica.status.view: "CREATE VIEW altinity_sink_connector.show_replica_status
     (
       `seconds_behind_source` Int32,
       `duration_behind_source` String,

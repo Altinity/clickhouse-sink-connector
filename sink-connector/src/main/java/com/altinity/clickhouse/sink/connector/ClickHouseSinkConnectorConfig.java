@@ -634,7 +634,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
-                        "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status " +
+                        "CREATE VIEW altinity_sink_connector.show_replica_status " +
                                 "(`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), " +
                                 "`local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, " +
                                 "`record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM " +

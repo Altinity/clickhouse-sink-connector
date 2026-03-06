@@ -154,7 +154,7 @@ metrics.enable: "true"
 #disable.drop.truncate: If set to true, the connector will ignore drop and truncate events. The default is false.
 #disable.drop.truncate: "false"
 
-replica.status.view: "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status
+replica.status.view: "CREATE VIEW altinity_sink_connector.show_replica_status
 (
     `seconds_behind_source` Int32,
     `duration_behind_source` String,

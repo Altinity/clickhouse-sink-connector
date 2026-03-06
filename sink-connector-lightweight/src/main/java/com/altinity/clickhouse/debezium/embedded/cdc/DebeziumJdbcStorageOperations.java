@@ -122,10 +122,30 @@ public class DebeziumJdbcStorageOperations {
         String formattedView = String.format(view, dbName, dbName + "." + tableName);
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
+
+        // Replace "CREATE OR REPLACE VIEW" with "CREATE VIEW" and extract the view name
+        // to issue a DROP VIEW IF EXISTS first. This avoids the renameat2() UNSUPPORTED_METHOD
+        // error on some ClickHouse versions/filesystems that don't support atomic rename.
+        String createViewSql = formattedView;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)CREATE\\s+OR\\s+REPLACE\\s+VIEW\\s+(\\S+)")
+                .matcher(formattedView);
+        if (matcher.find()) {
+            String viewName = matcher.group(1);
+            String dropViewSql = "DROP VIEW IF EXISTS " + viewName;
+            createViewSql = formattedView.replaceFirst(
+                    "(?i)CREATE\\s+OR\\s+REPLACE\\s+VIEW", "CREATE VIEW");
+            try {
+                log.info("Dropping view before recreating: " + dropViewSql);
+                new DBMetadata(props).executeSystemQuery(conn, dropViewSql);
+            } catch (Exception e) {
+                log.warn("Error dropping view (may not exist yet): " + dropViewSql, e);
+            }
+        }
         try {
-            new DBMetadata(props).executeSystemQuery(conn, formattedView);
+            new DBMetadata(props).executeSystemQuery(conn, createViewSql);
         } catch (Exception e) {
-            log.error("**** Error creating VIEW **** " + formattedView);
+            log.error("**** Error creating VIEW **** " + createViewSql);
         }
     }
 
