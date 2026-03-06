@@ -29,7 +29,13 @@ def _build_ch_col_expr(col_name, pg_type, is_nullable):
 
     if pg_type_lower in ('boolean', 'bool'):
         # CH stores boolean as UInt8; toString gives '0'/'1'
-        expr = "if({qc} = 0, '0', '1')".format(qc=qc)
+        # For Nullable(UInt8), if(col = 0, ...) treats NULL as false (else branch)
+        # which gives '1' instead of NULL.  Preserve NULL so the outer coalesce
+        # produces '' – matching the PG side.
+        if is_nullable:
+            expr = "if(isNull({qc}), NULL, if({qc} = 0, '0', '1'))".format(qc=qc)
+        else:
+            expr = "if({qc} = 0, '0', '1')".format(qc=qc)
     elif 'timestamp' in pg_type_lower and 'time zone' in pg_type_lower:
         # timestamptz: normalise to UTC so output matches PG AT TIME ZONE 'UTC'
         # toString(toTimeZone(col, 'UTC')) renders in UTC regardless of CH server TZ

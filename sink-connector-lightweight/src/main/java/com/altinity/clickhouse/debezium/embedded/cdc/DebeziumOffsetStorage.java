@@ -255,8 +255,14 @@ public class DebeziumOffsetStorage {
 
         String insertQuery = String.format(
                 JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT, tableName);
+        // Use a deterministic UUID derived from the offsetKey so that all
+        // updates for the same connector produce the same `id` value.
+        // This allows ReplacingMergeTree (ORDER BY id) to collapse
+        // duplicate rows via FINAL, keeping only the latest one.
+        String deterministicId = UUID.nameUUIDFromBytes(
+                offsetKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         try (PreparedStatement sql = connection.prepareStatement(insertQuery)) {
-            sql.setString(1, UUID.randomUUID().toString());
+            sql.setString(1, deterministicId);
             sql.setString(2, offsetKey);
             sql.setString(3, offsetVal);
             sql.setTimestamp(4, new Timestamp(currentTs));

@@ -161,7 +161,14 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
                         column_names, batch_size=None):
     """
     Build the psql command that streams CSV rows for *table_name* to stdout.
-    NULL values are represented as \\N (standard CSV NULL sentinel).
+
+    Uses standard CSV NULL convention: NULL = empty unquoted field,
+    empty string = quoted empty "".  FORCE_QUOTE * ensures every non-NULL
+    value is quoted so the two cases are always distinguishable.
+
+    On the ClickHouse side, format_csv_null_representation='' and
+    input_format_csv_empty_as_default=0 must be set so CH correctly
+    interprets empty unquoted fields as NULL (not default/empty string).
 
     NOTE: The COPY SQL is written to a temp file and passed via -f to avoid
     shell quoting issues with double-quoted identifiers.  When the COPY SQL
@@ -176,7 +183,7 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     col_list = ", ".join(f'"{c}"' for c in column_names)
     copy_sql = (
         f"COPY (SELECT {col_list} FROM \"{pg_schema}\".\"{table_name}\") "
-        f"TO STDOUT WITH (FORMAT CSV, HEADER false, NULL '\\\\N')"
+        f"TO STDOUT WITH (FORMAT CSV, HEADER false, FORCE_QUOTE *)"
     )
 
     # Write COPY SQL to a temp file to preserve double-quote identifiers
@@ -187,8 +194,10 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     qfile.write(copy_sql)
     qfile.close()
 
+    # PGTZ=UTC ensures that timestamptz values are output in UTC,
+    # matching what Debezium CDC sends to ClickHouse.
     cmd = (
-        f"PGPASSWORD='{pg_password}' psql"
+        f"PGPASSWORD='{pg_password}' PGTZ=UTC psql"
         f" -h {pg_host}"
         f" -p {pg_port}"
         f" -U {pg_user}"
@@ -225,6 +234,12 @@ def build_ch_insert_cmd(ch_host, ch_port, ch_user, ch_password,
         f'INSERT INTO "{ch_database}"."{table_name}"({col_list}) '
         f"SELECT {select_cols} "
         f"FROM input('{structure}') "
+        # format_csv_null_representation='' → empty unquoted CSV field = NULL
+        # input_format_csv_empty_as_default=0 → don't replace empty with column defaults
+        # These match the psql FORCE_QUOTE * convention where:
+        #   NULL  = empty unquoted field (nothing between commas)
+        #   ''    = quoted empty ""
+        f"SETTINGS format_csv_null_representation='', input_format_csv_empty_as_default=0 "
         f"FORMAT CSV"
     )
 
@@ -244,6 +259,7 @@ def build_ch_insert_cmd(ch_host, ch_port, ch_user, ch_password,
         f" -u {ch_user}"
         f" {password_opt}"
         f" {secure_opt}"
+        f" --session_timezone=UTC"
         f" --throw_if_no_data_to_insert=0"
         f" --max_partitions_per_insert_block=1000"
         f" --queries-file {qfile.name}"
@@ -372,7 +388,7 @@ def ensure_offset_database_and_table(ch_conn, offset_table, dry_run=False):
         f"    `record_insert_ts` DateTime,\n"
         f"    `record_insert_seq` UInt64\n"
         f") ENGINE = ReplacingMergeTree(record_insert_seq)\n"
-        f"ORDER BY id"
+        f"ORDER BY offset_key"
     )
     logging.info(f"Ensuring offset table exists: {create_tbl_sql}")
     if not dry_run:
