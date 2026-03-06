@@ -141,7 +141,7 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
             }
 
             // ── mandatory CDC virtual columns ───────────────────────────────
-            columnDdl.add("`_version` Nullable(UInt64)");
+            columnDdl.add("`_version` UInt64");
             columnDdl.add("`is_deleted` UInt8 DEFAULT 0");
 
             // ── ORDER BY / PRIMARY KEY ──────────────────────────────────────
