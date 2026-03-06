@@ -66,6 +66,9 @@ from ch_sink_tools.db_load.postgres_type_mapper import (
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
+# Heartbeat table used to keep CDC offsets fresh during idle periods
+HEARTBEAT_TABLE = "public.sink_connector_heartbeat"
+
 # ---------------------------------------------------------------------------
 # Logging factory (mirrors mysql_dumper.py pattern)
 # ---------------------------------------------------------------------------
@@ -420,6 +423,87 @@ def write_lsn_offset(ch_conn, offset_table, lsn_int, connector_name, dry_run=Fal
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat table creation on source PostgreSQL
+# ---------------------------------------------------------------------------
+
+def ensure_heartbeat_table(pg_conn, pg_user):
+    """
+    Create the heartbeat table on the source PostgreSQL database if it does
+    not already exist.  The heartbeat table is used by the sink connector to
+    keep CDC offsets fresh during idle periods.
+
+    This function is fault-tolerant: if the table cannot be created (e.g.
+    insufficient privileges), it logs a WARNING and continues without
+    raising an exception.
+    """
+    try:
+        cur = pg_conn.cursor()
+
+        # Check whether the table already exists
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' "
+            "  AND table_name = 'sink_connector_heartbeat'"
+        )
+        exists = cur.fetchone() is not None
+
+        if exists:
+            logging.info(
+                f"Heartbeat table {HEARTBEAT_TABLE} already exists"
+            )
+            cur.close()
+            return
+
+        # Create the heartbeat table
+        cur.execute(
+            f"CREATE TABLE IF NOT EXISTS {HEARTBEAT_TABLE} ("
+            f"  id INTEGER PRIMARY KEY DEFAULT 1, "
+            f"  ts TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()"
+            f")"
+        )
+
+        # Insert the initial row
+        cur.execute(
+            f"INSERT INTO {HEARTBEAT_TABLE} (id, ts) "
+            f"VALUES (1, now()) ON CONFLICT (id) DO NOTHING"
+        )
+
+        pg_conn.commit()
+        logging.info(f"Created heartbeat table {HEARTBEAT_TABLE}")
+
+        # Grant privileges to the sink connector user
+        try:
+            cur.execute(
+                f"GRANT SELECT, INSERT, UPDATE ON {HEARTBEAT_TABLE} "
+                f"TO \"{pg_user}\""
+            )
+            pg_conn.commit()
+            logging.info(
+                f"Granted SELECT, INSERT, UPDATE on {HEARTBEAT_TABLE} "
+                f"to user '{pg_user}'"
+            )
+        except Exception as grant_err:
+            pg_conn.rollback()
+            logging.warning(
+                f"Could not GRANT privileges on {HEARTBEAT_TABLE} "
+                f"to '{pg_user}': {grant_err}"
+            )
+
+        cur.close()
+
+    except Exception as e:
+        # Roll back any partial transaction so the connection stays usable
+        try:
+            pg_conn.rollback()
+        except Exception:
+            pass
+        logging.warning(
+            f"Could not create heartbeat table {HEARTBEAT_TABLE}: {e}. "
+            f"Continuing without heartbeat table."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -560,6 +644,10 @@ def main():
         )
         (lsn_str, lsn_int) = get_standby_lsn(pg_conn_main)
         logging.info(f"Pre-snapshot LSN: {lsn_str}  (integer: {lsn_int})")
+
+        # Create the heartbeat table on the source PostgreSQL database
+        logging.info("=== Step 1b: Ensuring heartbeat table exists ===")
+        ensure_heartbeat_table(pg_conn_main, pg_user)
 
         # Detect PG server timezone once for explicit CH column type annotation
         pg_server_timezone = get_server_timezone(pg_conn_main)
