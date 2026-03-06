@@ -414,9 +414,14 @@ def build_select_columns(columns) -> str:
             parts.append(f'toDate32OrNull("{name}")')
         elif bare == 'UInt8' and col.get('pg_type', '').lower() in ('boolean', 'bool'):
             # CSV will have 't'/'f' from PostgreSQL, convert to 0/1
-            parts.append(
-                f"multiIf(\"{name}\" = 't', 1, \"{name}\" = 'true', 1, \"{name}\" = '1', 1, 0)"
-            )
+            # For Nullable columns, preserve NULL (don't convert to 0)
+            bool_expr = f"multiIf(\"{name}\" = 't', 1, \"{name}\" = 'true', 1, \"{name}\" = '1', 1, 0)"
+            if ch_type.startswith('Nullable'):
+                parts.append(
+                    f"if(isNull(\"{name}\"), null, {bool_expr})"
+                )
+            else:
+                parts.append(bool_expr)
         else:
             parts.append(f'"{name}"')
     return ", ".join(parts)
@@ -457,6 +462,7 @@ def build_offset_insert(offset_table: str, lsn_int: int,
     """
     import time as _time
     import json as _json
+    import uuid as _uuid
     ts_usec = int(_time.time() * 1_000_000)
     # Construct the offset key to exactly match what the Java connector writes.
     # Java DebeziumOffsetStorage.getOffsetKey() (line 58):
@@ -467,6 +473,12 @@ def build_offset_insert(offset_table: str, lsn_int: int,
         [connector_name, {"server": "embeddedconnector"}],
         separators=(',', ':'),
     )
+
+    # Use a deterministic UUID (v3/MD5) derived from the offset_key so that
+    # all updates for the same connector produce the same `id` value.
+    # This matches the Java fix in DebeziumOffsetStorage.updateDebeziumStorageRow()
+    # which uses UUID.nameUUIDFromBytes(offsetKey.getBytes(UTF-8)) — also UUID v3/MD5.
+    deterministic_id = str(_uuid.uuid3(_uuid.NAMESPACE_URL, offset_key))
 
     payload = (
         '{'
@@ -480,6 +492,6 @@ def build_offset_insert(offset_table: str, lsn_int: int,
         f"INSERT INTO {offset_table} "
         f"(id, offset_key, offset_val, record_insert_ts, record_insert_seq) "
         f"VALUES "
-        f"(generateUUIDv4(), '{offset_key}', '{payload}', now(), 1)"
+        f"('{deterministic_id}', '{offset_key}', '{payload}', now(), 1)"
     )
     return sql

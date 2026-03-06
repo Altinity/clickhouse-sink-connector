@@ -83,7 +83,12 @@ def build_pg_select_expression(col_name, pg_type, is_nullable, udt_name,
 
     # Boolean → '0'/'1' to match CH UInt8 toString()
     if pg_type_lower in ('boolean', 'bool'):
-        expr = f"CASE WHEN {q} THEN '1' ELSE '0' END"
+        if is_nullable:
+            # Preserve NULL so that the outer coalesce(..., '') gives ''
+            # matching the CH side's if(isNull(col), NULL, ...) + coalesce
+            expr = f"CASE WHEN {q} IS NULL THEN NULL WHEN {q} THEN '1' ELSE '0' END"
+        else:
+            expr = f"CASE WHEN {q} THEN '1' ELSE '0' END"
 
     # Timestamps → microsecond-precision UTC string matching CH toString(toTimeZone(col, 'UTC'))
     # timestamptz (with time zone): normalise to UTC first so both sides produce the same string
