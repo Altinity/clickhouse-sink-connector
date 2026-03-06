@@ -17,6 +17,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -129,10 +130,52 @@ public class MultipleDatabaseIT
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "test_db");
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "employees");
+
+        // Poll until test_db.test_table is created and has data in ClickHouse
+        boolean testDbTableReady = false;
+        for (int i = 0; i < 20; i++) {
+            try {
+                Statement stmt = writer.getConnection().createStatement();
+                ResultSet countRs = stmt.executeQuery(
+                        "SELECT count(*) as cnt FROM system.tables WHERE database = 'test_db' AND name = 'test_table'");
+                if (countRs.next() && countRs.getLong("cnt") > 0) {
+                    // Also check for data
+                    ResultSet dataRs = stmt.executeQuery("SELECT count(*) as cnt FROM test_db.test_table");
+                    if (dataRs.next() && dataRs.getLong("cnt") > 0) {
+                        testDbTableReady = true;
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                // Database/table may not exist yet
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("test_db.test_table should exist with data in ClickHouse", testDbTableReady);
+
+        // Poll until test_db2.test_table2 is created and has data in ClickHouse
+        boolean testDb2TableReady = false;
+        for (int i = 0; i < 20; i++) {
+            try {
+                Statement stmt = writer.getConnection().createStatement();
+                ResultSet countRs = stmt.executeQuery(
+                        "SELECT count(*) as cnt FROM system.tables WHERE database = 'test_db2' AND name = 'test_table2'");
+                if (countRs.next() && countRs.getLong("cnt") > 0) {
+                    ResultSet dataRs = stmt.executeQuery("SELECT count(*) as cnt FROM test_db2.test_table2");
+                    if (dataRs.next() && dataRs.getLong("cnt") > 0) {
+                        testDb2TableReady = true;
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                // Database/table may not exist yet
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("test_db2.test_table2 should exist with data in ClickHouse", testDb2TableReady);
+
         // query clickhouse connection and get data for test_table1 and test_table2
-
-
         ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM test_db.test_table", writer.getConnection());
         // Validate the data
         boolean recordFound = false;
@@ -166,12 +209,24 @@ public class MultipleDatabaseIT
         // Jdbc url with test_db database.
         BaseDbWriter testDb2Writer = ITCommon.getDBWriter(clickHouseContainer, "test_db2");
 
-        // Validate the columns in Clickhouse for test_db.test_table
+        // Poll until the ALTER TABLE DROP COLUMN is replicated (name3 column removed)
+        boolean alterReplicated = false;
         DBMetadata dbMetadata = new DBMetadata(props);
+        for (int i = 0; i < 20; i++) {
+            Map<String, String> tempColumnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
+            if (tempColumnMap != null && tempColumnMap.containsKey("id") && !tempColumnMap.containsKey("name3")) {
+                alterReplicated = true;
+                break;
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("ALTER TABLE DROP COLUMN should be replicated to ClickHouse", alterReplicated);
+
+        // Validate the columns in Clickhouse for test_db2.test_table
         Map<String, String> columnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
 
-        assert columnMap.containsKey("id");
-        assert columnMap.containsKey("name2");
+        Assert.assertTrue("columnMap should contain 'id'", columnMap.containsKey("id"));
+        Assert.assertTrue("columnMap should contain 'name2'", columnMap.containsKey("name2"));
 
         if(engine.get() != null) {
             engine.get().stop();

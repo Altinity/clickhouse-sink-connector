@@ -527,13 +527,6 @@
             <version>31.0.1-jre</version>
         </dependency>
 
-        <!--junit for unit test-->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.8.1</version>
-            <scope>test</scope>
-        </dependency>
         <!--
                 <dependency>
                     <groupId>org.slf4j</groupId>

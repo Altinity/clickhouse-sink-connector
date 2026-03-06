@@ -77,19 +77,37 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
+        // Poll until the tables exist in ClickHouse (DDL replication may take time)
         DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
-        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+        Map<String, String> shipClassColumns = null;
+        Map<String, String> addTestColumns = null;
+        for (int retry = 0; retry < 10; retry++) {
+            shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+            addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+            if (!shipClassColumns.isEmpty() && !addTestColumns.isEmpty()
+                    && shipClassColumns.containsKey("class_name_new") && addTestColumns.containsKey("new_col3_name")) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
 
-        Thread.sleep(10000);
+        Assert.assertFalse("ship_class table columns should not be empty in ClickHouse employees database", shipClassColumns.isEmpty());
+        Assert.assertFalse("add_test table columns should not be empty in ClickHouse employees database", addTestColumns.isEmpty());
+
         // Validate all ship_class columns.
+        Assert.assertNotNull("class_name_new column should exist in ship_class", shipClassColumns.get("class_name_new"));
         Assert.assertTrue(shipClassColumns.get("class_name_new").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertNotNull("tonange_new column should exist in ship_class", shipClassColumns.get("tonange_new"));
         Assert.assertTrue(shipClassColumns.get("tonange_new").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
+        Assert.assertNotNull("max_length column should exist in ship_class", shipClassColumns.get("max_length"));
         Assert.assertTrue(shipClassColumns.get("max_length").equalsIgnoreCase("Nullable(Decimal(10, 2))"));
 
         // Files.deleteIfExists(tmpFilePath);
+        Assert.assertNotNull("new_col3_name column should exist in add_test", addTestColumns.get("new_col3_name"));
         Assert.assertTrue(addTestColumns.get("new_col3_name").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertNotNull("col1_new column should exist in add_test", addTestColumns.get("col1_new"));
         Assert.assertTrue(addTestColumns.get("col1_new").equalsIgnoreCase("Nullable(Int32)"));
+        Assert.assertNotNull("new_col2_name column should exist in add_test", addTestColumns.get("new_col2_name"));
         Assert.assertTrue(addTestColumns.get("new_col2_name").equalsIgnoreCase("Nullable(Int32)"));
 
 
