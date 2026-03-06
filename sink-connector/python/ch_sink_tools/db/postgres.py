@@ -263,6 +263,36 @@ def pg_execute_df(conn, sql, params=None):
 # Schema introspection
 # ---------------------------------------------------------------------------
 
+def get_schemas(pg_conn, include_regex=None, exclude_regex=None):
+    """Discover PostgreSQL schemas, optionally filtered by regex patterns.
+
+    Args:
+        pg_conn: PostgreSQL connection
+        include_regex: Optional regex pattern — only schemas matching are included
+        exclude_regex: Optional regex pattern — schemas matching are excluded
+
+    Returns:
+        List of schema names
+    """
+    query = """
+        SELECT schema_name
+        FROM information_schema.schemata
+        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1')
+    """
+    params = []
+    if include_regex:
+        query += " AND schema_name ~ %s"
+        params.append(include_regex)
+    if exclude_regex:
+        query += " AND schema_name !~ %s"
+        params.append(exclude_regex)
+    query += " ORDER BY schema_name"
+
+    with pg_conn.cursor() as cur:
+        cur.execute(query, params)
+        return [row[0] for row in cur.fetchall()]
+
+
 def get_tables(conn, pg_schema, include_regex=None, exclude_regex=None):
     """
     Return a list of table names in *pg_schema* matching *include_regex*
