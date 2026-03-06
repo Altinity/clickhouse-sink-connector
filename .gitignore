@@ -97,7 +97,7 @@ env/
 # ─── Environment variable files (may contain secrets) ───
 .env
 # Internal deployment documentation (not for open-source)
-plans/postgres/__internal/
 __internal/
+
 # Compiled Go binary (rebuild from source)
 sink-connector-client/sink-connector-client
