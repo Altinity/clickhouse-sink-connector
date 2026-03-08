@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
@@ -15,6 +16,7 @@ import postgres.PostgreSQLLexer;
 import postgres.PostgreSQLParser;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -336,5 +338,41 @@ public class PostgreSQLDDLParserService implements DDLParserService {
         // --- Unknown: safe fallback ---
         log.warn("Unknown PostgreSQL type '{}', falling back to String", pgType);
         return "String";
+    }
+
+    /**
+     * Maps a PostgreSQL column type to ClickHouse, with support for direct
+     * overrides from {@link ColumnTypeOverrideConfig}.
+     *
+     * <p>If a direct override is configured for the given
+     * {@code schema.table.column}, the overridden type is returned instead
+     * of the standard PG→CH mapping.
+     *
+     * @param pgType     the PostgreSQL type string.
+     * @param schema     the source schema name (e.g. "public").
+     * @param tableName  the source table name.
+     * @param columnName the column name.
+     * @param config     the connector configuration (used to load overrides).
+     * @return the ClickHouse type string (possibly overridden).
+     */
+    public static String mapPostgresTypeToClickHouse(String pgType,
+                                                     String schema,
+                                                     String tableName,
+                                                     String columnName,
+                                                     ClickHouseSinkConnectorConfig config) {
+        if (config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                Optional<String> directOverride =
+                        overrideConfig.getDirectOverride(schema, tableName, columnName);
+                if (directOverride.isPresent()) {
+                    log.info("DDL path: Applying direct override for {}.{}.{}: {} -> {}",
+                            schema, tableName, columnName, pgType, directOverride.get());
+                    return directOverride.get();
+                }
+            }
+        }
+        return mapPostgresTypeToClickHouse(pgType);
     }
 }

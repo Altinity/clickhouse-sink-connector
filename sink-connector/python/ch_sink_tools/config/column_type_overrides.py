@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DirectOverride:
     """A direct type override: replaces the CH column type."""
-    database: str     # e.g. "mydb" or "*"
     schema: str       # e.g. "public" or "*"
     table: str        # e.g. "events" or "*"
     column: str       # e.g. "created_at"
@@ -48,8 +47,7 @@ class AliasOverride:
     alias_type: str    # CH type for the alias, e.g. "DateTime64(3)"
     expression: str    # CH expression, e.g. "parseDateTime64BestEffort(col)"
 
-    # Database/schema/table context (used for matching)
-    database: str = "*"
+    # Schema/table context (used for matching)
     schema: str = "*"
     table: str = "*"
 
@@ -97,7 +95,7 @@ class ColumnTypeOverrideConfig:
     """Parsed column type override configuration.
 
     Provides lookup methods for direct and alias overrides with support
-    for exact database.schema.table.column matches and wildcard ('*') fallbacks.
+    for exact schema.table.column matches and wildcard ('*') fallbacks.
     """
 
     def __init__(
@@ -111,88 +109,62 @@ class ColumnTypeOverrideConfig:
     # -- Lookup methods ----------------------------------------------------
 
     def get_direct_override(
-        self, database: str, schema: str, table: str, column: str
+        self, schema: str, table: str, column: str
     ) -> Optional[str]:
         """Return the target CH type for a direct override, or None.
 
-        All comparisons are case-insensitive (consistent with the Java code
-        which normalises everything to lowercase).
-
         Matching priority:
-          1. Exact database.schema.table.column match
-          2. *.schema.table.column match (wildcard database)
-          3. *.*.table.column match (wildcard database+schema)
-          4. *.*.*.column match (global wildcard)
-          5. No match → None
+          1. Exact match on schema.table.column
+          2. Wildcard match: *.*.column  (applies to all tables)
+          3. No match → None
         """
         exact_match = None
-        db_wild_match = None
-        schema_wild_match = None
-        global_wild_match = None
-
-        db_l = database.lower()
-        schema_l = schema.lower()
-        table_l = table.lower()
-        column_l = column.lower()
+        wildcard_match = None
 
         for d in self._direct:
-            if d.column.lower() != column_l:
+            if d.column != column:
                 continue
-
-            d_db = d.database.lower()
-            d_schema = d.schema.lower()
-            d_table = d.table.lower()
-
-            if d_db == db_l and d_schema == schema_l and d_table == table_l:
+            # Exact schema.table match
+            if d.schema == schema and d.table == table:
                 exact_match = d.target_type
-            elif d_db == '*' and d_schema == schema_l and d_table == table_l:
-                db_wild_match = d.target_type
-            elif d_db == '*' and d_schema == '*' and d_table == table_l:
-                schema_wild_match = d.target_type
-            elif d_db == '*' and d_schema == '*' and d_table == '*':
-                global_wild_match = d.target_type
+                break  # exact match wins immediately
+            # Wildcard match (schema="*" and table="*")
+            if d.schema == '*' and d.table == '*':
+                wildcard_match = d.target_type
 
-        return exact_match or db_wild_match or schema_wild_match or global_wild_match
+        if exact_match is not None:
+            return exact_match
+        return wildcard_match
 
     def get_alias_overrides(
-        self, database: str, schema: str, table: str
+        self, schema: str, table: str
     ) -> List[AliasOverride]:
-        """Return all alias overrides that match the given database.schema.table.
+        """Return all alias overrides that match the given schema.table.
 
-        All comparisons are case-insensitive.  A match occurs when database,
-        schema, and table all match (either exactly or via wildcard '*').
+        A match occurs when:
+          - schema and table match exactly, OR
+          - schema='*' and table='*' (wildcard)
         """
-        db_l = database.lower()
-        schema_l = schema.lower()
-        table_l = table.lower()
-
         result = []
         for a in self._alias:
-            db_match = (a.database.lower() == db_l or a.database == '*')
-            schema_match = (a.schema.lower() == schema_l or a.schema == '*')
-            table_match = (a.table.lower() == table_l or a.table == '*')
-            if db_match and schema_match and table_match:
+            if (a.schema == schema and a.table == table) or \
+               (a.schema == '*' and a.table == '*'):
                 result.append(a)
         return result
 
     def get_direct_overrides(
-        self, database: str, schema: str, table: str
+        self, schema: str, table: str
     ) -> List[DirectOverride]:
-        """Return all direct overrides that match the given database.schema.table.
+        """Return all direct overrides that match the given schema.table.
 
-        All comparisons are case-insensitive.  A match occurs when database,
-        schema, and table all match (either exactly or via wildcard '*').
+        A match occurs when:
+          - schema and table match exactly, OR
+          - schema='*' and table='*' (wildcard)
         """
-        db_l = database.lower()
-        schema_l = schema.lower()
-        table_l = table.lower()
-
         result = []
         for d in self._direct:
-            db_match = (d.database.lower() == db_l or d.database == '*')
-            schema_match = (d.schema.lower() == schema_l or d.schema == '*')
-            table_match = (d.table.lower() == table_l or d.table == '*')
-            if db_match and schema_match and table_match:
+            if (d.schema == schema and d.table == table) or \
+               (d.schema == '*' and d.table == '*'):
                 result.append(d)
         return result
 
@@ -214,16 +186,14 @@ class ColumnTypeOverrideConfig:
         Expected format:
             column_type_overrides:
               direct:
-                - table: "mydb.public.my_table"   # database.schema.table
+                - table: "public.my_table"
                   column: "my_column"
                   target_type: "DateTime64(3)"
               alias:
-                - table: "mydb.public.my_table"
+                - table: "public.my_table"
                   column: "my_column"
                   alias_type: "DateTime64(3)"
                   expression: "parseDateTime64BestEffort(my_column)"
-
-        Backward-compatible: 'schema.table' (2-part) still works with wildcard database.
         """
         import yaml
         with open(path, 'r') as f:
@@ -274,108 +244,6 @@ class ColumnTypeOverrideConfig:
         return cls(direct_overrides, alias_overrides)
 
     @classmethod
-    def from_connector_properties(cls, props: dict) -> Optional['ColumnTypeOverrideConfig']:
-        """Parse column type overrides from a Java-style flat property dict.
-
-        This handles the connector config.yml format where keys look like:
-
-        4-part (preferred):
-            column_type_override.direct.<database>.<schema>.<table>.<column>: "<CHType>"
-            column_type_override.alias.<database>.<schema>.<table>.<column>: "<CHType>|<expression>"
-
-        3-part (backward compat — database defaults to '*'):
-            column_type_override.direct.<schema>.<table>.<column>: "<CHType>"
-            column_type_override.alias.<schema>.<table>.<column>: "<CHType>|<expression>"
-
-        Args:
-            props: a flat dict of connector config properties (e.g. loaded
-                   from config.yml via yaml.safe_load).
-
-        Returns:
-            a ColumnTypeOverrideConfig if any overrides were found, else None.
-        """
-        DIRECT_PREFIX = 'column_type_override.direct.'
-        ALIAS_PREFIX = 'column_type_override.alias.'
-
-        direct_overrides = []
-        alias_overrides = []
-
-        for key, value in props.items():
-            key_str = str(key)
-            value_str = str(value).strip()
-
-            if key_str.startswith(DIRECT_PREFIX):
-                suffix = key_str[len(DIRECT_PREFIX):]
-                parts = suffix.split('.')
-                if len(parts) == 4:
-                    database, schema, table, column = parts
-                elif len(parts) == 3:
-                    database = '*'
-                    schema, table, column = parts
-                else:
-                    logger.warning(
-                        f"column_type_overrides: skipping malformed direct key: '{key_str}'"
-                    )
-                    continue
-                direct_overrides.append(DirectOverride(
-                    database=database,
-                    schema=schema,
-                    table=table,
-                    column=column,
-                    target_type=value_str,
-                ))
-
-            elif key_str.startswith(ALIAS_PREFIX):
-                suffix = key_str[len(ALIAS_PREFIX):]
-                parts = suffix.split('.')
-                if len(parts) == 4:
-                    database, schema, table, column = parts
-                elif len(parts) == 3:
-                    database = '*'
-                    schema, table, column = parts
-                else:
-                    logger.warning(
-                        f"column_type_overrides: skipping malformed alias key: '{key_str}'"
-                    )
-                    continue
-
-                pipe_idx = value_str.find('|')
-                if pipe_idx < 0:
-                    logger.warning(
-                        f"column_type_overrides: alias value missing '|' separator: "
-                        f"'{key_str}={value_str}'"
-                    )
-                    continue
-
-                alias_type = value_str[:pipe_idx].strip()
-                expression = value_str[pipe_idx + 1:].strip()
-
-                if not alias_type or not expression:
-                    logger.warning(
-                        f"column_type_overrides: alias entry has empty type or expression: "
-                        f"'{key_str}={value_str}'"
-                    )
-                    continue
-
-                alias_overrides.append(AliasOverride(
-                    column=column,
-                    alias_type=alias_type,
-                    expression=expression,
-                    database=database,
-                    schema=schema,
-                    table=table,
-                ))
-
-        if direct_overrides or alias_overrides:
-            config = cls(direct_overrides, alias_overrides)
-            logger.info(
-                f"Parsed {len(direct_overrides)} direct override(s) and "
-                f"{len(alias_overrides)} alias override(s) from connector properties"
-            )
-            return config
-        return None
-
-    @classmethod
     def from_cli_args(
         cls,
         overrides_file: Optional[str] = None,
@@ -404,12 +272,11 @@ class ColumnTypeOverrideConfig:
 
         for item in (data.get('direct') or []):
             table_spec = item.get('table', '*')
-            database, schema, table = cls._split_table_spec(table_spec)
+            schema, table = cls._split_table_spec(table_spec)
             column = item.get('column')
             target_type = item.get('target_type')
             if column and target_type:
                 direct_overrides.append(DirectOverride(
-                    database=database,
                     schema=schema,
                     table=table,
                     column=column,
@@ -422,7 +289,7 @@ class ColumnTypeOverrideConfig:
 
         for item in (data.get('alias') or []):
             table_spec = item.get('table', '*')
-            database, schema, table = cls._split_table_spec(table_spec)
+            schema, table = cls._split_table_spec(table_spec)
             column = item.get('column')
             alias_type = item.get('alias_type')
             expression = item.get('expression')
@@ -431,7 +298,6 @@ class ColumnTypeOverrideConfig:
                     column=column,
                     alias_type=alias_type,
                     expression=expression,
-                    database=database,
                     schema=schema,
                     table=table,
                 ))
@@ -450,23 +316,18 @@ class ColumnTypeOverrideConfig:
 
     @staticmethod
     def _split_table_spec(table_spec: str):
-        """Split table spec into (database, schema, table).
+        """Split a 'schema.table' spec into (schema, table).
 
-        Formats:
-          'db.schema.table' → ('db', 'schema', 'table')
-          'schema.table'    → ('*', 'schema', 'table')     # backward compat
-          'table'           → ('*', '*', 'table')
-          '*'               → ('*', '*', '*')
+        If no dot is present, defaults schema to '*'.
+        If the spec is '*', returns ('*', '*').
         """
         if table_spec == '*':
-            return ('*', '*', '*')
-        parts = table_spec.split('.')
-        if len(parts) >= 3:
-            return (parts[0], parts[1], '.'.join(parts[2:]))
-        elif len(parts) == 2:
-            return ('*', parts[0], parts[1])
-        else:
-            return ('*', '*', table_spec)
+            return ('*', '*')
+        if '.' in table_spec:
+            parts = table_spec.split('.', 1)
+            return (parts[0], parts[1])
+        # No schema prefix — default to wildcard schema
+        return ('*', table_spec)
 
     @classmethod
     def _parse_direct_entry(cls, entry: str) -> Optional[DirectOverride]:
@@ -483,7 +344,7 @@ class ColumnTypeOverrideConfig:
         qualified_col = m.group(1).strip()
         target_type = m.group(2).strip()
 
-        database, schema, table, column = cls._split_qualified_column(qualified_col)
+        schema, table, column = cls._split_qualified_column(qualified_col)
         if not column:
             logger.warning(
                 f"column_type_overrides: could not parse column from '{qualified_col}'"
@@ -491,7 +352,6 @@ class ColumnTypeOverrideConfig:
             return None
 
         return DirectOverride(
-            database=database,
             schema=schema,
             table=table,
             column=column,
@@ -514,7 +374,7 @@ class ColumnTypeOverrideConfig:
         alias_type = m.group(2).strip()
         expression = m.group(3).strip()
 
-        database, schema, table, column = cls._split_qualified_column(qualified_col)
+        schema, table, column = cls._split_qualified_column(qualified_col)
         if not column:
             logger.warning(
                 f"column_type_overrides: could not parse column from '{qualified_col}'"
@@ -525,31 +385,27 @@ class ColumnTypeOverrideConfig:
             column=column,
             alias_type=alias_type,
             expression=expression,
-            database=database,
             schema=schema,
             table=table,
         )
 
     @staticmethod
     def _split_qualified_column(qualified: str):
-        """Split qualified column into (database, schema, table, column).
+        """Split 'schema.table.column' into (schema, table, column).
 
-        Formats:
-          'db.schema.table.column' → ('db', 'schema', 'table', 'column')
-          'schema.table.column'    → ('*', 'schema', 'table', 'column')
-          'table.column'           → ('*', '*', 'table', 'column')
-          'column'                 → ('*', '*', '*', 'column')
+        Supports:
+          'schema.table.column' → (schema, table, column)
+          'table.column'        → ('*', table, column)
+          'column'              → ('*', '*', column)
         """
         parts = qualified.split('.')
-        if len(parts) >= 4:
-            return (parts[0], parts[1], parts[2], '.'.join(parts[3:]))
-        elif len(parts) == 3:
-            return ('*', parts[0], parts[1], parts[2])
+        if len(parts) >= 3:
+            return (parts[0], parts[1], '.'.join(parts[2:]))
         elif len(parts) == 2:
-            return ('*', '*', parts[0], parts[1])
+            return ('*', parts[0], parts[1])
         elif len(parts) == 1:
-            return ('*', '*', '*', parts[0])
-        return ('*', '*', '*', None)
+            return ('*', '*', parts[0])
+        return ('*', '*', None)
 
     def __repr__(self):
         return (

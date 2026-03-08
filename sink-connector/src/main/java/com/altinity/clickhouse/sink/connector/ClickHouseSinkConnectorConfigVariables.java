@@ -111,7 +111,18 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
 
-    DATABASE_HOSTNAME("database.hostname");
+    DATABASE_HOSTNAME("database.hostname"),
+    /**
+     * Prefix for direct column type override properties.
+     * Format: column_type_override.direct.<schema>.<table>.<column>=<CHType>
+     */
+    COLUMN_TYPE_OVERRIDE_DIRECT_PREFIX("column_type_override.direct."),
+
+    /**
+     * Prefix for alias column type override properties.
+     * Format: column_type_override.alias.<schema>.<table>.<column>=<CHType>|<expression>
+     */
+    COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX("column_type_override.alias.");
 
 
 

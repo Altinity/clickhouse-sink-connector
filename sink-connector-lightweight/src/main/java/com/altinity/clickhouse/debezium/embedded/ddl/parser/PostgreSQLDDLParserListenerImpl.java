@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ParseTree;
@@ -48,8 +49,7 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
     /** ClickHouse destination database name. */
     private final String databaseName;
 
-    /** Connector configuration (reserved for future per-column overrides). */
-    @SuppressWarnings("unused")
+    /** Connector configuration — used for column type overrides. */
     private final ClickHouseSinkConnectorConfig config;
 
     /** Writer for optional online metadata look-ups (may be null). */
@@ -132,11 +132,25 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
                 }
 
                 // Pass 2: process column definitions with full PK knowledge.
+                String plainTable = extractPlainTableName(rawTable);
                 for (PostgreSQLParser.TableelementContext elem
                         : elemList.tableelementlist().tableelement()) {
                     if (elem.columnDef() != null) {
-                        processColumnDef(elem.columnDef(), columnDdl, primaryKeys);
+                        processColumnDef(elem.columnDef(), columnDdl, primaryKeys, plainTable);
                     }
+                }
+            }
+
+            // ── ALIAS columns from column type overrides ─────────────────────
+            if (config != null) {
+                String plainTable = extractPlainTableName(rawTable);
+                ColumnTypeOverrideConfig overrideConfig =
+                        ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(databaseName, plainTable);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    columnDdl.add("`" + entry.getAliasColumnName() + "` "
+                            + entry.getAliasType() + " ALIAS " + entry.getExpression());
                 }
             }
 
@@ -186,10 +200,12 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     private void processColumnDef(PostgreSQLParser.ColumnDefContext col,
                                    List<String> columnDdl,
-                                   List<String> primaryKeys) {
+                                   List<String> primaryKeys,
+                                   String tableName) {
         String colName  = unquoteId(col.colid().getText());
         String pgType   = extractTypeName(col.typename());
-        String chType   = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(pgType);
+        String chType   = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(
+                pgType, databaseName, tableName, colName, config);
         boolean notNull = isNotNullConstraint(col.colquallist());
         boolean isPk    = primaryKeys.contains(colName);
 
@@ -278,16 +294,37 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
     /** Translates {@code ADD [COLUMN] columnDef} → {@code ALTER TABLE … ADD COLUMN}. */
     private void translateAddColumn(String qualifiedTable,
                                     PostgreSQLParser.ColumnDefContext colDef) {
-        String colName  = unquoteId(colDef.colid().getText());
-        String pgType   = extractTypeName(colDef.typename());
-        String chType   = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(pgType);
-        boolean notNull = isNotNullConstraint(colDef.colquallist());
-        String colSpec  = notNull ? chType : wrapNullable(chType);
+        String colName    = unquoteId(colDef.colid().getText());
+        String pgType     = extractTypeName(colDef.typename());
+        String plainTable = extractPlainTableName(qualifiedTable);
+        String chType     = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(
+                pgType, databaseName, plainTable, colName, config);
+        boolean notNull   = isNotNullConstraint(colDef.colquallist());
+        String colSpec    = notNull ? chType : wrapNullable(chType);
 
         query.append("ALTER TABLE ").append(qualifiedTable)
              .append(" ADD COLUMN IF NOT EXISTS `").append(colName)
              .append("` ").append(colSpec).append(";");
         log.info("PostgreSQL ADD COLUMN translated: {}.{}", qualifiedTable, colName);
+
+        // If an alias override exists for this column, also add the companion ALIAS column
+        if (config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                    overrideConfig.getAliasOverrides(databaseName, plainTable);
+            for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                if (entry.getColumn().equals(colName)) {
+                    query.append("ALTER TABLE ").append(qualifiedTable)
+                         .append(" ADD COLUMN IF NOT EXISTS `")
+                         .append(entry.getAliasColumnName()).append("` ")
+                         .append(entry.getAliasType())
+                         .append(" ALIAS ").append(entry.getExpression()).append(";");
+                    log.info("PostgreSQL ADD ALIAS COLUMN translated: {}.{}",
+                             qualifiedTable, entry.getAliasColumnName());
+                }
+            }
+        }
     }
 
     /** Translates {@code DROP [COLUMN] colid} → {@code ALTER TABLE … DROP COLUMN}. */
@@ -300,6 +337,24 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
         query.append("ALTER TABLE ").append(qualifiedTable)
              .append(" DROP COLUMN IF EXISTS `").append(colName).append("`;");
         log.info("PostgreSQL DROP COLUMN translated: {}.{}", qualifiedTable, colName);
+
+        // If an alias override exists for this column, also drop the companion ALIAS column
+        if (config != null) {
+            String plainTable = extractPlainTableName(qualifiedTable);
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                    overrideConfig.getAliasOverrides(databaseName, plainTable);
+            for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                if (entry.getColumn().equals(colName)) {
+                    query.append("ALTER TABLE ").append(qualifiedTable)
+                         .append(" DROP COLUMN IF EXISTS `")
+                         .append(entry.getAliasColumnName()).append("`;");
+                    log.info("PostgreSQL DROP ALIAS COLUMN translated: {}.{}",
+                             qualifiedTable, entry.getAliasColumnName());
+                }
+            }
+        }
     }
 
     /**
@@ -313,14 +368,39 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
         PostgreSQLParser.TypenameContext tyCtx = cmd.typename();
         if (colid == null || tyCtx == null) return;
 
-        String colName = unquoteId(colid.getText());
-        String pgType  = extractTypeName(tyCtx);
-        String chType  = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(pgType);
+        String colName    = unquoteId(colid.getText());
+        String pgType     = extractTypeName(tyCtx);
+        String plainTable = extractPlainTableName(qualifiedTable);
+        String chType     = PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(
+                pgType, databaseName, plainTable, colName, config);
 
         query.append("ALTER TABLE ").append(qualifiedTable)
              .append(" MODIFY COLUMN `").append(colName)
              .append("` ").append(wrapNullable(chType)).append(";");
         log.info("PostgreSQL ALTER COLUMN TYPE translated: {}.{}", qualifiedTable, colName);
+
+        // If an alias override exists for this column, recreate the companion ALIAS column
+        if (config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                    overrideConfig.getAliasOverrides(databaseName, plainTable);
+            for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                if (entry.getColumn().equals(colName)) {
+                    // Drop the old ALIAS column and re-add with updated definition
+                    query.append("ALTER TABLE ").append(qualifiedTable)
+                         .append(" DROP COLUMN IF EXISTS `")
+                         .append(entry.getAliasColumnName()).append("`;");
+                    query.append("ALTER TABLE ").append(qualifiedTable)
+                         .append(" ADD COLUMN IF NOT EXISTS `")
+                         .append(entry.getAliasColumnName()).append("` ")
+                         .append(entry.getAliasType())
+                         .append(" ALIAS ").append(entry.getExpression()).append(";");
+                    log.info("PostgreSQL ALTER ALIAS COLUMN recreated: {}.{}",
+                             qualifiedTable, entry.getAliasColumnName());
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -698,6 +778,23 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
             return "`" + databaseName + "`.`" + name + "`";
         }
         return "`" + name + "`";
+    }
+
+    /**
+     * Extracts the plain (unqualified, unquoted) table name from either a raw
+     * DDL table reference (e.g. {@code "public"."events"}) or an already
+     * qualified back-tick form (e.g. {@code `mydb`.`events`}).
+     *
+     * @param tableRef the table reference string.
+     * @return the plain table name, e.g. {@code "events"}.
+     */
+    private static String extractPlainTableName(String tableRef) {
+        if (tableRef == null || tableRef.isEmpty()) return "";
+        // Remove backticks and double-quotes
+        String clean = tableRef.replace("`", "").replace("\"", "");
+        // Take the last segment after any dot
+        int dot = clean.lastIndexOf('.');
+        return dot >= 0 ? clean.substring(dot + 1) : clean;
     }
 
     /**

@@ -329,11 +329,21 @@ def get_server_timezone(conn) -> str:
     return 'UTC'
 
 
-def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None):
+def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
+                      override_config=None):
     """
     Return an ordered list of dicts describing every column in *table_name*:
       column_name, pg_type, ordinal_position, is_nullable,
       character_maximum_length, numeric_precision, numeric_scale
+
+    Parameters
+    ----------
+    conn               : psycopg2 connection
+    pg_schema          : PostgreSQL schema name
+    table_name         : PostgreSQL table name
+    pg_server_timezone : explicit PG server timezone for DateTime64 annotation
+    override_config    : optional ColumnTypeOverrideConfig — when provided,
+                         direct overrides replace the mapped CH type for matching columns
     """
     sql = f"""
         SELECT
@@ -361,6 +371,14 @@ def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None):
             nullable=nullable,
             pg_server_timezone=pg_server_timezone,
         )
+        # Apply direct override if configured
+        if override_config:
+            direct_type = override_config.get_direct_override(
+                pg_schema, table_name, r['column_name']
+            )
+            if direct_type:
+                ch_type = direct_type
+
         result.append({
             'column_name':      r['column_name'],
             'pg_type':          r['pg_type'],
@@ -529,18 +547,46 @@ def is_wal_replay_paused(conn):
     return result
 
 
-def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns, ch_database):
+def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
+                              ch_database, override_config=None):
     """
     Generate a ClickHouse CREATE TABLE IF NOT EXISTS … DDL string that mirrors
     what the Altinity sink-connector would auto-create, including:
       - _version Nullable(UInt64)   ← snapshot rows have NULL _version
       - is_deleted UInt8 DEFAULT 0
       ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY (pk...)
+
+    Parameters
+    ----------
+    pg_schema       : PostgreSQL schema name
+    table_name      : table name
+    columns         : list of column dicts with 'column_name' and 'ch_type'
+    pk_columns      : list of PK column name strings
+    ch_database     : target ClickHouse database name
+    override_config : optional ColumnTypeOverrideConfig for type overrides
     """
     col_defs = []
     for col in columns:
         ch_type = col['ch_type']
-        col_defs.append(f"    `{col['column_name']}` {ch_type}")
+        col_name = col['column_name']
+
+        # Apply direct override if configured
+        if override_config:
+            direct_type = override_config.get_direct_override(
+                pg_schema, table_name, col_name
+            )
+            if direct_type:
+                ch_type = direct_type
+
+        col_defs.append(f"    `{col_name}` {ch_type}")
+
+    # Append ALIAS column definitions before virtual columns
+    if override_config:
+        alias_overrides = override_config.get_alias_overrides(pg_schema, table_name)
+        for ao in alias_overrides:
+            col_defs.append(
+                f"    `{ao.alias_column_name}` {ao.alias_type} ALIAS {ao.expression}"
+            )
 
     col_defs.append("    `_version` UInt64 DEFAULT 0")
     col_defs.append("    `is_deleted` UInt8 DEFAULT 0")

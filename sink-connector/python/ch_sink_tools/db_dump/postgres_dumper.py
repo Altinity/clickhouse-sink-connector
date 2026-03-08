@@ -65,6 +65,12 @@ from ch_sink_tools.db_load.postgres_type_mapper import (
     build_select_columns,
     build_offset_insert,
 )
+from ch_sink_tools.config.column_type_overrides import ColumnTypeOverrideConfig
+from ch_sink_tools.config.override_reconciler import (
+    ch_table_exists,
+    reconcile_overrides_with_existing_table,
+    ColumnTypeOverrideMismatchError,
+)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -174,8 +180,11 @@ def ensure_ch_database(ch_conn, ch_database, dry_run=False):
 
 
 def create_ch_table(ch_conn, ch_database, table_name, columns, pk_columns,
-                    dry_run=False):
-    ddl = build_create_table(ch_database, table_name, columns, pk_columns)
+                    dry_run=False, override_config=None, schema=None):
+    ddl = build_create_table(
+        ch_database, table_name, columns, pk_columns,
+        override_config=override_config, schema=schema,
+    )
     logging.info(f"DDL for {table_name}:\n{ddl}")
     if not dry_run:
         clickhouse_execute_conn(ch_conn, ddl)
@@ -1036,6 +1045,16 @@ def main():
     parser.add_argument('--config', type=str, default=None,
                         help='Path to YAML config file (CLI args override config file values)')
 
+    # -- Column type overrides ------------------------------------------------
+    parser.add_argument('--column_type_overrides_file', type=str, default=None,
+                        help='Path to YAML file with column type override configuration')
+    parser.add_argument('--column_type_overrides', type=str, default=None,
+                        help=(
+                            'Inline column type overrides in CLI format. '
+                            'Format: "direct:schema.table.col=CHType,'
+                            'alias:schema.table.col=CHType|expression"'
+                        ))
+
     # -- Load options ---------------------------------------------------------
     parser.add_argument('--threads', type=int, default=4,
                         help='Number of parallel table threads (default: 4)')
@@ -1080,6 +1099,14 @@ def main():
         config = load_config_file(args.config)
         logger.info(f"Loaded {len(config)} parameters from config file: {args.config}")
         merge_config_with_args(args, config)
+
+    # -- Column type override config ------------------------------------------
+    override_config = ColumnTypeOverrideConfig.from_cli_args(
+        overrides_file=args.column_type_overrides_file,
+        overrides_string=args.column_type_overrides,
+    )
+    if override_config:
+        logging.info(f"Column type overrides: {override_config}")
 
     # -- Logging setup (mirrors mysql_dumper.py) ------------------------------
     root = logging.getLogger()
@@ -1301,11 +1328,34 @@ def main():
                         columns_meta = get_table_columns(
                             pg_conn_t, schema_name, table_name,
                             pg_server_timezone=pg_server_timezone,
+                            override_config=override_config,
                         )
                         pk_cols = get_table_pk(
                             pg_conn_t, schema_name, table_name
                         )
                         pg_conn_t.close()
+
+                        # -- Override reconciliation -------------------------
+                        # If the table already exists AND overrides are
+                        # configured, reconcile before (re-)creating:
+                        #   - ALIAS overrides  → auto-ALTER
+                        #   - DIRECT overrides → raise on mismatch
+                        if override_config and override_config.has_overrides():
+                            if not args.dry_run and ch_table_exists(
+                                ch_conn_schema, ch_db, ch_table
+                            ):
+                                logging.info(
+                                    f"Table {ch_db}.{ch_table} already exists "
+                                    f"— running override reconciliation"
+                                )
+                                reconcile_overrides_with_existing_table(
+                                    ch_conn=ch_conn_schema,
+                                    ch_database=ch_db,
+                                    table_name=ch_table,
+                                    schema=schema_name,
+                                    override_config=override_config,
+                                )
+
                         create_ch_table(
                             ch_conn_schema,
                             ch_db,
@@ -1313,6 +1363,8 @@ def main():
                             columns_meta,
                             pk_cols,
                             dry_run=args.dry_run,
+                            override_config=override_config,
+                            schema=schema_name,
                         )
                 finally:
                     ch_conn_schema.close()
