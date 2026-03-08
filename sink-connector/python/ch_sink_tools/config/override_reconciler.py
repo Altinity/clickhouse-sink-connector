@@ -105,6 +105,7 @@ def reconcile_overrides_with_existing_table(
     schema: str,
     override_config: ColumnTypeOverrideConfig,
     logger_override=None,
+    database: str = "*",
 ) -> None:
     """Check existing ClickHouse table against override config and reconcile.
 
@@ -123,6 +124,7 @@ def reconcile_overrides_with_existing_table(
     schema           : PostgreSQL schema (e.g. "public") — used for override lookups
     override_config  : ColumnTypeOverrideConfig instance
     logger_override  : optional logger; falls back to module-level logger
+    database         : PostgreSQL database name (e.g. "mydb") — used for override lookups
 
     Raises
     ------
@@ -151,7 +153,7 @@ def reconcile_overrides_with_existing_table(
     col_by_name = {col['name']: col for col in existing_columns}
 
     # Step 2: Check DIRECT overrides
-    direct_overrides = override_config.get_direct_overrides(schema, table_name)
+    direct_overrides = override_config.get_direct_overrides(database, schema, table_name)
     for override in direct_overrides:
         col_name = override.column
         configured_type = override.target_type
@@ -219,7 +221,7 @@ def reconcile_overrides_with_existing_table(
         raise ColumnTypeOverrideMismatchError(error_msg)
 
     # Step 3: Check ALIAS overrides
-    alias_overrides = override_config.get_alias_overrides(schema, table_name)
+    alias_overrides = override_config.get_alias_overrides(database, schema, table_name)
     for alias_override in alias_overrides:
         alias_col_name = alias_override.alias_column_name
         alias_type = alias_override.alias_type
