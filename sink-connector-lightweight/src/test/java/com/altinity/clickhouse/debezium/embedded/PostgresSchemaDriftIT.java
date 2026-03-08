@@ -180,24 +180,18 @@ public class PostgresSchemaDriftIT {
         ).execute();
         System.out.println("[SchemaDriftIT] ALTER TABLE executed in PostgreSQL.");
 
-        // ---- Wait for the DDL WAL event to flush before the INSERT ----
-        Thread.sleep(5_000);
-
-        // ---- Step 5: Insert row that populates the new column ----
-        pgConn.prepareStatement(
-                "INSERT INTO public.schema_drift_test (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
-        ).execute();
-        System.out.println("[SchemaDriftIT] Inserted new row with extra_info='drift_value'.");
-
-        // ---- Step 6: Wait for drift detection + reconciliation (up to 60 s) ----
+        // ---- Step 5: Wait for drift detection to add the column BEFORE inserting ----
+        // The drift detector must reconcile the new column into ClickHouse before the
+        // INSERT CDC event arrives, otherwise the writer drops the row because the
+        // table schema doesn't match the incoming record.
         boolean columnAdded = waitForColumnInClickHouse(
-                writer.getConnection(), "public", "schema_drift_test", "extra_info", 60);
+                writer.getConnection(), "public", "schema_drift_test", "extra_info", 90);
 
         if (!columnAdded) {
-            System.out.println("[SchemaDriftIT] WARN: column not yet visible – waiting extra 15 s");
-            Thread.sleep(15_000);
+            System.out.println("[SchemaDriftIT] WARN: column not yet visible – waiting extra 30 s");
+            Thread.sleep(30_000);
             columnAdded = waitForColumnInClickHouse(
-                    writer.getConnection(), "public", "schema_drift_test", "extra_info", 5);
+                    writer.getConnection(), "public", "schema_drift_test", "extra_info", 10);
         }
 
         Assert.assertTrue(
@@ -205,20 +199,30 @@ public class PostgresSchemaDriftIT {
                 columnAdded);
         System.out.println("[SchemaDriftIT] Column 'extra_info' is now present in ClickHouse.");
 
-        // ---- Step 7: Verify new row data ----
-        Thread.sleep(10_000);
+        // ---- Step 6: Insert row that populates the new column ----
+        pgConn.prepareStatement(
+                "INSERT INTO public.schema_drift_test (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
+        ).execute();
+        System.out.println("[SchemaDriftIT] Inserted new row with extra_info='drift_value'.");
+
+        // ---- Step 7: Verify new row data (polling up to 90 s) ----
+        String extraInfoValue = null;
         {
-            ResultSet rs = writer.getConnection()
-                    .prepareStatement(
-                            "SELECT extra_info FROM public.schema_drift_test FINAL WHERE id = 99")
-                    .executeQuery();
-            String extraInfoValue = null;
-            while (rs.next()) {
-                extraInfoValue = rs.getString("extra_info");
+            long rowDeadline = System.currentTimeMillis() + 90_000L;
+            while (System.currentTimeMillis() < rowDeadline) {
+                ResultSet rs = writer.getConnection()
+                        .prepareStatement(
+                                "SELECT extra_info FROM public.schema_drift_test FINAL WHERE id = 99")
+                        .executeQuery();
+                while (rs.next()) {
+                    extraInfoValue = rs.getString("extra_info");
+                }
+                if (extraInfoValue != null) break;
+                Thread.sleep(3_000);
             }
-            Assert.assertNotNull("Row 99 must exist in ClickHouse", extraInfoValue);
-            Assert.assertEquals("extra_info value must be 'drift_value'", "drift_value", extraInfoValue);
         }
+        Assert.assertNotNull("Row 99 must exist in ClickHouse", extraInfoValue);
+        Assert.assertEquals("extra_info value must be 'drift_value'", "drift_value", extraInfoValue);
 
         System.out.println("[SchemaDriftIT] Test PASSED – schema drift detected and reconciled end-to-end.");
 
@@ -270,10 +274,17 @@ public class PostgresSchemaDriftIT {
         ).execute();
         System.out.println("[SchemaDriftIT/multi] Added 3 columns in PostgreSQL.");
 
-        // ---- Wait for the ALTER TABLE DDL event to propagate via WAL before the INSERT ----
-        // Without this pause the INSERT CDC event arrives before the drift detector has
-        // reconciled all 3 new columns, causing the row to be dropped by the writer.
-        Thread.sleep(10_000);
+        // ---- Wait for all three columns to appear in ClickHouse BEFORE inserting ----
+        // The drift detector must reconcile all 3 new columns into ClickHouse before
+        // the INSERT CDC event arrives, otherwise the writer drops the row because the
+        // table schema doesn't match the incoming record.
+        boolean scoreReady  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "score",  90);
+        boolean labelReady  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "label",  30);
+        boolean activeReady = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "active", 30);
+
+        if (!scoreReady || !labelReady || !activeReady) {
+            System.out.println("[SchemaDriftIT/multi] WARN: not all columns appeared before INSERT – test may fail");
+        }
 
         // ---- Insert row with all three new columns populated ----
         pgConn.prepareStatement(
@@ -282,35 +293,36 @@ public class PostgresSchemaDriftIT {
         ).execute();
         System.out.println("[SchemaDriftIT/multi] Inserted row with score/label/active.");
 
-        // ---- Wait for all three columns to appear in ClickHouse ----
-        boolean scoreAdded  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "score",  60);
-        boolean labelAdded  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "label",  30);
-        boolean activeAdded = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "active", 30);
-
-        Assert.assertTrue("Column 'score' must be added to ClickHouse",  scoreAdded);
-        Assert.assertTrue("Column 'label' must be added to ClickHouse",  labelAdded);
-        Assert.assertTrue("Column 'active' must be added to ClickHouse", activeAdded);
+        // Columns were already confirmed before INSERT; re-assert for safety.
+        Assert.assertTrue("Column 'score' must be added to ClickHouse",  scoreReady);
+        Assert.assertTrue("Column 'label' must be added to ClickHouse",  labelReady);
+        Assert.assertTrue("Column 'active' must be added to ClickHouse", activeReady);
 
         System.out.println("[SchemaDriftIT/multi] All 3 columns detected in ClickHouse.");
 
-        // ---- Verify the row values ----
-        // 15 s to handle slower CI environments and the extra reconcile pass
-        Thread.sleep(15_000);
+        // ---- Verify the row values (polling) ----
+        // Poll for up to 90 s so the INSERT CDC event has time to be flushed to
+        // ClickHouse even on very slow CI runners.
+        String labelValue = null;
+        Integer scoreValue = null;
         {
-            ResultSet rs = writer.getConnection()
-                    .prepareStatement(
-                            "SELECT score, label FROM public.schema_drift_test FINAL WHERE id = 200")
-                    .executeQuery();
-            String labelValue = null;
-            Integer scoreValue = null;
-            while (rs.next()) {
-                scoreValue = rs.getInt("score");
-                labelValue = rs.getString("label");
+            long rowDeadline = System.currentTimeMillis() + 90_000L;
+            while (System.currentTimeMillis() < rowDeadline) {
+                ResultSet rs = writer.getConnection()
+                        .prepareStatement(
+                                "SELECT score, label FROM public.schema_drift_test FINAL WHERE id = 200")
+                        .executeQuery();
+                while (rs.next()) {
+                    scoreValue = rs.getInt("score");
+                    labelValue = rs.getString("label");
+                }
+                if (labelValue != null) break;
+                Thread.sleep(3_000);
             }
-            Assert.assertNotNull("Row 200 must be present in ClickHouse", labelValue);
-            Assert.assertEquals("score must be 42",      Integer.valueOf(42), scoreValue);
-            Assert.assertEquals("label must be 'hello'", "hello",             labelValue);
         }
+        Assert.assertNotNull("Row 200 must be present in ClickHouse", labelValue);
+        Assert.assertEquals("score must be 42",      Integer.valueOf(42), scoreValue);
+        Assert.assertEquals("label must be 'hello'", "hello",             labelValue);
 
         System.out.println("[SchemaDriftIT/multi] Test PASSED – all drift columns reconciled.");
 

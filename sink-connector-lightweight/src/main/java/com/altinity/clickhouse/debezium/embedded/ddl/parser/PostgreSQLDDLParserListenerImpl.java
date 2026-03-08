@@ -155,6 +155,7 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
             }
 
             // ── mandatory CDC virtual columns ───────────────────────────────
+            columnDdl.add("`_sign` Int8");
             columnDdl.add("`_version` UInt64");
             columnDdl.add("`is_deleted` UInt8 DEFAULT 0");
 
@@ -169,7 +170,10 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
                 if (i < columnDdl.size() - 1) sb.append(",");
                 sb.append("\n");
             }
-            sb.append(") ENGINE = ReplacingMergeTree(`_version`, `is_deleted`)\n");
+            sb.append(") ENGINE = ReplacingMergeTree(`_version`)\n");
+            if (!primaryKeys.isEmpty()) {
+                sb.append("PRIMARY KEY ").append(orderBy).append("\n");
+            }
             sb.append("ORDER BY ").append(orderBy).append(";");
 
             query.append(sb);
