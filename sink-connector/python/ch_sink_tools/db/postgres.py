@@ -330,7 +330,7 @@ def get_server_timezone(conn) -> str:
 
 
 def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
-                      override_config=None):
+                      override_config=None, pg_database="*"):
     """
     Return an ordered list of dicts describing every column in *table_name*:
       column_name, pg_type, ordinal_position, is_nullable,
@@ -344,6 +344,7 @@ def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
     pg_server_timezone : explicit PG server timezone for DateTime64 annotation
     override_config    : optional ColumnTypeOverrideConfig — when provided,
                          direct overrides replace the mapped CH type for matching columns
+    pg_database        : PostgreSQL database name (used for override lookups)
     """
     sql = f"""
         SELECT
@@ -374,7 +375,7 @@ def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
         # Apply direct override if configured
         if override_config:
             direct_type = override_config.get_direct_override(
-                pg_schema, table_name, r['column_name']
+                pg_database, pg_schema, table_name, r['column_name']
             )
             if direct_type:
                 ch_type = direct_type
@@ -548,7 +549,7 @@ def is_wal_replay_paused(conn):
 
 
 def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
-                              ch_database, override_config=None):
+                              ch_database, override_config=None, pg_database="*"):
     """
     Generate a ClickHouse CREATE TABLE IF NOT EXISTS … DDL string that mirrors
     what the Altinity sink-connector would auto-create, including:
@@ -564,6 +565,7 @@ def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
     pk_columns      : list of PK column name strings
     ch_database     : target ClickHouse database name
     override_config : optional ColumnTypeOverrideConfig for type overrides
+    pg_database     : PostgreSQL database name (used for override lookups)
     """
     col_defs = []
     for col in columns:
@@ -573,7 +575,7 @@ def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
         # Apply direct override if configured
         if override_config:
             direct_type = override_config.get_direct_override(
-                pg_schema, table_name, col_name
+                pg_database, pg_schema, table_name, col_name
             )
             if direct_type:
                 ch_type = direct_type
@@ -582,7 +584,7 @@ def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
 
     # Append ALIAS column definitions before virtual columns
     if override_config:
-        alias_overrides = override_config.get_alias_overrides(pg_schema, table_name)
+        alias_overrides = override_config.get_alias_overrides(pg_database, pg_schema, table_name)
         for ao in alias_overrides:
             col_defs.append(
                 f"    `{ao.alias_column_name}` {ao.alias_type} ALIAS {ao.expression}"

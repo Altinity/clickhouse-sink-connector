@@ -10,6 +10,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -161,6 +162,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Extract plain table name, stripping backticks and database prefix.
+     * e.g., "`mydb`.`mytable`" → "mytable", "`mytable`" → "mytable"
+     */
+    private static String extractPlainTableName(String tableName) {
+        if (tableName == null) return "";
+        String cleaned = tableName.replace("`", "").trim();
+        int dotIndex = cleaned.lastIndexOf('.');
+        if (dotIndex >= 0) {
+            cleaned = cleaned.substring(dotIndex + 1);
+        }
+        return cleaned;
+    }
+
+    /**
      * Override the enterCreateDatabase method from the parser listener to handle CREATE DATABASE statements.
      * This method transforms the original CREATE DATABASE query.
      *
@@ -283,6 +298,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     .append(",");
         }
 
+
+        // ALIAS columns from column_type_override.alias.*
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = extractPlainTableName(this.tableName);
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    this.query.append("`").append(entry.getAliasColumnName()).append("` ")
+                            .append(entry.getAliasType())
+                            .append(" ALIAS ").append(entry.getExpression()).append(",");
+                }
+            }
+        }
 
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
@@ -697,6 +728,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
         }
 
+        // column_type_override.direct.* takes highest priority (over default_column_datatype_mapping)
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : columnName;
+                String cleanTableName = extractPlainTableName(this.tableName);
+                Optional<String> directOverride =
+                        overrideConfig.getDirectOverride(this.databaseName, cleanTableName, cleanColumnName);
+                if (directOverride.isPresent()) {
+                    chDataType = directOverride.get();
+                }
+            }
+        }
+
         return chDataType;
     }
 
@@ -889,6 +935,28 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             postProcessModifyColumn(this.tableName, columnName, newColumnName, columnType);
         }
 
+        // Check for ALIAS companion column for ADD operations
+        if (tree instanceof AlterByAddColumnContext && this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = extractPlainTableName(this.tableName);
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : "";
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    if (entry.getColumn().equalsIgnoreCase(cleanColumnName)) {
+                        // Append companion ALIAS column as additional ALTER TABLE statement
+                        this.query.append("\n")
+                                .append("ALTER TABLE ").append(this.tableName)
+                                .append(" ADD COLUMN `").append(entry.getAliasColumnName()).append("` ")
+                                .append(entry.getAliasType())
+                                .append(" ALIAS ").append(entry.getExpression());
+                    }
+                }
+            }
+        }
+
         String trimmedQuery = this.query.toString().trim();
         this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
@@ -949,6 +1017,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         for (ParseTree dropColumnChild: ((MySqlParser.UidContext) dropColumnTree).children) {
                             if (dropColumnChild instanceof MySqlParser.SimpleIdContext || dropColumnChild instanceof TerminalNodeImpl) {
                                 this.query.append(String.format(Constants.DROP_COLUMN, dropColumnChild.getText()));
+
+                                // Check for ALIAS column companion drops
+                                if (this.config != null) {
+                                    ColumnTypeOverrideConfig overrideConfig =
+                                            ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+                                    if (overrideConfig.hasOverrides()) {
+                                        String cleanTableName = extractPlainTableName(this.tableName);
+                                        String droppedColName = dropColumnChild.getText().replace("`", "");
+                                        List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                                                overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                                        for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                                            if (entry.getColumn().equalsIgnoreCase(droppedColName)) {
+                                                this.query.append(",");
+                                                this.query.append(String.format(Constants.DROP_COLUMN,
+                                                        entry.getAliasColumnName()));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

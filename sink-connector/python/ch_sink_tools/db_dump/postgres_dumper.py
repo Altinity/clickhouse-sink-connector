@@ -180,10 +180,12 @@ def ensure_ch_database(ch_conn, ch_database, dry_run=False):
 
 
 def create_ch_table(ch_conn, ch_database, table_name, columns, pk_columns,
-                    dry_run=False, override_config=None, schema=None):
+                    dry_run=False, override_config=None, schema=None,
+                    pg_database=None):
     ddl = build_create_table(
         ch_database, table_name, columns, pk_columns,
         override_config=override_config, schema=schema,
+        database=pg_database,
     )
     logging.info(f"DDL for {table_name}:\n{ddl}")
     if not dry_run:
@@ -1329,6 +1331,7 @@ def main():
                             pg_conn_t, schema_name, table_name,
                             pg_server_timezone=pg_server_timezone,
                             override_config=override_config,
+                            pg_database=args.pg_database,
                         )
                         pk_cols = get_table_pk(
                             pg_conn_t, schema_name, table_name
@@ -1354,6 +1357,7 @@ def main():
                                     table_name=ch_table,
                                     schema=schema_name,
                                     override_config=override_config,
+                                    database=args.pg_database,
                                 )
 
                         create_ch_table(
@@ -1365,6 +1369,7 @@ def main():
                             dry_run=args.dry_run,
                             override_config=override_config,
                             schema=schema_name,
+                            pg_database=args.pg_database,
                         )
                 finally:
                     ch_conn_schema.close()
