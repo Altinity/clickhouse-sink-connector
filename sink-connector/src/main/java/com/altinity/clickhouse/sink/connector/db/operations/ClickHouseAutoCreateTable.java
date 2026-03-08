@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -15,6 +16,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -65,7 +67,8 @@ public class ClickHouseAutoCreateTable
                                ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> colNameToDataTypeMap =
-                this.getColumnNameToCHDataTypeMapping(fields,config);
+                this.getColumnNameToCHDataTypeMapping(fields, config,
+                        databaseName, tableName);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName,
                 databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree,
@@ -75,6 +78,26 @@ public class ClickHouseAutoCreateTable
         // TODO: Run this before a session is created.
         DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, createTableQuery);
+
+        // Reconcile column type overrides against the (possibly
+        // pre-existing) table.  Direct override mismatches will throw
+        // ColumnTypeOverrideMismatchException; alias drift is auto-fixed.
+        ColumnTypeOverrideConfig overrideConfig =
+                ColumnTypeOverrideConfig.fromProperties(
+                        config.originalsStrings());
+        if (overrideConfig.hasOverrides()) {
+            ColumnTypeOverrideReconciler reconciler =
+                    new ColumnTypeOverrideReconciler();
+            try {
+                reconciler.reconcile(connection, databaseName, tableName,
+                        databaseName, overrideConfig);
+            } catch (ColumnTypeOverrideMismatchException e) {
+                throw e; // propagate — must halt the connector
+            } catch (Exception e) {
+                log.error("Error reconciling column type overrides for "
+                        + "table {}.{}", databaseName, tableName, e);
+            }
+        }
     }
 
     /**
@@ -159,6 +182,26 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append("`").append(colName).append("`")
                     .append(" ").append(dataType);
             createTableSyntax.append(",");
+        }
+
+        // Append ALIAS column definitions from ColumnTypeOverrideConfig.
+        // ALIAS columns are virtual — computed on read, never stored, and
+        // automatically skipped during INSERT by the existing
+        // DBMetadata.getAliasAndMaterializedColumnsForTableAndDatabase()
+        // mechanism which queries system.columns WHERE default_kind='ALIAS'.
+        ColumnTypeOverrideConfig overrideConfig =
+                ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+        List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                overrideConfig.getAliasOverrides(databaseName, tableName);
+        for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+            createTableSyntax.append("`").append(entry.getAliasColumnName()).append("` ")
+                    .append(entry.getAliasType())
+                    .append(" ALIAS ")
+                    .append(entry.getExpression());
+            createTableSyntax.append(",");
+            log.info("Adding ALIAS column '{}' ({} ALIAS {}) to table {}.{}",
+                    entry.getAliasColumnName(), entry.getAliasType(),
+                    entry.getExpression(), databaseName, tableName);
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;

@@ -321,16 +321,42 @@ def map_udt_type(udt_name: str, nullable: bool = False) -> str:
 # DDL generation helpers
 # ---------------------------------------------------------------------------
 
-def build_column_defs(columns) -> list:
+def build_column_defs(columns, override_config=None, schema=None, table=None) -> list:
     """
     Given a list of column dicts (as returned by db.postgres.get_table_columns),
     return a list of SQL column definition strings for ClickHouse CREATE TABLE.
 
     Each dict must have keys: column_name, ch_type
+
+    Parameters
+    ----------
+    columns         : list of column dicts
+    override_config : optional ColumnTypeOverrideConfig — when provided,
+                      direct overrides replace the mapped CH type for matching columns
+    schema          : PG schema name (needed for override lookups)
+    table           : PG table name  (needed for override lookups)
     """
     defs = []
     for col in columns:
-        defs.append(f"`{col['column_name']}` {col['ch_type']}")
+        ch_type = col['ch_type']
+        col_name = col['column_name']
+
+        # Apply direct override if configured
+        if override_config and schema and table:
+            direct_type = override_config.get_direct_override(schema, table, col_name)
+            if direct_type:
+                ch_type = direct_type
+
+        defs.append(f"`{col_name}` {ch_type}")
+
+    # Append ALIAS column definitions before virtual columns
+    if override_config and schema and table:
+        alias_overrides = override_config.get_alias_overrides(schema, table)
+        for ao in alias_overrides:
+            defs.append(
+                f"`{ao.alias_column_name}` {ao.alias_type} ALIAS {ao.expression}"
+            )
+
     # Altinity sink-connector virtual columns
     defs.append("`_version` UInt64 DEFAULT 0")
     defs.append("`is_deleted` UInt8 DEFAULT 0")
@@ -342,6 +368,8 @@ def build_create_table(
     table_name: str,
     columns,
     pk_columns,
+    override_config=None,
+    schema=None,
 ) -> str:
     """
     Build a complete ClickHouse CREATE TABLE IF NOT EXISTS … statement that
@@ -349,16 +377,23 @@ def build_create_table(
 
     Parameters
     ----------
-    ch_database : target ClickHouse database name
-    table_name  : table name (no schema prefix)
-    columns     : list of dicts with 'column_name' and 'ch_type'
-    pk_columns  : list of PK column name strings
+    ch_database     : target ClickHouse database name
+    table_name      : table name (no schema prefix)
+    columns         : list of dicts with 'column_name' and 'ch_type'
+    pk_columns      : list of PK column name strings
+    override_config : optional ColumnTypeOverrideConfig for type overrides
+    schema          : PG schema name (needed for override lookups)
 
     Returns
     -------
     str — complete DDL ready to execute
     """
-    col_defs = build_column_defs(columns)
+    col_defs = build_column_defs(
+        columns,
+        override_config=override_config,
+        schema=schema,
+        table=table_name,
+    )
     cols_sql = ",\n    ".join(col_defs)
 
     if pk_columns:

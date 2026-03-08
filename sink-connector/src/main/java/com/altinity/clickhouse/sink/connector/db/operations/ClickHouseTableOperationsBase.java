@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
@@ -14,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
@@ -88,22 +90,55 @@ public class ClickHouseTableOperationsBase {
      * a provided array of Kafka Connect {@link Field} objects. Handles special
      * cases like Decimal, DateTime64, and arrays.
      *
+     * <p>This is the original method signature preserved for backward
+     * compatibility. It delegates to the overloaded variant without
+     * schema/table context, meaning {@link ColumnTypeOverrideConfig} direct
+     * overrides will not be applied (they require table-qualified lookups).
+     *
      * @param fields An array of {@link Field} representing schema fields.
+     * @param config The connector configuration.
      * @return A map where the key is the column name and the value is the
      *         corresponding ClickHouse data type as a String.
      */
     public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields, ClickHouseSinkConnectorConfig config) {
+        return getColumnNameToCHDataTypeMapping(fields, config, null, null);
+    }
+
+    /**
+     * Generates a mapping from column names to ClickHouse data types based on
+     * a provided array of Kafka Connect {@link Field} objects. Handles special
+     * cases like Decimal, DateTime64, and arrays.
+     *
+     * <p>When {@code schemaName} and {@code tableName} are provided, this
+     * method also applies {@link ColumnTypeOverrideConfig} direct overrides
+     * after the existing {@code default_column_datatype_mapping} logic. The
+     * new {@code column_type_override.direct.*} config takes precedence over
+     * the old {@code default_column_datatype_mapping.*} config.
+     *
+     * @param fields     An array of {@link Field} representing schema fields.
+     * @param config     The connector configuration.
+     * @param schemaName The source schema name (e.g. "public") for
+     *                   table-qualified override lookups. May be null.
+     * @param tableName  The source table name for table-qualified override
+     *                   lookups. May be null.
+     * @return A map where the key is the column name and the value is the
+     *         corresponding ClickHouse data type as a String.
+     */
+    public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields,
+                                                                ClickHouseSinkConnectorConfig config,
+                                                                String schemaName,
+                                                                String tableName) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         Map<String, String> columnToDataTypesMap = new HashMap<>();
 
         for (Field f : fields) {
             String colName = f.name();
             Schema.Type type = f.schema().type();
-            String schemaName = f.schema().name();
+            String fieldSchemaName = f.schema().name();
             boolean isOptional = f.schema().isOptional();
 
             if (type == Schema.Type.ARRAY) {
-                schemaName = f.schema().valueSchema().type().name();
+                fieldSchemaName = f.schema().valueSchema().type().name();
                 ClickHouseDataType dt = mapper.getClickHouseDataType(
                         f.schema().valueSchema().type(), null);
                 columnToDataTypesMap.put(
@@ -114,7 +149,7 @@ public class ClickHouseTableOperationsBase {
             }
             // Input:
             ClickHouseDataType dataType =
-                    mapper.getClickHouseDataType(type, schemaName);
+                    mapper.getClickHouseDataType(type, fieldSchemaName);
 
             if (dataType != null) {
                 String chType;
@@ -123,7 +158,7 @@ public class ClickHouseTableOperationsBase {
                     Map<String, String> params = f.schema().parameters();
 
                     // Postgres numeric data type has no scale/precision.
-                    if (schemaName.equalsIgnoreCase(
+                    if (fieldSchemaName.equalsIgnoreCase(
                             VariableScaleDecimal.LOGICAL_NAME)) {
                         chType = DECIMAL_64_18;
                     } else if (params != null
@@ -182,7 +217,7 @@ public class ClickHouseTableOperationsBase {
                 columnToDataTypesMap.put(colName, chType);
             } else {
                 log.error(" **** DATA TYPE MAPPING not found: TYPE:"
-                        + type.getName() + "SCHEMA NAME:" + schemaName);
+                        + type.getName() + "SCHEMA NAME:" + fieldSchemaName);
             }
         }
 
@@ -203,6 +238,26 @@ public class ClickHouseTableOperationsBase {
                 // If defaultColumnDataTypeMap contains the key, update columnToDataTypesMap's value
                 // with the corresponding value from defaultColumnDataTypeMap
                 entry.setValue(defaultColumnDataTypeMap.get(key));
+            }
+        }
+
+        // Apply column_type_override.direct.* overrides.
+        // These take precedence over both the default mapper and
+        // default_column_datatype_mapping.* when a match is found.
+        if (schemaName != null && tableName != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
+                    String columnName = entry.getKey();
+                    Optional<String> directOverride =
+                            overrideConfig.getDirectOverride(schemaName, tableName, columnName);
+                    directOverride.ifPresent(overriddenType -> {
+                        log.info("Applying column type override for {}.{}.{}: {} -> {}",
+                                schemaName, tableName, columnName, entry.getValue(), overriddenType);
+                        entry.setValue(overriddenType);
+                    });
+                }
             }
         }
 
