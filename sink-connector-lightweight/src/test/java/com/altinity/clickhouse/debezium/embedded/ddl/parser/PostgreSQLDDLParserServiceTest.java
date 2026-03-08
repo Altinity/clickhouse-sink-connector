@@ -46,7 +46,7 @@ class PostgreSQLDDLParserServiceTest {
         assertTrue(ch.contains("CREATE TABLE IF NOT EXISTS"), "Should use CREATE TABLE IF NOT EXISTS");
         assertTrue(ch.contains("`testdb`.`users`"), "Should qualify table name with database");
         assertTrue(ch.contains("ENGINE = ReplacingMergeTree"), "Should use ReplacingMergeTree engine");
-        assertTrue(ch.contains("`_version` Nullable(UInt64)"), "Should include CDC _version column");
+        assertTrue(ch.contains("`_version` UInt64"), "Should include CDC _version column");
         assertTrue(ch.contains("`is_deleted` UInt8"), "Should include CDC is_deleted column");
     }
 
