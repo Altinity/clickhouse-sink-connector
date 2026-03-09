@@ -42,11 +42,17 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
  *   <li>Start Debezium CDC connector (snapshot + streaming) per test method</li>
  *   <li>Verify initial row is replicated to ClickHouse</li>
  *   <li>Execute {@code ALTER TABLE ADD COLUMN} on PostgreSQL → schema drift</li>
- *   <li>Wait for the DDL CDC event to reach the drift detector</li>
- *   <li>Insert a new row that populates the new column(s)</li>
- *   <li>Wait up to 90 s for the drift detector to add the column(s) in ClickHouse</li>
+ *   <li>Insert a new row that populates the new column(s) — this DML event triggers
+ *       drift detection inside {@code processEveryChangeRecord()}</li>
+ *   <li>Wait up to 120 s for the drift detector to add the column(s) in ClickHouse
+ *       <strong>and</strong> for the new row to appear</li>
  *   <li>Assert ClickHouse table has the new column(s) and the new row's values are correct</li>
  * </ol>
+ *
+ * <p><strong>Important:</strong> Drift detection is <em>event-driven</em>.  The
+ * {@code checkAndReconcile()} method runs only when a DML {@code SourceRecord}
+ * arrives in the CDC pipeline.  Therefore, the INSERT must happen <em>before</em>
+ * waiting for the column, not after.
  *
  * <p>Each test method uses its own dedicated table ({@code schema_drift_single},
  * {@code schema_drift_multi}) and a unique replication slot name to prevent
@@ -216,27 +222,26 @@ public class PostgresSchemaDriftIT {
         ).execute();
         System.out.println("[SchemaDriftIT] ALTER TABLE executed in PostgreSQL.");
 
-        // ---- Step 5: Wait for drift detection to add the column BEFORE inserting ----
+        // ---- Step 5: INSERT immediately so the DML CDC event triggers drift detection ----
+        // Drift detection is event-driven: checkAndReconcile() runs only when a
+        // DML SourceRecord arrives in processEveryChangeRecord().  Without an INSERT,
+        // the column will never appear in ClickHouse.
+        pgConn.prepareStatement(
+                "INSERT INTO public." + TABLE + " (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
+        ).execute();
+        System.out.println("[SchemaDriftIT] Inserted new row with extra_info='drift_value' (triggers drift detection).");
+
+        // ---- Step 6: Wait for both the column AND the row to appear in ClickHouse ----
+        // The DML event arriving at the sink connector will:
+        //   1) call checkAndReconcile() → detect 'extra_info' missing → ALTER TABLE in CH
+        //   2) write the row data
         boolean columnAdded = waitForColumnInClickHouse(
                 writer.getConnection(), "public", TABLE, "extra_info", 120);
-
-        if (!columnAdded) {
-            System.out.println("[SchemaDriftIT] WARN: column not yet visible – waiting extra 30 s");
-            Thread.sleep(30_000);
-            columnAdded = waitForColumnInClickHouse(
-                    writer.getConnection(), "public", TABLE, "extra_info", 10);
-        }
 
         Assert.assertTrue(
                 "ClickHouse table must have the new column 'extra_info' after drift detection",
                 columnAdded);
         System.out.println("[SchemaDriftIT] Column 'extra_info' is now present in ClickHouse.");
-
-        // ---- Step 6: Insert row that populates the new column ----
-        pgConn.prepareStatement(
-                "INSERT INTO public." + TABLE + " (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
-        ).execute();
-        System.out.println("[SchemaDriftIT] Inserted new row with extra_info='drift_value'.");
 
         // ---- Step 7: Verify new row data (polling up to 90 s) ----
         String extraInfoValue = null;
@@ -318,23 +323,24 @@ public class PostgresSchemaDriftIT {
         ).execute();
         System.out.println("[SchemaDriftIT/multi] Added 3 columns in PostgreSQL.");
 
-        // ---- Wait for all three columns to appear in ClickHouse BEFORE inserting ----
-        boolean scoreReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "score",  120);
-        boolean labelReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "label",  30);
-        boolean activeReady = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "active", 30);
-
-        if (!scoreReady || !labelReady || !activeReady) {
-            System.out.println("[SchemaDriftIT/multi] WARN: not all columns appeared before INSERT – test may fail");
-        }
-
-        // ---- Insert row with all three new columns populated ----
+        // ---- INSERT immediately so the DML CDC event triggers drift detection ----
+        // Drift detection is event-driven: checkAndReconcile() runs only when a
+        // DML SourceRecord arrives in processEveryChangeRecord().  Without an INSERT,
+        // the columns will never appear in ClickHouse.
         pgConn.prepareStatement(
                 "INSERT INTO public." + TABLE + " (id, name, score, label, active) " +
                         "VALUES (200, 'multi_drift', 42, 'hello', TRUE)"
         ).execute();
-        System.out.println("[SchemaDriftIT/multi] Inserted row with score/label/active.");
+        System.out.println("[SchemaDriftIT/multi] Inserted row with score/label/active (triggers drift detection).");
 
-        // Columns were already confirmed before INSERT; re-assert for safety.
+        // ---- Wait for all three columns to appear in ClickHouse ----
+        // The DML event arriving at the sink connector will:
+        //   1) call checkAndReconcile() → detect score/label/active missing → ALTER TABLE in CH
+        //   2) write the row data
+        boolean scoreReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "score",  120);
+        boolean labelReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "label",  30);
+        boolean activeReady = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "active", 30);
+
         Assert.assertTrue("Column 'score' must be added to ClickHouse",  scoreReady);
         Assert.assertTrue("Column 'label' must be added to ClickHouse",  labelReady);
         Assert.assertTrue("Column 'active' must be added to ClickHouse", activeReady);
