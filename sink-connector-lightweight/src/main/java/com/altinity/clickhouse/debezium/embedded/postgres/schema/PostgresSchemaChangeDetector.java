@@ -361,6 +361,12 @@ public class PostgresSchemaChangeDetector {
      *         does not exist in ClickHouse yet; empty map on connection / query error
      */
     private Map<String, String> fetchClickHouseSchema(String database, String table) {
+        if (writer == null) {
+            log.warn("Cannot fetch ClickHouse schema for {}.{}: writer is null (not yet initialised?)",
+                    database, table);
+            return Collections.emptyMap();
+        }
+
         String columnSql = String.format(
                 "SELECT name, type FROM system.columns WHERE database = '%s' AND table = '%s'",
                 database, table);
