@@ -199,19 +199,33 @@ public class PostgresSchemaDriftIT {
             }
         });
 
-        // ---- Wait for initial snapshot to complete ----
-        System.out.println("[SchemaDriftIT] Waiting 60 s for initial snapshot…");
-        Thread.sleep(60_000);
-
-        // ---- Verify initial row was replicated ----
+        // ---- Wait for initial snapshot to complete (polling-based, up to 120 s) ----
+        System.out.println("[SchemaDriftIT] Waiting for initial snapshot (polling up to 120 s)…");
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         {
-            ResultSet rs = writer.getConnection()
-                    .prepareStatement("SELECT id, name FROM public." + TABLE + " FINAL WHERE id = 1")
-                    .executeQuery();
-            Assert.assertTrue("Initial row must exist in ClickHouse after snapshot", rs.next());
-            Assert.assertEquals("initial_row", rs.getString("name"));
-            System.out.println("[SchemaDriftIT] Initial row verified in ClickHouse.");
+            boolean snapshotDone = false;
+            long snapshotDeadline = System.currentTimeMillis() + 120_000L;
+            int pollCount = 0;
+            while (System.currentTimeMillis() < snapshotDeadline) {
+                try {
+                    ResultSet rs = writer.getConnection()
+                            .prepareStatement("SELECT id, name FROM public." + TABLE + " FINAL WHERE id = 1")
+                            .executeQuery();
+                    if (rs.next()) {
+                        String name = rs.getString("name");
+                        Assert.assertEquals("initial_row", name);
+                        snapshotDone = true;
+                        System.out.printf("[SchemaDriftIT] Initial row verified after %d polls (~%d s).%n",
+                                pollCount, pollCount * 5);
+                        break;
+                    }
+                } catch (Exception e) {
+                    System.out.printf("[SchemaDriftIT] Snapshot poll %d: %s%n", pollCount, e.getMessage());
+                }
+                Thread.sleep(5_000);
+                pollCount++;
+            }
+            Assert.assertTrue("Initial row must exist in ClickHouse after snapshot (waited 120 s)", snapshotDone);
         }
 
         // ---- Step 4: ALTER TABLE ADD COLUMN in PostgreSQL ----
@@ -298,19 +312,34 @@ public class PostgresSchemaDriftIT {
             }
         });
 
-        System.out.println("[SchemaDriftIT/multi] Waiting 60 s for initial snapshot…");
-        Thread.sleep(60_000);
-
-        // ---- Verify initial row replicated ----
+        // ---- Wait for initial snapshot to complete (polling-based, up to 120 s) ----
+        System.out.println("[SchemaDriftIT/multi] Waiting for initial snapshot (polling up to 120 s)…");
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         {
-            ResultSet rs = writer.getConnection()
-                    .prepareStatement("SELECT COUNT(*) AS cnt FROM public." + TABLE + " FINAL")
-                    .executeQuery();
-            Assert.assertTrue(rs.next());
-            long cnt = rs.getLong("cnt");
-            Assert.assertTrue("At least the seeded row must be replicated; got " + cnt, cnt >= 1);
-            System.out.println("[SchemaDriftIT/multi] Initial row count in ClickHouse: " + cnt);
+            boolean snapshotDone = false;
+            long snapshotDeadline = System.currentTimeMillis() + 120_000L;
+            int pollCount = 0;
+            while (System.currentTimeMillis() < snapshotDeadline) {
+                try {
+                    ResultSet rs = writer.getConnection()
+                            .prepareStatement("SELECT COUNT(*) AS cnt FROM public." + TABLE + " FINAL")
+                            .executeQuery();
+                    if (rs.next()) {
+                        long cnt = rs.getLong("cnt");
+                        if (cnt >= 1) {
+                            snapshotDone = true;
+                            System.out.printf("[SchemaDriftIT/multi] Initial row count %d after %d polls (~%d s).%n",
+                                    cnt, pollCount, pollCount * 5);
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.printf("[SchemaDriftIT/multi] Snapshot poll %d: %s%n", pollCount, e.getMessage());
+                }
+                Thread.sleep(5_000);
+                pollCount++;
+            }
+            Assert.assertTrue("At least the seeded row must be replicated (waited 120 s)", snapshotDone);
         }
 
         // ---- ADD three columns to PostgreSQL ----
