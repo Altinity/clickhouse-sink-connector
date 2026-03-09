@@ -138,6 +138,12 @@ public class PostgresSchemaDriftIT {
     /**
      * Builds properties for a test, capturing only the specified table and
      * using the given replication slot name.
+     *
+     * <p><strong>Critical:</strong> Each test uses unique offset storage and
+     * schema history table names (keyed by {@code slotName}) to prevent
+     * cross-test contamination.  Without this, Test 2's stored offsets
+     * (snapshot=FALSE) would cause Test 1's Debezium engine to skip the
+     * initial snapshot entirely, leading to "initial row not found" failures.
      */
     private Properties getProperties(String tableIncludeList, String slotName) throws Exception {
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
@@ -146,6 +152,13 @@ public class PostgresSchemaDriftIT {
         properties.put("table.include.list", tableIncludeList);
         // Use unique slot name per test to avoid replication slot conflicts
         properties.put("slot.name", slotName);
+        // Use unique offset storage and schema history tables per test so that
+        // one test's committed offsets don't cause another test to skip its
+        // initial snapshot.
+        properties.put("offset.storage.jdbc.table.name",
+                "altinity_sink_connector.replica_source_info_" + slotName);
+        properties.put("schema.history.internal.jdbc.schema.history.table.name",
+                "altinity_sink_connector.replicate_schema_history_" + slotName);
         // More retries for slow CI environments
         properties.put("slot.max.retries", "12");
         properties.put("slot.retry.delay.ms", "10000");
