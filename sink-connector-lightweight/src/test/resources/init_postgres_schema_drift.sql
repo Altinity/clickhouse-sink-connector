@@ -1,12 +1,20 @@
 -- PostgreSQL initialisation for PostgresSchemaDriftIT
--- Creates the initial table used by the schema-drift integration test.
--- The test will ALTER TABLE ADD COLUMN after CDC is running.
+-- Creates the initial tables used by the schema-drift integration tests.
+-- Each test method uses its own table to avoid column pollution and
+-- replication-slot conflicts between test runs.
 
-CREATE TABLE IF NOT EXISTS public.schema_drift_test
+-- Test 1: single new column
+CREATE TABLE IF NOT EXISTS public.schema_drift_single
 (
     id   SERIAL PRIMARY KEY,
     name TEXT
 );
+INSERT INTO public.schema_drift_single (id, name) VALUES (1, 'initial_row');
 
--- Seed one row so the initial snapshot has data to replicate
-INSERT INTO public.schema_drift_test (id, name) VALUES (1, 'initial_row');
+-- Test 2: multiple new columns
+CREATE TABLE IF NOT EXISTS public.schema_drift_multi
+(
+    id   SERIAL PRIMARY KEY,
+    name TEXT
+);
+INSERT INTO public.schema_drift_multi (id, name) VALUES (1, 'initial_row');

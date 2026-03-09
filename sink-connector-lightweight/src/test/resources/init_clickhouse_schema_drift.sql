@@ -1,12 +1,22 @@
 -- ClickHouse initialisation for PostgresSchemaDriftIT
--- Creates the minimal infrastructure needed by the integration test.
+-- Creates the minimal infrastructure needed by the integration tests.
+-- Each test method has its own target table so ALTER TABLE changes in one
+-- test do not pollute the other.
 
 CREATE database IF NOT EXISTS public;
 
--- Initial target table for schema drift test.
--- Only the columns that exist at test-start time are created here.
--- The ALTER TABLE ADD COLUMN executed by the drift-detector will add new columns.
-CREATE TABLE IF NOT EXISTS public.schema_drift_test
+-- Test 1: single new column
+CREATE TABLE IF NOT EXISTS public.schema_drift_single
+(
+    `id`    Int32,
+    `name`  Nullable(String),
+    `_version` UInt64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY id;
+
+-- Test 2: multiple new columns
+CREATE TABLE IF NOT EXISTS public.schema_drift_multi
 (
     `id`    Int32,
     `name`  Nullable(String),

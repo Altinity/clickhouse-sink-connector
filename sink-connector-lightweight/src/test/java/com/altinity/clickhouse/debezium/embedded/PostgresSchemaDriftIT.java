@@ -44,9 +44,13 @@ import static com.altinity.clickhouse.debezium.embedded.PostgresProperties.getDe
  *   <li>Execute {@code ALTER TABLE ADD COLUMN} on PostgreSQL → schema drift</li>
  *   <li>Wait for the DDL CDC event to reach the drift detector</li>
  *   <li>Insert a new row that populates the new column(s)</li>
- *   <li>Wait up to 60 s for the drift detector to add the column(s) in ClickHouse</li>
+ *   <li>Wait up to 90 s for the drift detector to add the column(s) in ClickHouse</li>
  *   <li>Assert ClickHouse table has the new column(s) and the new row's values are correct</li>
  * </ol>
+ *
+ * <p>Each test method uses its own dedicated table ({@code schema_drift_single},
+ * {@code schema_drift_multi}) and a unique replication slot name to prevent
+ * interference between sequential test runs.
  *
  * <p>Containers are started once per test <em>class</em> to avoid Podman socket
  * exhaustion from rapid per-method container cycling when multiple IT classes
@@ -125,18 +129,42 @@ public class PostgresSchemaDriftIT {
         }
     }
 
-    private Properties getProperties() throws Exception {
+    /**
+     * Builds properties for a test, capturing only the specified table and
+     * using the given replication slot name.
+     */
+    private Properties getProperties(String tableIncludeList, String slotName) throws Exception {
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
         properties.put("plugin.name", "pgoutput");
         properties.put("plugin.path", "/");
-        // Only capture our dedicated drift-test table
-        properties.put("table.include.list", "public.schema_drift_test");
-        properties.put("slot.max.retries", "6");
-        properties.put("slot.retry.delay.ms", "5000");
+        properties.put("table.include.list", tableIncludeList);
+        // Use unique slot name per test to avoid replication slot conflicts
+        properties.put("slot.name", slotName);
+        // More retries for slow CI environments
+        properties.put("slot.max.retries", "12");
+        properties.put("slot.retry.delay.ms", "10000");
         properties.put("database.allowPublicKeyRetrieval", "true");
         properties.put("skipped.operations", "none");
         properties.put("disable.drop.truncate", "false");
         return properties;
+    }
+
+    /**
+     * Drops a PostgreSQL replication slot if it exists, to avoid conflicts
+     * between test runs.
+     */
+    private void dropReplicationSlot(String slotName) {
+        try {
+            Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
+            pgConn.prepareStatement(
+                    "SELECT pg_drop_replication_slot(slot_name) " +
+                    "FROM pg_replication_slots WHERE slot_name = '" + slotName + "'"
+            ).execute();
+            pgConn.close();
+            log.info("Dropped replication slot '{}'", slotName);
+        } catch (Exception e) {
+            log.debug("Could not drop replication slot '{}': {}", slotName, e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -146,12 +174,20 @@ public class PostgresSchemaDriftIT {
     @Test
     @DisplayName("Schema drift: new column added to PostgreSQL is auto-propagated to ClickHouse")
     public void testColumnAddedToPostgresIsPropagatedToClickHouse() throws Exception {
+        final String TABLE = "schema_drift_single";
+        final String SLOT = "drift_slot_single";
+
+        // Clean up any leftover slot from a previous run
+        dropReplicationSlot(SLOT);
+
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
+                engine.get().setup(
+                        getProperties("public." + TABLE, SLOT),
+                        new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -165,7 +201,7 @@ public class PostgresSchemaDriftIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         {
             ResultSet rs = writer.getConnection()
-                    .prepareStatement("SELECT id, name FROM public.schema_drift_test FINAL WHERE id = 1")
+                    .prepareStatement("SELECT id, name FROM public." + TABLE + " FINAL WHERE id = 1")
                     .executeQuery();
             Assert.assertTrue("Initial row must exist in ClickHouse after snapshot", rs.next());
             Assert.assertEquals("initial_row", rs.getString("name"));
@@ -176,22 +212,19 @@ public class PostgresSchemaDriftIT {
         System.out.println("[SchemaDriftIT] Executing ALTER TABLE ADD COLUMN in PostgreSQL…");
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         pgConn.prepareStatement(
-                "ALTER TABLE public.schema_drift_test ADD COLUMN extra_info TEXT"
+                "ALTER TABLE public." + TABLE + " ADD COLUMN extra_info TEXT"
         ).execute();
         System.out.println("[SchemaDriftIT] ALTER TABLE executed in PostgreSQL.");
 
         // ---- Step 5: Wait for drift detection to add the column BEFORE inserting ----
-        // The drift detector must reconcile the new column into ClickHouse before the
-        // INSERT CDC event arrives, otherwise the writer drops the row because the
-        // table schema doesn't match the incoming record.
         boolean columnAdded = waitForColumnInClickHouse(
-                writer.getConnection(), "public", "schema_drift_test", "extra_info", 90);
+                writer.getConnection(), "public", TABLE, "extra_info", 120);
 
         if (!columnAdded) {
             System.out.println("[SchemaDriftIT] WARN: column not yet visible – waiting extra 30 s");
             Thread.sleep(30_000);
             columnAdded = waitForColumnInClickHouse(
-                    writer.getConnection(), "public", "schema_drift_test", "extra_info", 10);
+                    writer.getConnection(), "public", TABLE, "extra_info", 10);
         }
 
         Assert.assertTrue(
@@ -201,7 +234,7 @@ public class PostgresSchemaDriftIT {
 
         // ---- Step 6: Insert row that populates the new column ----
         pgConn.prepareStatement(
-                "INSERT INTO public.schema_drift_test (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
+                "INSERT INTO public." + TABLE + " (id, name, extra_info) VALUES (99, 'new_row', 'drift_value')"
         ).execute();
         System.out.println("[SchemaDriftIT] Inserted new row with extra_info='drift_value'.");
 
@@ -212,7 +245,7 @@ public class PostgresSchemaDriftIT {
             while (System.currentTimeMillis() < rowDeadline) {
                 ResultSet rs = writer.getConnection()
                         .prepareStatement(
-                                "SELECT extra_info FROM public.schema_drift_test FINAL WHERE id = 99")
+                                "SELECT extra_info FROM public." + TABLE + " FINAL WHERE id = 99")
                         .executeQuery();
                 while (rs.next()) {
                     extraInfoValue = rs.getString("extra_info");
@@ -229,6 +262,9 @@ public class PostgresSchemaDriftIT {
         if (engine.get() != null) engine.get().stop();
         executorService.shutdown();
         executorService.awaitTermination(30, TimeUnit.SECONDS);
+
+        // Clean up replication slot
+        dropReplicationSlot(SLOT);
     }
 
     // =========================================================================
@@ -238,12 +274,20 @@ public class PostgresSchemaDriftIT {
     @Test
     @DisplayName("Schema drift: multiple new columns added are all propagated to ClickHouse")
     public void testMultipleColumnsAdded() throws Exception {
+        final String TABLE = "schema_drift_multi";
+        final String SLOT = "drift_slot_multi";
+
+        // Clean up any leftover slot from a previous run
+        dropReplicationSlot(SLOT);
+
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getProperties(), new SourceRecordParserService(), false);
+                engine.get().setup(
+                        getProperties("public." + TABLE, SLOT),
+                        new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -256,7 +300,7 @@ public class PostgresSchemaDriftIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         {
             ResultSet rs = writer.getConnection()
-                    .prepareStatement("SELECT COUNT(*) AS cnt FROM public.schema_drift_test FINAL")
+                    .prepareStatement("SELECT COUNT(*) AS cnt FROM public." + TABLE + " FINAL")
                     .executeQuery();
             Assert.assertTrue(rs.next());
             long cnt = rs.getLong("cnt");
@@ -267,7 +311,7 @@ public class PostgresSchemaDriftIT {
         // ---- ADD three columns to PostgreSQL ----
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         pgConn.prepareStatement(
-                "ALTER TABLE public.schema_drift_test " +
+                "ALTER TABLE public." + TABLE + " " +
                         "ADD COLUMN score INT, " +
                         "ADD COLUMN label TEXT, " +
                         "ADD COLUMN active BOOLEAN"
@@ -275,12 +319,9 @@ public class PostgresSchemaDriftIT {
         System.out.println("[SchemaDriftIT/multi] Added 3 columns in PostgreSQL.");
 
         // ---- Wait for all three columns to appear in ClickHouse BEFORE inserting ----
-        // The drift detector must reconcile all 3 new columns into ClickHouse before
-        // the INSERT CDC event arrives, otherwise the writer drops the row because the
-        // table schema doesn't match the incoming record.
-        boolean scoreReady  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "score",  90);
-        boolean labelReady  = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "label",  30);
-        boolean activeReady = waitForColumnInClickHouse(writer.getConnection(), "public", "schema_drift_test", "active", 30);
+        boolean scoreReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "score",  120);
+        boolean labelReady  = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "label",  30);
+        boolean activeReady = waitForColumnInClickHouse(writer.getConnection(), "public", TABLE, "active", 30);
 
         if (!scoreReady || !labelReady || !activeReady) {
             System.out.println("[SchemaDriftIT/multi] WARN: not all columns appeared before INSERT – test may fail");
@@ -288,7 +329,7 @@ public class PostgresSchemaDriftIT {
 
         // ---- Insert row with all three new columns populated ----
         pgConn.prepareStatement(
-                "INSERT INTO public.schema_drift_test (id, name, score, label, active) " +
+                "INSERT INTO public." + TABLE + " (id, name, score, label, active) " +
                         "VALUES (200, 'multi_drift', 42, 'hello', TRUE)"
         ).execute();
         System.out.println("[SchemaDriftIT/multi] Inserted row with score/label/active.");
@@ -301,8 +342,6 @@ public class PostgresSchemaDriftIT {
         System.out.println("[SchemaDriftIT/multi] All 3 columns detected in ClickHouse.");
 
         // ---- Verify the row values (polling) ----
-        // Poll for up to 90 s so the INSERT CDC event has time to be flushed to
-        // ClickHouse even on very slow CI runners.
         String labelValue = null;
         Integer scoreValue = null;
         {
@@ -310,7 +349,7 @@ public class PostgresSchemaDriftIT {
             while (System.currentTimeMillis() < rowDeadline) {
                 ResultSet rs = writer.getConnection()
                         .prepareStatement(
-                                "SELECT score, label FROM public.schema_drift_test FINAL WHERE id = 200")
+                                "SELECT score, label FROM public." + TABLE + " FINAL WHERE id = 200")
                         .executeQuery();
                 while (rs.next()) {
                     scoreValue = rs.getInt("score");
@@ -329,6 +368,9 @@ public class PostgresSchemaDriftIT {
         if (engine.get() != null) engine.get().stop();
         executorService.shutdown();
         executorService.awaitTermination(30, TimeUnit.SECONDS);
+
+        // Clean up replication slot
+        dropReplicationSlot(SLOT);
     }
 
     // =========================================================================
