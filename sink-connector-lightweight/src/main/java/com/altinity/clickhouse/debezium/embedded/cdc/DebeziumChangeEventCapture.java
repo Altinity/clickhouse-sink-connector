@@ -126,6 +126,12 @@ public class DebeziumChangeEventCapture {
     private PostgresSchemaChangeDetector postgresSchemaChangeDetector;
 
     /**
+     * When true, ClickHouse table names include the PostgreSQL schema as a
+     * prefix: __<schema>__<table>.
+     */
+    private boolean schemaPrefixEnabled = false;
+
+    /**
      * Connection to the system database.
      */
     Connection systemDbConnection;
@@ -393,6 +399,10 @@ public class DebeziumChangeEventCapture {
             log.error("Error retrieving max retries", e);
         }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+
+        // Initialize schema prefix flag from configuration.
+        this.schemaPrefixEnabled = Boolean.parseBoolean(
+                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(), "false"));
         
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -584,6 +594,9 @@ public class DebeziumChangeEventCapture {
                 // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
                 try {
                     String tableName = getTableName(sr);
+                    if (tableName == null) {
+                        tableName = extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled);
+                    }
                     if (tableName != null) {
                         String tableKey = databaseName + "." + tableName;
                         CacheInvalidationManager.getInstance().invalidateTable(tableKey);
@@ -737,6 +750,18 @@ public class DebeziumChangeEventCapture {
             try {
                 String tableName = (String) ((Struct) sr.key()).get("tableName");
                 if (tableName != null && !tableName.isEmpty()) {
+                    if (schemaPrefixEnabled) {
+                        // Extract schema from the topic to build the prefixed name.
+                        // Topic format: {prefix}.{schema}.{table}
+                        String topic = sr.topic();
+                        if (topic != null) {
+                            String[] parts = topic.split("\\.");
+                            if (parts.length >= 3) {
+                                String schema = parts[parts.length - 2];
+                                return "__" + schema + "__" + tableName;
+                            }
+                        }
+                    }
                     return tableName;
                 }
             } catch (Exception e) {
@@ -758,8 +783,27 @@ public class DebeziumChangeEventCapture {
      * @return the table name, or {@code null} if the topic is null/empty
      */
     private static String extractTableNameFromTopic(String topic) {
+        return extractTableNameFromTopic(topic, false);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>When {@code schemaPrefix} is true, returns {@code __<schema>__<table>}
+     * using the second-to-last and last dot-separated segments.
+     *
+     * @param topic        Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix when true, prepend the schema segment
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix) {
         if (topic == null || topic.isEmpty()) {
             return null;
+        }
+        if (schemaPrefix) {
+            // Delegate to the shared utility that handles schema prefix extraction
+            return Utils.getTableNameFromTopic(topic, true);
         }
         int lastDot = topic.lastIndexOf('.');
         if (lastDot < 0 || lastDot == topic.length() - 1) {
@@ -1007,7 +1051,7 @@ public class DebeziumChangeEventCapture {
                 if (postgresSchemaChangeDetector != null) {
                     try {
                         String dmlTopic = sr.topic();
-                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic);
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, schemaPrefixEnabled);
                         String dmlDatabase = extractDatabaseNameFromRecord(sr);
                         if (dmlTable != null && dmlDatabase != null) {
                             postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);

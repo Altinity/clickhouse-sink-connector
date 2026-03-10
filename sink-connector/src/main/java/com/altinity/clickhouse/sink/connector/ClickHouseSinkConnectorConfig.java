@@ -824,6 +824,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, ClickHouse table names include the PostgreSQL "
+                                + "schema as a prefix: __<schema>__<table>",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString()
                 );
     }
 }

@@ -118,7 +118,13 @@ public enum ClickHouseSinkConnectorConfigVariables {
      * Prefix for alias column type override properties.
      * Format: column_type_override.alias.<schema>.<table>.<column>=<CHType>|<expression>
      */
-    COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX("column_type_override.alias.");
+    COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX("column_type_override.alias."),
+
+    /**
+     * When true, ClickHouse table names include the PostgreSQL schema as a
+     * prefix: __<schema>__<table>.  Default: false.
+     */
+    CLICKHOUSE_TABLE_SCHEMA_PREFIX("clickhouse.table.schema.prefix");
 
 
 

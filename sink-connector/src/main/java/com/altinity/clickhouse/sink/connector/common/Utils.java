@@ -159,12 +159,39 @@ public class Utils {
      * @return the extracted table name.
      */
     public static String getTableNameFromTopic(String topicName) {
+        return getTableNameFromTopic(topicName, false);
+    }
+
+    /**
+     * Extracts the table name from the given Kafka topic name.
+     * When schemaPrefix is true, returns {@code __<schema>__<table>} using
+     * the second-to-last and last segments respectively.
+     * <p>
+     * Topic format: {topic.prefix}.{schema}.{table}
+     * Split example: [prefix, public, LiteLLM_SpendLogs]
+     *   schema = splitName[length-2]
+     *   table  = splitName[length-1]
+     *   result = __public__LiteLLM_SpendLogs
+     * </p>
+     *
+     * @param topicName    the Kafka topic name.
+     * @param schemaPrefix when true, prepend the schema segment.
+     * @return the extracted table name, or null if the topic has fewer than 3 segments.
+     */
+    public static String getTableNameFromTopic(String topicName,
+                                                boolean schemaPrefix) {
         String tableName = null;
 
         // topic name is expected in the form of: hostname.dbName.tableName
         String[] splitName = topicName.split("\\.");
         if (splitName.length >= 3) {
-            tableName = splitName[splitName.length - 1];
+            if (schemaPrefix) {
+                String schema = splitName[splitName.length - 2];
+                String table = splitName[splitName.length - 1];
+                tableName = "__" + schema + "__" + table;
+            } else {
+                tableName = splitName[splitName.length - 1];
+            }
         }
 
         return tableName;
