@@ -101,3 +101,4 @@ __internal/
 
 # Compiled Go binary (rebuild from source)
 sink-connector-client/sink-connector-client
+plans/
