@@ -549,7 +549,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     public String getTableFromTopic(String topicName) {
         String tableName = null;
         if (this.topic2TableMap.containsKey(topicName) == false) {
-            tableName = Utils.getTableNameFromTopic(topicName);
+            boolean schemaPrefix = this.config != null &&
+                    this.config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString());
+            tableName = Utils.getTableNameFromTopic(topicName, schemaPrefix);
             this.topic2TableMap.put(topicName, tableName);
         } else {
             tableName = this.topic2TableMap.get(topicName);
