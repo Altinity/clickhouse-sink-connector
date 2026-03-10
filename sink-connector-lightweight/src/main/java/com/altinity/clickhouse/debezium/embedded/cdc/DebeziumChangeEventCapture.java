@@ -145,6 +145,13 @@ public class DebeziumChangeEventCapture {
     private String commonSchemaTemplate = "";
 
     /**
+     * Static prefix prepended to every ClickHouse database name.
+     * Only alphanumeric characters and underscores are allowed.
+     * Empty string (default) means disabled.
+     */
+    private String commonDatabasePrefix = "";
+
+    /**
      * Connection to the system database.
      */
     Connection systemDbConnection;
@@ -424,6 +431,16 @@ public class DebeziumChangeEventCapture {
         // Initialize the shared schema template from configuration.
         this.commonSchemaTemplate = props.getProperty(
                 ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(), "");
+
+        // Initialize and validate the database prefix from configuration.
+        this.commonDatabasePrefix = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(), "");
+        if (!Utils.isValidDatabasePrefix(this.commonDatabasePrefix)) {
+            throw new IllegalArgumentException(
+                    "clickhouse.common.database.prefix contains invalid characters. "
+                    + "Only alphanumeric and underscore allowed: "
+                    + this.commonDatabasePrefix);
+        }
 
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -758,6 +775,8 @@ public class DebeziumChangeEventCapture {
                 dbName = recordDbName;
             }
         }
+        // Apply database prefix if configured (before suffix)
+        dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
         // Apply database schema suffix if configured
         if (this.databaseSchemaSuffix && this.commonSchemaTemplate != null
                 && !this.commonSchemaTemplate.isEmpty()) {
@@ -903,6 +922,10 @@ public class DebeziumChangeEventCapture {
         if (dbName == null) {
             String fallback = getDatabaseName(sr);
             dbName = "system".equals(fallback) ? null : fallback;
+        }
+        // Apply database prefix if configured (before suffix)
+        if (dbName != null) {
+            dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
         }
         // Apply database schema suffix if configured
         if (dbName != null && this.databaseSchemaSuffix

@@ -863,6 +863,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                 + "Example: '__{{ schema }}__' resolves to '__public__'. "
                                 + "Empty string (default) means the hardcoded format is "
                                 + "used for table prefix."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Static prefix prepended to the ClickHouse database "
+                                + "name. Only alphanumeric characters and underscores "
+                                + "are allowed. Used to differentiate when multiple "
+                                + "sink-connectors write to the same ClickHouse "
+                                + "instance. Example: 'litellm_dev_' turns database "
+                                + "'app' into 'litellm_dev_app'. Empty string "
+                                + "(default) disables this feature."
                 );
     }
 }

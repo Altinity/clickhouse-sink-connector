@@ -142,7 +142,15 @@ public enum ClickHouseSinkConnectorConfigVariables {
      * Empty string (default) means the hardcoded format is used for table
      * prefix and no suffix is applied to the database name.
      */
-    CLICKHOUSE_COMMON_SCHEMA_TEMPLATE("clickhouse.common.schema.template");
+    CLICKHOUSE_COMMON_SCHEMA_TEMPLATE("clickhouse.common.schema.template"),
+
+    /**
+     * Static string prefix prepended to the ClickHouse database name.
+     * Only alphanumeric characters and underscores are allowed.
+     * Used to differentiate when multiple sink-connectors write to the
+     * same ClickHouse instance.  Empty string (default) disables this feature.
+     */
+    CLICKHOUSE_COMMON_DATABASE_PREFIX("clickhouse.common.database.prefix");
 
 
 
