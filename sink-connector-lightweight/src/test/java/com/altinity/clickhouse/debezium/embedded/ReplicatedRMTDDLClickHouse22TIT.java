@@ -58,7 +58,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         // clickHouseContainer.start();
         Thread.sleep(15000);
 
-        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("docker.io/clickhouse/clickhouse-server:22.3")
+        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse("clickhouse/clickhouse-server:22.3")
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
                 .withUsername("ch_user")
@@ -83,7 +83,7 @@ public class ReplicatedRMTDDLClickHouse22TIT {
 
     @ParameterizedTest
     @CsvSource({
-            "docker.io/clickhouse/clickhouse-server:22.3"
+            "clickhouse/clickhouse-server:22.3"
     })
     @DisplayName("Test that validates creation of Replicated Replacing Merge Tree")
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
