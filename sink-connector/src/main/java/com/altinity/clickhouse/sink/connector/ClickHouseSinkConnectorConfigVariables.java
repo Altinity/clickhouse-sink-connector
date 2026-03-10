@@ -124,7 +124,25 @@ public enum ClickHouseSinkConnectorConfigVariables {
      * When true, ClickHouse table names include the PostgreSQL schema as a
      * prefix: __<schema>__<table>.  Default: false.
      */
-    CLICKHOUSE_TABLE_SCHEMA_PREFIX("clickhouse.table.schema.prefix");
+    CLICKHOUSE_TABLE_SCHEMA_PREFIX("clickhouse.table.schema.prefix"),
+
+    /**
+     * When true, appends the resolved {@code clickhouse.common.schema.template}
+     * to the ClickHouse database name.  Default: false.
+     */
+    CLICKHOUSE_DATABASE_SCHEMA_SUFFIX("clickhouse.database.schema.suffix"),
+
+    /**
+     * Shared template string with a {@code {{ schema }}} placeholder.
+     * Used by both {@code clickhouse.table.schema.prefix} and
+     * {@code clickhouse.database.schema.suffix} when they are enabled.
+     * Example: {@code "__{{ schema }}__"} resolves to {@code "__public__"}.
+     * When non-empty, overrides the hardcoded {@code __<schema>__} format
+     * used by {@code clickhouse.table.schema.prefix}.
+     * Empty string (default) means the hardcoded format is used for table
+     * prefix and no suffix is applied to the database name.
+     */
+    CLICKHOUSE_COMMON_SCHEMA_TEMPLATE("clickhouse.common.schema.template");
 
 
 

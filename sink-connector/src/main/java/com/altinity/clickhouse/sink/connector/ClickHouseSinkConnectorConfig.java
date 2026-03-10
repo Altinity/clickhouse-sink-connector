@@ -838,6 +838,31 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables
                                 .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, appends the resolved "
+                                + "clickhouse.common.schema.template to the ClickHouse "
+                                + "database name. Requires "
+                                + "clickhouse.common.schema.template to be set."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Shared template with {{ schema }} placeholder. "
+                                + "Used by clickhouse.table.schema.prefix (overrides "
+                                + "the hardcoded __<schema>__ format) and "
+                                + "clickhouse.database.schema.suffix. "
+                                + "Example: '__{{ schema }}__' resolves to '__public__'. "
+                                + "Empty string (default) means the hardcoded format is "
+                                + "used for table prefix."
                 );
     }
 }

@@ -159,7 +159,7 @@ public class Utils {
      * @return the extracted table name.
      */
     public static String getTableNameFromTopic(String topicName) {
-        return getTableNameFromTopic(topicName, false);
+        return getTableNameFromTopic(topicName, false, null);
     }
 
     /**
@@ -167,11 +167,8 @@ public class Utils {
      * When schemaPrefix is true, returns {@code __<schema>__<table>} using
      * the second-to-last and last segments respectively.
      * <p>
-     * Topic format: {topic.prefix}.{schema}.{table}
-     * Split example: [prefix, public, LiteLLM_SpendLogs]
-     *   schema = splitName[length-2]
-     *   table  = splitName[length-1]
-     *   result = __public__LiteLLM_SpendLogs
+     * This 2-arg overload delegates to the 3-arg version with a null template,
+     * preserving backward compatibility.
      * </p>
      *
      * @param topicName    the Kafka topic name.
@@ -180,21 +177,95 @@ public class Utils {
      */
     public static String getTableNameFromTopic(String topicName,
                                                 boolean schemaPrefix) {
-        String tableName = null;
+        return getTableNameFromTopic(topicName, schemaPrefix, null);
+    }
 
-        // topic name is expected in the form of: hostname.dbName.tableName
+    /**
+     * Extracts the table name from the given Kafka topic name with template support.
+     * <p>
+     * When {@code schemaPrefixEnabled} is true:
+     * <ul>
+     *   <li>If {@code schemaTemplate} is non-empty, it is resolved via
+     *       {@link #resolveSchemaTemplate(String, String)} and prepended to the table name.</li>
+     *   <li>Otherwise the hardcoded {@code __<schema>__} format is used.</li>
+     * </ul>
+     * Topic format: {topic.prefix}.{schema}.{table}
+     * </p>
+     *
+     * @param topicName            the Kafka topic name.
+     * @param schemaPrefixEnabled  the boolean config ({@code clickhouse.table.schema.prefix}).
+     * @param schemaTemplate       the shared template ({@code clickhouse.common.schema.template}).
+     * @return the resolved table name, or null if the topic has fewer than 2 segments.
+     */
+    public static String getTableNameFromTopic(String topicName,
+                                                boolean schemaPrefixEnabled,
+                                                String schemaTemplate) {
+        if (topicName == null) return null;
         String[] splitName = topicName.split("\\.");
-        if (splitName.length >= 3) {
-            if (schemaPrefix) {
-                String schema = splitName[splitName.length - 2];
-                String table = splitName[splitName.length - 1];
-                tableName = "__" + schema + "__" + table;
-            } else {
-                tableName = splitName[splitName.length - 1];
+        if (splitName.length < 2) return topicName;
+
+        String tableName = splitName[splitName.length - 1];
+        String schema = (splitName.length >= 3) ? splitName[splitName.length - 2] : null;
+
+        if (schemaPrefixEnabled && schema != null) {
+            // Use template if available, otherwise fall back to hardcoded format
+            if (schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String resolvedPrefix = resolveSchemaTemplate(schemaTemplate, schema);
+                return resolvedPrefix + tableName;
             }
+            return "__" + schema + "__" + tableName;
         }
 
         return tableName;
+    }
+
+    /**
+     * Extracts the schema name from a Debezium topic.
+     * <p>
+     * Topic format: {prefix}.{schema}.{table}
+     * Returns the schema segment, or null if topic has fewer than 3 segments.
+     * </p>
+     *
+     * @param topicName the Kafka topic name.
+     * @return the schema segment, or null if the topic has fewer than 3 segments.
+     */
+    public static String extractSchemaFromTopic(String topicName) {
+        if (topicName == null) return null;
+        String[] parts = topicName.split("\\.");
+        if (parts.length >= 3) {
+            return parts[parts.length - 2];
+        }
+        return null;
+    }
+
+    /**
+     * Resolves a template string by replacing {@code {{ schema }}} with the
+     * actual schema name.
+     *
+     * @param template the template string containing {@code {{ schema }}} placeholder.
+     * @param schema   the actual schema name (e.g., "public").
+     * @return the template with placeholder replaced, or empty string if template is null/empty.
+     */
+    public static String resolveSchemaTemplate(String template, String schema) {
+        if (template == null || template.isEmpty()) return "";
+        if (schema == null) return template;
+        return template.replace("{{ schema }}", schema);
+    }
+
+    /**
+     * Applies a database schema suffix to a database name.
+     *
+     * @param databaseName   the original database name.
+     * @param suffixTemplate the suffix template (e.g., "__{{ schema }}__").
+     * @param schema         the actual schema name (e.g., "public").
+     * @return the database name with suffix applied, or original if template is empty.
+     */
+    public static String applyDatabaseSchemaSuffix(String databaseName,
+                                                    String suffixTemplate,
+                                                    String schema) {
+        if (suffixTemplate == null || suffixTemplate.isEmpty()) return databaseName;
+        String resolvedSuffix = resolveSchemaTemplate(suffixTemplate, schema);
+        return databaseName + resolvedSuffix;
     }
 
     /**

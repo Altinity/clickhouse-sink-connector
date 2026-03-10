@@ -132,6 +132,19 @@ public class DebeziumChangeEventCapture {
     private boolean schemaPrefixEnabled = false;
 
     /**
+     * When true, the resolved {@code clickhouse.common.schema.template} is
+     * appended to the ClickHouse database name as a suffix.
+     */
+    private boolean databaseSchemaSuffix = false;
+
+    /**
+     * Shared template string with a {@code {{ schema }}} placeholder.
+     * Used by both table-prefix and database-suffix features when they are
+     * enabled.  Empty string means disabled / use hardcoded format.
+     */
+    private String commonSchemaTemplate = "";
+
+    /**
      * Connection to the system database.
      */
     Connection systemDbConnection;
@@ -403,7 +416,15 @@ public class DebeziumChangeEventCapture {
         // Initialize schema prefix flag from configuration.
         this.schemaPrefixEnabled = Boolean.parseBoolean(
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(), "false"));
-        
+
+        // Initialize database schema suffix flag from configuration.
+        this.databaseSchemaSuffix = Boolean.parseBoolean(
+                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(), "false"));
+
+        // Initialize the shared schema template from configuration.
+        this.commonSchemaTemplate = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(), "");
+
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             log.info("************** HISTORY MODE ENABLED **************");
@@ -595,7 +616,7 @@ public class DebeziumChangeEventCapture {
                 try {
                     String tableName = getTableName(sr);
                     if (tableName == null) {
-                        tableName = extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled);
+                        tableName = extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled, commonSchemaTemplate);
                     }
                     if (tableName != null) {
                         String tableKey = databaseName + "." + tableName;
@@ -730,13 +751,21 @@ public class DebeziumChangeEventCapture {
      * @return The database name.
      */
     private String getDatabaseName(SourceRecord sr) {
+        String dbName = "system";
         if (sr != null && sr.key() instanceof Struct) {
             String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
             if (recordDbName != null && !recordDbName.isEmpty()) {
-                return recordDbName;
+                dbName = recordDbName;
             }
         }
-        return "system";
+        // Apply database schema suffix if configured
+        if (this.databaseSchemaSuffix && this.commonSchemaTemplate != null
+                && !this.commonSchemaTemplate.isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+        }
+        return dbName;
     }
 
     /**
@@ -758,6 +787,12 @@ public class DebeziumChangeEventCapture {
                             String[] parts = topic.split("\\.");
                             if (parts.length >= 3) {
                                 String schema = parts[parts.length - 2];
+                                // Use template if available, otherwise hardcoded format
+                                if (commonSchemaTemplate != null && !commonSchemaTemplate.isEmpty()) {
+                                    String resolvedPrefix = Utils.resolveSchemaTemplate(
+                                            commonSchemaTemplate, schema);
+                                    return resolvedPrefix + tableName;
+                                }
                                 return "__" + schema + "__" + tableName;
                             }
                         }
@@ -798,12 +833,30 @@ public class DebeziumChangeEventCapture {
      */
     private static String extractTableNameFromTopic(String topic,
                                                      boolean schemaPrefix) {
+        return extractTableNameFromTopic(topic, schemaPrefix, null);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic with template support.
+     *
+     * <p>When {@code schemaPrefix} is true and {@code schemaTemplate} is
+     * non-empty, the template is resolved and prepended.  Otherwise falls
+     * back to the hardcoded {@code __<schema>__<table>} format.
+     *
+     * @param topic          Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix   when true, prepend the schema segment
+     * @param schemaTemplate the shared template ({@code clickhouse.common.schema.template})
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix,
+                                                     String schemaTemplate) {
         if (topic == null || topic.isEmpty()) {
             return null;
         }
         if (schemaPrefix) {
             // Delegate to the shared utility that handles schema prefix extraction
-            return Utils.getTableNameFromTopic(topic, true);
+            return Utils.getTableNameFromTopic(topic, true, schemaTemplate);
         }
         int lastDot = topic.lastIndexOf('.');
         if (lastDot < 0 || lastDot == topic.length() - 1) {
@@ -824,6 +877,7 @@ public class DebeziumChangeEventCapture {
      * @return the database name, or {@code null} if it cannot be determined
      */
     private String extractDatabaseNameFromRecord(SourceRecord sr) {
+        String dbName = null;
         // Try to read from the value's 'source' struct (standard Debezium envelope).
         try {
             if (sr.value() instanceof Struct) {
@@ -835,7 +889,7 @@ public class DebeziumChangeEventCapture {
                     try {
                         String db = (String) sourceStruct.get("db");
                         if (db != null && !db.isEmpty()) {
-                            return db;
+                            dbName = db;
                         }
                     } catch (Exception e) {
                         log.trace("'db' field not present in source struct: {}", e.getMessage());
@@ -846,8 +900,19 @@ public class DebeziumChangeEventCapture {
             log.debug("Could not extract database name from source struct: {}", e.getMessage());
         }
         // Fall back to key-based extraction (used by DDL path).
-        String fallback = getDatabaseName(sr);
-        return "system".equals(fallback) ? null : fallback;
+        if (dbName == null) {
+            String fallback = getDatabaseName(sr);
+            dbName = "system".equals(fallback) ? null : fallback;
+        }
+        // Apply database schema suffix if configured
+        if (dbName != null && this.databaseSchemaSuffix
+                && this.commonSchemaTemplate != null
+                && !this.commonSchemaTemplate.isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+        }
+        return dbName;
     }
 
     /**
@@ -1051,7 +1116,7 @@ public class DebeziumChangeEventCapture {
                 if (postgresSchemaChangeDetector != null) {
                     try {
                         String dmlTopic = sr.topic();
-                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, schemaPrefixEnabled);
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, schemaPrefixEnabled, commonSchemaTemplate);
                         String dmlDatabase = extractDatabaseNameFromRecord(sr);
                         if (dmlTable != null && dmlDatabase != null) {
                             postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);
