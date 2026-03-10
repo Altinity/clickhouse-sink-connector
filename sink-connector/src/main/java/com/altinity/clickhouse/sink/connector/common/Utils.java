@@ -269,6 +269,55 @@ public class Utils {
     }
 
     /**
+     * Validate that a database prefix contains only alphanumeric characters
+     * and underscores.
+     *
+     * @param prefix the prefix to validate
+     * @return true if valid (or empty/null), false if contains invalid characters
+     */
+    public static boolean isValidDatabasePrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) return true;
+        return prefix.matches("[a-zA-Z0-9_]+");
+    }
+
+    /**
+     * Apply database prefix to a database name.
+     *
+     * @param databaseName the original database name
+     * @param prefix       the prefix string (must be alphanumeric + underscore only)
+     * @return the prefixed database name, or original if prefix is empty/null
+     */
+    public static String applyDatabasePrefix(String databaseName, String prefix) {
+        if (prefix == null || prefix.isEmpty()) return databaseName;
+        return prefix + databaseName;
+    }
+
+    /**
+     * Apply both database prefix and schema suffix to a database name.
+     * Order: prefix + databaseName + suffix
+     *
+     * @param databaseName   the original database name
+     * @param prefix         the static prefix (e.g., "litellm_dev_")
+     * @param suffixTemplate the suffix template (e.g., "__{{ schema }}__")
+     * @param schema         the actual schema name (e.g., "public")
+     * @return the fully qualified database name
+     */
+    public static String applyDatabaseNaming(String databaseName,
+                                              String prefix,
+                                              String suffixTemplate,
+                                              String schema) {
+        String result = databaseName;
+        if (prefix != null && !prefix.isEmpty()) {
+            result = prefix + result;
+        }
+        if (suffixTemplate != null && !suffixTemplate.isEmpty()) {
+            String resolvedSuffix = resolveSchemaTemplate(suffixTemplate, schema);
+            result = result + resolvedSuffix;
+        }
+        return result;
+    }
+
+    /**
      * Validates if the provided table name meets the required conditions.
      * <p>
      * This method is a placeholder for the validation logic.
