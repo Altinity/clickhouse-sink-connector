@@ -595,6 +595,25 @@ public class ClickHouseBatchRunnable implements Runnable {
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
         }
 
+        // Apply database prefix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            String dbPrefix = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+            databaseName = Utils.applyDatabasePrefix(databaseName, dbPrefix);
+        }
+
+        // Apply database schema suffix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            boolean dbSchemaSuffix = this.config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString());
+            String schemaTemplate = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+            if (dbSchemaSuffix && schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String schema = Utils.extractSchemaFromTopic(topicName);
+                databaseName = Utils.applyDatabaseSchemaSuffix(databaseName, schemaTemplate, schema);
+            }
+        }
+
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
 
