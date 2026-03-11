@@ -193,12 +193,110 @@ def create_ch_table(ch_conn, ch_database, table_name, columns, pk_columns,
 
 
 # ---------------------------------------------------------------------------
+# PK-range segmentation helpers
+# ---------------------------------------------------------------------------
+
+def get_pk_range_boundaries(pg_conn, pg_schema, table_name, pk_column, num_segments):
+    """
+    Discover evenly-spaced boundary values for *pk_column* so the table can
+    be loaded in *num_segments* parallel COPY streams.
+
+    Uses ntile() windowing to find the segment boundaries.  Returns a list of
+    (lower_bound_inclusive, upper_bound_exclusive) tuples.  The first tuple
+    has lower_bound=None and the last has upper_bound=None so the full range
+    is covered.
+
+    Parameters
+    ----------
+    pg_conn      : psycopg2 connection
+    pg_schema    : PG schema name
+    table_name   : PG table name
+    pk_column    : column name to range-partition on (must be sortable)
+    num_segments : desired number of segments
+
+    Returns
+    -------
+    list of (lower, upper) tuples — len == num_segments
+    """
+    from ch_sink_tools.db.postgres import execute_pg
+
+    # Find the boundary values using ntile
+    sql = f"""
+        WITH ranked AS (
+            SELECT "{pk_column}",
+                   ntile({num_segments}) OVER (ORDER BY "{pk_column}") AS seg
+            FROM "{pg_schema}"."{table_name}"
+        )
+        SELECT seg, MIN("{pk_column}") AS seg_min, MAX("{pk_column}") AS seg_max
+        FROM ranked
+        GROUP BY seg
+        ORDER BY seg
+    """
+    rows = execute_pg(pg_conn, sql)
+
+    if not rows:
+        return [(None, None)]
+
+    boundaries = []
+    for i, row in enumerate(rows):
+        lower = row['seg_min'] if i > 0 else None
+        upper = rows[i + 1]['seg_min'] if i < len(rows) - 1 else None
+        boundaries.append((lower, upper))
+
+    return boundaries
+
+
+def get_pk_type_is_segmentable(pg_conn, pg_schema, table_name, pk_columns):
+    """
+    Check if the primary key is suitable for range-based segmentation.
+
+    A PK is segmentable if:
+    - It has exactly one column (compound PKs are too complex)
+    - The column type supports range comparisons (int, bigint, text, varchar,
+      timestamp, uuid, etc.)
+
+    Returns (is_segmentable: bool, pk_column: str or None)
+    """
+    if len(pk_columns) != 1:
+        return False, None
+
+    pk_col = pk_columns[0]
+
+    # Check the column type
+    from ch_sink_tools.db.postgres import execute_pg
+    sql = f"""
+        SELECT data_type, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = '{pg_schema}'
+          AND table_name = '{table_name}'
+          AND column_name = '{pk_col}'
+    """
+    rows = execute_pg(pg_conn, sql)
+    if not rows:
+        return False, None
+
+    data_type = rows[0]['data_type'].lower()
+    # Most types support range comparisons in PostgreSQL
+    segmentable_types = {
+        'integer', 'bigint', 'smallint', 'serial', 'bigserial',
+        'text', 'character varying', 'varchar', 'character', 'char',
+        'uuid', 'timestamp without time zone', 'timestamp with time zone',
+        'date', 'real', 'double precision', 'numeric',
+    }
+    if data_type in segmentable_types:
+        return True, pk_col
+
+    return False, None
+
+
+# ---------------------------------------------------------------------------
 # Per-table COPY → clickhouse-client pipe
 # ---------------------------------------------------------------------------
 
 def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
                         pg_database, pg_schema, table_name,
-                        column_names, batch_size=None):
+                        column_names, batch_size=None,
+                        where_clause=None):
     """
     Build the psql command that streams CSV rows for *table_name* to stdout.
 
@@ -217,12 +315,19 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     (e.g. "LiteLLM_AccessGroupTable" → litellm_accessgrouptable) and fail
     with 'relation does not exist'.
 
+    Parameters
+    ----------
+    where_clause : Optional SQL WHERE clause (without the WHERE keyword) to
+                   filter rows.  Used for PK-range segmented loading.
+                   Example: '"request_id" >= 'abc' AND "request_id" < 'def''
+
     Returns (cmd, tmp_file_path) — the caller must clean up the temp file.
     """
     import tempfile
     col_list = ", ".join(f'"{c}"' for c in column_names)
+    where_part = f" WHERE {where_clause}" if where_clause else ""
     copy_sql = (
-        f"COPY (SELECT {col_list} FROM \"{pg_schema}\".\"{table_name}\") "
+        f"COPY (SELECT {col_list} FROM \"{pg_schema}\".\"{table_name}\"{where_part}) "
         f"TO STDOUT WITH (FORMAT CSV, HEADER false, FORCE_QUOTE *)"
     )
 
@@ -316,9 +421,12 @@ def load_table(
     dry_run=False, batch_size=None,
     pg_server_timezone=None,
     ch_table_name=None,
+    where_clause=None,
+    segment_label=None,
 ):
     """
-    Stream one table from PostgreSQL COPY to ClickHouse INSERT via a shell pipe.
+    Stream one table (or a segment of it) from PostgreSQL COPY to ClickHouse
+    INSERT via a shell pipe.
     Returns (label, rows_estimated, elapsed_seconds, success).
 
     Parameters
@@ -326,11 +434,17 @@ def load_table(
     table_name     : PG table name (used for COPY from PostgreSQL)
     ch_table_name  : ClickHouse destination table name.  Defaults to *table_name*
                      when not provided (backward compatible pass-through).
+    where_clause   : Optional SQL WHERE clause (without WHERE keyword) to filter
+                     rows.  Used for PK-range segmented loading of large tables.
+    segment_label  : Human-readable label for this segment (e.g. "seg 1/4").
+                     Used in log messages.
     """
     # Resolve CH table name — default to PG table name for backward compat
     if ch_table_name is None:
         ch_table_name = table_name
     label = ch_table_name
+    if segment_label:
+        label = f"{ch_table_name} [{segment_label}]"
 
     t_start = time.time()
     success = False
@@ -342,6 +456,10 @@ def load_table(
         columns_meta = get_table_columns(pg_conn, pg_schema, table_name, pg_server_timezone=pg_server_timezone)
         pk_cols = get_table_pk(pg_conn, pg_schema, table_name)
         approx_rows = get_table_row_count(pg_conn, pg_schema, table_name)
+        if where_clause:
+            # For segments we don't have an exact row count for the segment;
+            # estimate evenly (caller can override via segment_label).
+            approx_rows = -1
         pg_conn.close()
 
         column_names = [c['column_name'] for c in columns_meta]
@@ -349,6 +467,7 @@ def load_table(
         psql_cmd, pg_tmp_file = build_psql_copy_cmd(
             pg_host, pg_port, pg_user, pg_password,
             pg_database, pg_schema, table_name, column_names, batch_size,
+            where_clause=where_clause,
         )
         ch_cmd = build_ch_insert_cmd(
             ch_host, ch_port, ch_user, ch_password,
@@ -361,7 +480,10 @@ def load_table(
         # exit code of the last command (clickhouse-client) is returned,
         # masking psql COPY errors.
         pipe_cmd = f"set -o pipefail; {psql_cmd} | {ch_cmd}"
-        logging.info(f"[{label}] Starting load (~{approx_rows:,} rows)")
+        if approx_rows >= 0:
+            logging.info(f"[{label}] Starting load (~{approx_rows:,} rows)")
+        else:
+            logging.info(f"[{label}] Starting segment load")
         logging.debug(f"[{label}] pipe cmd: {pipe_cmd}")
 
         if not dry_run:
@@ -379,11 +501,14 @@ def load_table(
                 )
 
         elapsed = time.time() - t_start
-        rate = approx_rows / elapsed if elapsed > 0 else 0
-        logging.info(
-            f"[{label}] Done in {elapsed:.1f}s "
-            f"(~{approx_rows:,} rows, ~{rate:,.0f} rows/s)"
-        )
+        if approx_rows > 0:
+            rate = approx_rows / elapsed if elapsed > 0 else 0
+            logging.info(
+                f"[{label}] Done in {elapsed:.1f}s "
+                f"(~{approx_rows:,} rows, ~{rate:,.0f} rows/s)"
+            )
+        else:
+            logging.info(f"[{label}] Done in {elapsed:.1f}s")
         success = True
 
     except Exception as e:
@@ -394,6 +519,40 @@ def load_table(
         logging.error(traceback.format_exc())
 
     return (label, approx_rows, time.time() - t_start, success)
+
+
+def build_segment_where_clause(pk_column, lower_bound, upper_bound):
+    """
+    Build a SQL WHERE clause for a PK-range segment.
+
+    Parameters
+    ----------
+    pk_column    : the primary key column name
+    lower_bound  : inclusive lower bound (None = no lower limit)
+    upper_bound  : exclusive upper bound (None = no upper limit)
+
+    Returns
+    -------
+    str — WHERE clause without the WHERE keyword, e.g.
+          '"request_id" >= 'abc' AND "request_id" < 'def''
+    """
+    conditions = []
+    if lower_bound is not None:
+        # Escape single quotes in the value
+        val = str(lower_bound).replace("'", "''")
+        conditions.append(f'"{pk_column}" >= \'{val}\'')
+    if upper_bound is not None:
+        val = str(upper_bound).replace("'", "''")
+        conditions.append(f'"{pk_column}" < \'{val}\'')
+    return " AND ".join(conditions) if conditions else "TRUE"
+
+
+def drop_ch_table(ch_conn, ch_database, table_name, dry_run=False):
+    """Drop a ClickHouse table if it exists."""
+    sql = f"DROP TABLE IF EXISTS `{ch_database}`.`{table_name}`"
+    logging.info(f"DROP TABLE: {sql}")
+    if not dry_run:
+        clickhouse_execute_conn(ch_conn, sql)
 
 
 # ---------------------------------------------------------------------------
@@ -679,7 +838,7 @@ def validate_postgres_privileges(pg_conn, pg_user, schema, tables, config):
         try:
             cur.execute(
                 "SELECT has_table_privilege(%s, %s, 'SELECT')",
-                (pg_user, f"{schema}.{table_name}")
+                (pg_user, f'"{schema}"."{table_name}"')
             )
             has_sel = cur.fetchone()[0]
             if has_sel:
@@ -894,7 +1053,12 @@ def parse_sink_connector_config(config: dict) -> dict:
     if 'clickhouse.server.url' in config:
         mapping['ch_host'] = config['clickhouse.server.url']
     if 'clickhouse.server.port' in config:
-        mapping['ch_port'] = int(config['clickhouse.server.port'])
+        cfg_port = int(config['clickhouse.server.port'])
+        # The Java connector uses the HTTP port (8123/8443).  The Python
+        # dumper uses clickhouse-client (native protocol, default 9000/9440).
+        # Auto-convert well-known HTTP ports to their native equivalents.
+        http_to_native = {8123: 9000, 8443: 9440}
+        mapping['ch_port'] = http_to_native.get(cfg_port, cfg_port)
     if 'clickhouse.server.user' in config:
         mapping['ch_user'] = config['clickhouse.server.user']
     if 'clickhouse.server.password' in config:
@@ -933,6 +1097,31 @@ def parse_sink_connector_config(config: dict) -> dict:
         mapping['pg_database_exclude'] = _debezium_list_to_regex(
             str(config['database.exclude.list']))
 
+    # ClickHouse database prefix / schema suffix (naming convention)
+    # These config keys control how the Java connector builds its CH database
+    # name.  We translate them into a ch_database_template so that
+    # resolve_ch_names() produces the same result.
+    #
+    #   clickhouse.common.database.prefix  →  prepended to {{ database }}
+    #   clickhouse.common.schema.template  →  appended (contains {{ schema }})
+    #   clickhouse.database.schema.suffix  →  "true" to enable the above
+    #
+    # Example:  prefix="litellm_prod_", schema_template="__{{ schema }}"
+    #   → ch_database_template = "litellm_prod_{{ database }}__{{ schema }}"
+    #   → for db=app, schema=public  →  litellm_prod_app__public
+    db_prefix = config.get('clickhouse.common.database.prefix', '')
+    schema_template = config.get('clickhouse.common.schema.template', '')
+    use_schema_suffix = str(config.get('clickhouse.database.schema.suffix', 'false')).lower() == 'true'
+
+    if db_prefix or (use_schema_suffix and schema_template):
+        tmpl = f"{db_prefix}{{{{ database }}}}"
+        if use_schema_suffix and schema_template:
+            tmpl += schema_template
+        mapping['ch_database_template'] = tmpl
+        # If ch_database was already set as a literal, remove it — the template
+        # is more specific and will produce the correct per-schema names.
+        mapping.pop('ch_database', None)
+
     # Connector name (used for offset table)
     if 'database.server.name' in config:
         mapping['connector_name'] = config['database.server.name']
@@ -970,12 +1159,21 @@ def load_config_file(config_path: str) -> dict:
 
 def merge_config_with_args(args, config: dict):
     """Merge config file values into args namespace.
-    CLI arguments take precedence over config file values.
-    Only set config values for args that are still at their default (None).
+
+    CLI arguments that were *explicitly* passed on the command line always win.
+    Config file values fill in everything else — even args whose argparse
+    ``default`` is not None (e.g. ``--ch_database_template`` defaults to
+    ``'{{ database }}'``).
+
+    We rely on the ``_explicitly_set`` attribute stamped onto the namespace
+    by ``main()`` right after ``parse_args()``.  Any key listed there was
+    provided on the CLI and must not be overwritten.
     """
+    explicitly_set = getattr(args, '_explicitly_set', set())
     for key, value in config.items():
-        # Only apply config value if CLI arg was not explicitly provided
-        if hasattr(args, key) and getattr(args, key) is None:
+        if key in explicitly_set:
+            continue            # CLI wins
+        if hasattr(args, key):
             setattr(args, key, value)
     return args
 
@@ -991,11 +1189,11 @@ def main():
     )
 
     # -- PostgreSQL connection ------------------------------------------------
-    parser.add_argument('--pg_host', required=True,
+    parser.add_argument('--pg_host', required=False, default=None,
                         help='PostgreSQL host')
     parser.add_argument('--pg_port', type=int, default=5432,
                         help='PostgreSQL port (default: 5432)')
-    parser.add_argument('--pg_database', required=True,
+    parser.add_argument('--pg_database', required=False, default=None,
                         help='PostgreSQL database name')
     parser.add_argument('--pg_user', required=False,
                         help='PostgreSQL user')
@@ -1011,7 +1209,7 @@ def main():
                         help='Regex pattern to exclude schemas (e.g., "pg_.*|information_schema")')
 
     # -- ClickHouse connection ------------------------------------------------
-    parser.add_argument('--ch_host', required=True,
+    parser.add_argument('--ch_host', required=False, default=None,
                         help='ClickHouse host')
     parser.add_argument('--ch_port', type=int, default=9000,
                         help='ClickHouse native port (default: 9000)')
@@ -1062,6 +1260,21 @@ def main():
                         help='Number of parallel table threads (default: 4)')
     parser.add_argument('--batch_size', type=int, default=None,
                         help='Batch size hint (not enforced in direct-pipe mode)')
+    parser.add_argument('--drop_existing', dest='drop_existing',
+                        action='store_true', default=False,
+                        help='DROP existing ClickHouse tables before recreating them')
+    parser.add_argument('--segment_threshold', type=int, default=1_000_000,
+                        help=(
+                            'Row count above which a table is split into parallel '
+                            'PK-range segments for loading (default: 1,000,000). '
+                            'Set to 0 to disable segmentation.'
+                        ))
+    parser.add_argument('--segments_per_table', type=int, default=4,
+                        help=(
+                            'Number of parallel segments per large table '
+                            '(default: 4). Only applies to tables exceeding '
+                            '--segment_threshold rows.'
+                        ))
 
     # -- Offset table (for CDC hand-off) -------------------------------------
     parser.add_argument('--offset_table', required=False, default=None,
@@ -1096,6 +1309,19 @@ def main():
     global args
     args = parser.parse_args()
 
+    # Track which CLI args were explicitly provided (not just defaulted).
+    # This lets merge_config_with_args() know which values the user typed
+    # on the command line so they are never overwritten by the config file.
+    _explicitly_set = set()
+    for action in parser._actions:
+        if action.dest == 'help':
+            continue
+        # If the current value differs from the argparse default,
+        # the user explicitly provided it.
+        if getattr(args, action.dest) != action.default:
+            _explicitly_set.add(action.dest)
+    args._explicitly_set = _explicitly_set
+
     # -- Config file loading (CLI args override config values) ----------------
     if args.config:
         config = load_config_file(args.config)
@@ -1129,6 +1355,20 @@ def main():
     validate_template(args.ch_database_template, 'ch_database_template')
     validate_template(args.ch_table_template, 'ch_table_template',
                       required_vars=frozenset({'table'}))
+
+    # -- Post-config required-arg validation ----------------------------------
+    missing = []
+    if not args.pg_host:
+        missing.append('--pg_host')
+    if not args.pg_database:
+        missing.append('--pg_database')
+    if not args.ch_host:
+        missing.append('--ch_host')
+    if missing:
+        parser.error(
+            f"the following arguments are required (via CLI or config file): "
+            f"{', '.join(missing)}"
+        )
 
     # -- Dependency checks ----------------------------------------------------
     assert check_program_exists('psql'), \
@@ -1338,6 +1578,13 @@ def main():
                         )
                         pg_conn_t.close()
 
+                        # -- Drop existing table if requested ----------------
+                        if args.drop_existing:
+                            drop_ch_table(
+                                ch_conn_schema, ch_db, ch_table,
+                                dry_run=args.dry_run,
+                            )
+
                         # -- Override reconciliation -------------------------
                         # If the table already exists AND overrides are
                         # configured, reconcile before (re-)creating:
@@ -1375,11 +1622,105 @@ def main():
                     ch_conn_schema.close()
 
         # --------------------------------------------------------------------
-        # Step 4: Load data in parallel
+        # Step 4: Load data in parallel (with PK-range segmentation for
+        # large tables)
         # --------------------------------------------------------------------
         if not args.schema_only:
+            # Build the full list of load jobs.  Each job is either:
+            #   - A whole-table load (small tables)
+            #   - A PK-range segment load (large tables)
+            # This list is then fed into the thread pool.
+            load_jobs = []   # list of dicts with load_table kwargs
+
+            segment_threshold = getattr(args, 'segment_threshold', 1_000_000)
+            segments_per_table = getattr(args, 'segments_per_table', 4)
+
+            for schema_name, table_name, ch_database, ch_table in work_items:
+                # Check row count to decide if segmentation is needed
+                pg_conn_seg = get_postgres_connection(
+                    args.pg_host, pg_user, pg_password,
+                    args.pg_port, args.pg_database
+                )
+                approx_rows = get_table_row_count(pg_conn_seg, schema_name, table_name)
+                pk_cols = get_table_pk(pg_conn_seg, schema_name, table_name)
+
+                if (segment_threshold > 0
+                        and approx_rows > segment_threshold
+                        and segments_per_table > 1):
+                    # Check if PK is suitable for segmentation
+                    is_seg, pk_col = get_pk_type_is_segmentable(
+                        pg_conn_seg, schema_name, table_name, pk_cols
+                    )
+                    if is_seg:
+                        logging.info(
+                            f"[{ch_table}] Large table (~{approx_rows:,} rows), "
+                            f"splitting into {segments_per_table} PK segments "
+                            f"on column '{pk_col}'"
+                        )
+                        boundaries = get_pk_range_boundaries(
+                            pg_conn_seg, schema_name, table_name,
+                            pk_col, segments_per_table
+                        )
+                        pg_conn_seg.close()
+                        for seg_idx, (lower, upper) in enumerate(boundaries, 1):
+                            where = build_segment_where_clause(pk_col, lower, upper)
+                            load_jobs.append({
+                                'table_name': table_name,
+                                'pg_host': args.pg_host,
+                                'pg_port': args.pg_port,
+                                'pg_user': pg_user,
+                                'pg_password': pg_password,
+                                'pg_database': args.pg_database,
+                                'pg_schema': schema_name,
+                                'ch_host': args.ch_host,
+                                'ch_port': args.ch_port,
+                                'ch_user': ch_user,
+                                'ch_password': ch_password,
+                                'ch_database': ch_database,
+                                'ch_config_file': args.ch_config_file,
+                                'ch_secure': args.ch_secure,
+                                'dry_run': args.dry_run,
+                                'batch_size': args.batch_size,
+                                'pg_server_timezone': pg_server_timezone,
+                                'ch_table_name': ch_table,
+                                'where_clause': where,
+                                'segment_label': f"seg {seg_idx}/{len(boundaries)}",
+                            })
+                        continue   # skip the whole-table fallback below
+                    else:
+                        logging.info(
+                            f"[{ch_table}] Large table (~{approx_rows:,} rows) "
+                            f"but PK not segmentable (compound or unsupported type), "
+                            f"loading as single stream"
+                        )
+
+                pg_conn_seg.close()
+
+                # Whole-table load (no segmentation)
+                load_jobs.append({
+                    'table_name': table_name,
+                    'pg_host': args.pg_host,
+                    'pg_port': args.pg_port,
+                    'pg_user': pg_user,
+                    'pg_password': pg_password,
+                    'pg_database': args.pg_database,
+                    'pg_schema': schema_name,
+                    'ch_host': args.ch_host,
+                    'ch_port': args.ch_port,
+                    'ch_user': ch_user,
+                    'ch_password': ch_password,
+                    'ch_database': ch_database,
+                    'ch_config_file': args.ch_config_file,
+                    'ch_secure': args.ch_secure,
+                    'dry_run': args.dry_run,
+                    'batch_size': args.batch_size,
+                    'pg_server_timezone': pg_server_timezone,
+                    'ch_table_name': ch_table,
+                })
+
             logging.info(
                 f"=== Step 4: Loading {len(work_items)} tables "
+                f"({len(load_jobs)} jobs including segments) "
                 f"with {args.threads} threads ==="
             )
             results = []
@@ -1387,23 +1728,8 @@ def main():
                 max_workers=args.threads, thread_name_prefix='pg_loader'
             ) as executor:
                 futures = {
-                    executor.submit(
-                        load_table,
-                        table_name,
-                        args.pg_host, args.pg_port,
-                        pg_user, pg_password,
-                        args.pg_database, schema_name,
-                        args.ch_host, args.ch_port,
-                        ch_user, ch_password,
-                        ch_database,
-                        ch_config_file=args.ch_config_file,
-                        ch_secure=args.ch_secure,
-                        dry_run=args.dry_run,
-                        batch_size=args.batch_size,
-                        pg_server_timezone=pg_server_timezone,
-                        ch_table_name=ch_table,
-                    ): (schema_name, table_name, ch_database, ch_table)
-                    for schema_name, table_name, ch_database, ch_table in work_items
+                    executor.submit(load_table, **job): job
+                    for job in load_jobs
                 }
 
                 for future in concurrent.futures.as_completed(futures):
@@ -1411,8 +1737,11 @@ def main():
                         result = future.result()
                         results.append(result)
                     except Exception as exc:
-                        item = futures[future]
-                        tbl_label = f"{item[0]}.{item[1]}"
+                        job = futures[future]
+                        tbl_label = job.get('ch_table_name', job['table_name'])
+                        seg = job.get('segment_label', '')
+                        if seg:
+                            tbl_label = f"{tbl_label} [{seg}]"
                         logging.error(f"[{tbl_label}] raised an exception: {exc}")
                         logging.error(traceback.format_exc())
                         results.append((tbl_label, -1, 0, False))
@@ -1424,13 +1753,19 @@ def main():
             for (tbl, rows, elapsed, ok) in sorted(results, key=lambda r: r[0]):
                 status = "OK" if ok else "FAILED"
                 rate = rows / elapsed if elapsed > 0 and rows > 0 else 0
-                logging.info(
-                    f"  {status:6s}  {tbl:50s} "
-                    f"~{rows:>12,} rows  {elapsed:>7.1f}s  ~{rate:>10,.0f} rows/s"
-                )
+                if rows >= 0:
+                    logging.info(
+                        f"  {status:6s}  {tbl:50s} "
+                        f"~{rows:>12,} rows  {elapsed:>7.1f}s  ~{rate:>10,.0f} rows/s"
+                    )
+                else:
+                    logging.info(
+                        f"  {status:6s}  {tbl:50s} "
+                        f"   (segment)  {elapsed:>7.1f}s"
+                    )
                 if not ok:
                     failed.append(tbl)
-                else:
+                elif rows > 0:
                     total_rows += rows
 
             if failed:
