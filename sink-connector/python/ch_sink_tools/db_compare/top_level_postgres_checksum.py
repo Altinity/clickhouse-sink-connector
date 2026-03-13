@@ -975,6 +975,9 @@ def compare_table(table_name: str,
                     if pg_t in ('tstzrange', 'tsrange', 'daterange', 'int4range', 'int8range', 'numrange') \
                             or udt_n in ('tstzrange', 'tsrange', 'daterange', 'int4range', 'int8range', 'numrange'):
                         continue
+                    # Bug 84.2-2 fix: Skip array columns (Debezium JSON vs PG text format mismatch)
+                    if udt_n.startswith('_') or pg_t.endswith('[]') or 'array' in pg_t:
+                        continue
                     pg_included_cols.append(c['column_name'])
 
                 # Build columns_meta for only the included columns so CH can
@@ -1719,6 +1722,12 @@ def run_config(config: dict, args) -> None:
                                         or udt_n in ('tstzrange', 'tsrange',
                                                      'daterange', 'int4range',
                                                      'int8range', 'numrange'):
+                                    continue
+
+                                # Bug 84.2-2 fix: Skip array columns
+                                # (Debezium JSON vs PG text format mismatch)
+                                if udt_n.startswith('_') or pg_t.endswith('[]') \
+                                        or 'array' in pg_t:
                                     continue
 
                                 included_cols.append(col_name)

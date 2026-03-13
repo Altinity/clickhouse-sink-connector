@@ -115,6 +115,9 @@ class ColumnTypeOverrideConfig:
     ) -> Optional[str]:
         """Return the target CH type for a direct override, or None.
 
+        All comparisons are case-insensitive (consistent with the Java code
+        which normalises everything to lowercase).
+
         Matching priority:
           1. Exact database.schema.table.column match
           2. *.schema.table.column match (wildcard database)
@@ -127,17 +130,26 @@ class ColumnTypeOverrideConfig:
         schema_wild_match = None
         global_wild_match = None
 
+        db_l = database.lower()
+        schema_l = schema.lower()
+        table_l = table.lower()
+        column_l = column.lower()
+
         for d in self._direct:
-            if d.column.lower() != column.lower():
+            if d.column.lower() != column_l:
                 continue
 
-            if d.database == database and d.schema == schema and d.table == table:
+            d_db = d.database.lower()
+            d_schema = d.schema.lower()
+            d_table = d.table.lower()
+
+            if d_db == db_l and d_schema == schema_l and d_table == table_l:
                 exact_match = d.target_type
-            elif d.database == '*' and d.schema == schema and d.table == table:
+            elif d_db == '*' and d_schema == schema_l and d_table == table_l:
                 db_wild_match = d.target_type
-            elif d.database == '*' and d.schema == '*' and d.table == table:
+            elif d_db == '*' and d_schema == '*' and d_table == table_l:
                 schema_wild_match = d.target_type
-            elif d.database == '*' and d.schema == '*' and d.table == '*':
+            elif d_db == '*' and d_schema == '*' and d_table == '*':
                 global_wild_match = d.target_type
 
         return exact_match or db_wild_match or schema_wild_match or global_wild_match
@@ -147,14 +159,18 @@ class ColumnTypeOverrideConfig:
     ) -> List[AliasOverride]:
         """Return all alias overrides that match the given database.schema.table.
 
-        A match occurs when database, schema, and table all match
-        (either exactly or via wildcard '*').
+        All comparisons are case-insensitive.  A match occurs when database,
+        schema, and table all match (either exactly or via wildcard '*').
         """
+        db_l = database.lower()
+        schema_l = schema.lower()
+        table_l = table.lower()
+
         result = []
         for a in self._alias:
-            db_match = (a.database == database or a.database == '*')
-            schema_match = (a.schema == schema or a.schema == '*')
-            table_match = (a.table == table or a.table == '*')
+            db_match = (a.database.lower() == db_l or a.database == '*')
+            schema_match = (a.schema.lower() == schema_l or a.schema == '*')
+            table_match = (a.table.lower() == table_l or a.table == '*')
             if db_match and schema_match and table_match:
                 result.append(a)
         return result
@@ -164,14 +180,18 @@ class ColumnTypeOverrideConfig:
     ) -> List[DirectOverride]:
         """Return all direct overrides that match the given database.schema.table.
 
-        A match occurs when database, schema, and table all match
-        (either exactly or via wildcard '*').
+        All comparisons are case-insensitive.  A match occurs when database,
+        schema, and table all match (either exactly or via wildcard '*').
         """
+        db_l = database.lower()
+        schema_l = schema.lower()
+        table_l = table.lower()
+
         result = []
         for d in self._direct:
-            db_match = (d.database == database or d.database == '*')
-            schema_match = (d.schema == schema or d.schema == '*')
-            table_match = (d.table == table or d.table == '*')
+            db_match = (d.database.lower() == db_l or d.database == '*')
+            schema_match = (d.schema.lower() == schema_l or d.schema == '*')
+            table_match = (d.table.lower() == table_l or d.table == '*')
             if db_match and schema_match and table_match:
                 result.append(d)
         return result
@@ -252,6 +272,108 @@ class ColumnTypeOverrideConfig:
                 )
 
         return cls(direct_overrides, alias_overrides)
+
+    @classmethod
+    def from_connector_properties(cls, props: dict) -> Optional['ColumnTypeOverrideConfig']:
+        """Parse column type overrides from a Java-style flat property dict.
+
+        This handles the connector config.yml format where keys look like:
+
+        4-part (preferred):
+            column_type_override.direct.<database>.<schema>.<table>.<column>: "<CHType>"
+            column_type_override.alias.<database>.<schema>.<table>.<column>: "<CHType>|<expression>"
+
+        3-part (backward compat — database defaults to '*'):
+            column_type_override.direct.<schema>.<table>.<column>: "<CHType>"
+            column_type_override.alias.<schema>.<table>.<column>: "<CHType>|<expression>"
+
+        Args:
+            props: a flat dict of connector config properties (e.g. loaded
+                   from config.yml via yaml.safe_load).
+
+        Returns:
+            a ColumnTypeOverrideConfig if any overrides were found, else None.
+        """
+        DIRECT_PREFIX = 'column_type_override.direct.'
+        ALIAS_PREFIX = 'column_type_override.alias.'
+
+        direct_overrides = []
+        alias_overrides = []
+
+        for key, value in props.items():
+            key_str = str(key)
+            value_str = str(value).strip()
+
+            if key_str.startswith(DIRECT_PREFIX):
+                suffix = key_str[len(DIRECT_PREFIX):]
+                parts = suffix.split('.')
+                if len(parts) == 4:
+                    database, schema, table, column = parts
+                elif len(parts) == 3:
+                    database = '*'
+                    schema, table, column = parts
+                else:
+                    logger.warning(
+                        f"column_type_overrides: skipping malformed direct key: '{key_str}'"
+                    )
+                    continue
+                direct_overrides.append(DirectOverride(
+                    database=database,
+                    schema=schema,
+                    table=table,
+                    column=column,
+                    target_type=value_str,
+                ))
+
+            elif key_str.startswith(ALIAS_PREFIX):
+                suffix = key_str[len(ALIAS_PREFIX):]
+                parts = suffix.split('.')
+                if len(parts) == 4:
+                    database, schema, table, column = parts
+                elif len(parts) == 3:
+                    database = '*'
+                    schema, table, column = parts
+                else:
+                    logger.warning(
+                        f"column_type_overrides: skipping malformed alias key: '{key_str}'"
+                    )
+                    continue
+
+                pipe_idx = value_str.find('|')
+                if pipe_idx < 0:
+                    logger.warning(
+                        f"column_type_overrides: alias value missing '|' separator: "
+                        f"'{key_str}={value_str}'"
+                    )
+                    continue
+
+                alias_type = value_str[:pipe_idx].strip()
+                expression = value_str[pipe_idx + 1:].strip()
+
+                if not alias_type or not expression:
+                    logger.warning(
+                        f"column_type_overrides: alias entry has empty type or expression: "
+                        f"'{key_str}={value_str}'"
+                    )
+                    continue
+
+                alias_overrides.append(AliasOverride(
+                    column=column,
+                    alias_type=alias_type,
+                    expression=expression,
+                    database=database,
+                    schema=schema,
+                    table=table,
+                ))
+
+        if direct_overrides or alias_overrides:
+            config = cls(direct_overrides, alias_overrides)
+            logger.info(
+                f"Parsed {len(direct_overrides)} direct override(s) and "
+                f"{len(alias_overrides)} alias override(s) from connector properties"
+            )
+            return config
+        return None
 
     @classmethod
     def from_cli_args(

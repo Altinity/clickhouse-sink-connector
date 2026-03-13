@@ -364,6 +364,10 @@ public class PostgreSQLDDLParserService implements DDLParserService {
             ColumnTypeOverrideConfig overrideConfig =
                     ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
             if (overrideConfig.hasOverrides()) {
+                // Use the 3-arg backward-compatible overload which passes
+                // database="*".  The schema parameter here is actually the
+                // CH database name (e.g. "litellm_prod_app__public"), and
+                // schemaMatches() inside the config handles suffix extraction.
                 Optional<String> directOverride =
                         overrideConfig.getDirectOverride(schema, tableName, columnName);
                 if (directOverride.isPresent()) {
