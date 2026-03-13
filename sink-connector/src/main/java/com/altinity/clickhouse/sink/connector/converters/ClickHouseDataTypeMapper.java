@@ -683,9 +683,9 @@ public class ClickHouseDataTypeMapper {
      *   <tr><td>BOOLEAN</td><td>Nullable(UInt8)</td></tr>
      *   <tr><td>STRING</td><td>Nullable(String)</td></tr>
      *   <tr><td>BYTES</td><td>Nullable(String)</td></tr>
-     *   <tr><td>io.debezium.time.MicroTimestamp</td><td>Nullable(DateTime64(6))</td></tr>
-     *   <tr><td>io.debezium.time.Timestamp</td><td>Nullable(DateTime64(3))</td></tr>
-     *   <tr><td>io.debezium.time.NanoTimestamp</td><td>Nullable(DateTime64(9))</td></tr>
+     *   <tr><td>io.debezium.time.MicroTimestamp</td><td>Nullable(DateTime64(6, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.Timestamp</td><td>Nullable(DateTime64(3, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.NanoTimestamp</td><td>Nullable(DateTime64(9, 'UTC'))</td></tr>
      *   <tr><td>io.debezium.time.ZonedTimestamp</td><td>Nullable(DateTime64(6, 'UTC'))</td></tr>
      *   <tr><td>io.debezium.time.Date</td><td>Nullable(Date32)</td></tr>
      *   <tr><td>io.debezium.time.MicroTime</td><td>Nullable(Int64)</td></tr>
@@ -707,11 +707,11 @@ public class ClickHouseDataTypeMapper {
         if (logicalType != null) {
             switch (logicalType) {
                 case MicroTimestamp.SCHEMA_NAME:       // "io.debezium.time.MicroTimestamp"
-                    return "Nullable(DateTime64(6))";
+                    return "Nullable(DateTime64(6, 'UTC'))";
                 case Timestamp.SCHEMA_NAME:            // "io.debezium.time.Timestamp"
-                    return "Nullable(DateTime64(3))";
+                    return "Nullable(DateTime64(3, 'UTC'))";
                 case NanoTimestamp.SCHEMA_NAME:         // "io.debezium.time.NanoTimestamp"
-                    return "Nullable(DateTime64(9))";
+                    return "Nullable(DateTime64(9, 'UTC'))";
                 case ZonedTimestamp.SCHEMA_NAME:        // "io.debezium.time.ZonedTimestamp"
                     return "Nullable(DateTime64(6, 'UTC'))";
                 case Date.SCHEMA_NAME:                 // "io.debezium.time.Date"

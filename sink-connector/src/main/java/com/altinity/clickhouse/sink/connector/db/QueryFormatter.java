@@ -180,8 +180,13 @@ public class QueryFormatter {
         // Check DateTime64 before DateTime since "DateTime64" contains "DateTime"
         // Check Date32 before Date since "Date32" contains "Date"
         if (upperDataType.contains("DATETIME64")) {
-            // Extract precision from DateTime64(precision) or DateTime64(precision, 'timezone')
+            // Extract precision and optional timezone from DateTime64(precision)
+            // or DateTime64(precision, 'timezone')
             String precision = extractDateTime64Precision(dataType);
+            String tz = extractDateTime64Timezone(dataType);
+            if (tz != null) {
+                return "toDateTime64(?, " + precision + ", '" + tz + "')";
+            }
             return "toDateTime64(?, " + precision + ")";
         } else if (upperDataType.contains("DATETIME")) {
             return "toDateTime(?)";
@@ -217,6 +222,26 @@ public class QueryFormatter {
             return "3"; // Default precision
         }
         return dataType.substring(start + 1, end).trim();
+    }
+
+    /**
+     * Extracts the timezone from a DateTime64 data type string.
+     * Handles formats like "DateTime64(3, 'UTC')" or "Nullable(DateTime64(6, 'UTC'))".
+     *
+     * @param dataType the DateTime64 data type string
+     * @return the timezone string (e.g. "UTC"), or null if no timezone is specified
+     */
+    private String extractDateTime64Timezone(String dataType) {
+        // Look for single-quoted timezone: DateTime64(6, 'UTC')
+        int singleQuoteStart = dataType.indexOf('\'');
+        if (singleQuoteStart == -1) {
+            return null;
+        }
+        int singleQuoteEnd = dataType.indexOf('\'', singleQuoteStart + 1);
+        if (singleQuoteEnd == -1) {
+            return null;
+        }
+        return dataType.substring(singleQuoteStart + 1, singleQuoteEnd);
     }
 
     /**
