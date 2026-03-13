@@ -36,10 +36,18 @@ def _build_ch_col_expr(col_name, pg_type, is_nullable):
             expr = "if(isNull({qc}), NULL, if({qc} = 0, '0', '1'))".format(qc=qc)
         else:
             expr = "if({qc} = 0, '0', '1')".format(qc=qc)
-    elif 'timestamp' in pg_type_lower and 'time zone' in pg_type_lower:
-        # timestamptz: normalise to UTC so output matches PG AT TIME ZONE 'UTC'
+    elif 'timestamp' in pg_type_lower and 'with time zone' in pg_type_lower \
+            and 'without time zone' not in pg_type_lower:
+        # Bug 84.2-1 fix: only apply toTimeZone() for `timestamp with time zone`
+        # (timestamptz).  `timestamp without time zone` must NOT be converted —
+        # it stores timezone-naive values and toTimeZone() would incorrectly
+        # shift them by the CH server's timezone offset.
         # toString(toTimeZone(col, 'UTC')) renders in UTC regardless of CH server TZ
         expr = "toString(toTimeZone({qc}, 'UTC'))".format(qc=qc)
+    elif 'timestamp' in pg_type_lower:
+        # timestamp without time zone — no timezone conversion needed;
+        # the value is already timezone-naive, just render as string.
+        expr = "toString({qc})".format(qc=qc)
     elif pg_type_lower in ('json', 'jsonb'):
         # Debezium PostgreSQL connector preserves the Postgres jsonb serialization,
         # which always has keys in sorted order (Postgres jsonb guarantees this at

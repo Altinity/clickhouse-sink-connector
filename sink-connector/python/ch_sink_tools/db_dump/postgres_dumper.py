@@ -1139,6 +1139,12 @@ def load_config_file(config_path: str) -> dict:
     Auto-detects if the file is a sink-connector config (with keys like
     'database.hostname') or a dumper-specific config (with keys like 'pg_host').
     Sink-connector configs are mapped to dumper CLI arg names.
+
+    When a sink-connector config is detected, any ``column_type_override.*``
+    entries are also parsed via
+    :meth:`ColumnTypeOverrideConfig.from_connector_properties` and stored
+    under the special key ``_column_type_override_config`` in the returned
+    dict.
     """
     import yaml
     with open(config_path, 'r') as f:
@@ -1151,7 +1157,14 @@ def load_config_file(config_path: str) -> dict:
                            'clickhouse.server.url', 'database.server.name'}
     if sink_connector_keys & set(config.keys()):
         logger.info("Detected sink-connector config format, mapping to dumper parameters")
-        return parse_sink_connector_config(config)
+        mapping = parse_sink_connector_config(config)
+
+        # Also extract column type override entries from the raw config
+        connector_override_config = ColumnTypeOverrideConfig.from_connector_properties(config)
+        if connector_override_config:
+            mapping['_column_type_override_config'] = connector_override_config
+
+        return mapping
 
     # Otherwise treat as dumper-native config
     return config
@@ -1329,10 +1342,14 @@ def main():
         merge_config_with_args(args, config)
 
     # -- Column type override config ------------------------------------------
+    # Priority: CLI args > connector config file > None
     override_config = ColumnTypeOverrideConfig.from_cli_args(
         overrides_file=args.column_type_overrides_file,
         overrides_string=args.column_type_overrides,
     )
+    if not override_config and args.config:
+        # Fall back to overrides embedded in the sink-connector config file
+        override_config = config.pop('_column_type_override_config', None)
     if override_config:
         logging.info(f"Column type overrides: {override_config}")
 

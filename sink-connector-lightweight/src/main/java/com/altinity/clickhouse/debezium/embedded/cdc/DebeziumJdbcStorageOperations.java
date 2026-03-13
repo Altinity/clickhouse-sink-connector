@@ -123,29 +123,59 @@ public class DebeziumJdbcStorageOperations {
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
 
-        // Replace "CREATE OR REPLACE VIEW" with "CREATE VIEW" and extract the view name
-        // to issue a DROP VIEW IF EXISTS first. This avoids the renameat2() UNSUPPORTED_METHOD
-        // error on some ClickHouse versions/filesystems that don't support atomic rename.
+        // Normalise the DDL to use "DROP VIEW IF EXISTS" + "CREATE VIEW IF NOT EXISTS".
+        // This is safe, idempotent, and avoids:
+        //   - renameat2() UNSUPPORTED_METHOD errors from "CREATE OR REPLACE VIEW"
+        //     on ClickHouse versions/filesystems that don't support atomic rename.
+        //   - plain "CREATE VIEW" failures when the view already exists.
         String createViewSql = formattedView;
-        java.util.regex.Matcher matcher = java.util.regex.Pattern
+
+        // Step 1: Extract the view name from whichever CREATE variant is used.
+        java.util.regex.Matcher corMatcher = java.util.regex.Pattern
                 .compile("(?i)CREATE\\s+OR\\s+REPLACE\\s+VIEW\\s+(\\S+)")
                 .matcher(formattedView);
-        if (matcher.find()) {
-            String viewName = matcher.group(1);
-            String dropViewSql = "DROP VIEW IF EXISTS " + viewName;
+        java.util.regex.Matcher cifneMatcher = java.util.regex.Pattern
+                .compile("(?i)CREATE\\s+VIEW\\s+IF\\s+NOT\\s+EXISTS\\s+(\\S+)")
+                .matcher(formattedView);
+        java.util.regex.Matcher plainMatcher = java.util.regex.Pattern
+                .compile("(?i)CREATE\\s+VIEW\\s+(\\S+)")
+                .matcher(formattedView);
+
+        String viewName = null;
+        if (corMatcher.find()) {
+            viewName = corMatcher.group(1);
             createViewSql = formattedView.replaceFirst(
-                    "(?i)CREATE\\s+OR\\s+REPLACE\\s+VIEW", "CREATE VIEW");
+                    "(?i)CREATE\\s+OR\\s+REPLACE\\s+VIEW",
+                    "CREATE VIEW IF NOT EXISTS");
+        } else if (cifneMatcher.find()) {
+            viewName = cifneMatcher.group(1);
+            // Already idempotent — keep as-is.
+        } else if (plainMatcher.find()) {
+            viewName = plainMatcher.group(1);
+            createViewSql = formattedView.replaceFirst(
+                    "(?i)CREATE\\s+VIEW",
+                    "CREATE VIEW IF NOT EXISTS");
+        }
+
+        // Step 2: Drop existing view first so the definition is always refreshed.
+        if (viewName != null) {
+            String dropViewSql = "DROP VIEW IF EXISTS " + viewName;
             try {
                 log.info("Dropping view before recreating: " + dropViewSql);
                 new DBMetadata(props).executeSystemQuery(conn, dropViewSql);
             } catch (Exception e) {
-                log.warn("Error dropping view (may not exist yet): " + dropViewSql, e);
+                log.warn("Error dropping view (may not exist yet): "
+                        + dropViewSql, e);
             }
         }
+
+        // Step 3: Create the view.  IF NOT EXISTS provides a safety net
+        // in case the DROP above was a no-op (e.g. permissions issue).
         try {
+            log.info("Creating replica-status view: " + createViewSql);
             new DBMetadata(props).executeSystemQuery(conn, createViewSql);
         } catch (Exception e) {
-            log.error("**** Error creating VIEW **** " + createViewSql);
+            log.error("**** Error creating VIEW **** " + createViewSql, e);
         }
     }
 
