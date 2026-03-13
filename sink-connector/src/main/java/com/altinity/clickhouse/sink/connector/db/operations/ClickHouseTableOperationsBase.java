@@ -63,14 +63,18 @@ public class ClickHouseTableOperationsBase {
     private static final String DECIMAL_64_18 = "Decimal(64,18)";
 
     /**
-     * String constant for DateTime64(3) type (millisecond precision).
+     * String constant for DateTime64(3, 'UTC') type (millisecond precision).
+     * Explicit UTC timezone prevents DST-related corruption when the
+     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
      */
-    private static final String DATETIME64_3 = "DateTime64(3)";
+    private static final String DATETIME64_3 = "DateTime64(3, 'UTC')";
 
     /**
-     * String constant for DateTime64(6) type (microsecond precision).
+     * String constant for DateTime64(6, 'UTC') type (microsecond precision).
+     * Explicit UTC timezone prevents DST-related corruption when the
+     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
      */
-    private static final String DATETIME64_6 = "DateTime64(6)";
+    private static final String DATETIME64_6 = "DateTime64(6, 'UTC')";
 
     /**
      * Logger for this class.

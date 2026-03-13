@@ -75,8 +75,8 @@ _BASE_MAP = {
     'time without time zone':      'String',
     'time with time zone':         'String',
     'timetz':                      'String',
-    'timestamp':                   "DateTime64(6)",
-    'timestamp without time zone': "DateTime64(6)",
+    'timestamp':                   "DateTime64(6, 'UTC')",
+    'timestamp without time zone': "DateTime64(6, 'UTC')",
     'timestamp with time zone':    "DateTime64(6, 'UTC')",
     'timestamptz':                 "DateTime64(6, 'UTC')",
     # ↓ THE critical mapping — PostgreSQL `interval` must become String
@@ -258,17 +258,11 @@ def map_pg_type(
     # 3. Timestamp variants  (must come before generic "time" check)
     # -----------------------------------------------------------------------
     if 'timestamp' in base:
-        # 'timestamp with time zone' / 'timestamptz'  →  UTC (absolute epoch)
-        # 'timestamp without time zone' / 'timestamp'  →  PG server TZ (local time)
-        if 'with time zone' in base or base == 'timestamptz':
-            ch = "DateTime64(6, 'UTC')"
-        else:
-            # Use explicit PG server timezone so the stored epoch is unambiguous.
-            # Without this, DateTime64(6) renders in CH server TZ by default.
-            if pg_server_timezone:
-                ch = f"DateTime64(6, '{pg_server_timezone}')"
-            else:
-                ch = "DateTime64(6)"
+        # All timestamp variants use explicit UTC timezone to prevent
+        # DST-related corruption when the CH server timezone is a
+        # DST-observing zone like America/Chicago.  See Phase 85 plan:
+        # plans/postgres/21-dst-timestamp-fix-plan.md
+        ch = "DateTime64(6, 'UTC')"
         return f'Nullable({ch})' if nullable else ch
 
     # -----------------------------------------------------------------------
