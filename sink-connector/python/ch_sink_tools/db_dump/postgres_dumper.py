@@ -1658,12 +1658,19 @@ def parse_sink_connector_config(config: dict) -> dict:
         # is more specific and will produce the correct per-schema names.
         mapping.pop('ch_database', None)
 
-    # Connector name (used for offset table)
-    if 'database.server.name' in config:
+    # Connector name (used for offset key)
+    # Priority: "name" (top-level connector name) > "database.server.name"
+    # The Java DebeziumOffsetStorage.getOffsetKey() uses the connector "name"
+    # property to build the offset key, NOT the database.server.name.
+    if 'name' in config:
+        mapping['connector_name'] = config['name']
+    elif 'database.server.name' in config:
         mapping['connector_name'] = config['database.server.name']
 
-    # Offset storage
-    if 'offset.storage.jdbc.offset.table.name' in config:
+    # Offset storage — support both key variants
+    if 'offset.storage.jdbc.table.name' in config:
+        mapping['offset_table'] = config['offset.storage.jdbc.table.name']
+    elif 'offset.storage.jdbc.offset.table.name' in config:
         mapping['offset_table'] = config['offset.storage.jdbc.offset.table.name']
 
     return mapping
