@@ -95,7 +95,7 @@ public class MultipleDatabaseIT
             }
         });
 
-        Thread.sleep(30000);
+        Thread.sleep(15000); // Allow engine to initialize
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
 
         // Create a new database
@@ -120,13 +120,14 @@ public class MultipleDatabaseIT
         // Insert a new row into test_table
         conn.createStatement().execute("INSERT INTO test_table VALUES (1, 'test33', 'test44')");
 
-        Thread.sleep(10000);
+        // No fixed sleep — polling below will wait for data
+        Thread.sleep(5000);
 
         conn.createStatement().execute("use test_db");
         // Run ALTER TABLE to add a new column
         conn.createStatement().execute("ALTER TABLE test_table ADD COLUMN age INT");
 
-        Thread.sleep(10000);
+        Thread.sleep(5000);
         conn.close();
 
         // Create connection to clickhouse and validate if the tables are replicated.
@@ -134,7 +135,7 @@ public class MultipleDatabaseIT
 
         // Poll until test_db.test_table is created and has data in ClickHouse
         boolean testDbTableReady = false;
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 40; i++) {
             try {
                 Statement stmt = writer.getConnection().createStatement();
                 ResultSet countRs = stmt.executeQuery(
@@ -156,7 +157,7 @@ public class MultipleDatabaseIT
 
         // Poll until test_db2.test_table2 is created and has data in ClickHouse
         boolean testDb2TableReady = false;
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 40; i++) {
             try {
                 Statement stmt = writer.getConnection().createStatement();
                 ResultSet countRs = stmt.executeQuery(
@@ -202,7 +203,6 @@ public class MultipleDatabaseIT
         conn = ITCommon.connectToMySQL(mySqlContainer);
         conn.createStatement().execute("use test_db2");
         conn.createStatement().execute("ALTER TABLE test_table DROP COLUMN name3");
-        Thread.sleep(10000);
 
         // Create a test_db DBWriter instance.
         // A new ClickHouseConnection with test_db database.
@@ -212,7 +212,7 @@ public class MultipleDatabaseIT
         // Poll until the ALTER TABLE DROP COLUMN is replicated (name3 column removed)
         boolean alterReplicated = false;
         DBMetadata dbMetadata = new DBMetadata(props);
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 40; i++) {
             Map<String, String> tempColumnMap = dbMetadata.getColumnsDataTypesForTable(testDb2Writer.getConnection(), "test_table", "test_db2");
             if (tempColumnMap != null && tempColumnMap.containsKey("id") && !tempColumnMap.containsKey("name3")) {
                 alterReplicated = true;

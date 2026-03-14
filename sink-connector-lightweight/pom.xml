@@ -678,6 +678,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.22.0</version>
                 <configuration>
+                    <argLine>-Xmx4g -Xms2g -XX:+UseG1GC</argLine>
+                    <reuseForks>false</reuseForks>
                     <includes>
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>

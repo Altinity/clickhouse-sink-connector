@@ -146,8 +146,11 @@ public class PostgresUpdateOperationsIT {
             }
         });
 
-        // Wait for initial snapshot to complete
-        Thread.sleep(60_000);
+        // Poll until initial snapshot completes
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
+        long snapshotCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.tm FINAL", 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.tm", snapshotCount >= 1);
 
         // Connect to PostgreSQL and execute UPDATE
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
@@ -156,18 +159,26 @@ public class PostgresUpdateOperationsIT {
                 "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'"
         ).execute();
 
-        // Wait for replication
-        Thread.sleep(15_000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
-        ResultSet chRs = writer.getConnection().prepareStatement(
-                "SELECT ccatz FROM public.tm FINAL " +
-                "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'"
-        ).executeQuery();
-
+        // Poll until the updated value appears in ClickHouse (up to 60s)
         String updatedValue = null;
-        while (chRs.next()) {
-            updatedValue = chRs.getString("ccatz");
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(
+                            "SELECT ccatz FROM public.tm FINAL " +
+                            "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'"
+                    ).executeQuery();
+                    if (rs.next()) {
+                        String val = rs.getString("ccatz");
+                        if ("UPDATED_VALUE".equals(val)) {
+                            updatedValue = val;
+                            break;
+                        }
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
         }
 
         Assert.assertNotNull("Updated row should exist in ClickHouse", updatedValue);
@@ -196,8 +207,11 @@ public class PostgresUpdateOperationsIT {
             }
         });
 
-        // Wait for initial snapshot to complete
-        Thread.sleep(60_000);
+        // Poll until initial snapshot completes
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
+        long snapshotCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.tm FINAL", 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.tm", snapshotCount >= 1);
 
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         pgConn.prepareStatement(
@@ -205,19 +219,25 @@ public class PostgresUpdateOperationsIT {
                 "vbilling_currency = 'USD' WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
         ).execute();
 
-        Thread.sleep(15_000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
-        ResultSet chRs = writer.getConnection().prepareStatement(
-                "SELECT ccatz, vstatus, vbilling_currency FROM public.tm FINAL " +
-                "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
-        ).executeQuery();
-
+        // Poll until the updated values appear in ClickHouse (up to 60s)
         String ccatz = null, vstatus = null, vbillingCurrency = null;
-        while (chRs.next()) {
-            ccatz            = chRs.getString("ccatz");
-            vstatus          = chRs.getString("vstatus");
-            vbillingCurrency = chRs.getString("vbilling_currency");
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(
+                            "SELECT ccatz, vstatus, vbilling_currency FROM public.tm FINAL " +
+                            "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
+                    ).executeQuery();
+                    if (rs.next()) {
+                        ccatz            = rs.getString("ccatz");
+                        vstatus          = rs.getString("vstatus");
+                        vbillingCurrency = rs.getString("vbilling_currency");
+                        if ("MULTI_UPDATE".equals(ccatz)) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
         }
 
         Assert.assertEquals("ccatz should be updated",             "MULTI_UPDATE",   ccatz);
@@ -247,8 +267,11 @@ public class PostgresUpdateOperationsIT {
             }
         });
 
-        // Wait for initial snapshot to complete (protocol_test is large, needs extra time)
-        Thread.sleep(60_000);
+        // Poll until initial snapshot completes — wait for protocol_test data
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
+        long snapshotCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.protocol_test FINAL", 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.protocol_test", snapshotCount >= 1);
 
         // IDs 1778392-1778395 are seeded via init_postgres.sql
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
@@ -257,19 +280,10 @@ public class PostgresUpdateOperationsIT {
                 "WHERE id >= 1778392 AND id <= 1778395"
         ).executeUpdate();
 
-        // Allow extra time for schema drift reconciliation + large table snapshot replication
-        Thread.sleep(30_000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
-        ResultSet chRs = writer.getConnection().prepareStatement(
-                "SELECT count(*) as cnt FROM public.protocol_test FINAL " +
-                "WHERE id >= 1778392 AND id <= 1778395 AND recomendation = 'BATCH_UPDATED'"
-        ).executeQuery();
-
-        int updatedInCH = 0;
-        while (chRs.next()) {
-            updatedInCH = chRs.getInt("cnt");
-        }
+        // Poll until all 4 updated rows appear in ClickHouse (up to 90s)
+        String batchQuery = "SELECT count(*) as cnt FROM public.protocol_test FINAL " +
+                "WHERE id >= 1778392 AND id <= 1778395 AND recomendation = 'BATCH_UPDATED'";
+        long updatedInCH = ITCommon.waitForRowCount(writer.getConnection(), batchQuery, 4, 90_000, 5_000);
 
         Assert.assertEquals("All batch updated rows should be replicated", 4, updatedInCH);
 
@@ -296,7 +310,11 @@ public class PostgresUpdateOperationsIT {
             }
         });
 
-        Thread.sleep(60_000);
+        // Poll until initial snapshot completes
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
+        long snapshotCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.tm FINAL", 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.tm", snapshotCount >= 1);
 
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         pgConn.prepareStatement(
@@ -304,18 +322,25 @@ public class PostgresUpdateOperationsIT {
                 "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
         ).execute();
 
-        Thread.sleep(15_000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
-        ResultSet chRs = writer.getConnection().prepareStatement(
-                "SELECT vstatus, vbilling_currency FROM public.tm FINAL " +
-                "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
-        ).executeQuery();
-
+        // Poll until the NULL values appear in ClickHouse (up to 60s)
+        // We detect the update by checking that vstatus IS NULL for the target row
         String vstatus = "NOT_NULL", vbillingCurrency = "NOT_NULL";
-        while (chRs.next()) {
-            vstatus          = chRs.getString("vstatus");
-            vbillingCurrency = chRs.getString("vbilling_currency");
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(
+                            "SELECT vstatus, vbilling_currency FROM public.tm FINAL " +
+                            "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f73'"
+                    ).executeQuery();
+                    if (rs.next()) {
+                        vstatus          = rs.getString("vstatus");
+                        vbillingCurrency = rs.getString("vbilling_currency");
+                        if (vstatus == null) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
         }
 
         Assert.assertNull("vstatus should be NULL after update",           vstatus);
@@ -344,7 +369,11 @@ public class PostgresUpdateOperationsIT {
             }
         });
 
-        Thread.sleep(60_000);
+        // Poll until initial snapshot completes
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
+        long snapshotCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.redata FINAL", 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.redata", snapshotCount >= 1);
 
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         pgConn.prepareStatement(
@@ -352,17 +381,23 @@ public class PostgresUpdateOperationsIT {
                 "WHERE uid = 123456"
         ).execute();
 
-        Thread.sleep(15_000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
-        ResultSet chRs = writer.getConnection().prepareStatement(
-                "SELECT amount, total_amount FROM public.redata FINAL WHERE uid = 123456"
-        ).executeQuery();
-
+        // Poll until the updated numeric values appear in ClickHouse (up to 60s)
         double amount = 0.0, totalAmount = 0.0;
-        while (chRs.next()) {
-            amount      = chRs.getDouble("amount");
-            totalAmount = chRs.getDouble("total_amount");
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(
+                            "SELECT amount, total_amount FROM public.redata FINAL WHERE uid = 123456"
+                    ).executeQuery();
+                    if (rs.next()) {
+                        amount      = rs.getDouble("amount");
+                        totalAmount = rs.getDouble("total_amount");
+                        if (Math.abs(amount - 999.8888) < 0.001) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
         }
 
         Assert.assertEquals("amount should be updated correctly",       999.8888,   amount,      0.0001);

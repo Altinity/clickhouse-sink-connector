@@ -92,7 +92,15 @@ public class PostgresPgoutputMultipleSchemaIT {
             }
         });
 
-        Thread.sleep(50000);
+        // Poll until initial snapshot completes — 'tm' table has 23 columns and 2 rows
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        Assert.assertTrue("Timed out waiting for 'tm' table columns",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "tm", 23, 180_000));
+
+        long tmCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.tm final", 2, 180_000, 5_000);
+        Assert.assertEquals("Expected 2 rows in public.tm", 2, tmCount);
 
         // Create a postgres connection and insert new records
         // to public2.tm CREATE TABLE "public2.tm" (id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY, secid uuid, acc_id uuid);
@@ -100,10 +108,11 @@ public class PostgresPgoutputMultipleSchemaIT {
         postgresConn.createStatement().execute("insert into public2.tm2 (id, secid, acc_id) values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid())");
         postgresConn.close();
 
-        Thread.sleep(10000);
+        // Poll for the inserted row in public.tm2 (up to 60s)
+        long tm2Count = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.tm2 final", 1, 60_000, 5_000);
+        Assert.assertEquals("Expected 1 row in public.tm2", 1, tm2Count);
 
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        
         DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
@@ -112,23 +121,6 @@ public class PostgresPgoutputMultipleSchemaIT {
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
         Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
-
-
-        int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm final").executeQuery();
-        while(chRs.next()) {
-            tmCount =  chRs.getInt(1);
-        }
-
-        Assert.assertTrue(tmCount == 2);
-
-
-        int tm2Count = 0;
-        ResultSet chRs2 = writer.getConnection().prepareStatement("select count(*) from public.tm2 final").executeQuery();
-        while(chRs2.next()) {
-            tm2Count =  chRs2.getInt(1);
-        }
-        Assert.assertTrue(tm2Count == 1);
 
         // valdate table_with_timezone
 //        int tableWithTimezoneCount = 0;
@@ -142,27 +134,25 @@ public class PostgresPgoutputMultipleSchemaIT {
         Connection postgresConn2 = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         postgresConn2.createStatement().execute("CREATE TABLE public.people( height_cm numeric PRIMARY KEY, height_in numeric GENERATED ALWAYS AS (height_cm / 2.54) STORED)");
 
-        Thread.sleep(10000);
         // insert new records into the new table.
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (180)");
-        Thread.sleep(10000);
+
+        // Poll until the first people row appears in ClickHouse (up to 60s)
+        long firstPeopleCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.people", 1, 60_000, 5_000);
+        Assert.assertTrue("Expected at least 1 row in public.people", firstPeopleCount >= 1);
 
         // ClickHouse, add ALIAS column to public.people
         writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name String ALIAS concat('John', ' ', 'Doe');");
-        Thread.sleep(10000);
 
         // Add MATERIALIZED column to public.people
         writer.getConnection().createStatement().execute("ALTER TABLE public.people ADD COLUMN full_name_mat String MATERIALIZED toString(height_cm)");
         postgresConn2.createStatement().execute("insert into public.people (height_cm) values (200)");
-        Thread.sleep(20000);
 
-        // Check if public.people has 2 records.
-        int peopleCount = 0;
-        ResultSet chRs3 = writer.getConnection().prepareStatement("select count(*) from public.people").executeQuery();
-        while(chRs3.next()) {
-            peopleCount =  chRs3.getInt(1);
-        }
-        Assert.assertTrue(peopleCount == 2);
+        // Poll until public.people has 2 records (up to 60s)
+        long peopleCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.people", 2, 60_000, 5_000);
+        Assert.assertEquals("Expected 2 rows in public.people", 2, peopleCount);
 
         if(engine.get() != null) {
             engine.get().stop();

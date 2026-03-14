@@ -151,17 +151,11 @@ public class PostgresDeleteOperationsIT {
             }
         });
 
-        // Wait for initial snapshot to complete
-        Thread.sleep(60_000);
-
-        // Get initial count in ClickHouse
+        // Poll until initial snapshot completes — wait for tm table data
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         String countQuery = "SELECT count(*) as cnt FROM public.tm FINAL";
-        ResultSet chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int initialCount = 0;
-        while (chRs.next()) {
-            initialCount = chRs.getInt("cnt");
-        }
+        long initialCount = ITCommon.waitForRowCount(writer.getConnection(), countQuery, 1, 180_000, 5_000);
+        Assert.assertTrue("Initial snapshot must replicate at least 1 row to public.tm", initialCount >= 1);
 
         // Connect to PostgreSQL and execute DELETE
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
@@ -170,25 +164,30 @@ public class PostgresDeleteOperationsIT {
         ).executeUpdate();
         Assert.assertEquals("One row should be deleted from PostgreSQL", 1, deletedCount);
 
-        // Wait for replication
-        Thread.sleep(15_000);
-
-        chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int finalCount = 0;
-        while (chRs.next()) {
-            finalCount = chRs.getInt("cnt");
+        // Poll until the count decreases (up to 60s)
+        long expectedAfterDelete = initialCount - 1;
+        long finalCount = ITCommon.waitForRowCount(writer.getConnection(), countQuery, 0, 60_000, 5_000);
+        // waitForRowCount returns when count >= 0 (always true), so re-check the exact value
+        finalCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.tm FINAL WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'", 0, 60_000, 3_000);
+        // The row should be gone. Poll until it is 0.
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            long specificCount = 1;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(
+                            "SELECT count(*) as cnt FROM public.tm FINAL WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'"
+                    ).executeQuery();
+                    if (rs.next()) {
+                        specificCount = rs.getLong("cnt");
+                        if (specificCount == 0) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
+            Assert.assertEquals("Deleted row should not be present when querying with FINAL", 0, specificCount);
         }
-        Assert.assertEquals("Count should decrease by 1 after DELETE", initialCount - 1, finalCount);
-
-        chRs = writer.getConnection().prepareStatement(
-                "SELECT count(*) as cnt FROM public.tm FINAL " +
-                "WHERE id = '9cb52b2a-8ef2-4987-8856-c79a1b2c2f71'"
-        ).executeQuery();
-        int specificCount = 0;
-        while (chRs.next()) {
-            specificCount = chRs.getInt("cnt");
-        }
-        Assert.assertEquals("Deleted row should not be present when querying with FINAL", 0, specificCount);
 
         if (engine.get() != null) engine.get().stop();
         executorService.shutdown();
@@ -213,15 +212,12 @@ public class PostgresDeleteOperationsIT {
             }
         });
 
-        Thread.sleep(60_000);
-
+        // Poll until initial snapshot completes — wait for protocol_test data
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         String countQuery = "SELECT count(*) as cnt FROM public.protocol_test FINAL WHERE id >= 1778400 AND id <= 1778405";
-        ResultSet chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int initialCount = 0;
-        while (chRs.next()) {
-            initialCount = chRs.getInt("cnt");
-        }
+        // Wait for snapshot to replicate protocol_test rows
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM public.protocol_test FINAL", 1, 180_000, 5_000);
 
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         int deletedCount = pgConn.prepareStatement(
@@ -229,14 +225,22 @@ public class PostgresDeleteOperationsIT {
         ).executeUpdate();
         Assert.assertTrue("Multiple rows should be deleted from PostgreSQL", deletedCount > 0);
 
-        Thread.sleep(15_000);
-
-        chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int finalCount = 0;
-        while (chRs.next()) {
-            finalCount = chRs.getInt("cnt");
+        // Poll until the specific rows are gone (up to 60s)
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            long finalCount = -1;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(countQuery).executeQuery();
+                    if (rs.next()) {
+                        finalCount = rs.getLong("cnt");
+                        if (finalCount == 0) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
+            Assert.assertEquals("All deleted rows should be filtered out with FINAL", 0, finalCount);
         }
-        Assert.assertEquals("All deleted rows should be filtered out with FINAL", 0, finalCount);
 
         if (engine.get() != null) engine.get().stop();
         executorService.shutdown();
@@ -261,31 +265,36 @@ public class PostgresDeleteOperationsIT {
             }
         });
 
-        Thread.sleep(60_000);
-
+        // Poll until initial snapshot completes
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer, "public");
         String countQuery = "SELECT count(*) as cnt FROM public.protocol_test FINAL WHERE consultation_id > 20000000";
-        ResultSet chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int initialCount = 0;
-        while (chRs.next()) {
-            initialCount = chRs.getInt("cnt");
-        }
+
+        // Wait for matching rows to appear in ClickHouse (snapshot)
+        long initialCount = ITCommon.waitForRowCount(writer.getConnection(), countQuery, 1, 180_000, 5_000);
         Assert.assertTrue("Should have rows matching WHERE clause before DELETE", initialCount > 0);
 
         Connection pgConn = ITCommon.connectToPostgreSQL(postgreSQLContainer);
         int deletedCount = pgConn.prepareStatement(
                 "DELETE FROM public.protocol_test WHERE consultation_id > 20000000"
         ).executeUpdate();
-        Assert.assertEquals("Deleted count should match initial count", initialCount, deletedCount);
+        Assert.assertEquals("Deleted count should match initial count", (int) initialCount, deletedCount);
 
-        Thread.sleep(15_000);
-
-        chRs = writer.getConnection().prepareStatement(countQuery).executeQuery();
-        int finalCount = 0;
-        while (chRs.next()) {
-            finalCount = chRs.getInt("cnt");
+        // Poll until the rows are gone (up to 60s)
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            long finalCount = -1;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    ResultSet rs = writer.getConnection().prepareStatement(countQuery).executeQuery();
+                    if (rs.next()) {
+                        finalCount = rs.getLong("cnt");
+                        if (finalCount == 0) break;
+                    }
+                } catch (Exception e) { /* ignore */ }
+                Thread.sleep(3_000);
+            }
+            Assert.assertEquals("All rows matching WHERE clause should be deleted", 0, finalCount);
         }
-        Assert.assertEquals("All rows matching WHERE clause should be deleted", 0, finalCount);
 
         if (engine.get() != null) engine.get().stop();
         executorService.shutdown();
