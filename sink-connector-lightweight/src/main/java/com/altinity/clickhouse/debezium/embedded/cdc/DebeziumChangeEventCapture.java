@@ -1080,12 +1080,43 @@ public class DebeziumChangeEventCapture {
     private void initPostgresSchemaChangeDetector(Properties props,
                                                    ClickHouseSinkConnectorConfig config) {
        String connectorClass = props != null
-               ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
-               : "";
+                ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
+                : "";
         if (DDLParserFactory.isPostgresConnector(connectorClass)) {
             this.postgresSchemaChangeDetector =
                     new PostgresSchemaChangeDetector(writer, config);
             log.info("PostgresSchemaChangeDetector initialised for connector class '{}'", connectorClass);
+
+            // --- Startup alias column reconciliation ---
+            // Ensure any configured ALIAS columns (e.g. Date aliases for text
+            // date columns) exist on all relevant ClickHouse tables.  This is
+            // idempotent and runs once per startup.
+            try {
+                String pgDbName = props != null
+                        ? props.getProperty("database.dbname", "")
+                        : "";
+                if (pgDbName != null && !pgDbName.isEmpty()) {
+                    // Build the ClickHouse database name by applying the same
+                    // prefix + schema-suffix logic used at runtime.
+                    String chDatabase = pgDbName;
+                    chDatabase = Utils.applyDatabasePrefix(chDatabase, this.commonDatabasePrefix);
+                    if (this.databaseSchemaSuffix
+                            && this.commonSchemaTemplate != null
+                            && !this.commonSchemaTemplate.isEmpty()) {
+                        // Default to "public" schema for PostgreSQL
+                        chDatabase = Utils.applyDatabaseSchemaSuffix(
+                                chDatabase, this.commonSchemaTemplate, "public");
+                    }
+                    log.info("Startup alias reconciliation: pgDb='{}', chDb='{}'",
+                            pgDbName, chDatabase);
+                    this.postgresSchemaChangeDetector.ensureAllAliasColumns(pgDbName, chDatabase);
+                } else {
+                    log.debug("database.dbname not set – skipping startup alias reconciliation");
+                }
+            } catch (Exception e) {
+                log.warn("Startup alias column reconciliation failed – continuing. Cause: {}",
+                        e.getMessage(), e);
+            }
         } else {
             this.postgresSchemaChangeDetector = null;
             log.debug("PostgresSchemaChangeDetector not activated (connector class: '{}')", connectorClass);

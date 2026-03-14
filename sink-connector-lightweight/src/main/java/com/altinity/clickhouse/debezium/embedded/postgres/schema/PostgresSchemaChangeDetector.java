@@ -156,6 +156,31 @@ public class PostgresSchemaChangeDetector {
     // -----------------------------------------------------------------------
 
     /**
+     * Returns the underlying {@link PostgresSchemaReconciler} for direct access
+     * (e.g. for startup-time alias column reconciliation).
+     *
+     * @return the reconciler instance
+     */
+    public PostgresSchemaReconciler getReconciler() {
+        return reconciler;
+    }
+
+    /**
+     * Ensures all configured alias columns are present across all tables that
+     * have alias overrides.  Delegates to
+     * {@link PostgresSchemaReconciler#ensureAllAliasColumns(String, String)}.
+     *
+     * <p>Designed to be called once at connector startup.
+     *
+     * @param database   the source PostgreSQL database name (e.g. {@code "app"}).
+     * @param chDatabase the ClickHouse database name (e.g.
+     *                   {@code "litellm_prod_app__public"}).
+     */
+    public void ensureAllAliasColumns(String database, String chDatabase) {
+        reconciler.ensureAllAliasColumns(database, chDatabase);
+    }
+
+    /**
      * Called on every DML {@link SourceRecord}.
      *
      * <ol>

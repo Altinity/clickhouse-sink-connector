@@ -44,6 +44,9 @@ import time
 import datetime
 import subprocess
 import concurrent.futures
+import gzip
+import shutil
+from pathlib import Path
 from subprocess import Popen, PIPE
 
 from ch_sink_tools.db.postgres import (
@@ -76,6 +79,18 @@ runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 # Heartbeat table used to keep CDC offsets fresh during idle periods
 HEARTBEAT_TABLE = "public.sink_connector_heartbeat"
+
+# ---------------------------------------------------------------------------
+# PG binary resolution  (supports --pg_bin_dir / PG_BIN_DIR env var)
+# ---------------------------------------------------------------------------
+PG_BIN_DIR = os.environ.get('PG_BIN_DIR', '')
+
+
+def pg_bin(name: str) -> str:
+    """Resolve a PostgreSQL binary (psql, pg_dump, pg_restore) using PG_BIN_DIR."""
+    if PG_BIN_DIR:
+        return os.path.join(PG_BIN_DIR, name)
+    return name
 
 # ---------------------------------------------------------------------------
 # Logging factory (mirrors mysql_dumper.py pattern)
@@ -342,7 +357,7 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     # PGTZ=UTC ensures that timestamptz values are output in UTC,
     # matching what Debezium CDC sends to ClickHouse.
     cmd = (
-        f"PGPASSWORD='{pg_password}' PGTZ=UTC psql"
+        f"PGPASSWORD='{pg_password}' PGTZ=UTC {pg_bin('psql')}"
         f" -h {pg_host}"
         f" -p {pg_port}"
         f" -U {pg_user}"
@@ -553,6 +568,527 @@ def drop_ch_table(ch_conn, ch_database, table_name, dry_run=False):
     logging.info(f"DROP TABLE: {sql}")
     if not dry_run:
         clickhouse_execute_conn(ch_conn, sql)
+
+
+def truncate_ch_table(ch_conn, ch_database, table_name, dry_run=False):
+    """Truncate a ClickHouse table if it exists (keeps schema, removes data)."""
+    sql = f"TRUNCATE TABLE IF EXISTS `{ch_database}`.`{table_name}`"
+    logging.info(f"TRUNCATE TABLE: {sql}")
+    if not dry_run:
+        clickhouse_execute_conn(ch_conn, sql)
+
+
+def check_ch_table_has_data(ch_conn, ch_database, table_name):
+    """Check if a ClickHouse table exists and has rows > 0.
+
+    Returns (exists: bool, row_count: int).  If the table does not exist,
+    returns (False, 0).
+    """
+    try:
+        if not ch_table_exists(ch_conn, ch_database, table_name):
+            return False, 0
+        result = clickhouse_execute_conn(
+            ch_conn,
+            f"SELECT count() FROM `{ch_database}`.`{table_name}`"
+        )
+        row_count = int(result[0][0]) if result and result[0] else 0
+        return True, row_count
+    except Exception as e:
+        logging.debug(f"check_ch_table_has_data({ch_database}.{table_name}): {e}")
+        return False, 0
+
+
+def get_pg_approx_row_count(pg_conn, pg_schema, table_name):
+    """Get approximate row count from pg_stat_user_tables.n_live_tup.
+
+    This is faster than COUNT(*) and good enough for ordering tables by size.
+    Falls back to pg_class.reltuples if pg_stat is unavailable.
+    """
+    try:
+        from ch_sink_tools.db.postgres import execute_pg
+        rows = execute_pg(
+            pg_conn,
+            f"SELECT n_live_tup FROM pg_stat_user_tables "
+            f"WHERE schemaname = '{pg_schema}' AND relname = '{table_name}'"
+        )
+        if rows and rows[0].get('n_live_tup') is not None:
+            return int(rows[0]['n_live_tup'])
+    except Exception:
+        pass
+    # Fallback to get_table_row_count from the existing module
+    return get_table_row_count(pg_conn, pg_schema, table_name)
+
+
+# ---------------------------------------------------------------------------
+# Two-phase disk-based strategies
+# ---------------------------------------------------------------------------
+
+def psqlcopy_dump_table(table_name, column_names, pg_host, pg_port, pg_user,
+                        pg_password, pg_database, pg_schema, dump_dir,
+                        limit=None):
+    """Dump a single table to a gzipped CSV file using psql COPY TO STDOUT.
+
+    Phase 1 of the 'psql-copy' strategy.
+
+    Returns (csv_file_path, elapsed_seconds).
+    """
+    dump_path = Path(dump_dir)
+    dump_path.mkdir(parents=True, exist_ok=True)
+    csv_file = dump_path / f"{table_name}.csv.gz"
+
+    col_list = ", ".join(f'"{c}"' for c in column_names)
+    query = f'SELECT {col_list} FROM "{pg_schema}"."{table_name}"'
+    if limit:
+        query += f' LIMIT {limit}'
+
+    copy_sql = (
+        f"COPY ({query}) TO STDOUT WITH "
+        f"(FORMAT CSV, HEADER true, FORCE_QUOTE *)"
+    )
+
+    import tempfile
+    qfile = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.sql', prefix='pg_dump_copy_',
+        delete=False, dir='/tmp'
+    )
+    qfile.write(copy_sql)
+    qfile.close()
+
+    cmd = (
+        f"PGPASSWORD='{pg_password}' PGTZ=UTC {pg_bin('psql')}"
+        f" -h {pg_host}"
+        f" -p {pg_port}"
+        f" -U {pg_user}"
+        f" -d \"{pg_database}\""
+        f" -f {qfile.name}"
+        f" | gzip -1 > {csv_file}"
+    )
+
+    t0 = time.time()
+    logging.info(f"[{table_name}] psql-copy Phase 1: dumping to {csv_file}")
+    logging.debug(f"[{table_name}] dump cmd: {cmd}")
+
+    process = subprocess.Popen(
+        cmd, shell=True, executable='/bin/bash',
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    for line in process.stdout:
+        logging.debug(line.decode().strip())
+    process.wait()
+
+    try:
+        os.unlink(qfile.name)
+    except OSError:
+        pass
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"psql-copy dump failed for {table_name} (rc={process.returncode})"
+        )
+
+    elapsed = time.time() - t0
+    size_mb = csv_file.stat().st_size / (1024 * 1024) if csv_file.exists() else 0
+    logging.info(
+        f"[{table_name}] CSV dumped in {elapsed:.1f}s ({size_mb:.1f} MB)"
+    )
+    return str(csv_file), elapsed
+
+
+def psqlcopy_load_table(table_name, csv_file, ch_host, ch_port, ch_user,
+                        ch_password, ch_database, ch_table_name,
+                        column_names, columns_meta,
+                        ch_config_file=None, ch_secure=False,
+                        dry_run=False):
+    """Load a single table from a gzipped CSV file into ClickHouse.
+
+    Phase 2 of the 'psql-copy' strategy.  Uses the existing
+    build_ch_insert_cmd() to ensure type-safe insertion via input().
+
+    Returns (label, rows_estimate, elapsed_seconds, success).
+    """
+    label = ch_table_name or table_name
+    t_start = time.time()
+    success = False
+
+    try:
+        ch_cmd = build_ch_insert_cmd(
+            ch_host, ch_port, ch_user, ch_password,
+            ch_database, ch_table_name or table_name, column_names, columns_meta,
+            ch_config_file=ch_config_file, ch_secure=ch_secure,
+        )
+
+        # gunzip → clickhouse-client
+        # The CSV has a header line; clickhouse-client with FORMAT CSV will
+        # skip it when input_format_csv_detect_header=1 (the default).
+        # However our build_ch_insert_cmd() uses FORMAT CSV without header
+        # awareness, so strip the header with tail.
+        load_cmd = f"set -o pipefail; gunzip -c {csv_file} | tail -n +2 | {ch_cmd}"
+
+        logging.info(f"[{label}] psql-copy Phase 2: loading from {csv_file}")
+        logging.debug(f"[{label}] load cmd: {load_cmd}")
+
+        if not dry_run:
+            rc = run_command(load_cmd)
+            if rc != "0":
+                raise RuntimeError(
+                    f"psql-copy load failed for {label} (rc={rc})"
+                )
+
+        elapsed = time.time() - t_start
+        logging.info(f"[{label}] Loaded in {elapsed:.1f}s")
+        success = True
+
+    except Exception as e:
+        elapsed = time.time() - t_start
+        logging.error(f"[{label}] psql-copy load FAILED after {elapsed:.1f}s: {e}")
+        logging.error(traceback.format_exc())
+
+    return (label, -1, time.time() - t_start, success)
+
+
+def pgdump_dump_tables(pg_host, pg_port, pg_user, pg_password, pg_database,
+                       pg_schema, dump_dir, tables=None, jobs=4):
+    """Dump tables using pg_dump --format=directory.
+
+    Phase 1 of the 'pgdump' strategy.
+
+    Returns (dump_dir_path, elapsed_seconds).
+    """
+    dump_path = Path(dump_dir)
+    # Clean and recreate
+    if dump_path.exists():
+        shutil.rmtree(dump_path)
+
+    env = os.environ.copy()
+    env['PGPASSWORD'] = pg_password
+
+    cmd = [
+        pg_bin('pg_dump'),
+        '-h', pg_host, '-p', str(pg_port), '-U', pg_user, '-d', pg_database,
+        '--format=directory', f'--jobs={jobs}',
+        '--no-owner', '--no-privileges',
+        '--data-only', '--schema', pg_schema,
+        '-f', str(dump_path),
+    ]
+    if tables:
+        for t in tables:
+            cmd.extend(['-t', f'{pg_schema}."{t}"'])
+
+    logging.info(
+        f"pg_dump: dumping to {dump_path} with {jobs} jobs ..."
+    )
+    t0 = time.time()
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"pg_dump failed (exit {result.returncode}): {result.stderr}"
+        )
+    elapsed = time.time() - t0
+
+    # List dump files
+    dat_files = sorted(dump_path.glob("*.dat.gz"))
+    total_mb = sum(f.stat().st_size for f in dat_files) / (1024 * 1024)
+    logging.info(
+        f"pg_dump completed in {elapsed:.1f}s — "
+        f"{len(dat_files)} files, {total_mb:.1f} MB total"
+    )
+    return str(dump_path), elapsed
+
+
+def pgdump_load_table(table_name, dump_dir, ch_host, ch_port, ch_user,
+                      ch_password, ch_database, ch_table_name,
+                      column_names, columns_meta,
+                      ch_config_file=None, ch_secure=False,
+                      dry_run=False, approx_rows=-1):
+    """Load a single table from a pg_dump directory into ClickHouse.
+
+    Phase 2 of the 'pgdump' strategy.  Uses pg_restore to extract COPY-text
+    data, then pipes through a Python transform to clickhouse-client.
+
+    pg_restore COPY-text format:
+      - Tab-separated fields
+      - \\N for NULL
+      - No header line
+
+    Returns (label, rows_loaded, elapsed_seconds, success).
+    """
+    label = ch_table_name or table_name
+    t_start = time.time()
+    success = False
+    row_count = 0
+
+    try:
+        ch_cmd = build_ch_insert_cmd(
+            ch_host, ch_port, ch_user, ch_password,
+            ch_database, ch_table_name or table_name, column_names, columns_meta,
+            ch_config_file=ch_config_file, ch_secure=ch_secure,
+        )
+
+        # pg_restore outputs COPY-text (tab-separated).
+        # We need to convert to CSV for our clickhouse-client INSERT.
+        # Use a shell pipeline: pg_restore | python csv-converter | ch-client
+        #
+        # For simplicity, we use a helper script approach:
+        # pg_restore --data-only -t table dump_dir → pipe to clickhouse-client
+        # with TabSeparated format instead of CSV.
+
+        # Build a simpler approach: pipe pg_restore output through awk to convert
+        # tab-separated COPY-text to CSV, filtering out SQL lines.
+        pg_restore_cmd = (
+            f"{pg_bin('pg_restore')} --data-only -t {table_name} {dump_dir}"
+        )
+
+        # Extract only data lines (skip COPY/SQL lines), convert TSV to CSV
+        # This awk script:
+        #  - Skips lines starting with COPY or ending with \.
+        #  - Skips SET/SELECT/-- lines
+        #  - Converts tab-separated COPY-text to CSV
+        #  - Handles NULL (\N) → empty unquoted field
+        convert_cmd = (
+            f"{pg_restore_cmd} 2>/dev/null"
+            f" | awk -F'\\t' '"
+            f"   /^COPY /{{next}} /^\\\\\\./{{next}} /^SET /{{next}} /^SELECT /{{next}} /^--/{{next}} /^$/{{next}}"
+            f"   {{for(i=1;i<=NF;i++){{"
+            f"     if($i==\"\\\\N\")printf \"\"; "
+            f"     else{{gsub(/\"/,\"\\\"\\\"\",$i); printf \"\\\"%s\\\"\",$i}}"
+            f"     if(i<NF)printf \",\"; else print \"\""
+            f"   }}}}'"
+        )
+
+        pipe_cmd = f"set -o pipefail; {convert_cmd} | {ch_cmd}"
+
+        logging.info(f"[{label}] pgdump Phase 2: loading from {dump_dir}")
+        logging.debug(f"[{label}] pipe cmd: {pipe_cmd}")
+
+        if not dry_run:
+            rc = run_command(pipe_cmd)
+            if rc != "0":
+                raise RuntimeError(
+                    f"pgdump load failed for {label} (rc={rc})"
+                )
+
+        elapsed = time.time() - t_start
+        logging.info(f"[{label}] Loaded in {elapsed:.1f}s")
+        success = True
+
+    except Exception as e:
+        elapsed = time.time() - t_start
+        logging.error(f"[{label}] pgdump load FAILED after {elapsed:.1f}s: {e}")
+        logging.error(traceback.format_exc())
+
+    return (label, approx_rows, time.time() - t_start, success)
+
+
+# ---------------------------------------------------------------------------
+# Benchmark mode
+# ---------------------------------------------------------------------------
+
+def run_benchmark(args, pg_user, pg_password, ch_user, ch_password,
+                  pg_server_timezone, override_config):
+    """Benchmark loading strategies on a single table.
+
+    Creates temporary CH tables, runs each strategy, compares throughput,
+    and reports results.
+    """
+    table_name = args.benchmark_table
+    if not table_name:
+        logging.error("--benchmark requires --benchmark_table")
+        sys.exit(1)
+
+    bench_limit = getattr(args, 'benchmark_limit', 1_000_000)
+    pg_schema = args.pg_schema[0] if isinstance(args.pg_schema, list) else args.pg_schema
+
+    logging.info("=" * 72)
+    logging.info(f"BENCHMARK: {table_name} (limit {bench_limit:,} rows)")
+    logging.info("=" * 72)
+
+    # Get table metadata
+    pg_conn = get_postgres_connection(
+        args.pg_host, pg_user, pg_password, args.pg_port, args.pg_database
+    )
+    columns_meta = get_table_columns(
+        pg_conn, pg_schema, table_name,
+        pg_server_timezone=pg_server_timezone,
+        override_config=override_config,
+        pg_database=args.pg_database,
+    )
+    pk_cols = get_table_pk(pg_conn, pg_schema, table_name)
+    approx_rows = get_table_row_count(pg_conn, pg_schema, table_name)
+    pg_conn.close()
+
+    column_names = [c['column_name'] for c in columns_meta]
+
+    # Resolve CH database name
+    if args.ch_database:
+        ch_database = args.ch_database
+    else:
+        from ch_sink_tools.db_dump.naming import resolve_ch_names
+        ch_database, _ = resolve_ch_names(
+            args.pg_database, pg_schema, table_name,
+            args.ch_database_template, args.ch_table_template,
+        )
+
+    strategies = ['streaming', 'psql-copy']
+    results = {}
+
+    for strategy in strategies:
+        logging.info("")
+        logging.info("-" * 72)
+        logging.info(f"Strategy: {strategy}")
+        logging.info("-" * 72)
+
+        bench_table = f"_benchmark_{strategy.replace('-', '_')}_{table_name}"
+
+        # Ensure CH database exists
+        ch_conn = clickhouse_connection(
+            args.ch_host, database='default',
+            user=ch_user, password=ch_password,
+            port=args.ch_port, secure=args.ch_secure,
+        )
+        try:
+            ensure_ch_database(ch_conn, ch_database)
+            # Drop existing benchmark table
+            try:
+                clickhouse_execute_conn(
+                    ch_conn,
+                    f"DROP TABLE IF EXISTS `{ch_database}`.`{bench_table}`"
+                )
+            except Exception:
+                pass
+        finally:
+            ch_conn.close()
+
+        # Create benchmark table
+        ch_conn = clickhouse_connection(
+            args.ch_host, database=ch_database,
+            user=ch_user, password=ch_password,
+            port=args.ch_port, secure=args.ch_secure,
+        )
+        try:
+            create_ch_table(
+                ch_conn, ch_database, bench_table, columns_meta, pk_cols,
+                override_config=override_config,
+                schema=pg_schema, pg_database=args.pg_database,
+            )
+        finally:
+            ch_conn.close()
+
+        t0 = time.time()
+
+        if strategy == 'streaming':
+            # Direct pipe: psql COPY → clickhouse-client
+            result = load_table(
+                table_name=table_name,
+                pg_host=args.pg_host, pg_port=args.pg_port,
+                pg_user=pg_user, pg_password=pg_password,
+                pg_database=args.pg_database, pg_schema=pg_schema,
+                ch_host=args.ch_host, ch_port=args.ch_port,
+                ch_user=ch_user, ch_password=ch_password,
+                ch_database=ch_database,
+                ch_config_file=args.ch_config_file,
+                ch_secure=args.ch_secure,
+                pg_server_timezone=pg_server_timezone,
+                ch_table_name=bench_table,
+            )
+            total_elapsed = time.time() - t0
+            results[strategy] = {
+                'dump_time': 0, 'load_time': total_elapsed,
+                'total_time': total_elapsed,
+                'rows': approx_rows,
+                'status': 'OK' if result[3] else 'ERROR',
+            }
+
+        elif strategy == 'psql-copy':
+            dump_dir = f"/tmp/benchmark_psql_copy"
+            # Phase 1: dump
+            try:
+                csv_file, dump_elapsed = psqlcopy_dump_table(
+                    table_name, column_names,
+                    args.pg_host, args.pg_port, pg_user, pg_password,
+                    args.pg_database, pg_schema, dump_dir,
+                    limit=bench_limit,
+                )
+                # Phase 2: load
+                result = psqlcopy_load_table(
+                    table_name, csv_file,
+                    args.ch_host, args.ch_port, ch_user, ch_password,
+                    ch_database, bench_table,
+                    column_names, columns_meta,
+                    ch_config_file=args.ch_config_file,
+                    ch_secure=args.ch_secure,
+                )
+                total_elapsed = time.time() - t0
+                results[strategy] = {
+                    'dump_time': dump_elapsed,
+                    'load_time': result[2],
+                    'total_time': total_elapsed,
+                    'rows': bench_limit,
+                    'status': 'OK' if result[3] else 'ERROR',
+                }
+            except Exception as e:
+                total_elapsed = time.time() - t0
+                results[strategy] = {
+                    'dump_time': 0, 'load_time': 0,
+                    'total_time': total_elapsed,
+                    'rows': 0,
+                    'status': 'ERROR',
+                    'error': str(e),
+                }
+
+        # Verify row count
+        ch_conn = clickhouse_connection(
+            args.ch_host, database=ch_database,
+            user=ch_user, password=ch_password,
+            port=args.ch_port, secure=args.ch_secure,
+        )
+        try:
+            r = clickhouse_execute_conn(
+                ch_conn,
+                f"SELECT count() FROM `{ch_database}`.`{bench_table}`"
+            )
+            ch_count = int(r[0][0]) if r and r[0] else 0
+            logging.info(f"[{strategy}] CH row count: {ch_count:,}")
+        except Exception as e:
+            logging.warning(f"[{strategy}] Could not verify count: {e}")
+        finally:
+            # Cleanup benchmark table
+            try:
+                clickhouse_execute_conn(
+                    ch_conn,
+                    f"DROP TABLE IF EXISTS `{ch_database}`.`{bench_table}`"
+                )
+            except Exception:
+                pass
+            ch_conn.close()
+
+    # --- Print comparison ---
+    logging.info("")
+    logging.info("=" * 72)
+    logging.info(f"BENCHMARK RESULTS — {table_name}")
+    logging.info("=" * 72)
+    logging.info(
+        f"{'STRATEGY':15s} {'DUMP(s)':>10s} {'LOAD(s)':>10s} "
+        f"{'TOTAL(s)':>10s} {'ROWS':>12s} {'ROWS/S':>10s}"
+    )
+    logging.info("-" * 72)
+    for strat, r in results.items():
+        rows_per_sec = r['rows'] / r['total_time'] if r['total_time'] > 0 and r['rows'] > 0 else 0
+        error_msg = f" ERROR: {r.get('error', '')}" if r['status'] == 'ERROR' else ""
+        logging.info(
+            f"{strat:15s} {r['dump_time']:10.1f} {r['load_time']:10.1f} "
+            f"{r['total_time']:10.1f} {r['rows']:12,} {rows_per_sec:10.0f}{error_msg}"
+        )
+    logging.info("=" * 72)
+
+    # Recommend the winner
+    valid = {k: v for k, v in results.items() if v['status'] == 'OK'}
+    if valid:
+        winner = min(valid, key=lambda k: valid[k]['total_time'])
+        rate = valid[winner]['rows'] / valid[winner]['total_time'] if valid[winner]['total_time'] > 0 else 0
+        logging.info(
+            f"WINNER: {winner} ({valid[winner]['total_time']:.1f}s total, "
+            f"{rate:.0f} rows/s)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1201,17 +1737,22 @@ def main():
                     "Pipes COPY CSV output directly to clickhouse-client."
     )
 
-    # -- PostgreSQL connection ------------------------------------------------
-    parser.add_argument('--pg_host', required=False, default=None,
-                        help='PostgreSQL host')
-    parser.add_argument('--pg_port', type=int, default=5432,
-                        help='PostgreSQL port (default: 5432)')
-    parser.add_argument('--pg_database', required=False, default=None,
-                        help='PostgreSQL database name')
+    # -- PostgreSQL connection (env var fallbacks) ----------------------------
+    parser.add_argument('--pg_host', required=False,
+                        default=os.environ.get('PG_HOST'),
+                        help='PostgreSQL host (env: PG_HOST)')
+    parser.add_argument('--pg_port', type=int,
+                        default=int(os.environ.get('PG_PORT', '5432')),
+                        help='PostgreSQL port (default: 5432, env: PG_PORT)')
+    parser.add_argument('--pg_database', required=False,
+                        default=os.environ.get('PG_DATABASE'),
+                        help='PostgreSQL database name (env: PG_DATABASE)')
     parser.add_argument('--pg_user', required=False,
-                        help='PostgreSQL user')
-    parser.add_argument('--pg_password', required=False, default=None,
-                        help='PostgreSQL password (discouraged; prefer ~/.pgpass)')
+                        default=os.environ.get('PG_USER'),
+                        help='PostgreSQL user (env: PG_USER)')
+    parser.add_argument('--pg_password', required=False,
+                        default=os.environ.get('PG_PASSWORD'),
+                        help='PostgreSQL password (env: PG_PASSWORD; prefer ~/.pgpass)')
     parser.add_argument('--pg_schema', type=str, nargs='+', default=['public'],
                         help='PostgreSQL schema(s) to dump (default: public)')
 
@@ -1221,17 +1762,22 @@ def main():
     parser.add_argument('--pg_schema_exclude', type=str, default=None,
                         help='Regex pattern to exclude schemas (e.g., "pg_.*|information_schema")')
 
-    # -- ClickHouse connection ------------------------------------------------
-    parser.add_argument('--ch_host', required=False, default=None,
-                        help='ClickHouse host')
-    parser.add_argument('--ch_port', type=int, default=9000,
-                        help='ClickHouse native port (default: 9000)')
-    parser.add_argument('--ch_database', required=False, default=None,
-                        help='ClickHouse target database (overrides --ch_database_template if set)')
-    parser.add_argument('--ch_user', required=False, default='default',
-                        help='ClickHouse user (default: default)')
-    parser.add_argument('--ch_password', required=False, default=None,
-                        help='ClickHouse password')
+    # -- ClickHouse connection (env var fallbacks) ----------------------------
+    parser.add_argument('--ch_host', required=False,
+                        default=os.environ.get('CH_HOST'),
+                        help='ClickHouse host (env: CH_HOST)')
+    parser.add_argument('--ch_port', type=int,
+                        default=int(os.environ.get('CH_PORT', '9000')),
+                        help='ClickHouse native port (default: 9000, env: CH_PORT)')
+    parser.add_argument('--ch_database', required=False,
+                        default=os.environ.get('CH_DATABASE'),
+                        help='ClickHouse target database (env: CH_DATABASE; overrides --ch_database_template if set)')
+    parser.add_argument('--ch_user', required=False,
+                        default=os.environ.get('CH_USER', 'default'),
+                        help='ClickHouse user (default: default, env: CH_USER)')
+    parser.add_argument('--ch_password', required=False,
+                        default=os.environ.get('CH_PASSWORD'),
+                        help='ClickHouse password (env: CH_PASSWORD)')
     parser.add_argument('--ch_config_file', required=False, default=None,
                         help='ClickHouse client config file (xml or yaml)')
     parser.add_argument('--ch_secure', dest='ch_secure',
@@ -1276,6 +1822,18 @@ def main():
     parser.add_argument('--drop_existing', dest='drop_existing',
                         action='store_true', default=False,
                         help='DROP existing ClickHouse tables before recreating them')
+    parser.add_argument('--truncate', dest='truncate',
+                        action='store_true', default=False,
+                        help='Truncate existing CH tables instead of dropping them')
+    parser.add_argument('--skip_existing', dest='skip_existing',
+                        action='store_true', default=False,
+                        help='Skip tables that already have data in ClickHouse')
+    parser.add_argument('--order_by_size', dest='order_by_size',
+                        action='store_true', default=True,
+                        help='Sort tables by approx row count ascending (small first, default: True)')
+    parser.add_argument('--no_order_by_size', dest='order_by_size',
+                        action='store_false',
+                        help='Disable size-based table ordering')
     parser.add_argument('--segment_threshold', type=int, default=1_000_000,
                         help=(
                             'Row count above which a table is split into parallel '
@@ -1288,6 +1846,40 @@ def main():
                             '(default: 4). Only applies to tables exceeding '
                             '--segment_threshold rows.'
                         ))
+
+    # -- Strategy (streaming vs two-phase disk-based) -------------------------
+    parser.add_argument('--strategy', type=str, default='streaming',
+                        choices=['streaming', 'psql-copy', 'pgdump'],
+                        help=(
+                            'Data loading strategy (default: streaming). '
+                            '"streaming" pipes psql COPY directly to clickhouse-client. '
+                            '"psql-copy" dumps to gzipped CSV files first, then loads. '
+                            '"pgdump" uses pg_dump --format=directory, then loads.'
+                        ))
+    parser.add_argument('--dump_dir', type=str, default='/tmp/pg_dump',
+                        help='Directory for intermediate dump files (default: /tmp/pg_dump)')
+    parser.add_argument('--dump_only', dest='dump_only',
+                        action='store_true', default=False,
+                        help='Only dump data to disk, do not load into ClickHouse')
+    parser.add_argument('--load_only', dest='load_only',
+                        action='store_true', default=False,
+                        help='Only load from existing dump files, do not dump from PG')
+    parser.add_argument('--dump_jobs', type=int, default=4,
+                        help='Number of parallel dump workers for pg_dump (default: 4)')
+
+    # -- PG binary path -------------------------------------------------------
+    parser.add_argument('--pg_bin_dir', type=str,
+                        default=os.environ.get('PG_BIN_DIR', ''),
+                        help='Path to PG binaries (psql, pg_dump, pg_restore). Env: PG_BIN_DIR')
+
+    # -- Benchmark mode -------------------------------------------------------
+    parser.add_argument('--benchmark', dest='benchmark',
+                        action='store_true', default=False,
+                        help='Benchmark loading strategies on a single table')
+    parser.add_argument('--benchmark_table', type=str, default=None,
+                        help='Table name to benchmark (required with --benchmark)')
+    parser.add_argument('--benchmark_limit', type=int, default=1_000_000,
+                        help='Row limit for benchmark (default: 1,000,000)')
 
     # -- Offset table (for CDC hand-off) -------------------------------------
     parser.add_argument('--offset_table', required=False, default=None,
@@ -1353,6 +1945,11 @@ def main():
     if override_config:
         logging.info(f"Column type overrides: {override_config}")
 
+    # -- PG_BIN_DIR setup (CLI > env var) -------------------------------------
+    global PG_BIN_DIR
+    if getattr(args, 'pg_bin_dir', ''):
+        PG_BIN_DIR = args.pg_bin_dir
+
     # -- Logging setup (mirrors mysql_dumper.py) ------------------------------
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -1388,10 +1985,15 @@ def main():
         )
 
     # -- Dependency checks ----------------------------------------------------
-    assert check_program_exists('psql'), \
-        "psql should be in the PATH"
+    assert check_program_exists(pg_bin('psql')), \
+        f"psql should be in the PATH (looked for: {pg_bin('psql')})"
     assert check_program_exists('clickhouse-client'), \
         "clickhouse-client should be in the PATH"
+    if getattr(args, 'strategy', 'streaming') == 'pgdump':
+        assert check_program_exists(pg_bin('pg_dump')), \
+            f"pg_dump should be in the PATH (looked for: {pg_bin('pg_dump')})"
+        assert check_program_exists(pg_bin('pg_restore')), \
+            f"pg_restore should be in the PATH (looked for: {pg_bin('pg_restore')})"
 
     # -- Credential resolution ------------------------------------------------
     pg_user = args.pg_user
@@ -1416,6 +2018,27 @@ def main():
         (ch_user, ch_password) = resolve_credentials_from_config(
             args.ch_config_file
         )
+
+    # -- Benchmark early exit ------------------------------------------------
+    if args.benchmark:
+        if not args.benchmark_table:
+            logging.error("--benchmark requires --benchmark_table")
+            sys.exit(1)
+        run_benchmark(
+            args,
+            pg_user=pg_user,
+            pg_password=pg_password,
+            ch_user=ch_user,
+            ch_password=ch_password,
+            pg_server_timezone=get_server_timezone(
+                get_postgres_connection(
+                    args.pg_host, pg_user, pg_password,
+                    args.pg_port, args.pg_database
+                )
+            ),
+            override_config=override_config,
+        )
+        sys.exit(0)
 
     try:
         # --------------------------------------------------------------------
@@ -1506,6 +2129,36 @@ def main():
 
         logging.info(f"Total tables to process: {len(work_items)}")
 
+        # -- Order by size (ascending) so small tables finish first ----------
+        if args.order_by_size and len(work_items) > 1:
+            logging.info("Sorting tables by approximate row count (ascending)...")
+            pg_conn_sort = get_postgres_connection(
+                args.pg_host, pg_user, pg_password,
+                args.pg_port, args.pg_database
+            )
+            try:
+                size_map = {}
+                for schema_name, table_name, _, _ in work_items:
+                    key = (schema_name, table_name)
+                    if key not in size_map:
+                        size_map[key] = get_pg_approx_row_count(
+                            pg_conn_sort, schema_name, table_name
+                        )
+                work_items.sort(
+                    key=lambda item: size_map.get(
+                        (item[0], item[1]), 0
+                    )
+                )
+                logging.info(
+                    "Table order (smallest first): %s",
+                    ", ".join(
+                        f"{t[1]}(~{size_map.get((t[0], t[1]), 0):,})"
+                        for t in work_items
+                    ),
+                )
+            finally:
+                pg_conn_sort.close()
+
         # Collect unique (schema, tables) pairs for privilege validation
         schema_tables_map = {}
         for schema_name, table_name, _, _ in work_items:
@@ -1595,9 +2248,14 @@ def main():
                         )
                         pg_conn_t.close()
 
-                        # -- Drop existing table if requested ----------------
+                        # -- Drop or truncate existing table -----------------
                         if args.drop_existing:
                             drop_ch_table(
+                                ch_conn_schema, ch_db, ch_table,
+                                dry_run=args.dry_run,
+                            )
+                        elif args.truncate:
+                            truncate_ch_table(
                                 ch_conn_schema, ch_db, ch_table,
                                 dry_run=args.dry_run,
                             )
@@ -1643,153 +2301,474 @@ def main():
         # large tables)
         # --------------------------------------------------------------------
         if not args.schema_only:
-            # Build the full list of load jobs.  Each job is either:
-            #   - A whole-table load (small tables)
-            #   - A PK-range segment load (large tables)
-            # This list is then fed into the thread pool.
-            load_jobs = []   # list of dicts with load_table kwargs
+            strategy = args.strategy
 
-            segment_threshold = getattr(args, 'segment_threshold', 1_000_000)
-            segments_per_table = getattr(args, 'segments_per_table', 4)
-
-            for schema_name, table_name, ch_database, ch_table in work_items:
-                # Check row count to decide if segmentation is needed
-                pg_conn_seg = get_postgres_connection(
-                    args.pg_host, pg_user, pg_password,
-                    args.pg_port, args.pg_database
+            # -- Skip-existing: filter out tables that already have data -----
+            if args.skip_existing:
+                ch_conn_check = clickhouse_connection(
+                    args.ch_host,
+                    database='default',
+                    user=ch_user,
+                    password=ch_password,
+                    port=args.ch_port,
+                    secure=args.ch_secure,
                 )
-                approx_rows = get_table_row_count(pg_conn_seg, schema_name, table_name)
-                pk_cols = get_table_pk(pg_conn_seg, schema_name, table_name)
-
-                if (segment_threshold > 0
-                        and approx_rows > segment_threshold
-                        and segments_per_table > 1):
-                    # Check if PK is suitable for segmentation
-                    is_seg, pk_col = get_pk_type_is_segmentable(
-                        pg_conn_seg, schema_name, table_name, pk_cols
-                    )
-                    if is_seg:
-                        logging.info(
-                            f"[{ch_table}] Large table (~{approx_rows:,} rows), "
-                            f"splitting into {segments_per_table} PK segments "
-                            f"on column '{pk_col}'"
+                try:
+                    filtered_items = []
+                    for item in work_items:
+                        schema_name, table_name, ch_database, ch_table = item
+                        exists, row_count = check_ch_table_has_data(
+                            ch_conn_check, ch_database, ch_table
                         )
-                        boundaries = get_pk_range_boundaries(
-                            pg_conn_seg, schema_name, table_name,
-                            pk_col, segments_per_table
-                        )
-                        pg_conn_seg.close()
-                        for seg_idx, (lower, upper) in enumerate(boundaries, 1):
-                            where = build_segment_where_clause(pk_col, lower, upper)
-                            load_jobs.append({
-                                'table_name': table_name,
-                                'pg_host': args.pg_host,
-                                'pg_port': args.pg_port,
-                                'pg_user': pg_user,
-                                'pg_password': pg_password,
-                                'pg_database': args.pg_database,
-                                'pg_schema': schema_name,
-                                'ch_host': args.ch_host,
-                                'ch_port': args.ch_port,
-                                'ch_user': ch_user,
-                                'ch_password': ch_password,
-                                'ch_database': ch_database,
-                                'ch_config_file': args.ch_config_file,
-                                'ch_secure': args.ch_secure,
-                                'dry_run': args.dry_run,
-                                'batch_size': args.batch_size,
-                                'pg_server_timezone': pg_server_timezone,
-                                'ch_table_name': ch_table,
-                                'where_clause': where,
-                                'segment_label': f"seg {seg_idx}/{len(boundaries)}",
-                            })
-                        continue   # skip the whole-table fallback below
-                    else:
-                        logging.info(
-                            f"[{ch_table}] Large table (~{approx_rows:,} rows) "
-                            f"but PK not segmentable (compound or unsupported type), "
-                            f"loading as single stream"
-                        )
+                        if exists and row_count > 0:
+                            logging.info(
+                                f"[{ch_table}] Skipping — already has "
+                                f"{row_count:,} rows in CH (--skip_existing)"
+                            )
+                        else:
+                            filtered_items.append(item)
+                finally:
+                    ch_conn_check.close()
 
-                pg_conn_seg.close()
-
-                # Whole-table load (no segmentation)
-                load_jobs.append({
-                    'table_name': table_name,
-                    'pg_host': args.pg_host,
-                    'pg_port': args.pg_port,
-                    'pg_user': pg_user,
-                    'pg_password': pg_password,
-                    'pg_database': args.pg_database,
-                    'pg_schema': schema_name,
-                    'ch_host': args.ch_host,
-                    'ch_port': args.ch_port,
-                    'ch_user': ch_user,
-                    'ch_password': ch_password,
-                    'ch_database': ch_database,
-                    'ch_config_file': args.ch_config_file,
-                    'ch_secure': args.ch_secure,
-                    'dry_run': args.dry_run,
-                    'batch_size': args.batch_size,
-                    'pg_server_timezone': pg_server_timezone,
-                    'ch_table_name': ch_table,
-                })
-
-            logging.info(
-                f"=== Step 4: Loading {len(work_items)} tables "
-                f"({len(load_jobs)} jobs including segments) "
-                f"with {args.threads} threads ==="
-            )
-            results = []
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=args.threads, thread_name_prefix='pg_loader'
-            ) as executor:
-                futures = {
-                    executor.submit(load_table, **job): job
-                    for job in load_jobs
-                }
-
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as exc:
-                        job = futures[future]
-                        tbl_label = job.get('ch_table_name', job['table_name'])
-                        seg = job.get('segment_label', '')
-                        if seg:
-                            tbl_label = f"{tbl_label} [{seg}]"
-                        logging.error(f"[{tbl_label}] raised an exception: {exc}")
-                        logging.error(traceback.format_exc())
-                        results.append((tbl_label, -1, 0, False))
-
-            # Summary report
-            logging.info("=== Load Summary ===")
-            failed = []
-            total_rows = 0
-            for (tbl, rows, elapsed, ok) in sorted(results, key=lambda r: r[0]):
-                status = "OK" if ok else "FAILED"
-                rate = rows / elapsed if elapsed > 0 and rows > 0 else 0
-                if rows >= 0:
+                skipped = len(work_items) - len(filtered_items)
+                if skipped > 0:
                     logging.info(
-                        f"  {status:6s}  {tbl:50s} "
-                        f"~{rows:>12,} rows  {elapsed:>7.1f}s  ~{rate:>10,.0f} rows/s"
+                        f"Skipped {skipped} tables with existing data; "
+                        f"{len(filtered_items)} remaining"
+                    )
+                work_items = filtered_items
+
+                if not work_items:
+                    logging.info("All tables already have data — nothing to load")
+                    # Jump directly to Step 5 (offset writing)
+                    strategy = None  # signal to skip loading
+
+            # ================================================================
+            # Strategy: pgdump (two-phase: pg_dump → disk → clickhouse-client)
+            # ================================================================
+            if strategy == 'pgdump':
+                dump_dir = args.dump_dir
+
+                # Phase 1: dump
+                if not args.load_only:
+                    # Collect table list for pg_dump
+                    pg_tables_for_dump = [
+                        f"{schema_name}.{table_name}"
+                        for schema_name, table_name, _, _ in work_items
+                    ]
+                    pgdump_dump_tables(
+                        pg_host=args.pg_host,
+                        pg_port=args.pg_port,
+                        pg_user=pg_user,
+                        pg_password=pg_password,
+                        pg_database=args.pg_database,
+                        pg_schemas=[s for s in schemas],
+                        dump_dir=dump_dir,
+                        dump_jobs=args.dump_jobs,
+                        dry_run=args.dry_run,
+                    )
+
+                if args.dump_only:
+                    logging.info(
+                        "pgdump Phase 1 complete (--dump_only). "
+                        f"Dump directory: {dump_dir}"
                     )
                 else:
+                    # Phase 2: load from dump directory
                     logging.info(
-                        f"  {status:6s}  {tbl:50s} "
-                        f"   (segment)  {elapsed:>7.1f}s"
+                        f"=== Step 4: Loading {len(work_items)} tables "
+                        f"from pgdump directory ({dump_dir}) "
+                        f"with {args.threads} threads ==="
                     )
-                if not ok:
-                    failed.append(tbl)
-                elif rows > 0:
-                    total_rows += rows
+                    results = []
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=args.threads,
+                        thread_name_prefix='pgdump_loader',
+                    ) as executor:
+                        futures = {}
+                        for schema_name, table_name, ch_database, ch_table in work_items:
+                            future = executor.submit(
+                                pgdump_load_table,
+                                table_name=table_name,
+                                dump_dir=dump_dir,
+                                ch_host=args.ch_host,
+                                ch_port=args.ch_port,
+                                ch_user=ch_user,
+                                ch_password=ch_password,
+                                ch_database=ch_database,
+                                ch_table=ch_table,
+                                pg_schema=schema_name,
+                                ch_secure=args.ch_secure,
+                                dry_run=args.dry_run,
+                            )
+                            futures[future] = ch_table
 
-            if failed:
-                logging.error(f"FAILED tables: {failed}")
-                sys.exit(1)
+                        for future in concurrent.futures.as_completed(futures):
+                            tbl_label = futures[future]
+                            try:
+                                result = future.result()
+                                results.append(result)
+                            except Exception as exc:
+                                logging.error(
+                                    f"[{tbl_label}] raised an exception: {exc}"
+                                )
+                                logging.error(traceback.format_exc())
+                                results.append((tbl_label, -1, 0, False))
 
-            logging.info(f"All tables loaded successfully (~{total_rows:,} rows total)")
+                    # Summary
+                    logging.info("=== Load Summary (pgdump) ===")
+                    failed = []
+                    total_rows = 0
+                    for (tbl, rows, elapsed, ok) in sorted(
+                        results, key=lambda r: r[0]
+                    ):
+                        status = "OK" if ok else "FAILED"
+                        rate = (
+                            rows / elapsed
+                            if elapsed > 0 and rows > 0
+                            else 0
+                        )
+                        logging.info(
+                            f"  {status:6s}  {tbl:50s} "
+                            f"~{rows:>12,} rows  {elapsed:>7.1f}s  "
+                            f"~{rate:>10,.0f} rows/s"
+                        )
+                        if not ok:
+                            failed.append(tbl)
+                        elif rows > 0:
+                            total_rows += rows
+
+                    if failed:
+                        logging.error(f"FAILED tables: {failed}")
+                        sys.exit(1)
+                    logging.info(
+                        f"All tables loaded successfully "
+                        f"(~{total_rows:,} rows total)"
+                    )
+
+            # ================================================================
+            # Strategy: psql-copy (two-phase: psql COPY → gzip → disk → CH)
+            # ================================================================
+            elif strategy == 'psql-copy':
+                dump_dir = args.dump_dir
+                os.makedirs(dump_dir, exist_ok=True)
+
+                # Phase 1: dump each table to gzipped CSV
+                if not args.load_only:
+                    logging.info(
+                        f"=== Step 4a: Dumping {len(work_items)} tables "
+                        f"to {dump_dir} (psql-copy) ==="
+                    )
+                    for schema_name, table_name, ch_database, ch_table in work_items:
+                        pg_conn_cols = get_postgres_connection(
+                            args.pg_host, pg_user, pg_password,
+                            args.pg_port, args.pg_database
+                        )
+                        columns_meta = get_table_columns(
+                            pg_conn_cols, schema_name, table_name,
+                            pg_server_timezone=pg_server_timezone,
+                            override_config=override_config,
+                            pg_database=args.pg_database,
+                        )
+                        pg_conn_cols.close()
+                        col_names = [c['column_name'] for c in columns_meta]
+
+                        psqlcopy_dump_table(
+                            table_name=table_name,
+                            column_names=col_names,
+                            pg_host=args.pg_host,
+                            pg_port=args.pg_port,
+                            pg_user=pg_user,
+                            pg_password=pg_password,
+                            pg_database=args.pg_database,
+                            pg_schema=schema_name,
+                            dump_dir=dump_dir,
+                            dry_run=args.dry_run,
+                        )
+
+                if args.dump_only:
+                    logging.info(
+                        "psql-copy Phase 1 complete (--dump_only). "
+                        f"Dump directory: {dump_dir}"
+                    )
+                else:
+                    # Phase 2: load each gzipped CSV into ClickHouse
+                    logging.info(
+                        f"=== Step 4b: Loading {len(work_items)} tables "
+                        f"from {dump_dir} (psql-copy) "
+                        f"with {args.threads} threads ==="
+                    )
+                    results = []
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=args.threads,
+                        thread_name_prefix='psqlcopy_loader',
+                    ) as executor:
+                        futures = {}
+                        for schema_name, table_name, ch_database, ch_table in work_items:
+                            csv_file = os.path.join(
+                                dump_dir, f"{table_name}.csv.gz"
+                            )
+                            if not os.path.exists(csv_file):
+                                logging.warning(
+                                    f"[{ch_table}] Dump file not found: "
+                                    f"{csv_file} — skipping"
+                                )
+                                results.append((ch_table, 0, 0, False))
+                                continue
+
+                            # Get column names for the load command
+                            pg_conn_cols = get_postgres_connection(
+                                args.pg_host, pg_user, pg_password,
+                                args.pg_port, args.pg_database
+                            )
+                            columns_meta = get_table_columns(
+                                pg_conn_cols, schema_name, table_name,
+                                pg_server_timezone=pg_server_timezone,
+                                override_config=override_config,
+                                pg_database=args.pg_database,
+                            )
+                            pg_conn_cols.close()
+                            col_names = [
+                                c['column_name'] for c in columns_meta
+                            ]
+
+                            future = executor.submit(
+                                psqlcopy_load_table,
+                                table_name=table_name,
+                                csv_file=csv_file,
+                                ch_host=args.ch_host,
+                                ch_port=args.ch_port,
+                                ch_user=ch_user,
+                                ch_password=ch_password,
+                                ch_database=ch_database,
+                                ch_table=ch_table,
+                                column_names=col_names,
+                                ch_secure=args.ch_secure,
+                                dry_run=args.dry_run,
+                            )
+                            futures[future] = ch_table
+
+                        for future in concurrent.futures.as_completed(futures):
+                            tbl_label = futures[future]
+                            try:
+                                result = future.result()
+                                results.append(result)
+                            except Exception as exc:
+                                logging.error(
+                                    f"[{tbl_label}] raised an exception: "
+                                    f"{exc}"
+                                )
+                                logging.error(traceback.format_exc())
+                                results.append((tbl_label, -1, 0, False))
+
+                    # Summary
+                    logging.info("=== Load Summary (psql-copy) ===")
+                    failed = []
+                    total_rows = 0
+                    for (tbl, rows, elapsed, ok) in sorted(
+                        results, key=lambda r: r[0]
+                    ):
+                        status = "OK" if ok else "FAILED"
+                        rate = (
+                            rows / elapsed
+                            if elapsed > 0 and rows > 0
+                            else 0
+                        )
+                        logging.info(
+                            f"  {status:6s}  {tbl:50s} "
+                            f"~{rows:>12,} rows  {elapsed:>7.1f}s  "
+                            f"~{rate:>10,.0f} rows/s"
+                        )
+                        if not ok:
+                            failed.append(tbl)
+                        elif rows > 0:
+                            total_rows += rows
+
+                    if failed:
+                        logging.error(f"FAILED tables: {failed}")
+                        sys.exit(1)
+                    logging.info(
+                        f"All tables loaded successfully "
+                        f"(~{total_rows:,} rows total)"
+                    )
+
+            # ================================================================
+            # Strategy: streaming (default — existing behavior)
+            # ================================================================
+            elif strategy == 'streaming':
+                # Build the full list of load jobs.  Each job is either:
+                #   - A whole-table load (small tables)
+                #   - A PK-range segment load (large tables)
+                # This list is then fed into the thread pool.
+                load_jobs = []   # list of dicts with load_table kwargs
+
+                segment_threshold = getattr(
+                    args, 'segment_threshold', 1_000_000
+                )
+                segments_per_table = getattr(args, 'segments_per_table', 4)
+
+                for schema_name, table_name, ch_database, ch_table in work_items:
+                    # Check row count to decide if segmentation is needed
+                    pg_conn_seg = get_postgres_connection(
+                        args.pg_host, pg_user, pg_password,
+                        args.pg_port, args.pg_database
+                    )
+                    approx_rows = get_table_row_count(
+                        pg_conn_seg, schema_name, table_name
+                    )
+                    pk_cols = get_table_pk(
+                        pg_conn_seg, schema_name, table_name
+                    )
+
+                    if (segment_threshold > 0
+                            and approx_rows > segment_threshold
+                            and segments_per_table > 1):
+                        # Check if PK is suitable for segmentation
+                        is_seg, pk_col = get_pk_type_is_segmentable(
+                            pg_conn_seg, schema_name, table_name, pk_cols
+                        )
+                        if is_seg:
+                            logging.info(
+                                f"[{ch_table}] Large table "
+                                f"(~{approx_rows:,} rows), splitting into "
+                                f"{segments_per_table} PK segments "
+                                f"on column '{pk_col}'"
+                            )
+                            boundaries = get_pk_range_boundaries(
+                                pg_conn_seg, schema_name, table_name,
+                                pk_col, segments_per_table
+                            )
+                            pg_conn_seg.close()
+                            for seg_idx, (lower, upper) in enumerate(
+                                boundaries, 1
+                            ):
+                                where = build_segment_where_clause(
+                                    pk_col, lower, upper
+                                )
+                                load_jobs.append({
+                                    'table_name': table_name,
+                                    'pg_host': args.pg_host,
+                                    'pg_port': args.pg_port,
+                                    'pg_user': pg_user,
+                                    'pg_password': pg_password,
+                                    'pg_database': args.pg_database,
+                                    'pg_schema': schema_name,
+                                    'ch_host': args.ch_host,
+                                    'ch_port': args.ch_port,
+                                    'ch_user': ch_user,
+                                    'ch_password': ch_password,
+                                    'ch_database': ch_database,
+                                    'ch_config_file': args.ch_config_file,
+                                    'ch_secure': args.ch_secure,
+                                    'dry_run': args.dry_run,
+                                    'batch_size': args.batch_size,
+                                    'pg_server_timezone': pg_server_timezone,
+                                    'ch_table_name': ch_table,
+                                    'where_clause': where,
+                                    'segment_label': (
+                                        f"seg {seg_idx}/{len(boundaries)}"
+                                    ),
+                                })
+                            continue  # skip the whole-table fallback below
+                        else:
+                            logging.info(
+                                f"[{ch_table}] Large table "
+                                f"(~{approx_rows:,} rows) but PK not "
+                                f"segmentable (compound or unsupported "
+                                f"type), loading as single stream"
+                            )
+
+                    pg_conn_seg.close()
+
+                    # Whole-table load (no segmentation)
+                    load_jobs.append({
+                        'table_name': table_name,
+                        'pg_host': args.pg_host,
+                        'pg_port': args.pg_port,
+                        'pg_user': pg_user,
+                        'pg_password': pg_password,
+                        'pg_database': args.pg_database,
+                        'pg_schema': schema_name,
+                        'ch_host': args.ch_host,
+                        'ch_port': args.ch_port,
+                        'ch_user': ch_user,
+                        'ch_password': ch_password,
+                        'ch_database': ch_database,
+                        'ch_config_file': args.ch_config_file,
+                        'ch_secure': args.ch_secure,
+                        'dry_run': args.dry_run,
+                        'batch_size': args.batch_size,
+                        'pg_server_timezone': pg_server_timezone,
+                        'ch_table_name': ch_table,
+                    })
+
+                logging.info(
+                    f"=== Step 4: Loading {len(work_items)} tables "
+                    f"({len(load_jobs)} jobs including segments) "
+                    f"with {args.threads} threads ==="
+                )
+                results = []
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=args.threads, thread_name_prefix='pg_loader'
+                ) as executor:
+                    futures = {
+                        executor.submit(load_table, **job): job
+                        for job in load_jobs
+                    }
+
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as exc:
+                            job = futures[future]
+                            tbl_label = job.get(
+                                'ch_table_name', job['table_name']
+                            )
+                            seg = job.get('segment_label', '')
+                            if seg:
+                                tbl_label = f"{tbl_label} [{seg}]"
+                            logging.error(
+                                f"[{tbl_label}] raised an exception: {exc}"
+                            )
+                            logging.error(traceback.format_exc())
+                            results.append((tbl_label, -1, 0, False))
+
+                # Summary report
+                logging.info("=== Load Summary ===")
+                failed = []
+                total_rows = 0
+                for (tbl, rows, elapsed, ok) in sorted(
+                    results, key=lambda r: r[0]
+                ):
+                    status = "OK" if ok else "FAILED"
+                    rate = (
+                        rows / elapsed if elapsed > 0 and rows > 0 else 0
+                    )
+                    if rows >= 0:
+                        logging.info(
+                            f"  {status:6s}  {tbl:50s} "
+                            f"~{rows:>12,} rows  {elapsed:>7.1f}s  "
+                            f"~{rate:>10,.0f} rows/s"
+                        )
+                    else:
+                        logging.info(
+                            f"  {status:6s}  {tbl:50s} "
+                            f"   (segment)  {elapsed:>7.1f}s"
+                        )
+                    if not ok:
+                        failed.append(tbl)
+                    elif rows > 0:
+                        total_rows += rows
+
+                if failed:
+                    logging.error(f"FAILED tables: {failed}")
+                    sys.exit(1)
+
+                logging.info(
+                    f"All tables loaded successfully "
+                    f"(~{total_rows:,} rows total)"
+                )
 
         # --------------------------------------------------------------------
         # Step 5: Write LSN offset so CDC connector starts from right position

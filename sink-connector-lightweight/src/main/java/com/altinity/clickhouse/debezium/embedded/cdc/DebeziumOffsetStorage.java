@@ -55,8 +55,15 @@ public class DebeziumOffsetStorage {
      */
     public String getOffsetKey(Properties props) {
         String connectorName = props.getProperty("name");
-        return String.format("[\"%s\",{\"server\":\"embeddedconnector\"}]",
-                connectorName);
+        // Debezium 2.x embedded engine always writes offset keys with
+        // "embeddedconnector" as the server name (its internal default for
+        // topic.prefix). This constant MUST match what Debezium writes so
+        // that reads and writes target the same row. The Python tooling
+        // (postgres_dumper.py / postgres_type_mapper.py) also uses this
+        // constant for the same reason.
+        String topicPrefix = "embeddedconnector";
+        return String.format("[\"%s\",{\"server\":\"%s\"}]",
+                connectorName, topicPrefix);
     }
 
     /**
