@@ -57,7 +57,7 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(10000);
+        Thread.sleep(15000); // Allow engine to start and begin snapshot
 
         Connection conn = connectToMySQL();
         // alter table ship_class change column class_name class_name_new int;
@@ -73,15 +73,13 @@ public class AlterTableChangeColumnIT extends DDLBaseIT {
 //        conn.prepareStatement("alter table add_test change column col3 int first").execute();
 //        conn.prepareStatement("alter table add_test change column col2 int after col3").execute();
 
-        Thread.sleep(10000);
-
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
-        // Poll until the tables exist in ClickHouse (DDL replication may take time)
+        // Poll until the tables exist in ClickHouse with all expected columns (DDL replication may take time)
         DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
         Map<String, String> shipClassColumns = null;
         Map<String, String> addTestColumns = null;
-        for (int retry = 0; retry < 10; retry++) {
+        for (int retry = 0; retry < 40; retry++) {
             shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
             addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
             if (!shipClassColumns.isEmpty() && !addTestColumns.isEmpty()

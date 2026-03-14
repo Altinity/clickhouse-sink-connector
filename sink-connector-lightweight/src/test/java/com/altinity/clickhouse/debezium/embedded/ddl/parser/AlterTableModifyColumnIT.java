@@ -57,7 +57,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(10000);
+        Thread.sleep(10000); // Allow engine to start
 
         Connection conn = connectToMySQL();
 
@@ -68,13 +68,22 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         conn.prepareStatement("alter table add_test modify column col3 int first;").execute();
         conn.prepareStatement("alter table add_test modify column col2 int after col3;").execute();
 
-
-        Thread.sleep(15000);
-
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
-        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+
+        // Poll until columns are modified in ClickHouse
+        Map<String, String> shipClassColumns = null;
+        Map<String, String> addTestColumns = null;
+        for (int retry = 0; retry < 40; retry++) {
+            shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+            addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+            if (!shipClassColumns.isEmpty() && !addTestColumns.isEmpty()
+                    && "Nullable(Int32)".equalsIgnoreCase(shipClassColumns.get("class_name"))
+                    && "Nullable(Int32)".equalsIgnoreCase(addTestColumns.get("col2"))) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
 
         Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Nullable(Int32)"));
         Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
