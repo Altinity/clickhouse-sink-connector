@@ -40,8 +40,8 @@ public class ClickHouseTableOperationsBaseTest {
         Assert.assertTrue(result.get("totalAmount").equalsIgnoreCase("Decimal(4,2)"));
         Assert.assertTrue(result.get("amount").equalsIgnoreCase("Decimal(10,2)"));
 
-        Assert.assertTrue(result.get("date_milli").equalsIgnoreCase("DateTime64(3)"));
-        Assert.assertTrue(result.get("date_micro").equalsIgnoreCase("DateTime64(6)"));
+        Assert.assertTrue(result.get("date_milli").equalsIgnoreCase("DateTime64(3, 'UTC')"));
+        Assert.assertTrue(result.get("date_micro").equalsIgnoreCase("DateTime64(6, 'UTC')"));
 
     }
 }
