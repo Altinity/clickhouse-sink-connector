@@ -136,7 +136,7 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap2.size() ==44);
+        Assert.assertTrue(columnDataTypesMap2.size() == 44);
 
     }
 

@@ -44,7 +44,7 @@ public class ErrorLogger {
         }
 
         String createTableQuery = String.format(
-            "CREATE TABLE IF NOT EXISTS %s.%s (" +
+            "CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
                 "error_timestamp DateTime64(3) DEFAULT now()," +
                 "error String," +
                 "offset_key String," +
@@ -55,8 +55,8 @@ public class ErrorLogger {
                 "source_database String," +
                 "database_query String" +
             ") ENGINE = MergeTree() " +
-            "ORDER BY (error_timestamp, server)", 
-            BaseDbWriter.SYSTEM_DB, 
+            "ORDER BY (error_timestamp, server)",
+            BaseDbWriter.SYSTEM_DB,
             errorTableName
         );
 
@@ -91,7 +91,7 @@ public class ErrorLogger {
         }
 
         String insertQuery = String.format(
-            "INSERT INTO %s.%s (" +
+            "INSERT INTO `%s`.`%s` (" +
                 "error, " +
                 "offset_key, " +
                 "binlog_file, " +
@@ -100,8 +100,8 @@ public class ErrorLogger {
                 "server, " +
                 "source_database, " +
                 "database_query" +
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
-            BaseDbWriter.SYSTEM_DB, 
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            BaseDbWriter.SYSTEM_DB,
             errorTableName
         );
 

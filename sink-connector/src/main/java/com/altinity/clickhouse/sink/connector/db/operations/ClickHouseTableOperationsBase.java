@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
@@ -14,6 +15,12 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.SIGN_COLUMN;
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.IS_DELETED_COLUMN;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 
@@ -56,14 +63,18 @@ public class ClickHouseTableOperationsBase {
     private static final String DECIMAL_64_18 = "Decimal(64,18)";
 
     /**
-     * String constant for DateTime64(3) type (millisecond precision).
+     * String constant for DateTime64(3, 'UTC') type (millisecond precision).
+     * Explicit UTC timezone prevents DST-related corruption when the
+     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
      */
-    private static final String DATETIME64_3 = "DateTime64(3)";
+    private static final String DATETIME64_3 = "DateTime64(3, 'UTC')";
 
     /**
-     * String constant for DateTime64(6) type (microsecond precision).
+     * String constant for DateTime64(6, 'UTC') type (microsecond precision).
+     * Explicit UTC timezone prevents DST-related corruption when the
+     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
      */
-    private static final String DATETIME64_6 = "DateTime64(6)";
+    private static final String DATETIME64_6 = "DateTime64(6, 'UTC')";
 
     /**
      * Logger for this class.
@@ -83,21 +94,55 @@ public class ClickHouseTableOperationsBase {
      * a provided array of Kafka Connect {@link Field} objects. Handles special
      * cases like Decimal, DateTime64, and arrays.
      *
+     * <p>This is the original method signature preserved for backward
+     * compatibility. It delegates to the overloaded variant without
+     * schema/table context, meaning {@link ColumnTypeOverrideConfig} direct
+     * overrides will not be applied (they require table-qualified lookups).
+     *
      * @param fields An array of {@link Field} representing schema fields.
+     * @param config The connector configuration.
      * @return A map where the key is the column name and the value is the
      *         corresponding ClickHouse data type as a String.
      */
     public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields, ClickHouseSinkConnectorConfig config) {
+        return getColumnNameToCHDataTypeMapping(fields, config, null, null);
+    }
+
+    /**
+     * Generates a mapping from column names to ClickHouse data types based on
+     * a provided array of Kafka Connect {@link Field} objects. Handles special
+     * cases like Decimal, DateTime64, and arrays.
+     *
+     * <p>When {@code schemaName} and {@code tableName} are provided, this
+     * method also applies {@link ColumnTypeOverrideConfig} direct overrides
+     * after the existing {@code default_column_datatype_mapping} logic. The
+     * new {@code column_type_override.direct.*} config takes precedence over
+     * the old {@code default_column_datatype_mapping.*} config.
+     *
+     * @param fields     An array of {@link Field} representing schema fields.
+     * @param config     The connector configuration.
+     * @param schemaName The source schema name (e.g. "public") for
+     *                   table-qualified override lookups. May be null.
+     * @param tableName  The source table name for table-qualified override
+     *                   lookups. May be null.
+     * @return A map where the key is the column name and the value is the
+     *         corresponding ClickHouse data type as a String.
+     */
+    public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields,
+                                                                ClickHouseSinkConnectorConfig config,
+                                                                String schemaName,
+                                                                String tableName) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         Map<String, String> columnToDataTypesMap = new HashMap<>();
 
         for (Field f : fields) {
             String colName = f.name();
             Schema.Type type = f.schema().type();
-            String schemaName = f.schema().name();
+            String fieldSchemaName = f.schema().name();
+            boolean isOptional = f.schema().isOptional();
 
             if (type == Schema.Type.ARRAY) {
-                schemaName = f.schema().valueSchema().type().name();
+                fieldSchemaName = f.schema().valueSchema().type().name();
                 ClickHouseDataType dt = mapper.getClickHouseDataType(
                         f.schema().valueSchema().type(), null);
                 columnToDataTypesMap.put(
@@ -108,36 +153,25 @@ public class ClickHouseTableOperationsBase {
             }
             // Input:
             ClickHouseDataType dataType =
-                    mapper.getClickHouseDataType(type, schemaName);
+                    mapper.getClickHouseDataType(type, fieldSchemaName);
 
             if (dataType != null) {
+                String chType;
                 if (dataType == ClickHouseDataType.Decimal) {
                     // Get Scale, precision from parameters.
                     Map<String, String> params = f.schema().parameters();
 
                     // Postgres numeric data type has no scale/precision.
-                    if (schemaName.equalsIgnoreCase(
+                    if (fieldSchemaName.equalsIgnoreCase(
                             VariableScaleDecimal.LOGICAL_NAME)) {
-                        columnToDataTypesMap.put(
-                                colName,
-                                DECIMAL_64_18
-                        );
-                        continue;
-                    }
-
-                    if (params != null
+                        chType = DECIMAL_64_18;
+                    } else if (params != null
                             && params.containsKey(SCALE)
                             && params.containsKey(PRECISION)) {
-                        columnToDataTypesMap.put(
-                                colName,
-                                "Decimal(" + params.get(PRECISION) + ","
-                                        + params.get(SCALE) + ")"
-                        );
+                        chType = "Decimal(" + params.get(PRECISION) + ","
+                                + params.get(SCALE) + ")";
                     } else {
-                        columnToDataTypesMap.put(
-                                colName,
-                                DEFAULT_DECIMAL_TYPE
-                        );
+                        chType = DEFAULT_DECIMAL_TYPE;
                     }
                 } else if (dataType == ClickHouseDataType.DateTime64) {
                     // Timestamp (with milliseconds scale),
@@ -145,7 +179,7 @@ public class ClickHouseTableOperationsBase {
                     if (f.schema().type() == Schema.INT64_SCHEMA.type()
                             && f.schema().name().equalsIgnoreCase(
                             Timestamp.SCHEMA_NAME)) {
-                        columnToDataTypesMap.put(colName, DATETIME64_3);
+                        chType = DATETIME64_3;
                     } else if (
                             (f.schema().type() == Schema.INT64_SCHEMA.type()
                                     && f.schema().name().equalsIgnoreCase(
@@ -158,16 +192,36 @@ public class ClickHouseTableOperationsBase {
                         // DATETIME(3 -6) -> DateTime64(6)
                         // TIMESTAMP(1..6) -> ZONEDTIMESTAMP(Debezium)
                         // -> DateTime64(6)
-                        columnToDataTypesMap.put(colName, DATETIME64_6);
+                        chType = DATETIME64_6;
                     } else {
-                        columnToDataTypesMap.put(colName, dataType.name());
+                        chType = dataType.name();
                     }
                 } else {
-                    columnToDataTypesMap.put(colName, dataType.name());
+                    chType = dataType.name();
                 }
+
+                // Wrap the type in Nullable() if the source schema marks the
+                // field as optional (i.e. nullable in PostgreSQL/MySQL) so that
+                // auto-created tables and ALTER TABLE statements use the correct
+                // Nullable type and can accept NULL values from CDC events.
+                // ClickHouse does NOT support Nullable() around composite types
+                // such as Array, Map, or Tuple, so those must be left as-is.
+                // System/engine columns (_version, _sign, is_deleted) must stay
+                // non-nullable because ClickHouse requires them as bare integer
+                // types for ReplacingMergeTree / CollapsingMergeTree engines.
+                if (isOptional && !chType.startsWith("Nullable(")
+                        && !chType.startsWith("Array(")
+                        && !chType.startsWith("Map(")
+                        && !chType.startsWith("Tuple(")
+                        && !colName.equals(VERSION_COLUMN)
+                        && !colName.equals(SIGN_COLUMN)
+                        && !colName.equals(IS_DELETED_COLUMN)) {
+                    chType = "Nullable(" + chType + ")";
+                }
+                columnToDataTypesMap.put(colName, chType);
             } else {
                 log.error(" **** DATA TYPE MAPPING not found: TYPE:"
-                        + type.getName() + "SCHEMA NAME:" + schemaName);
+                        + type.getName() + "SCHEMA NAME:" + fieldSchemaName);
             }
         }
 
@@ -188,6 +242,26 @@ public class ClickHouseTableOperationsBase {
                 // If defaultColumnDataTypeMap contains the key, update columnToDataTypesMap's value
                 // with the corresponding value from defaultColumnDataTypeMap
                 entry.setValue(defaultColumnDataTypeMap.get(key));
+            }
+        }
+
+        // Apply column_type_override.direct.* overrides.
+        // These take precedence over both the default mapper and
+        // default_column_datatype_mapping.* when a match is found.
+        if (schemaName != null && tableName != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
+                    String columnName = entry.getKey();
+                    Optional<String> directOverride =
+                            overrideConfig.getDirectOverride(schemaName, tableName, columnName);
+                    directOverride.ifPresent(overriddenType -> {
+                        log.info("Applying column type override for {}.{}.{}: {} -> {}",
+                                schemaName, tableName, columnName, entry.getValue(), overriddenType);
+                        entry.setValue(overriddenType);
+                    });
+                }
             }
         }
 
