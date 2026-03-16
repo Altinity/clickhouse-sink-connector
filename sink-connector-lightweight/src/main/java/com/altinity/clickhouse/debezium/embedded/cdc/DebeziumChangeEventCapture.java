@@ -2,11 +2,14 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
+import com.altinity.clickhouse.debezium.embedded.postgres.schema.PostgresSchemaChangeDetector;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -62,6 +65,7 @@ public class DebeziumChangeEventCapture {
     private static final Logger log = LogManager.getLogger(
             DebeziumChangeEventCapture.class);
 
+
     /**
      * Executor for scheduling batch tasks.
      */
@@ -114,6 +118,38 @@ public class DebeziumChangeEventCapture {
      * Database writer instance.
      */
     BaseDbWriter writer;
+
+    /**
+     * Schema drift detector for PostgreSQL connectors.
+     * Null when the connector is not PostgreSQL (MySQL/MariaDB).
+     */
+    private PostgresSchemaChangeDetector postgresSchemaChangeDetector;
+
+    /**
+     * When true, ClickHouse table names include the PostgreSQL schema as a
+     * prefix: __<schema>__<table>.
+     */
+    private boolean schemaPrefixEnabled = false;
+
+    /**
+     * When true, the resolved {@code clickhouse.common.schema.template} is
+     * appended to the ClickHouse database name as a suffix.
+     */
+    private boolean databaseSchemaSuffix = false;
+
+    /**
+     * Shared template string with a {@code {{ schema }}} placeholder.
+     * Used by both table-prefix and database-suffix features when they are
+     * enabled.  Empty string means disabled / use hardcoded format.
+     */
+    private String commonSchemaTemplate = "";
+
+    /**
+     * Static prefix prepended to every ClickHouse database name.
+     * Only alphanumeric characters and underscores are allowed.
+     * Empty string (default) means disabled.
+     */
+    private String commonDatabasePrefix = "";
 
     /**
      * Connection to the system database.
@@ -190,6 +226,7 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
+        initPostgresSchemaChangeDetector(props, config);
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
         }
@@ -337,10 +374,9 @@ public class DebeziumChangeEventCapture {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
                     Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
-
                     engine.run();
                 } catch (Exception e) {
-                    log.error("Debezium event capture starting Exception", e);
+                    log.error("Debezium event thread: engine.run() threw exception", e);
                 }
             });
         } catch (Exception e) {
@@ -383,7 +419,29 @@ public class DebeziumChangeEventCapture {
             log.error("Error retrieving max retries", e);
         }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
-        
+
+        // Initialize schema prefix flag from configuration.
+        this.schemaPrefixEnabled = Boolean.parseBoolean(
+                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(), "false"));
+
+        // Initialize database schema suffix flag from configuration.
+        this.databaseSchemaSuffix = Boolean.parseBoolean(
+                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(), "false"));
+
+        // Initialize the shared schema template from configuration.
+        this.commonSchemaTemplate = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(), "");
+
+        // Initialize and validate the database prefix from configuration.
+        this.commonDatabasePrefix = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(), "");
+        if (!Utils.isValidDatabasePrefix(this.commonDatabasePrefix)) {
+            throw new IllegalArgumentException(
+                    "clickhouse.common.database.prefix contains invalid characters. "
+                    + "Only alphanumeric and underscore allowed: "
+                    + this.commonDatabasePrefix);
+        }
+
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             log.info("************** HISTORY MODE ENABLED **************");
@@ -437,6 +495,56 @@ public class DebeziumChangeEventCapture {
         }
 
         Metrics.stop();
+    }
+
+    /**
+     * Flushes all buffered records and pauses the batch executor so that
+     * no further writes reach ClickHouse until {@link #resumeAfterFlush()}
+     * is called.
+     *
+     * <p>This is used by the checksum tool to quiesce the connector without
+     * fully stopping it:
+     * <ol>
+     *   <li>Set the executor's pause flag — any currently executing batch
+     *       finishes, but no new batch starts.</li>
+     *   <li>Wait for the in-flight batch to drain (up to 30 seconds).</li>
+     * </ol>
+     *
+     * <p>After this method returns the connector is still running (Debezium
+     * still captures WAL events into the internal queue), but nothing is
+     * written to ClickHouse.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void flushAndPause() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot flush");
+        }
+        log.info("FLUSH: Pausing batch executor (drain buffered records)...");
+        this.executor.pause();
+
+        // Wait briefly for any in-flight batch to complete.
+        // The pause flag is checked in beforeExecute(), so the currently running
+        // task will finish normally; we just need to give it time.
+        try {
+            TimeUnit.SECONDS.sleep(5);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        log.info("FLUSH: Batch executor paused — no new writes will reach ClickHouse");
+    }
+
+    /**
+     * Resumes the batch executor after a previous {@link #flushAndPause()}.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void resumeAfterFlush() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot resume");
+        }
+        log.info("FLUSH: Resuming batch executor — writes to ClickHouse will restart");
+        this.executor.resume();
     }
 
     /**
@@ -496,8 +604,8 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+        DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
+        ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
@@ -524,8 +632,19 @@ public class DebeziumChangeEventCapture {
                 // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
                 try {
                     String tableName = getTableName(sr);
+                    if (tableName == null) {
+                        tableName = extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled, commonSchemaTemplate);
+                    }
                     if (tableName != null) {
-                        CacheInvalidationManager.getInstance().invalidateTable(databaseName + "." + tableName);
+                        String tableKey = databaseName + "." + tableName;
+                        CacheInvalidationManager.getInstance().invalidateTable(tableKey);
+                        // Also invalidate the schema-drift detector cache so the next DML event
+                        // re-fetches the updated ClickHouse schema immediately, without waiting
+                        // for the TTL to expire.
+                        if (postgresSchemaChangeDetector != null) {
+                            postgresSchemaChangeDetector.invalidateCache(tableKey);
+                            log.debug("Schema-drift cache invalidated for {} after DDL: {}", tableKey, DDL);
+                        }
                     }
                 } catch (Exception e) {
                     log.warn("Error invalidating cache for DDL: " + DDL, e);
@@ -597,6 +716,61 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Initialises the {@link PostgresSchemaChangeDetector} for PostgreSQL connectors.
+     * Must be called after {@link #setSystemDbConnection} so that {@link #writer} is
+     * already set.
+     *
+     * @param props  connector properties (used to detect connector type via
+     *               {@code connector.class})
+     * @param config the connector configuration forwarded to the detector
+     */
+    private void initPostgresSchemaChangeDetector(Properties props,
+                                                   ClickHouseSinkConnectorConfig config) {
+       String connectorClass = props != null
+                ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
+                : "";
+        if (DDLParserFactory.isPostgresConnector(connectorClass)) {
+            this.postgresSchemaChangeDetector =
+                    new PostgresSchemaChangeDetector(writer, config);
+            log.info("PostgresSchemaChangeDetector initialised for connector class '{}'", connectorClass);
+
+            // --- Startup alias column reconciliation ---
+            // Ensure any configured ALIAS columns (e.g. Date aliases for text
+            // date columns) exist on all relevant ClickHouse tables.  This is
+            // idempotent and runs once per startup.
+            try {
+                String pgDbName = props != null
+                        ? props.getProperty("database.dbname", "")
+                        : "";
+                if (pgDbName != null && !pgDbName.isEmpty()) {
+                    // Build the ClickHouse database name by applying the same
+                    // prefix + schema-suffix logic used at runtime.
+                    String chDatabase = pgDbName;
+                    chDatabase = Utils.applyDatabasePrefix(chDatabase, this.commonDatabasePrefix);
+                    if (this.databaseSchemaSuffix
+                            && this.commonSchemaTemplate != null
+                            && !this.commonSchemaTemplate.isEmpty()) {
+                        // Default to "public" schema for PostgreSQL
+                        chDatabase = Utils.applyDatabaseSchemaSuffix(
+                                chDatabase, this.commonSchemaTemplate, "public");
+                    }
+                    log.info("Startup alias reconciliation: pgDb='{}', chDb='{}'",
+                            pgDbName, chDatabase);
+                    this.postgresSchemaChangeDetector.ensureAllAliasColumns(pgDbName, chDatabase);
+                } else {
+                    log.debug("database.dbname not set – skipping startup alias reconciliation");
+                }
+            } catch (Exception e) {
+                log.warn("Startup alias column reconciliation failed – continuing. Cause: {}",
+                        e.getMessage(), e);
+            }
+        } else {
+            this.postgresSchemaChangeDetector = null;
+            log.debug("PostgresSchemaChangeDetector not activated (connector class: '{}')", connectorClass);
+        }
+    }
+
+    /**
      * Sets up the replication history database connection using the provided database
      * credentials and connector configuration.
      *
@@ -625,13 +799,23 @@ public class DebeziumChangeEventCapture {
      * @return The database name.
      */
     private String getDatabaseName(SourceRecord sr) {
+        String dbName = "system";
         if (sr != null && sr.key() instanceof Struct) {
             String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
             if (recordDbName != null && !recordDbName.isEmpty()) {
-                return recordDbName;
+                dbName = recordDbName;
             }
         }
-        return "system";
+        // Apply database prefix if configured (before suffix)
+        dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
+        // Apply database schema suffix if configured
+        if (this.databaseSchemaSuffix && this.commonSchemaTemplate != null
+                && !this.commonSchemaTemplate.isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+        }
+        return dbName;
     }
 
     /**
@@ -645,6 +829,24 @@ public class DebeziumChangeEventCapture {
             try {
                 String tableName = (String) ((Struct) sr.key()).get("tableName");
                 if (tableName != null && !tableName.isEmpty()) {
+                    if (schemaPrefixEnabled) {
+                        // Extract schema from the topic to build the prefixed name.
+                        // Topic format: {prefix}.{schema}.{table}
+                        String topic = sr.topic();
+                        if (topic != null) {
+                            String[] parts = topic.split("\\.");
+                            if (parts.length >= 3) {
+                                String schema = parts[parts.length - 2];
+                                // Use template if available, otherwise hardcoded format
+                                if (commonSchemaTemplate != null && !commonSchemaTemplate.isEmpty()) {
+                                    String resolvedPrefix = Utils.resolveSchemaTemplate(
+                                            commonSchemaTemplate, schema);
+                                    return resolvedPrefix + tableName;
+                                }
+                                return "__" + schema + "__" + tableName;
+                            }
+                        }
+                    }
                     return tableName;
                 }
             } catch (Exception e) {
@@ -653,6 +855,118 @@ public class DebeziumChangeEventCapture {
             }
         }
         return null;
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>For PostgreSQL, the topic format is:
+     * {@code {topic.prefix}.{schema}.{table}}
+     * The table name is the last dot-separated segment.
+     *
+     * @param topic Kafka topic string from a {@link SourceRecord}
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic) {
+        return extractTableNameFromTopic(topic, false);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>When {@code schemaPrefix} is true, returns {@code __<schema>__<table>}
+     * using the second-to-last and last dot-separated segments.
+     *
+     * @param topic        Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix when true, prepend the schema segment
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix) {
+        return extractTableNameFromTopic(topic, schemaPrefix, null);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic with template support.
+     *
+     * <p>When {@code schemaPrefix} is true and {@code schemaTemplate} is
+     * non-empty, the template is resolved and prepended.  Otherwise falls
+     * back to the hardcoded {@code __<schema>__<table>} format.
+     *
+     * @param topic          Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix   when true, prepend the schema segment
+     * @param schemaTemplate the shared template ({@code clickhouse.common.schema.template})
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix,
+                                                     String schemaTemplate) {
+        if (topic == null || topic.isEmpty()) {
+            return null;
+        }
+        if (schemaPrefix) {
+            // Delegate to the shared utility that handles schema prefix extraction
+            return Utils.getTableNameFromTopic(topic, true, schemaTemplate);
+        }
+        int lastDot = topic.lastIndexOf('.');
+        if (lastDot < 0 || lastDot == topic.length() - 1) {
+            return topic; // no dot → the whole topic is treated as the table name
+        }
+        return topic.substring(lastDot + 1);
+    }
+
+    /**
+     * Extracts the ClickHouse target database name from a DML {@link SourceRecord}.
+     *
+     * <p>The database name is read from the {@code source} struct embedded in the
+     * record value.  For PostgreSQL the relevant field is {@code db}.
+     * Falls back to the existing {@link #getDatabaseName(SourceRecord)} logic
+     * (which reads from the key struct – used for DDL records).
+     *
+     * @param sr the DML source record
+     * @return the database name, or {@code null} if it cannot be determined
+     */
+    private String extractDatabaseNameFromRecord(SourceRecord sr) {
+        String dbName = null;
+        // Try to read from the value's 'source' struct (standard Debezium envelope).
+        try {
+            if (sr.value() instanceof Struct) {
+                Struct valueStruct = (Struct) sr.value();
+                Object sourceObj = valueStruct.get("source");
+                if (sourceObj instanceof Struct) {
+                    Struct sourceStruct = (Struct) sourceObj;
+                    // PostgreSQL uses "db" field; MySQL uses "db" as well.
+                    try {
+                        String db = (String) sourceStruct.get("db");
+                        if (db != null && !db.isEmpty()) {
+                            dbName = db;
+                        }
+                    } catch (Exception e) {
+                        log.trace("'db' field not present in source struct: {}", e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not extract database name from source struct: {}", e.getMessage());
+        }
+        // Fall back to key-based extraction (used by DDL path).
+        if (dbName == null) {
+            String fallback = getDatabaseName(sr);
+            dbName = "system".equals(fallback) ? null : fallback;
+        }
+        // Apply database prefix if configured (before suffix)
+        if (dbName != null) {
+            dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
+        }
+        // Apply database schema suffix if configured
+        if (dbName != null && this.databaseSchemaSuffix
+                && this.commonSchemaTemplate != null
+                && !this.commonSchemaTemplate.isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+        }
+        return dbName;
     }
 
     /**
@@ -851,6 +1165,21 @@ public class DebeziumChangeEventCapture {
                     this.executor.resume();
                 }
             } else {
+                // Schema drift detection: check before writing to ClickHouse so that
+                // any newly-added PostgreSQL columns are present in ClickHouse first.
+                if (postgresSchemaChangeDetector != null) {
+                    try {
+                        String dmlTopic = sr.topic();
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, schemaPrefixEnabled, commonSchemaTemplate);
+                        String dmlDatabase = extractDatabaseNameFromRecord(sr);
+                        if (dmlTable != null && dmlDatabase != null) {
+                            postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);
+                        }
+                    } catch (Exception schemaEx) {
+                        log.warn("Schema drift detection threw unexpectedly; continuing replication. Cause: {}",
+                                schemaEx.getMessage(), schemaEx);
+                    }
+                }
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                 chStruct.setSequenceNumber(sequenceNumber);
                 try {
