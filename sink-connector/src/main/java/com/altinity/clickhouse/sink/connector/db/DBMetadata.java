@@ -487,27 +487,36 @@ public class DBMetadata {
         retryCount = 0;
         while (retryCount < MAX_RETRIES) {
             try {
-                ResultSet columns = conn.getMetaData().getColumns(database, null, tableName, null);
-                while (columns.next()) {
-                    String columnName = columns.getString("COLUMN_NAME");
-                    String typeName = columns.getString("TYPE_NAME");
+                // Query system.columns directly to get the real column types
+                // including the Nullable() wrapper, which the JDBC driver's
+                // getMetaData().getColumns() TYPE_NAME strips.
+                String sql = String.format(
+                        "SELECT name, type, default_kind FROM system.columns "
+                        + "WHERE database = '%s' AND table = '%s' "
+                        + "ORDER BY position",
+                        database, tableName);
+                try (Statement stmt = conn.createStatement();
+                     ResultSet columns = stmt.executeQuery(sql)) {
+                    while (columns.next()) {
+                        String columnName = columns.getString("name");
+                        String typeName = columns.getString("type");
+                        String defaultKind = columns.getString("default_kind");
 
-                    String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
-                    String columnDefinition = columns.getString("COLUMN_DEF");
-                    String sqlDataType = columns.getString("SQL_DATA_TYPE");
-                    String dataType = columns.getString("DATA_TYPE");
-
-                    // Skip generated columns.
-                    if (isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
-                        continue;
+                        // Skip ALIAS and MATERIALIZED columns — they cannot
+                        // be written to directly.
+                        if (defaultKind != null
+                                && (defaultKind.equalsIgnoreCase("ALIAS")
+                                    || defaultKind.equalsIgnoreCase("MATERIALIZED"))) {
+                            log.debug("Skipping {} column: {}", defaultKind, columnName);
+                            continue;
+                        }
+                        if (aliasColumns.contains(columnName)) {
+                            log.debug("Skipping alias column: " + columnName);
+                            continue;
+                        }
+                        result.put(columnName, typeName);
                     }
-                    if (aliasColumns.contains(columnName)) {
-                        log.debug("Skipping alias column: " + columnName);
-                        continue;
-                    }
-                    result.put(columnName, typeName);
                 }
-                columns.close();
                 break;
             } catch (SQLException sq) {
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}), use error.max.retries to configure",
@@ -681,15 +690,22 @@ public class DBMetadata {
                     return result;
                 }
 
-                ResultSet columns = conn.getMetaData().getColumns(null, database,
-                        tableName, null);
-                while (columns.next()) {
-                    String columnName = columns.getString("COLUMN_NAME");
-                    String typeName = columns.getString("TYPE_NAME");
-
-                    result.put(columnName, typeName);
+                // Query system.columns directly to get the real column types
+                // including the Nullable() wrapper, which the JDBC driver's
+                // getMetaData().getColumns() TYPE_NAME strips.
+                String sql = String.format(
+                        "SELECT name, type FROM system.columns "
+                        + "WHERE database = '%s' AND table = '%s' "
+                        + "ORDER BY position",
+                        database, tableName);
+                try (Statement stmt = conn.createStatement();
+                     ResultSet columns = stmt.executeQuery(sql)) {
+                    while (columns.next()) {
+                        String columnName = columns.getString("name");
+                        String typeName = columns.getString("type");
+                        result.put(columnName, typeName);
+                    }
                 }
-                columns.close();
                 break;
             } catch (Exception sq) {
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}),use error.max.retries to configure",
@@ -721,7 +737,7 @@ public class DBMetadata {
         PreparedStatement ps = null;
         while(retryCount < MAX_RETRIES) {
             try {
-                ps = conn.prepareStatement("TRUNCATE TABLE " + databaseName + "." + tableName);
+                ps = conn.prepareStatement("TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`");
                 ps.execute();
                 break;
             } catch (SQLException e) {
