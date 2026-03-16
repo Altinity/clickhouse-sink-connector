@@ -634,14 +634,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
-                        "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status " +
+                        "CREATE VIEW altinity_sink_connector.show_replica_status " +
                                 "(`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), " +
                                 "`local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, " +
                                 "`record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM " +
-                                "(SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, " +
+                                "(SELECT now() - fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS seconds_behind_source, " +
                                 "formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, " +
-                                "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
-                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM " +
+                                "toDateTime(fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))), 'UTC') AS utc_time, " +
+                                "fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS local_time, * FROM " +
                                 "merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC",
                         Importance.HIGH,
                         "SQL query to get replica status, lag etc.",
@@ -818,6 +824,59 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, ClickHouse table names include the PostgreSQL "
+                                + "schema as a prefix: __<schema>__<table>",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, appends the resolved "
+                                + "clickhouse.common.schema.template to the ClickHouse "
+                                + "database name. Requires "
+                                + "clickhouse.common.schema.template to be set."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Shared template with {{ schema }} placeholder. "
+                                + "Used by clickhouse.table.schema.prefix (overrides "
+                                + "the hardcoded __<schema>__ format) and "
+                                + "clickhouse.database.schema.suffix. "
+                                + "Example: '__{{ schema }}__' resolves to '__public__'. "
+                                + "Empty string (default) means the hardcoded format is "
+                                + "used for table prefix."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Static prefix prepended to the ClickHouse database "
+                                + "name. Only alphanumeric characters and underscores "
+                                + "are allowed. Used to differentiate when multiple "
+                                + "sink-connectors write to the same ClickHouse "
+                                + "instance. Example: 'litellm_dev_' turns database "
+                                + "'app' into 'litellm_dev_app'. Empty string "
+                                + "(default) disables this feature."
                 );
     }
 }

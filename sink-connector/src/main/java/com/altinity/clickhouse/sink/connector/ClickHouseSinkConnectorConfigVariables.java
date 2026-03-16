@@ -106,7 +106,51 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_REPLICATION_LOG_ONLY("replication.history.replication_log_only"),
 
-    DATABASE_HOSTNAME("database.hostname");
+    DATABASE_HOSTNAME("database.hostname"),
+
+    /**
+     * Prefix for direct column type override properties.
+     * Format: column_type_override.direct.<schema>.<table>.<column>=<CHType>
+     */
+    COLUMN_TYPE_OVERRIDE_DIRECT_PREFIX("column_type_override.direct."),
+
+    /**
+     * Prefix for alias column type override properties.
+     * Format: column_type_override.alias.<schema>.<table>.<column>=<CHType>|<expression>
+     */
+    COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX("column_type_override.alias."),
+
+    /**
+     * When true, ClickHouse table names include the PostgreSQL schema as a
+     * prefix: __<schema>__<table>.  Default: false.
+     */
+    CLICKHOUSE_TABLE_SCHEMA_PREFIX("clickhouse.table.schema.prefix"),
+
+    /**
+     * When true, appends the resolved {@code clickhouse.common.schema.template}
+     * to the ClickHouse database name.  Default: false.
+     */
+    CLICKHOUSE_DATABASE_SCHEMA_SUFFIX("clickhouse.database.schema.suffix"),
+
+    /**
+     * Shared template string with a {@code {{ schema }}} placeholder.
+     * Used by both {@code clickhouse.table.schema.prefix} and
+     * {@code clickhouse.database.schema.suffix} when they are enabled.
+     * Example: {@code "__{{ schema }}__"} resolves to {@code "__public__"}.
+     * When non-empty, overrides the hardcoded {@code __<schema>__} format
+     * used by {@code clickhouse.table.schema.prefix}.
+     * Empty string (default) means the hardcoded format is used for table
+     * prefix and no suffix is applied to the database name.
+     */
+    CLICKHOUSE_COMMON_SCHEMA_TEMPLATE("clickhouse.common.schema.template"),
+
+    /**
+     * Static string prefix prepended to the ClickHouse database name.
+     * Only alphanumeric characters and underscores are allowed.
+     * Used to differentiate when multiple sink-connectors write to the
+     * same ClickHouse instance.  Empty string (default) disables this feature.
+     */
+    CLICKHOUSE_COMMON_DATABASE_PREFIX("clickhouse.common.database.prefix");
 
 
 

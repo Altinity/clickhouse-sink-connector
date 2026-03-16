@@ -218,7 +218,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
+                    "CREATE DATABASE IF NOT EXISTS `" + databaseName + "`");
         } catch (Exception e) {
             log.error("Error creating database " + e);
         } finally {
@@ -489,7 +489,16 @@ public class ClickHouseBatchRunnable implements Runnable {
     public String getTableFromTopic(String topicName) {
         String tableName = null;
         if (this.topic2TableMap.containsKey(topicName) == false) {
-            tableName = Utils.getTableNameFromTopic(topicName);
+            boolean schemaPrefix = this.config != null &&
+                    this.config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString());
+            String schemaTemplate = this.config != null
+                    ? this.config.getString(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString())
+                    : null;
+            tableName = Utils.getTableNameFromTopic(topicName, schemaPrefix, schemaTemplate);
             this.topic2TableMap.put(topicName, tableName);
         } else {
             tableName = this.topic2TableMap.get(topicName);
@@ -584,6 +593,25 @@ public class ClickHouseBatchRunnable implements Runnable {
         // If replication history is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
+        // Apply database prefix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            String dbPrefix = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+            databaseName = Utils.applyDatabasePrefix(databaseName, dbPrefix);
+        }
+
+        // Apply database schema suffix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            boolean dbSchemaSuffix = this.config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString());
+            String schemaTemplate = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+            if (dbSchemaSuffix && schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String schema = Utils.extractSchemaFromTopic(topicName);
+                databaseName = Utils.applyDatabaseSchemaSuffix(databaseName, schemaTemplate, schema);
+            }
         }
 
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
