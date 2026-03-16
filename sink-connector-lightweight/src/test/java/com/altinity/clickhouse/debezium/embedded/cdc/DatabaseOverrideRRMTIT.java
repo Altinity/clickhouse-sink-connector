@@ -136,18 +136,22 @@ public class DatabaseOverrideRRMTIT {
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
 
 
-        Thread.sleep(10000);
-
-        // Validate in Clickhouse the last record written is 29999
-
+        // Poll until employees2.newtable has data
+        assertTrue("employees2.newtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from employees2.newtable final where col1 = 'a'", 120_000));
 
         long col2 = 0L;
         ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
-        Thread.sleep(10000);
         assertTrue(col2 == 1);
+
+        // Poll until productsnew.prodtable has data
+        assertTrue("productsnew.prodtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from productsnew.prodtable final where col1 = 'a'", 120_000));
 
         long productsCol2 = 0L;
         ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
@@ -155,7 +159,11 @@ public class DatabaseOverrideRRMTIT {
             productsCol2 = productsVersionResult.getLong("col2");
         }
         assertTrue(productsCol2 == 1);
-        Thread.sleep(10000);
+
+        // Poll until customers.custtable has data
+        assertTrue("customers.custtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from customers.custtable final where col1 = 'a'", 120_000));
 
         long customersCol2 = 0L;
         ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
@@ -164,41 +172,43 @@ public class DatabaseOverrideRRMTIT {
         }
         assertTrue(customersCol2 == 1);
 
-
-        Thread.sleep(10000);
         // Execute the query in MySQL to rename table.
         conn.prepareStatement("use products").execute();
         conn.prepareStatement("rename table prodtable to prodtable2").execute();
-        Thread.sleep(10000);
 //        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
 //        while(customersVersionResult2.next()) {
 //            customersCol2 = customersVersionResult2.getLong("col2");
 //        }
 //        assertTrue(customersCol2 == 2);
 
-        // validate that the table prodtaable2 is present in clickhouse
+        // Poll until the renamed table prodtable2 is present in clickhouse
+        assertTrue("productsnew.prodtable2 should have data after rename",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select * from productsnew.prodtable2", 120_000));
+
         ResultSet chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable2", writer.getConnection());
         boolean recordFound = false;
         while(chRs.next()) {
             recordFound = true;
             assert chRs.getString("col1").equalsIgnoreCase("a");
-            //assert rs.getString("name").equalsIgnoreCase("test");
         }
 
         assertTrue(recordFound);
 
 
-        // Execute mysql to rename from prodtabl2 to prodtable3 without database prefix.
+        // Execute mysql to rename from prodtable2 to prodtable3 without database prefix.
         conn.prepareStatement("rename table prodtable2 to prodtable3").execute();
 
-        Thread.sleep(10000);
-        // Validate on CH that the table prodtable3 is present.
-         chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
+        // Poll until prodtable3 is present in ClickHouse
+        assertTrue("productsnew.prodtable3 should have data after rename",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select * from productsnew.prodtable3", 120_000));
+
+        chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
         boolean prod3RecordFound = false;
         while(chRs.next()) {
             prod3RecordFound = true;
             assert chRs.getString("col1").equalsIgnoreCase("a");
-            //assert rs.getString("name").equalsIgnoreCase("test");
         }
         assertTrue(prod3RecordFound);
 

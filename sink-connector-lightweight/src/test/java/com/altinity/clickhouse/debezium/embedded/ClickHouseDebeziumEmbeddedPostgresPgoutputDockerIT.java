@@ -91,12 +91,16 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
             }
         });
 
-        Thread.sleep(50000);
-
-
-        // Create connection.
-
+        // Poll until the 'tm' table has 23 columns and at least 2 rows (up to 180s)
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        Assert.assertTrue("Timed out waiting for 'tm' table to have 23 columns in ClickHouse",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "tm", 23, 180_000));
+
+        long tmCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.tm", 2, 180_000, 5_000);
+        Assert.assertEquals("Expected 2 rows in public.tm", 2, tmCount);
+
         DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
@@ -105,15 +109,6 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
         Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
-
-
-        int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
-        while(chRs.next()) {
-            tmCount =  chRs.getInt(1);
-        }
-
-        Assert.assertTrue(tmCount == 2);
 
         if(engine.get() != null) {
             engine.get().stop();
