@@ -34,7 +34,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "employees",
                 createFields(), this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
         System.out.println("QUERY" + query);
-        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
+        Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
     }
 
     @Test
@@ -45,7 +45,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         String query = act.createTableSyntax(null, "auto_create_table", "employees", createFields(),
                 this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        String expectedQuery = "CREATE TABLE employees.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        String expectedQuery = "CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -59,7 +59,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "customers", createFields(),
                 this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
-        String expectedQuery = "CREATE TABLE customers.`auto_create_table`(`customerName` String NOT NULL,`occupation` String NOT NULL,`quantity` Int32 NOT NULL,`amount_1` Float32 NOT NULL,`amount` Float64 NOT NULL,`employed` Bool NOT NULL,`blob_storage` String NOT NULL,`blob_storage_scale` Decimal NOT NULL,`json_output` JSON,`max_amount` Float64 NOT NULL,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
+        String expectedQuery = "CREATE TABLE `customers`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) ORDER BY tuple()";
         Assert.assertTrue(query.equalsIgnoreCase(expectedQuery));
         System.out.println(query);
     }

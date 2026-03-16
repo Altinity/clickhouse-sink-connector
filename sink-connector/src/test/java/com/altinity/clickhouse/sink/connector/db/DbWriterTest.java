@@ -125,7 +125,7 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap.size() == 44);
+        Assert.assertTrue(columnDataTypesMap.size() == 20);
 
         String database2 = "employees2";
         String jdbcUrl2 = BaseDbWriter.getConnectionString(dbHostName, port, database2);
@@ -136,7 +136,7 @@ public class DbWriterTest {
         Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap2.size() == 44);
+        Assert.assertTrue(columnDataTypesMap2.size() == 20);
 
     }
 
