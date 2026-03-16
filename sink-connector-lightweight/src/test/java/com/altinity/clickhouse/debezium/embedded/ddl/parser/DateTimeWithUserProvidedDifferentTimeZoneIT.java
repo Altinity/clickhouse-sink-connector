@@ -25,6 +25,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -114,6 +115,26 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
+        // Poll until temporal_types_DATETIME table is auto-created and has data in ClickHouse
+        boolean tableReady = false;
+        for (int i = 0; i < 20; i++) {
+            try {
+                Statement stmt = writer.getConnection().createStatement();
+                ResultSet countRs = stmt.executeQuery(
+                        "SELECT count(*) as cnt FROM system.tables WHERE database = 'employees' AND name = 'temporal_types_DATETIME'");
+                if (countRs.next() && countRs.getLong("cnt") > 0) {
+                    ResultSet dataRs = stmt.executeQuery("SELECT count(*) as cnt FROM employees.temporal_types_DATETIME");
+                    if (dataRs.next() && dataRs.getLong("cnt") > 0) {
+                        tableReady = true;
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                // Table may not exist yet
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("employees.temporal_types_DATETIME should be auto-created with data", tableReady);
 
         // Validate that the MySQL server is set to Central timezone.
         ResultSet mySqlTimeZoneRS = conn.createStatement().executeQuery("select @@system_time_zone\n");

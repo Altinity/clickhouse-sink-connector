@@ -90,11 +90,16 @@ public class PostgresInitialDockerIT {
             }
         });
 
-        Thread.sleep(10000);//
-        Thread.sleep(50000);
-
-
+        // Poll until the 'tm' table has the expected 23 columns and at least 2 rows (up to 180s)
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        Assert.assertTrue("Timed out waiting for 'tm' table to have 23 columns in ClickHouse",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "tm", 23, 180_000));
+
+        long tmCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.tm", 2, 180_000, 5_000);
+        Assert.assertEquals("Expected 2 rows in public.tm", 2, tmCount);
+
         DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
@@ -104,19 +109,14 @@ public class PostgresInitialDockerIT {
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
         Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
 
+        // Get the columns in re_data — poll until available
+        Assert.assertTrue("Timed out waiting for 'redata' table columns in ClickHouse",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "redata", 1, 60_000));
 
-        int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
-        while(chRs.next()) {
-            tmCount =  chRs.getInt(1);
-        }
-
-        // Get the columns in re_data.
         Map<String, String> reDataColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "redata", "public");
 
         Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
-        Assert.assertTrue(tmCount == 2);
 
         String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
 

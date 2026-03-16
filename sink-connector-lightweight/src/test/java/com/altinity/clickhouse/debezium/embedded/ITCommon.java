@@ -203,7 +203,7 @@ public class ITCommon {
         props.replace("snapshot.mode", "no_data");
         props.replace("disable.drop.truncate", "true");
         props.setProperty("disable.ddl", "true");
-        props.setProperty("replica.status.view", "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status (`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), `local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, `record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM (SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC");
+        props.setProperty("replica.status.view", "CREATE VIEW altinity_sink_connector.show_replica_status (`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), `local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, `record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM (SELECT now() - fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS seconds_behind_source, formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, toDateTime(fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))), 'UTC') AS utc_time, fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS local_time, * FROM merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC");
         return props;
     }
 
@@ -246,5 +246,114 @@ public class ITCommon {
         ResultSet rs = conn.prepareStatement(sql).executeQuery();
         return rs;
 
+    }
+
+    /**
+     * Wait until a ClickHouse query returns at least {@code expectedMinRows} rows,
+     * polling every {@code pollIntervalMs} milliseconds until {@code timeoutMs} elapses.
+     *
+     * @param conn          ClickHouse JDBC connection
+     * @param countQuery    SQL query that returns a single count column (e.g. "SELECT count(*) FROM t")
+     * @param expectedMin   minimum count value to consider "ready"
+     * @param timeoutMs     maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @return the last observed count, or -1 if the query never succeeded
+     */
+    static public long waitForRowCount(Connection conn, String countQuery, long expectedMin, long timeoutMs, long pollIntervalMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCount = -1;
+        int poll = 0;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(countQuery).executeQuery()) {
+                if (rs.next()) {
+                    lastCount = rs.getLong(1);
+                    if (lastCount >= expectedMin) {
+                        return lastCount;
+                    }
+                }
+            } catch (Exception e) {
+                // Table/database may not exist yet — keep polling
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            poll++;
+        }
+        return lastCount;
+    }
+
+    /**
+     * Convenience overload: polls every 5 s with a 120 s timeout.
+     */
+    static public long waitForRowCount(Connection conn, String countQuery, long expectedMin) {
+        return waitForRowCount(conn, countQuery, expectedMin, 120_000, 5_000);
+    }
+
+    /**
+     * Wait until a table exists in ClickHouse and has the expected number of columns.
+     * Polls {@code system.columns} every 5 seconds.
+     *
+     * @param conn           ClickHouse JDBC connection
+     * @param database       ClickHouse database name
+     * @param table          table name
+     * @param expectedCols   expected column count
+     * @param timeoutMs      max wait in milliseconds
+     * @return true if the column count matched within the timeout
+     */
+    static public boolean waitForTableColumns(Connection conn, String database, String table, int expectedCols, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                String sql = String.format(
+                        "SELECT count() FROM system.columns WHERE database='%s' AND table='%s'",
+                        database, table);
+                try (ResultSet rs = conn.prepareStatement(sql).executeQuery()) {
+                    if (rs.next() && rs.getInt(1) >= expectedCols) {
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                // table may not exist yet
+            }
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Wait until a ClickHouse query returns at least one row (any result),
+     * polling every 5 seconds with the given timeout.
+     *
+     * @param conn       ClickHouse JDBC connection
+     * @param query      any SELECT query
+     * @param timeoutMs  maximum wait in milliseconds
+     * @return true if the query returned at least one row within the timeout
+     */
+    static public boolean waitForData(Connection conn, String query, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
+                if (rs.next()) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // Ignore — table/db may not exist yet
+            }
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return false;
     }
 }

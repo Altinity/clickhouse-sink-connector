@@ -91,7 +91,7 @@ public class MySQLDemoIT  {
             BasicConfigurator.configure();
             mySqlContainer.start();
             clickHouseContainer.start();
-            Thread.sleep(10000);
+            Thread.sleep(15000);
 
             setupDebeziumEngine();
             mysqlConn = connectToMySQL();
@@ -100,7 +100,10 @@ public class MySQLDemoIT  {
                     "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
             writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                     "employees", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, connection);
-            Thread.sleep(20000);
+
+            // Poll until employees table is snapshotted into ClickHouse
+            ITCommon.waitForRowCount(writer.getConnection(),
+                    "SELECT count(*) FROM employees.`employees` FINAL", 1, 120_000, 5_000);
         }
         catch (Exception e) {
             throw new RuntimeException("Failed to start containers", e);
@@ -127,7 +130,7 @@ public class MySQLDemoIT  {
                 throw new RuntimeException("Failed to start Debezium engine", e);
             }
         });
-        Thread.sleep( 20000); // wait for engine
+        Thread.sleep(30000); // wait for engine to start and begin snapshot
     }
 
     protected static Connection connectToMySQL() {
@@ -270,11 +273,20 @@ public class MySQLDemoIT  {
     private void addJobTitleColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN jobTitle" +
                 " VARCHAR(50) NOT NULL DEFAULT 'Engineer';").execute();
-       Thread.sleep(10000);
+
+        // Poll until jobTitle column appears in ClickHouse
         DBMetadata metadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> columns =
-                metadata.getColumnsDataTypesForTable( writer.getConnection(), "employees", "employees");
-        Assert.assertTrue("jobTitle column should exist", columns.containsKey("jobTitle"));
+        boolean found = false;
+        for (int i = 0; i < 30; i++) {
+            Map<String, String> cols =
+                    metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
+            if (cols.containsKey("jobTitle")) {
+                found = true;
+                break;
+            }
+            Thread.sleep(5000);
+        }
+        Assert.assertTrue("jobTitle column should exist", found);
 
         //verifyTableCounts(mysqlConn, writer, "After adding jobTitle column");
     }
@@ -293,21 +305,29 @@ public class MySQLDemoIT  {
      */
     private void updateJobTitle(Connection mysqlConn, BaseDbWriter writer, String title) throws Exception {
         mysqlConn.prepareStatement("UPDATE employees set jobTitle='Senior Engineer'").execute();
-        Thread.sleep(10000);
 
-        // Verify the update
-        try (PreparedStatement pstmt = writer.getConnection().prepareStatement(
-                "SELECT jobTitle FROM employees.`employees` FINAL LIMIT 1")) {
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-              //  Assert.assertEquals("Job title should match", title, rs.getString("jobTitle"));
-            }
-        }
+        // Poll until the update is visible in ClickHouse
+        ITCommon.waitForData(writer.getConnection(),
+                "SELECT jobTitle FROM employees.`employees` FINAL WHERE jobTitle = 'Senior Engineer' LIMIT 1", 120_000);
 
         mysqlConn.prepareStatement("ALTER TABLE employees DROP COLUMN jobTitle;").execute();
-        Thread.sleep(10000);
 
-        verifyTableCounts(mysqlConn, writer, "After setting jobTitle to " + title);
+        // Poll until verifyTableCounts succeeds (counts match)
+        long deadline = System.currentTimeMillis() + 120_000;
+        Exception lastEx = null;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                verifyTableCounts(mysqlConn, writer, "After setting jobTitle to " + title);
+                lastEx = null;
+                break;
+            } catch (AssertionError | Exception e) {
+                lastEx = (e instanceof Exception) ? (Exception) e : new Exception(e);
+                Thread.sleep(5000);
+            }
+        }
+        if (lastEx != null) {
+            verifyTableCounts(mysqlConn, writer, "After setting jobTitle to " + title);
+        }
     }
 
     /**
@@ -331,8 +351,14 @@ public class MySQLDemoIT  {
         if (lastName != null) {
             int before = getCount(mysqlConn, "SELECT COUNT(*) FROM employees");
             mysqlConn.prepareStatement("DELETE FROM employees WHERE last_name = '" + lastName + "'").execute();
-            Thread.sleep(10000);
-            int after = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`employees` FINAL");
+
+            // Poll until ClickHouse count decreases
+            int after = before;
+            for (int i = 0; i < 30; i++) {
+                after = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`employees` FINAL");
+                if (after < before) break;
+                Thread.sleep(5000);
+            }
             Assert.assertTrue("Records should decrease", after < before);
         }
     }
@@ -350,16 +376,34 @@ public class MySQLDemoIT  {
      */
     private void addAndDropHireDateColumn(Connection mysqlConn, BaseDbWriter writer) throws Exception {
         mysqlConn.prepareStatement("ALTER TABLE employees ADD COLUMN hireDate DATE;").execute();
-        Thread.sleep(10000);
+
+        // Poll until hireDate column appears
         DBMetadata metadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> columns = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
-        Assert.assertTrue("hireDate column should exist", columns.containsKey("hireDate"));
+        boolean addFound = false;
+        for (int i = 0; i < 30; i++) {
+            Map<String, String> cols = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
+            if (cols.containsKey("hireDate")) {
+                addFound = true;
+                break;
+            }
+            Thread.sleep(5000);
+        }
+        Assert.assertTrue("hireDate column should exist", addFound);
 
         mysqlConn.prepareStatement("ALTER TABLE employees DROP COLUMN hireDate;").execute();
-        Thread.sleep(30000);
 
-        Map<String, String> columnsAfterDelete = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
-        Assert.assertFalse("hireDate column should not exist", columnsAfterDelete.containsKey("hireDate"));
+        // Poll until hireDate column is removed
+        boolean dropDone = false;
+        for (int i = 0; i < 30; i++) {
+            Map<String, String> cols = metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees");
+            if (!cols.containsKey("hireDate")) {
+                dropDone = true;
+                break;
+            }
+            Thread.sleep(5000);
+        }
+        Assert.assertFalse("hireDate column should not exist",
+                metadata.getColumnsDataTypesForTable(writer.getConnection(), "employees", "employees").containsKey("hireDate"));
     }
 
     /**
@@ -392,7 +436,11 @@ public class MySQLDemoIT  {
                 }
             }
 
-            Thread.sleep(10000);
+            // Poll until the inserted employee is visible in ClickHouse
+            boolean found = ITCommon.waitForData(writer.getConnection(),
+                    "SELECT * FROM employees.`employees` FINAL WHERE emp_no = 2000", 120_000);
+            Assert.assertTrue("Inserted employee should be found", found);
+
             try (ResultSet rs =
                          writer.getConnection().prepareStatement("SELECT * FROM employees.`employees` FINAL WHERE emp_no = 2000").executeQuery()) {
                 Assert.assertTrue("Inserted employee should be found",
@@ -463,7 +511,11 @@ public class MySQLDemoIT  {
                 "(5003, 1002, 3000.00), " +
                 "(5004, 1003, 2500.00);").execute();
 
-        Thread.sleep(10000);
+        // Poll until customers and payments tables are replicated to ClickHouse
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM employees.`customers` FINAL", 3, 120_000, 5_000);
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM employees.`payments` FINAL", 4, 120_000, 5_000);
     }
 
     /**
@@ -496,10 +548,16 @@ public class MySQLDemoIT  {
                 "DELETE FROM customers WHERE sales_rep_employee_number = 1621"
         ).execute();
 
-        Thread.sleep(10000);
-
         int mysqlPaymentsAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM payments");
         int mysqlCustomersAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM customers");
+
+        // Poll until ClickHouse reflects the deletes
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM employees.`payments` FINAL", 0,
+                120_000, 5_000);
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM employees.`customers` FINAL", 0,
+                120_000, 5_000);
 
         int chPaymentsAfter = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`payments` FINAL");
         int chCustomersAfter = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`customers` FINAL");
@@ -542,6 +600,11 @@ public class MySQLDemoIT  {
      */
     private void verifyTableCounts(Connection mysqlConn, BaseDbWriter writer, String message) throws Exception {
         int mysqlCount = getCount(mysqlConn, "SELECT COUNT(*) FROM employees");
+
+        // Poll until ClickHouse count matches MySQL count
+        ITCommon.waitForRowCount(writer.getConnection(),
+                "SELECT count(*) FROM employees.`employees` FINAL", mysqlCount, 120_000, 5_000);
+
         int chCount = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`employees` FINAL");
         System.out.printf("MySQL: %d, ClickHouse: %d - %s%n", mysqlCount, chCount, message);
         Assert.assertEquals(message, mysqlCount, chCount);
