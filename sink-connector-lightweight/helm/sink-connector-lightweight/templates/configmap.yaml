@@ -39,7 +39,7 @@ data:
       `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
     )
     ENGINE = ReplacingMergeTree(_version)
-    ORDER BY id
+    ORDER BY offset_key
     SETTINGS index_granularity = 8192"
     offset.storage.jdbc.table.delete: "select * from %s"
     enable.snapshot.ddl: "true"
@@ -47,7 +47,7 @@ data:
     database.dbname: "public"
     clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
     metrics.enable: "true"
-    replica.status.view: "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status
+    replica.status.view: "CREATE VIEW altinity_sink_connector.show_replica_status
     (
       `seconds_behind_source` Int32,
       `duration_behind_source` String,
@@ -117,7 +117,7 @@ data:
         `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
       )
       ENGINE = ReplacingMergeTree(_version)
-      ORDER BY id
+      ORDER BY offset_key
       SETTINGS index_granularity = 8192"
       offset.storage.jdbc.table.delete: "select * from %s"
       offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"

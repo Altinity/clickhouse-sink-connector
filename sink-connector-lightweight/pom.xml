@@ -6,7 +6,7 @@
 
     <groupId>com.altinity</groupId>
     <artifactId>clickhouse-debezium-embedded</artifactId>
-    <version>0.0.4</version>
+    <version>0.0.9</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
@@ -362,6 +362,12 @@
             <version>${version.junit}</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>${version.junit}</version>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.junit-pioneer</groupId>
@@ -521,13 +527,6 @@
             <version>31.0.1-jre</version>
         </dependency>
 
-        <!--junit for unit test-->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.8.1</version>
-            <scope>test</scope>
-        </dependency>
         <!--
                 <dependency>
                     <groupId>org.slf4j</groupId>
@@ -609,6 +608,23 @@
 
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>1.18.30</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.4.1</version>
                 <executions>
@@ -646,6 +662,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.22.0</version>
                 <configuration>
+                    <argLine>-Xmx4g -Xms2g -XX:+UseG1GC</argLine>
+                    <reuseForks>false</reuseForks>
                     <includes>
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
