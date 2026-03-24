@@ -1583,6 +1583,10 @@ public class DebeziumChangeEventCapture {
                     }
                 }
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                if (chStruct == null) {
+                    log.debug("Skipping record with null ClickHouseStruct (likely internal heartbeat event)");
+                    return null;
+                }
                 chStruct.setSequenceNumber(sequenceNumber);
                 try {
                     if (chStruct != null) {
