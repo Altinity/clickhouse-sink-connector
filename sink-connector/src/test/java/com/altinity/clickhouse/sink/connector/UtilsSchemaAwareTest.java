@@ -1,7 +1,13 @@
 package com.altinity.clickhouse.sink.connector;
 
 import com.altinity.clickhouse.sink.connector.common.Utils;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.stream.Stream;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -16,222 +22,153 @@ public class UtilsSchemaAwareTest {
 
     // === extractSchemaFromTopic() ===
 
-    @Test
-    public void testExtractSchemaFromTopicThreeSegments() {
-        assertEquals("public", Utils.extractSchemaFromTopic("prefix.public.orders"));
+    static Stream<Arguments> extractSchemaFromTopicCases() {
+        return Stream.of(
+                Arguments.of("3 segments",  "prefix.public.orders",          "public"),
+                Arguments.of("4 segments",  "server1.mydb.public.orders",    "public"),
+                Arguments.of("2 segments",  "prefix.orders",                 null),
+                Arguments.of("1 segment",   "orders",                        null),
+                Arguments.of("null topic",  null,                            null)
+        );
     }
 
-    @Test
-    public void testExtractSchemaFromTopicFourSegments() {
-        // 4 segments: server1.mydb.public.orders → second-to-last = "public"
-        assertEquals("public", Utils.extractSchemaFromTopic("server1.mydb.public.orders"));
-    }
-
-    @Test
-    public void testExtractSchemaFromTopicTwoSegments() {
-        // Only 2 segments — no schema available
-        assertNull(Utils.extractSchemaFromTopic("prefix.orders"));
-    }
-
-    @Test
-    public void testExtractSchemaFromTopicOneSegment() {
-        assertNull(Utils.extractSchemaFromTopic("orders"));
-    }
-
-    @Test
-    public void testExtractSchemaFromTopicNull() {
-        assertNull(Utils.extractSchemaFromTopic(null));
+    @ParameterizedTest(name = "extractSchemaFromTopic({1}) → {2} [{0}]")
+    @MethodSource("extractSchemaFromTopicCases")
+    @DisplayName("extractSchemaFromTopic()")
+    public void testExtractSchemaFromTopic(String label, String topic, String expected) {
+        assertEquals(expected, Utils.extractSchemaFromTopic(topic));
     }
 
     // === resolveSchemaTemplate() ===
 
-    @Test
-    public void testResolveSchemaTemplateBasic() {
-        assertEquals("__public__", Utils.resolveSchemaTemplate("__{{ schema }}__", "public"));
+    static Stream<Arguments> resolveSchemaTemplateCases() {
+        return Stream.of(
+                Arguments.of("basic template",       "__{{ schema }}__", "public", "__public__"),
+                Arguments.of("custom template",      "{{ schema }}.",    "public", "public."),
+                Arguments.of("empty template",       "",                 "public", ""),
+                Arguments.of("null template",        null,               "public", ""),
+                Arguments.of("null schema",          "__{{ schema }}__", null,     "__{{ schema }}__")
+        );
     }
 
-    @Test
-    public void testResolveSchemaTemplateCustom() {
-        assertEquals("public.", Utils.resolveSchemaTemplate("{{ schema }}.", "public"));
-    }
-
-    @Test
-    public void testResolveSchemaTemplateEmpty() {
-        assertEquals("", Utils.resolveSchemaTemplate("", "public"));
-    }
-
-    @Test
-    public void testResolveSchemaTemplateNull() {
-        assertEquals("", Utils.resolveSchemaTemplate(null, "public"));
-    }
-
-    @Test
-    public void testResolveSchemaTemplateNullSchema() {
-        // When schema is null, the template is returned unchanged (placeholder not replaced)
-        assertEquals("__{{ schema }}__", Utils.resolveSchemaTemplate("__{{ schema }}__", null));
+    @ParameterizedTest(name = "resolveSchemaTemplate({1}, {2}) → {3} [{0}]")
+    @MethodSource("resolveSchemaTemplateCases")
+    @DisplayName("resolveSchemaTemplate()")
+    public void testResolveSchemaTemplate(String label, String template, String schema, String expected) {
+        assertEquals(expected, Utils.resolveSchemaTemplate(template, schema));
     }
 
     // === getTableNameFromTopic(String, boolean, String) — 3-arg version ===
 
-    @Test
-    public void testTableNameWithSchemaPrefixEnabled() {
-        // Boolean true, no template → hardcoded __schema__ format
-        assertEquals("__public__orders",
-            Utils.getTableNameFromTopic("prefix.public.orders", true, null));
+    static Stream<Arguments> getTableNameFromTopicCases() {
+        return Stream.of(
+                Arguments.of("prefix enabled, null template",
+                        "prefix.public.orders", true, null, "__public__orders"),
+                Arguments.of("prefix enabled, empty template",
+                        "prefix.public.orders", true, "", "__public__orders"),
+                Arguments.of("template overrides hardcoded",
+                        "prefix.public.orders", true, "{{ schema }}__", "public__orders"),
+                Arguments.of("prefix disabled, template set but ignored",
+                        "prefix.public.orders", false, "__{{ schema }}__", "orders"),
+                Arguments.of("prefix disabled, null template",
+                        "prefix.public.orders", false, null, "orders"),
+                Arguments.of("2 segments, no schema available",
+                        "prefix.orders", true, null, "orders"),
+                Arguments.of("4 segments",
+                        "server1.mydb.public.orders", true, null, "__public__orders"),
+                Arguments.of("1 segment",
+                        "orders", true, null, "orders"),
+                Arguments.of("null topic",
+                        null, true, null, null)
+        );
     }
 
-    @Test
-    public void testTableNameWithSchemaPrefixEnabledEmptyTemplate() {
-        // Boolean true, empty template → hardcoded __schema__ format
-        assertEquals("__public__orders",
-            Utils.getTableNameFromTopic("prefix.public.orders", true, ""));
-    }
-
-    @Test
-    public void testTableNameWithTemplateOverridesHardcoded() {
-        // Template takes precedence over hardcoded format when schemaPrefixEnabled is true
-        assertEquals("public__orders",
-            Utils.getTableNameFromTopic("prefix.public.orders", true, "{{ schema }}__"));
-    }
-
-    @Test
-    public void testTableNameWithTemplatePrefixDisabledButTemplateSet() {
-        // When schemaPrefixEnabled is false, template is NOT applied — just returns table name
-        assertEquals("orders",
-            Utils.getTableNameFromTopic("prefix.public.orders", false, "__{{ schema }}__"));
-    }
-
-    @Test
-    public void testTableNameWithSchemaPrefixDisabled() {
-        assertEquals("orders",
-            Utils.getTableNameFromTopic("prefix.public.orders", false, null));
-    }
-
-    @Test
-    public void testTableNameWithSchemaPrefixTwoSegments() {
-        // Only 2 segments — no schema available, so no prefix even when enabled
-        assertEquals("orders",
-            Utils.getTableNameFromTopic("prefix.orders", true, null));
-    }
-
-    @Test
-    public void testTableNameWithSchemaPrefixFourSegments() {
-        // 4 segments: server1.mydb.public.orders → schema = "public", table = "orders"
-        assertEquals("__public__orders",
-            Utils.getTableNameFromTopic("server1.mydb.public.orders", true, null));
-    }
-
-    @Test
-    public void testTableNameWithSchemaPrefixOneSegment() {
-        // Only 1 segment — returns the topic name as-is
-        assertEquals("orders",
-            Utils.getTableNameFromTopic("orders", true, null));
-    }
-
-    @Test
-    public void testTableNameNullTopic() {
-        assertNull(Utils.getTableNameFromTopic(null, true, null));
+    @ParameterizedTest(name = "getTableNameFromTopic({1}, {2}, {3}) → {4} [{0}]")
+    @MethodSource("getTableNameFromTopicCases")
+    @DisplayName("getTableNameFromTopic()")
+    public void testGetTableNameFromTopic(String label, String topic, boolean schemaPrefixEnabled,
+                                          String template, String expected) {
+        assertEquals(expected, Utils.getTableNameFromTopic(topic, schemaPrefixEnabled, template));
     }
 
     // === isValidDatabasePrefix() ===
 
-    @Test
-    public void testValidDatabasePrefixAlphanumeric() {
-        assertTrue(Utils.isValidDatabasePrefix("litellm_dev_"));
+    static Stream<Arguments> isValidDatabasePrefixCases() {
+        return Stream.of(
+                Arguments.of("alphanumeric with underscore", "litellm_dev_", true),
+                Arguments.of("empty string",                 "",             true),
+                Arguments.of("null",                         null,           true),
+                Arguments.of("pure alpha",                   "myPrefix",     true),
+                Arguments.of("contains dash",                "litellm-dev-", false),
+                Arguments.of("contains dot",                 "my.prefix",    false),
+                Arguments.of("contains space",               "my prefix",    false)
+        );
     }
 
-    @Test
-    public void testValidDatabasePrefixEmpty() {
-        assertTrue(Utils.isValidDatabasePrefix(""));
-    }
-
-    @Test
-    public void testValidDatabasePrefixNull() {
-        assertTrue(Utils.isValidDatabasePrefix(null));
-    }
-
-    @Test
-    public void testValidDatabasePrefixPureAlpha() {
-        assertTrue(Utils.isValidDatabasePrefix("myPrefix"));
-    }
-
-    @Test
-    public void testInvalidDatabasePrefixWithDash() {
-        assertFalse(Utils.isValidDatabasePrefix("litellm-dev-"));
-    }
-
-    @Test
-    public void testInvalidDatabasePrefixWithDot() {
-        assertFalse(Utils.isValidDatabasePrefix("my.prefix"));
-    }
-
-    @Test
-    public void testInvalidDatabasePrefixWithSpace() {
-        assertFalse(Utils.isValidDatabasePrefix("my prefix"));
+    @ParameterizedTest(name = "isValidDatabasePrefix({1}) → {2} [{0}]")
+    @MethodSource("isValidDatabasePrefixCases")
+    @DisplayName("isValidDatabasePrefix()")
+    public void testIsValidDatabasePrefix(String label, String prefix, boolean expected) {
+        assertEquals(expected, Utils.isValidDatabasePrefix(prefix));
     }
 
     // === applyDatabasePrefix() ===
 
-    @Test
-    public void testApplyDatabasePrefix() {
-        assertEquals("litellm_dev_app", Utils.applyDatabasePrefix("app", "litellm_dev_"));
+    static Stream<Arguments> applyDatabasePrefixCases() {
+        return Stream.of(
+                Arguments.of("with prefix",    "app", "litellm_dev_", "litellm_dev_app"),
+                Arguments.of("empty prefix",   "app", "",             "app"),
+                Arguments.of("null prefix",    "app", null,           "app")
+        );
     }
 
-    @Test
-    public void testApplyDatabasePrefixEmpty() {
-        assertEquals("app", Utils.applyDatabasePrefix("app", ""));
-    }
-
-    @Test
-    public void testApplyDatabasePrefixNull() {
-        assertEquals("app", Utils.applyDatabasePrefix("app", null));
+    @ParameterizedTest(name = "applyDatabasePrefix({1}, {2}) → {3} [{0}]")
+    @MethodSource("applyDatabasePrefixCases")
+    @DisplayName("applyDatabasePrefix()")
+    public void testApplyDatabasePrefix(String label, String database, String prefix, String expected) {
+        assertEquals(expected, Utils.applyDatabasePrefix(database, prefix));
     }
 
     // === applyDatabaseSchemaSuffix() ===
 
-    @Test
-    public void testApplyDatabaseSchemaSuffix() {
-        assertEquals("app__public__",
-            Utils.applyDatabaseSchemaSuffix("app", "__{{ schema }}__", "public"));
+    static Stream<Arguments> applyDatabaseSchemaSuffixCases() {
+        return Stream.of(
+                Arguments.of("with template",    "app", "__{{ schema }}__", "public", "app__public__"),
+                Arguments.of("empty template",   "app", "",                "public", "app"),
+                Arguments.of("null template",    "app", null,              "public", "app")
+        );
     }
 
-    @Test
-    public void testApplyDatabaseSchemaSuffixEmpty() {
-        assertEquals("app", Utils.applyDatabaseSchemaSuffix("app", "", "public"));
-    }
-
-    @Test
-    public void testApplyDatabaseSchemaSuffixNull() {
-        assertEquals("app", Utils.applyDatabaseSchemaSuffix("app", null, "public"));
+    @ParameterizedTest(name = "applyDatabaseSchemaSuffix({1}, {2}, {3}) → {4} [{0}]")
+    @MethodSource("applyDatabaseSchemaSuffixCases")
+    @DisplayName("applyDatabaseSchemaSuffix()")
+    public void testApplyDatabaseSchemaSuffix(String label, String database, String template,
+                                              String schema, String expected) {
+        assertEquals(expected, Utils.applyDatabaseSchemaSuffix(database, template, schema));
     }
 
     // === applyDatabaseNaming() — combined prefix + suffix ===
 
-    @Test
-    public void testApplyDatabaseNamingBoth() {
-        assertEquals("litellm_dev_app__public__",
-            Utils.applyDatabaseNaming("app", "litellm_dev_", "__{{ schema }}__", "public"));
+    static Stream<Arguments> applyDatabaseNamingCases() {
+        return Stream.of(
+                Arguments.of("both prefix and suffix",
+                        "app", "litellm_dev_", "__{{ schema }}__", "public", "litellm_dev_app__public__"),
+                Arguments.of("prefix only",
+                        "app", "litellm_dev_", "",                 "public", "litellm_dev_app"),
+                Arguments.of("suffix only",
+                        "app", "",             "__{{ schema }}__", "public", "app__public__"),
+                Arguments.of("neither",
+                        "app", "",             "",                 "public", "app"),
+                Arguments.of("null prefix and suffix",
+                        "app", null,           null,               "public", "app")
+        );
     }
 
-    @Test
-    public void testApplyDatabaseNamingPrefixOnly() {
-        assertEquals("litellm_dev_app",
-            Utils.applyDatabaseNaming("app", "litellm_dev_", "", "public"));
-    }
-
-    @Test
-    public void testApplyDatabaseNamingSuffixOnly() {
-        assertEquals("app__public__",
-            Utils.applyDatabaseNaming("app", "", "__{{ schema }}__", "public"));
-    }
-
-    @Test
-    public void testApplyDatabaseNamingNeither() {
-        assertEquals("app", Utils.applyDatabaseNaming("app", "", "", "public"));
-    }
-
-    @Test
-    public void testApplyDatabaseNamingNullPrefixAndSuffix() {
-        assertEquals("app", Utils.applyDatabaseNaming("app", null, null, "public"));
+    @ParameterizedTest(name = "applyDatabaseNaming({1}, {2}, {3}, {4}) → {5} [{0}]")
+    @MethodSource("applyDatabaseNamingCases")
+    @DisplayName("applyDatabaseNaming()")
+    public void testApplyDatabaseNaming(String label, String database, String prefix,
+                                        String suffixTemplate, String schema, String expected) {
+        assertEquals(expected, Utils.applyDatabaseNaming(database, prefix, suffixTemplate, schema));
     }
 }
