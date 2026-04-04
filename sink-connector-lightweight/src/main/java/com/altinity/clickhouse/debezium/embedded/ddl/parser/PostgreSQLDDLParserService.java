@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -236,8 +238,86 @@ public class PostgreSQLDDLParserService implements DDLParserService {
     // -----------------------------------------------------------------------
 
     /**
+     * Static lookup table for simple PostgreSQL type → ClickHouse type mappings.
+     * Parameterised types (NUMERIC, DECIMAL, VARCHAR, TIMESTAMP, etc.) are handled
+     * via regex in the method body.
+     *
+     * <p><strong>Note:</strong> these are PostgreSQL <em>SQL DDL</em> types (e.g.
+     * {@code BIGSERIAL}, {@code TIMESTAMP WITH TIME ZONE}), not Debezium schema
+     * types.  {@code DataTypeConverter.java} handles Debezium-level type resolution
+     * and operates at a different layer.
+     */
+    private static final Map<String, String> PG_TO_CH_SIMPLE_TYPES;
+    static {
+        Map<String, String> m = new HashMap<>();
+        // Integer / Serial types
+        m.put("BIGSERIAL", "Int64");
+        m.put("SERIAL8", "Int64");
+        m.put("SERIAL", "Int64");
+        m.put("SERIAL4", "Int64");
+        m.put("SMALLSERIAL", "Int16");
+        m.put("SERIAL2", "Int16");
+        m.put("BIGINT", "Int64");
+        m.put("INT8", "Int64");
+        m.put("INT64", "Int64");
+        m.put("INTEGER", "Int32");
+        m.put("INT", "Int32");
+        m.put("INT4", "Int32");
+        m.put("INT32", "Int32");
+        m.put("SMALLINT", "Int16");
+        m.put("INT2", "Int16");
+        m.put("INT16", "Int16");
+        // Boolean
+        m.put("BOOLEAN", "UInt8");
+        m.put("BOOL", "UInt8");
+        // Floating point
+        m.put("REAL", "Float32");
+        m.put("FLOAT4", "Float32");
+        m.put("DOUBLE PRECISION", "Float64");
+        m.put("FLOAT8", "Float64");
+        m.put("FLOAT", "Float64");
+        // Character types
+        m.put("TEXT", "String");
+        m.put("CITEXT", "String");
+        m.put("NAME", "String");
+        // Date / Time types
+        m.put("TIMESTAMP WITH TIME ZONE", "DateTime64(6, 'UTC')");
+        m.put("TIMESTAMPTZ", "DateTime64(6, 'UTC')");
+        m.put("TIMESTAMP WITHOUT TIME ZONE", "DateTime64(6)");
+        m.put("TIMESTAMP", "DateTime64(6)");
+        m.put("DATE", "Date32");
+        m.put("TIME", "String");
+        m.put("TIME WITHOUT TIME ZONE", "String");
+        m.put("TIME WITH TIME ZONE", "String");
+        m.put("TIMETZ", "String");
+        m.put("INTERVAL", "String");
+        // UUID
+        m.put("UUID", "UUID");
+        // JSON
+        m.put("JSON", "String");
+        m.put("JSONB", "String");
+        // Binary
+        m.put("BYTEA", "String");
+        // Network / PG-specific
+        m.put("INET", "String");
+        m.put("CIDR", "String");
+        m.put("MACADDR", "String");
+        m.put("MACADDR8", "String");
+        m.put("TSVECTOR", "String");
+        m.put("TSQUERY", "String");
+        m.put("XML", "String");
+        m.put("MONEY", "Decimal(19, 4)");
+        m.put("BIT", "String");
+        PG_TO_CH_SIMPLE_TYPES = Map.copyOf(m);
+    }
+
+    /**
      * Maps a PostgreSQL column type string to the most appropriate ClickHouse
      * type.
+     *
+     * <p>Simple types are resolved via a static map ({@link #PG_TO_CH_SIMPLE_TYPES}).
+     * Parameterised types (NUMERIC, DECIMAL, VARCHAR, CHAR, TIMESTAMP with
+     * precision) are handled via regex.
      *
      * <p>Non-primary-key columns should be wrapped with {@code Nullable(…)} by
      * the caller (the listener handles this automatically).
@@ -252,23 +332,11 @@ public class PostgreSQLDDLParserService implements DDLParserService {
 
         String upper = pgType.trim().toUpperCase();
 
-        // --- Integer / Serial types ---
-        if (upper.equals("BIGSERIAL") || upper.equals("SERIAL8")) return "Int64";
-        if (upper.equals("SERIAL")    || upper.equals("SERIAL4")) return "Int64";
-        if (upper.equals("SMALLSERIAL") || upper.equals("SERIAL2")) return "Int16";
+        // 1. Try simple map lookup first
+        String mapped = PG_TO_CH_SIMPLE_TYPES.get(upper);
+        if (mapped != null) return mapped;
 
-        if (upper.equals("BIGINT")  || upper.equals("INT8")  || upper.equals("INT64")) return "Int64";
-        if (upper.equals("INTEGER") || upper.equals("INT")   || upper.equals("INT4")
-                || upper.equals("INT32")) return "Int32";
-        if (upper.equals("SMALLINT") || upper.equals("INT2") || upper.equals("INT16")) return "Int16";
-
-        // --- Boolean ---
-        if (upper.equals("BOOLEAN") || upper.equals("BOOL")) return "UInt8";
-
-        // --- Floating point ---
-        if (upper.equals("REAL") || upper.equals("FLOAT4")) return "Float32";
-        if (upper.equals("DOUBLE PRECISION") || upper.equals("FLOAT8")
-                || upper.equals("FLOAT")) return "Float64";
+        // 2. Parameterised types requiring regex parsing
 
         // --- Numeric / Decimal with precision and scale ---
         if (upper.startsWith("NUMERIC") || upper.startsWith("DECIMAL")) {
@@ -288,19 +356,11 @@ public class PostgreSQLDDLParserService implements DDLParserService {
             return "Decimal(38, 9)";
         }
 
-        // --- Character types ---
+        // --- Character varying / varchar / char ---
         if (upper.startsWith("CHARACTER VARYING") || upper.startsWith("VARCHAR")) return "String";
         if (upper.startsWith("CHARACTER") || upper.startsWith("CHAR")) return "String";
-        if (upper.equals("TEXT")   || upper.equals("CITEXT")) return "String";
-        if (upper.equals("NAME")) return "String";
 
-        // --- Date / Time types ---
-        if (upper.equals("TIMESTAMP WITH TIME ZONE") || upper.equals("TIMESTAMPTZ")) {
-            return "DateTime64(6, 'UTC')";
-        }
-        if (upper.equals("TIMESTAMP WITHOUT TIME ZONE") || upper.equals("TIMESTAMP")) {
-            return "DateTime64(6)";
-        }
+        // --- Timestamp with precision ---
         if (upper.startsWith("TIMESTAMP")) {
             if (upper.contains("WITH TIME ZONE")) return "DateTime64(6, 'UTC')";
             Pattern tsp = Pattern.compile("TIMESTAMP\\s*\\(\\s*(\\d+)\\s*\\)", Pattern.CASE_INSENSITIVE);
@@ -308,28 +368,11 @@ public class PostgreSQLDDLParserService implements DDLParserService {
             if (tsm.find()) return "DateTime64(" + tsm.group(1) + ")";
             return "DateTime64(6)";
         }
-        if (upper.equals("DATE")) return "Date32";
-        if (upper.equals("TIME") || upper.equals("TIME WITHOUT TIME ZONE")) return "String";
-        if (upper.equals("TIME WITH TIME ZONE") || upper.equals("TIMETZ")) return "String";
-        if (upper.equals("INTERVAL")) return "String";
 
-        // --- UUID ---
-        if (upper.equals("UUID")) return "UUID";
+        // --- BIT VARYING / VARBIT ---
+        if (upper.startsWith("BIT VARYING") || upper.startsWith("VARBIT")) return "String";
 
-        // --- JSON ---
-        if (upper.equals("JSON") || upper.equals("JSONB")) return "String";
-
-        // --- Binary ---
-        if (upper.equals("BYTEA")) return "String";
-
-        // --- Network / other PG-specific ---
-        if (upper.equals("INET") || upper.equals("CIDR")
-                || upper.equals("MACADDR") || upper.equals("MACADDR8")) return "String";
-        if (upper.equals("TSVECTOR") || upper.equals("TSQUERY")) return "String";
-        if (upper.equals("XML")) return "String";
-        if (upper.equals("MONEY")) return "Decimal(19, 4)";
-        if (upper.equals("BIT") || upper.startsWith("BIT VARYING")
-                || upper.startsWith("VARBIT")) return "String";
+        // --- OID types ---
         if (upper.startsWith("OID")) return "UInt32";
 
         // --- Array types → String (stored as JSON) ---

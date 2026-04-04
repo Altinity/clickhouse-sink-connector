@@ -2,6 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.postgres.schema;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
+import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -81,7 +83,11 @@ public class PostgresSchemaChangeDetector {
      * These must be excluded when comparing Debezium schema against ClickHouse.
      */
     private static final Set<String> CDC_INTERNAL_COLUMNS = Set.of(
-            "_sign", "_version", "_topic", "_offset", "_partition");
+            ClickHouseDbConstants.SIGN_COLUMN,
+            ClickHouseDbConstants.VERSION_COLUMN,
+            KafkaMetaData.TOPIC.getColumn(),
+            KafkaMetaData.OFFSET.getColumn(),
+            KafkaMetaData.PARTITION.getColumn());
 
     // -----------------------------------------------------------------------
     // TTL-aware cache entry
@@ -329,7 +335,7 @@ public class PostgresSchemaChangeDetector {
             // Prefer "after" (INSERT / UPDATE); fall back to "before" (DELETE).
             Schema rowSchema = null;
 
-            org.apache.kafka.connect.data.Field afterField = valueSchema.field("after");
+            Field afterField = valueSchema.field("after");
             if (afterField != null && afterField.schema() != null
                     && afterField.schema().type() == Schema.Type.STRUCT) {
                 // For DELETE, the "after" value in the Struct will be null, so check the value too.
@@ -341,7 +347,7 @@ public class PostgresSchemaChangeDetector {
             }
 
             if (rowSchema == null) {
-                org.apache.kafka.connect.data.Field beforeField = valueSchema.field("before");
+                Field beforeField = valueSchema.field("before");
                 if (beforeField != null && beforeField.schema() != null
                         && beforeField.schema().type() == Schema.Type.STRUCT) {
                     rowSchema = beforeField.schema();
@@ -352,13 +358,13 @@ public class PostgresSchemaChangeDetector {
                 return null;
             }
 
-            List<org.apache.kafka.connect.data.Field> fields = rowSchema.fields();
+            List<Field> fields = rowSchema.fields();
             if (fields == null || fields.isEmpty()) {
                 return null;
             }
 
             Map<String, Schema> result = new LinkedHashMap<>(fields.size());
-            for (org.apache.kafka.connect.data.Field field : fields) {
+            for (Field field : fields) {
                 result.put(field.name(), field.schema());
             }
             return result;
@@ -392,10 +398,6 @@ public class PostgresSchemaChangeDetector {
             return Collections.emptyMap();
         }
 
-        String columnSql = String.format(
-                "SELECT name, type FROM system.columns WHERE database = '%s' AND table = '%s'",
-                database, table);
-
         try {
             Connection conn = writer.getConnection();
             if (conn == null) {
@@ -403,13 +405,10 @@ public class PostgresSchemaChangeDetector {
                 return Collections.emptyMap();  // error path – skip detection
             }
 
-            Map<String, String> result = new HashMap<>();
-            try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(columnSql)) {
-                while (rs.next()) {
-                    result.put(rs.getString(1), rs.getString(2));
-                }
-            }
+            // Delegate to DBMetadata to avoid duplicating the system.columns query.
+            DBMetadata dbMeta = new DBMetadata(config);
+            Map<String, String> result = dbMeta.getColumnsDataTypesForTable(conn, table, database);
+            if (result == null) result = new HashMap<>();
 
             if (!result.isEmpty()) {
                 log.debug("Fetched {} columns from ClickHouse for table {}.{}", result.size(), database, table);

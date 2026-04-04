@@ -390,4 +390,60 @@ public class Utils {
                         (prev, next) -> next, HashMap::new
                 ));
     }
+
+    /**
+     * Extracts the table name from a SourceRecord's key struct, applying
+     * schema-prefix logic when enabled.
+     *
+     * <p>When {@code schemaPrefixEnabled} is true, the schema segment is
+     * extracted from the topic and prepended to the table name (using the
+     * template or the hardcoded {@code __<schema>__} format).
+     *
+     * @param tableName              the raw table name from the SourceRecord key
+     * @param topic                  the Kafka topic from the SourceRecord
+     * @param schemaPrefixEnabled    whether schema prefix is enabled
+     * @param commonSchemaTemplate   the shared schema template (may be null/empty)
+     * @return the resolved table name with optional schema prefix
+     */
+    public static String getTableNameForSchemaPrefix(String tableName,
+                                                      String topic,
+                                                      boolean schemaPrefixEnabled,
+                                                      String commonSchemaTemplate) {
+        if (tableName == null || tableName.isEmpty()) {
+            return null;
+        }
+        if (!schemaPrefixEnabled) {
+            return tableName;
+        }
+        // Extract schema from topic: format is {prefix}.{schema}.{table}
+        if (topic != null) {
+            String[] parts = topic.split("\\.");
+            if (parts.length >= 3) {
+                String schema = parts[parts.length - 2];
+                if (commonSchemaTemplate != null && !commonSchemaTemplate.isEmpty()) {
+                    String resolvedPrefix = resolveSchemaTemplate(commonSchemaTemplate, schema);
+                    return resolvedPrefix + tableName;
+                }
+                return "__" + schema + "__" + tableName;
+            }
+        }
+        return tableName;
+    }
+
+    /**
+     * Extract plain table name, stripping backticks and database prefix.
+     * e.g., "`mydb`.`mytable`" returns "mytable", "`mytable`" returns "mytable"
+     *
+     * @param tableName the table name potentially containing backticks and database prefix.
+     * @return the cleaned table name.
+     */
+    public static String extractPlainTableName(String tableName) {
+        if (tableName == null) return "";
+        String cleaned = tableName.replace("`", "").trim();
+        int dotIndex = cleaned.lastIndexOf('.');
+        if (dotIndex >= 0) {
+            cleaned = cleaned.substring(dotIndex + 1);
+        }
+        return cleaned;
+    }
 }
