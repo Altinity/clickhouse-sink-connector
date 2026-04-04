@@ -119,6 +119,13 @@ public class DebeziumChangeEventCapture {
      */
     BaseDbWriter writer;
 
+    // TODO: Consider extracting the PostgreSQL-specific fields below
+    // (postgresSchemaChangeDetector, schemaPrefixEnabled, databaseSchemaSuffix,
+    // commonSchemaTemplate, commonDatabasePrefix) and their initialization logic
+    // into a dedicated PostgresConnectorConfig helper class to reduce the
+    // responsibility of DebeziumChangeEventCapture. Deferred to a follow-up
+    // refactoring to minimise risk in this PR.
+
     /**
      * Schema drift detector for PostgreSQL connectors.
      * Null when the connector is not PostgreSQL (MySQL/MariaDB).
@@ -633,7 +640,7 @@ public class DebeziumChangeEventCapture {
                 try {
                     String tableName = getTableName(sr);
                     if (tableName == null) {
-                        tableName = extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled, commonSchemaTemplate);
+                        tableName = Utils.getTableNameFromTopic(sr.topic(), schemaPrefixEnabled, commonSchemaTemplate);
                     }
                     if (tableName != null) {
                         String tableKey = databaseName + "." + tableName;
@@ -829,25 +836,8 @@ public class DebeziumChangeEventCapture {
             try {
                 String tableName = (String) ((Struct) sr.key()).get("tableName");
                 if (tableName != null && !tableName.isEmpty()) {
-                    if (schemaPrefixEnabled) {
-                        // Extract schema from the topic to build the prefixed name.
-                        // Topic format: {prefix}.{schema}.{table}
-                        String topic = sr.topic();
-                        if (topic != null) {
-                            String[] parts = topic.split("\\.");
-                            if (parts.length >= 3) {
-                                String schema = parts[parts.length - 2];
-                                // Use template if available, otherwise hardcoded format
-                                if (commonSchemaTemplate != null && !commonSchemaTemplate.isEmpty()) {
-                                    String resolvedPrefix = Utils.resolveSchemaTemplate(
-                                            commonSchemaTemplate, schema);
-                                    return resolvedPrefix + tableName;
-                                }
-                                return "__" + schema + "__" + tableName;
-                            }
-                        }
-                    }
-                    return tableName;
+                    return Utils.getTableNameForSchemaPrefix(
+                            tableName, sr.topic(), schemaPrefixEnabled, commonSchemaTemplate);
                 }
             } catch (Exception e) {
                 // tableName field may not exist in the struct
@@ -857,63 +847,6 @@ public class DebeziumChangeEventCapture {
         return null;
     }
 
-    /**
-     * Extracts the table name from a Debezium DML topic.
-     *
-     * <p>For PostgreSQL, the topic format is:
-     * {@code {topic.prefix}.{schema}.{table}}
-     * The table name is the last dot-separated segment.
-     *
-     * @param topic Kafka topic string from a {@link SourceRecord}
-     * @return the table name, or {@code null} if the topic is null/empty
-     */
-    private static String extractTableNameFromTopic(String topic) {
-        return extractTableNameFromTopic(topic, false);
-    }
-
-    /**
-     * Extracts the table name from a Debezium DML topic.
-     *
-     * <p>When {@code schemaPrefix} is true, returns {@code __<schema>__<table>}
-     * using the second-to-last and last dot-separated segments.
-     *
-     * @param topic        Kafka topic string from a {@link SourceRecord}
-     * @param schemaPrefix when true, prepend the schema segment
-     * @return the table name, or {@code null} if the topic is null/empty
-     */
-    private static String extractTableNameFromTopic(String topic,
-                                                     boolean schemaPrefix) {
-        return extractTableNameFromTopic(topic, schemaPrefix, null);
-    }
-
-    /**
-     * Extracts the table name from a Debezium DML topic with template support.
-     *
-     * <p>When {@code schemaPrefix} is true and {@code schemaTemplate} is
-     * non-empty, the template is resolved and prepended.  Otherwise falls
-     * back to the hardcoded {@code __<schema>__<table>} format.
-     *
-     * @param topic          Kafka topic string from a {@link SourceRecord}
-     * @param schemaPrefix   when true, prepend the schema segment
-     * @param schemaTemplate the shared template ({@code clickhouse.common.schema.template})
-     * @return the table name, or {@code null} if the topic is null/empty
-     */
-    private static String extractTableNameFromTopic(String topic,
-                                                     boolean schemaPrefix,
-                                                     String schemaTemplate) {
-        if (topic == null || topic.isEmpty()) {
-            return null;
-        }
-        if (schemaPrefix) {
-            // Delegate to the shared utility that handles schema prefix extraction
-            return Utils.getTableNameFromTopic(topic, true, schemaTemplate);
-        }
-        int lastDot = topic.lastIndexOf('.');
-        if (lastDot < 0 || lastDot == topic.length() - 1) {
-            return topic; // no dot → the whole topic is treated as the table name
-        }
-        return topic.substring(lastDot + 1);
-    }
 
     /**
      * Extracts the ClickHouse target database name from a DML {@link SourceRecord}.

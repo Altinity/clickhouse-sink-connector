@@ -90,6 +90,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     String originalSql;
 
     /**
+     * Pre-computed clean table name (backticks and database prefix stripped).
+     */
+    String cleanTableName;
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -121,6 +126,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
         this.originalSql = originalSql;
+        this.cleanTableName = Utils.extractPlainTableName(tableName);
     }
 
     /**
@@ -161,19 +167,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         return userProvidedTimeZoneId;
     }
 
-    /**
-     * Extract plain table name, stripping backticks and database prefix.
-     * e.g., "`mydb`.`mytable`" → "mytable", "`mytable`" → "mytable"
-     */
-    private static String extractPlainTableName(String tableName) {
-        if (tableName == null) return "";
-        String cleaned = tableName.replace("`", "").trim();
-        int dotIndex = cleaned.lastIndexOf('.');
-        if (dotIndex >= 0) {
-            cleaned = cleaned.substring(dotIndex + 1);
-        }
-        return cleaned;
-    }
+
 
     /**
      * Override the enterCreateDatabase method from the parser listener to handle CREATE DATABASE statements.
@@ -304,7 +298,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             ColumnTypeOverrideConfig overrideConfig =
                     ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
             if (overrideConfig.hasOverrides()) {
-                String cleanTableName = extractPlainTableName(this.tableName);
+                String cleanTableName = this.cleanTableName;
                 List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
                         overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
                 for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
@@ -734,7 +728,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
             if (overrideConfig.hasOverrides()) {
                 String cleanColumnName = columnName != null ? columnName.replace("`", "") : columnName;
-                String cleanTableName = extractPlainTableName(this.tableName);
+                String cleanTableName = this.cleanTableName;
                 Optional<String> directOverride =
                         overrideConfig.getDirectOverride(this.databaseName, cleanTableName, cleanColumnName);
                 if (directOverride.isPresent()) {
@@ -940,7 +934,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             ColumnTypeOverrideConfig overrideConfig =
                     ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
             if (overrideConfig.hasOverrides()) {
-                String cleanTableName = extractPlainTableName(this.tableName);
+                String cleanTableName = this.cleanTableName;
                 String cleanColumnName = columnName != null ? columnName.replace("`", "") : "";
                 List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
                         overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
@@ -1023,7 +1017,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     ColumnTypeOverrideConfig overrideConfig =
                                             ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
                                     if (overrideConfig.hasOverrides()) {
-                                        String cleanTableName = extractPlainTableName(this.tableName);
+                                        String cleanTableName = this.cleanTableName;
                                         String droppedColName = dropColumnChild.getText().replace("`", "");
                                         List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
                                                 overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);

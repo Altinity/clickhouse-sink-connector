@@ -231,19 +231,17 @@ public class PostgresSchemaReconciler {
     private Set<String> fetchColumnNames(String database, String table) {
         try {
             Connection conn = writer.getConnection();
-            String sql = String.format(
-                    "SELECT name FROM system.columns WHERE database = '%s' AND table = '%s'",
-                    database.replace("'", "\\'"),
-                    table.replace("'", "\\'"));
-
-            Set<String> columns = new HashSet<>();
-            try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(sql)) {
-                while (rs.next()) {
-                    columns.add(rs.getString(1).toLowerCase());
-                }
+            // Delegate to DBMetadata to avoid duplicating the system.columns query.
+            DBMetadata dbMeta = new DBMetadata(config);
+            Map<String, String> columnsMap = dbMeta.getColumnsDataTypesForTable(conn, table, database);
+            if (columnsMap == null || columnsMap.isEmpty()) {
+                return null;
             }
-            return columns.isEmpty() ? null : columns;
+            Set<String> columns = new HashSet<>();
+            for (String colName : columnsMap.keySet()) {
+                columns.add(colName.toLowerCase());
+            }
+            return columns;
         } catch (Exception e) {
             log.warn("Failed to fetch columns for {}.{}: {}", database, table, e.getMessage());
             return null;
