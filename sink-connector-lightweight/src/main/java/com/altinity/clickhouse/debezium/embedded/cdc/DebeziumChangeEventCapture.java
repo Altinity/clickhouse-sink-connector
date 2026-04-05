@@ -5,7 +5,6 @@ import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeight
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.debezium.embedded.postgres.schema.PostgresSchemaChangeDetector;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
@@ -148,36 +147,11 @@ public class DebeziumChangeEventCapture {
     BaseDbWriter writer;
 
     /**
-     * Schema drift detector for PostgreSQL connectors.
-     * Null when the connector is not PostgreSQL (MySQL/MariaDB).
+     * PostgreSQL-specific configuration and state (schema change detection,
+     * schema prefix, database suffix, etc.).  Initialised in
+     * {@link #setup} from the connector properties.
      */
-    private PostgresSchemaChangeDetector postgresSchemaChangeDetector;
-
-    /**
-     * When true, ClickHouse table names include the PostgreSQL schema as a
-     * prefix: __<schema>__<table>.
-     */
-    private boolean schemaPrefixEnabled = false;
-
-    /**
-     * When true, the resolved {@code clickhouse.common.schema.template} is
-     * appended to the ClickHouse database name as a suffix.
-     */
-    private boolean databaseSchemaSuffix = false;
-
-    /**
-     * Shared template string with a {@code {{ schema }}} placeholder.
-     * Used by both table-prefix and database-suffix features when they are
-     * enabled.  Empty string means disabled / use hardcoded format.
-     */
-    private String commonSchemaTemplate = "";
-
-    /**
-     * Static prefix prepended to every ClickHouse database name.
-     * Only alphanumeric characters and underscores are allowed.
-     * Empty string (default) means disabled.
-     */
-    private String commonDatabasePrefix = "";
+    private PostgresConnectorConfig pgConfig;
 
     /**
      * Connection to the system database.
@@ -278,7 +252,7 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
-        initPostgresSchemaChangeDetector(props, config);
+        pgConfig.initSchemaChangeDetector(props, config, writer);
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
         }
@@ -543,27 +517,8 @@ public class DebeziumChangeEventCapture {
         }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
-        // Initialize schema prefix flag from configuration.
-        this.schemaPrefixEnabled = Boolean.parseBoolean(
-                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(), "false"));
-
-        // Initialize database schema suffix flag from configuration.
-        this.databaseSchemaSuffix = Boolean.parseBoolean(
-                props.getProperty(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(), "false"));
-
-        // Initialize the shared schema template from configuration.
-        this.commonSchemaTemplate = props.getProperty(
-                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(), "");
-
-        // Initialize and validate the database prefix from configuration.
-        this.commonDatabasePrefix = props.getProperty(
-                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(), "");
-        if (!Utils.isValidDatabasePrefix(this.commonDatabasePrefix)) {
-            throw new IllegalArgumentException(
-                    "clickhouse.common.database.prefix contains invalid characters. "
-                    + "Only alphanumeric and underscore allowed: "
-                    + this.commonDatabasePrefix);
-        }
+        // Initialize PostgreSQL-specific configuration from properties.
+        this.pgConfig = new PostgresConnectorConfig(props);
 
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -884,15 +839,9 @@ public class DebeziumChangeEventCapture {
                 // here. We intentionally start from the real source-mapped database
                 // (getDatabaseName(sr)), not the replication-history override above.
                 try {
-                    String invalidationDatabaseName = getDatabaseName(sr);
-                    String overrideMapConfig = config.getString(
-                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
-                    if (overrideMapConfig != null) {
-                        Map<String, String> databaseOverrideMap =
-                                Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
-                        if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
-                            invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
-                        }
+                    String tableName = getTableName(sr);
+                    if (tableName == null) {
+                        tableName = Utils.getTableNameFromTopic(sr.topic(), pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
                     }
                     List<String> ddlTables = getTableNamesFromDDL(sr, DDL);
                     if (ddlTables.isEmpty()) {
@@ -909,8 +858,8 @@ public class DebeziumChangeEventCapture {
                         // Also invalidate the schema-drift detector cache so the next DML event
                         // re-fetches the updated ClickHouse schema immediately, without waiting
                         // for the TTL to expire.
-                        if (postgresSchemaChangeDetector != null) {
-                            postgresSchemaChangeDetector.invalidateCache(tableKey);
+                        if (pgConfig.getSchemaChangeDetector() != null) {
+                            pgConfig.getSchemaChangeDetector().invalidateCache(tableKey);
                             log.debug("Schema-drift cache invalidated for {} after DDL: {}", tableKey, DDL);
                         }
                     }
@@ -1068,60 +1017,6 @@ public class DebeziumChangeEventCapture {
         return conn;
     }
 
-    /**
-     * Initialises the {@link PostgresSchemaChangeDetector} for PostgreSQL connectors.
-     * Must be called after {@link #setSystemDbConnection} so that {@link #writer} is
-     * already set.
-     *
-     * @param props  connector properties (used to detect connector type via
-     *               {@code connector.class})
-     * @param config the connector configuration forwarded to the detector
-     */
-    private void initPostgresSchemaChangeDetector(Properties props,
-                                                   ClickHouseSinkConnectorConfig config) {
-       String connectorClass = props != null
-                ? props.getProperty(ClickHouseSinkConnectorConfigVariables.CONNECTOR_CLASS.toString(), "")
-                : "";
-        if (DDLParserFactory.isPostgresConnector(connectorClass)) {
-            this.postgresSchemaChangeDetector =
-                    new PostgresSchemaChangeDetector(writer, config);
-            log.info("PostgresSchemaChangeDetector initialised for connector class '{}'", connectorClass);
-
-            // --- Startup alias column reconciliation ---
-            // Ensure any configured ALIAS columns (e.g. Date aliases for text
-            // date columns) exist on all relevant ClickHouse tables.  This is
-            // idempotent and runs once per startup.
-            try {
-                String pgDbName = props != null
-                        ? props.getProperty("database.dbname", "")
-                        : "";
-                if (pgDbName != null && !pgDbName.isEmpty()) {
-                    // Build the ClickHouse database name by applying the same
-                    // prefix + schema-suffix logic used at runtime.
-                    String chDatabase = pgDbName;
-                    chDatabase = Utils.applyDatabasePrefix(chDatabase, this.commonDatabasePrefix);
-                    if (this.databaseSchemaSuffix
-                            && this.commonSchemaTemplate != null
-                            && !this.commonSchemaTemplate.isEmpty()) {
-                        // Default to "public" schema for PostgreSQL
-                        chDatabase = Utils.applyDatabaseSchemaSuffix(
-                                chDatabase, this.commonSchemaTemplate, "public");
-                    }
-                    log.info("Startup alias reconciliation: pgDb='{}', chDb='{}'",
-                            pgDbName, chDatabase);
-                    this.postgresSchemaChangeDetector.ensureAllAliasColumns(pgDbName, chDatabase);
-                } else {
-                    log.debug("database.dbname not set – skipping startup alias reconciliation");
-                }
-            } catch (Exception e) {
-                log.warn("Startup alias column reconciliation failed – continuing. Cause: {}",
-                        e.getMessage(), e);
-            }
-        } else {
-            this.postgresSchemaChangeDetector = null;
-            log.debug("PostgresSchemaChangeDetector not activated (connector class: '{}')", connectorClass);
-        }
-    }
 
     /**
      * Sets up the replication history database connection using the provided database
@@ -1160,13 +1055,13 @@ public class DebeziumChangeEventCapture {
             }
         }
         // Apply database prefix if configured (before suffix)
-        dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
+        dbName = Utils.applyDatabasePrefix(dbName, pgConfig.getCommonDatabasePrefix());
         // Apply database schema suffix if configured
-        if (this.databaseSchemaSuffix && this.commonSchemaTemplate != null
-                && !this.commonSchemaTemplate.isEmpty()) {
+        if (pgConfig.isDatabaseSchemaSuffix() && pgConfig.getCommonSchemaTemplate() != null
+                && !pgConfig.getCommonSchemaTemplate().isEmpty()) {
             String topic = sr != null ? sr.topic() : null;
             String schema = Utils.extractSchemaFromTopic(topic);
-            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, pgConfig.getCommonSchemaTemplate(), schema);
         }
         return dbName;
     }
@@ -1182,25 +1077,8 @@ public class DebeziumChangeEventCapture {
             try {
                 String tableName = (String) ((Struct) sr.key()).get("tableName");
                 if (tableName != null && !tableName.isEmpty()) {
-                    if (schemaPrefixEnabled) {
-                        // Extract schema from the topic to build the prefixed name.
-                        // Topic format: {prefix}.{schema}.{table}
-                        String topic = sr.topic();
-                        if (topic != null) {
-                            String[] parts = topic.split("\\.");
-                            if (parts.length >= 3) {
-                                String schema = parts[parts.length - 2];
-                                // Use template if available, otherwise hardcoded format
-                                if (commonSchemaTemplate != null && !commonSchemaTemplate.isEmpty()) {
-                                    String resolvedPrefix = Utils.resolveSchemaTemplate(
-                                            commonSchemaTemplate, schema);
-                                    return resolvedPrefix + tableName;
-                                }
-                                return "__" + schema + "__" + tableName;
-                            }
-                        }
-                    }
-                    return tableName;
+                    return Utils.getTableNameForSchemaPrefix(
+                            tableName, sr.topic(), pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
                 }
             } catch (Exception e) {
                 // tableName field may not exist in the struct
@@ -1432,15 +1310,15 @@ public class DebeziumChangeEventCapture {
         }
         // Apply database prefix if configured (before suffix)
         if (dbName != null) {
-            dbName = Utils.applyDatabasePrefix(dbName, this.commonDatabasePrefix);
+            dbName = Utils.applyDatabasePrefix(dbName, pgConfig.getCommonDatabasePrefix());
         }
         // Apply database schema suffix if configured
-        if (dbName != null && this.databaseSchemaSuffix
-                && this.commonSchemaTemplate != null
-                && !this.commonSchemaTemplate.isEmpty()) {
+        if (dbName != null && pgConfig.isDatabaseSchemaSuffix()
+                && pgConfig.getCommonSchemaTemplate() != null
+                && !pgConfig.getCommonSchemaTemplate().isEmpty()) {
             String topic = sr != null ? sr.topic() : null;
             String schema = Utils.extractSchemaFromTopic(topic);
-            dbName = Utils.applyDatabaseSchemaSuffix(dbName, this.commonSchemaTemplate, schema);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, pgConfig.getCommonSchemaTemplate(), schema);
         }
         return dbName;
     }
@@ -1569,13 +1447,13 @@ public class DebeziumChangeEventCapture {
             } else {
                 // Schema drift detection: check before writing to ClickHouse so that
                 // any newly-added PostgreSQL columns are present in ClickHouse first.
-                if (postgresSchemaChangeDetector != null) {
+                if (pgConfig.getSchemaChangeDetector() != null) {
                     try {
                         String dmlTopic = sr.topic();
-                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, schemaPrefixEnabled, commonSchemaTemplate);
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
                         String dmlDatabase = extractDatabaseNameFromRecord(sr);
                         if (dmlTable != null && dmlDatabase != null) {
-                            postgresSchemaChangeDetector.checkAndReconcile(sr, dmlTable, dmlDatabase);
+                            pgConfig.getSchemaChangeDetector().checkAndReconcile(sr, dmlTable, dmlDatabase);
                         }
                     } catch (Exception schemaEx) {
                         log.warn("Schema drift detection threw unexpectedly; continuing replication. Cause: {}",

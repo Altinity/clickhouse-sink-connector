@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.postgres.schema;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
@@ -212,7 +213,7 @@ public class PostgresSchemaChangeDetector {
 
         try {
             // 1. Extract Debezium field schema from the record envelope.
-            Map<String, Schema> debeziumFields = extractDebeziumSchema(record);
+            Map<String, Schema> debeziumFields = ClickHouseConverter.extractDebeziumSchema(record);
             if (debeziumFields == null || debeziumFields.isEmpty()) {
                 return;
             }
@@ -305,77 +306,6 @@ public class PostgresSchemaChangeDetector {
     // -----------------------------------------------------------------------
 
     /**
-     * Extracts the field name → Debezium {@link Schema} mapping from a Debezium
-     * SourceRecord's value schema.
-     *
-     * <p>In a Debezium PostgreSQL envelope the value schema looks like:
-     * <pre>
-     * Envelope {
-     *   before: Struct { id INT, name STRING, … }
-     *   after:  Struct { id INT, name STRING, new_col FLOAT64, … }   ← preferred
-     *   source: Struct { … }
-     *   op:     STRING
-     * }
-     * </pre>
-     *
-     * <p>For DELETE events {@code after} is {@code null}, so {@code before} is used
-     * as the fallback.  For all other event types {@code after} is used.
-     *
-     * @param record the Debezium {@link SourceRecord}
-     * @return ordered map of field name → field {@link Schema}, or {@code null}
-     *         if the schema cannot be extracted
-     */
-    private Map<String, Schema> extractDebeziumSchema(SourceRecord record) {
-        try {
-            Schema valueSchema = record.valueSchema();
-            if (valueSchema == null) {
-                return null;
-            }
-
-            // Prefer "after" (INSERT / UPDATE); fall back to "before" (DELETE).
-            Schema rowSchema = null;
-
-            Field afterField = valueSchema.field("after");
-            if (afterField != null && afterField.schema() != null
-                    && afterField.schema().type() == Schema.Type.STRUCT) {
-                // For DELETE, the "after" value in the Struct will be null, so check the value too.
-                Struct valueStruct = record.value() instanceof Struct ? (Struct) record.value() : null;
-                Object afterValue = (valueStruct != null) ? safeGet(valueStruct, "after") : null;
-                if (afterValue != null) {
-                    rowSchema = afterField.schema();
-                }
-            }
-
-            if (rowSchema == null) {
-                Field beforeField = valueSchema.field("before");
-                if (beforeField != null && beforeField.schema() != null
-                        && beforeField.schema().type() == Schema.Type.STRUCT) {
-                    rowSchema = beforeField.schema();
-                }
-            }
-
-            if (rowSchema == null) {
-                return null;
-            }
-
-            List<Field> fields = rowSchema.fields();
-            if (fields == null || fields.isEmpty()) {
-                return null;
-            }
-
-            Map<String, Schema> result = new LinkedHashMap<>(fields.size());
-            for (Field field : fields) {
-                result.put(field.name(), field.schema());
-            }
-            return result;
-
-        } catch (Exception e) {
-            log.debug("Could not extract Debezium schema from SourceRecord: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
      * Queries {@code system.columns} in ClickHouse to get the current set of
      * columns for the given table.
      *
@@ -466,15 +396,4 @@ public class PostgresSchemaChangeDetector {
         return missing;
     }
 
-    /**
-     * Safely retrieves a field value from a {@link Struct}, returning {@code null}
-     * if the field does not exist or the access throws.
-     */
-    private static Object safeGet(Struct struct, String fieldName) {
-        try {
-            return struct.get(fieldName);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 }

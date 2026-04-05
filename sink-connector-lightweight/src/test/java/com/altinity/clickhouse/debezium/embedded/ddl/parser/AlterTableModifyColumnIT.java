@@ -74,7 +74,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         // Poll until columns are modified in ClickHouse
         Map<String, String> shipClassColumns = null;
         Map<String, String> addTestColumns = null;
-        for (int retry = 0; retry < 40; retry++) {
+        for (int retry = 0; retry < 10; retry++) {
             shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
             addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
             if (!shipClassColumns.isEmpty() && !addTestColumns.isEmpty()
