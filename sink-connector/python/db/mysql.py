@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
 import logging
 import warnings
 import os
@@ -19,7 +20,7 @@ def is_binary_datatype(datatype):
 
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
-        host=mysql_host, user=mysql_user, passwd=mysql_passwd, port=int(mysql_port), db=mysql_database)
+        host=mysql_host, user=quote_plus(mysql_user), passwd=quote_plus(mysql_passwd), port=int(mysql_port), db=mysql_database)
     # Ensure session wait_timeout is large enough for long-running flushes
     engine = create_engine(url, connect_args={"init_command": "SET SESSION wait_timeout=28000"})
     conn = engine.connect()
@@ -74,7 +75,7 @@ def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclud
 
 def get_table_partition_key(conn, database, table):
     partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
-    partitions = partitions.fetchall()
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
