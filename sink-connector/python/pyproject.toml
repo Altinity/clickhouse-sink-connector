@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ch-sink-tools"
+version = "0.3.0"
+description = "PostgreSQL/MySQL to ClickHouse CDC verification and snapshot tools"
+readme = "README.md"
+requires-python = ">=3.6"
+license = "Apache-2.0"
+authors = [
+    {name = "Data Platform Team"},
+]
+
+dependencies = [
+    "clickhouse-driver>=0.2.9",
+    "psycopg2-binary",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+mysql = [
+    "pymysql",
+    "sqlalchemy>=1.4",
+    "antlr4-python3-runtime==4.11.1",
+]
+dataframe = [
+    "pandas",
+]
+all = [
+    "ch-sink-tools[mysql,dataframe]",
+]
+
+[project.scripts]
+# PostgreSQL checksum tools
+ch-checksum    = "ch_sink_tools.db_compare.top_level_postgres_checksum:main"
+ch-pg-checksum = "ch_sink_tools.db_compare.postgres_table_checksum:main"
+ch-pg-count    = "ch_sink_tools.db_compare.postgres_table_count:main"
+ch-ch-checksum = "ch_sink_tools.db_compare.clickhouse_table_checksum:main"
+ch-ch-count    = "ch_sink_tools.db_compare.clickhouse_table_count:main"
+
+# Snapshot dump/load
+ch-pg-dump     = "ch_sink_tools.db_dump.postgres_dumper:main"
+
+# MySQL tools (only work if [mysql] extra is installed)
+ch-mysql-checksum = "ch_sink_tools.db_compare.top_level_table_checksum:main"
+ch-mysql-dump     = "ch_sink_tools.db_dump.mysql_dumper:main"
+ch-mysql-load     = "ch_sink_tools.db_load.clickhouse_loader:main"
+
+[tool.setuptools.packages.find]
+include = ["ch_sink_tools*"]
+
+[tool.setuptools.package-data]
+"ch_sink_tools.db_load.mysql_parser"    = ["*.interp", "*.tokens"]
+"ch_sink_tools.db_load.postgres_parser" = ["*.interp", "*.tokens"]
+"ch_sink_tools.db_compare"              = ["scripts/*.sh"]
