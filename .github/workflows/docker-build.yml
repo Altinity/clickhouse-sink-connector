@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clickhouse-sink-connector-lt-${{ env.IMAGE_TAG }}.jar
-          path: sink-connector-lightweight/target/clickhouse-debezium-embedded-${{ env.PROJECT_VERSION }}.jar
+          path: sink-connector-lightweight/target/clickhouse-debezium-embedded-*.jar
           if-no-files-found: error
 
       - name: Build with Go (AMD64)
