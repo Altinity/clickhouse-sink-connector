@@ -1049,7 +1049,16 @@ public class DebeziumChangeEventCapture {
     private String getDatabaseName(SourceRecord sr) {
         String dbName = "system";
         if (sr != null && sr.key() instanceof Struct) {
-            String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
+            Struct keyStruct = (Struct) sr.key();
+            String recordDbName = null;
+            // Try "databaseName" first (MySQL DDL key struct)
+            if (keyStruct.schema().field("databaseName") != null) {
+                recordDbName = (String) keyStruct.get("databaseName");
+            }
+            // Fall back to "db" (PostgreSQL key struct)
+            if ((recordDbName == null || recordDbName.isEmpty()) && keyStruct.schema().field("db") != null) {
+                recordDbName = (String) keyStruct.get("db");
+            }
             if (recordDbName != null && !recordDbName.isEmpty()) {
                 dbName = recordDbName;
             }
