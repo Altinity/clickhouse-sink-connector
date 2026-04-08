@@ -194,6 +194,18 @@ public class PreparedStatementFieldMapper {
             String schemaName = f.schema().name();
             Object value = struct.get(f);
             if (type == Schema.Type.ARRAY) {
+                // Check if the ClickHouse column is a non-Array type (e.g. String/Nullable(String)).
+                // PG text[] columns may be auto-created as Nullable(String) in ClickHouse,
+                // so we serialize the array as a JSON string instead of using setArray().
+                String chColumnType = columnNameToDataTypeMap.get(colName);
+                if (chColumnType != null && !chColumnType.startsWith("Array")) {
+                    if (value == null) {
+                        ps.setNull(index, Types.VARCHAR);
+                    } else {
+                        ps.setString(index, value.toString());
+                    }
+                    continue;
+                }
                 schemaName = f.schema().valueSchema().type().name();
             }
             // This will throw an exception, unknown data type.
