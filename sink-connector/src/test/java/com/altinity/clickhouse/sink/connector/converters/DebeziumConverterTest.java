@@ -155,6 +155,24 @@ public class DebeziumConverterTest {
         // DateTime32 and America/Los Angeles timezone.
         String formattedTimestampLATZDate32 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime);
         Assert.assertTrue(formattedTimestampLATZDate32.equalsIgnoreCase("2106-02-07 06:28:15"));
+
+        Object timestampEpoch2 = LocalDateTime.of(2026, 3, 8, 3, 0, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
+        // Test 2026-03-08 03:00:00.000000 and  2026-03-08 02:00:00.000000 with America/Chicago timezone.
+        String formattedTimestampChicagoTZ2 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch2, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime);
+        Assert.assertTrue(formattedTimestampChicagoTZ2.equalsIgnoreCase("2026-03-08 03:00:00"));
+
+        // DST start time.(2026)
+        Object timestampEpoch3 = LocalDateTime.of(2026, 3, 8, 2, 0, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
+        String formattedTimestampChicagoTZ3 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch3, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime);
+
+        Assert.assertTrue(formattedTimestampChicagoTZ3.equalsIgnoreCase("2026-03-08 02:00:00"));
+
+        // DST end time.(2026) - Nov 1st 2026 2 am.
+        Object timestampEpoch4 = LocalDateTime.of(2026, 11, 1, 2, 0, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
+        String formattedTimestampChicagoTZ4 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch4, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime);
+        Assert.assertTrue(formattedTimestampChicagoTZ4.equalsIgnoreCase("2026-11-01 02:00:00"));
+
+
     }
 
     @Test

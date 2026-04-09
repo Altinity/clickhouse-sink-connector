@@ -187,6 +187,29 @@ public class DateTimeWithTimeZoneIT {
             break;
         }
 
+        // Validate test_2 DST transition rows (DATETIME(6) around America/Chicago spring-forward)
+        String[] expectedGatesFrom = {
+                "2026-03-17 13:34:41.0",       // id=1: after DST
+                "2026-03-08 03:00:00.0",       // id=2: DST boundary (02:00 CST -> 03:00 CDT)
+                "2026-03-08 01:59:59.0",       // id=3: last second before gap
+                "2026-03-08 03:00:00.0",       // id=4: 02:00 falls in non-existent hour, shifted to 03:00
+                "2026-03-08 07:59:59.0",       // id=5: well after transition
+                "2026-03-08 08:00:00.0"        // id=6: well after transition
+        };
+
+        ResultSet test2Result = ITCommon.executeQueryWithResultSet(
+                "select * from employees.test_2 order by id", writer.getConnection());
+        int test2RowCount = 0;
+        while (test2Result.next()) {
+            int id = test2Result.getInt("id");
+            String actual = test2Result.getTimestamp("gates_from").toString();
+            System.out.println("test_2 id=" + id + " gates_from=" + actual);
+            Assert.assertTrue("test_2 row id=" + id + " gates_from mismatch: " + actual,
+                    actual.equalsIgnoreCase(expectedGatesFrom[id - 1]));
+            test2RowCount++;
+        }
+        Assert.assertEquals("test_2 should have 6 rows", 6, test2RowCount);
+
         if(engine.get() != null) {
             engine.get().stop();
         }

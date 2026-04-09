@@ -158,6 +158,10 @@ public class PreparedStatementExecutor {
             ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
 
             DBMetadata metadata = new DBMetadata(config);
+            ReplicationHistoryHandler replicationHistoryHandler = null;
+            if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                replicationHistoryHandler = new ReplicationHistoryHandler(config, this.serverTimeZone, metadata);
+            }
             try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
 
                 for (ClickHouseStruct record : batch) {
@@ -178,10 +182,9 @@ public class PreparedStatementExecutor {
 
                     // DELETE --> History Mode.
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) &&
+                        if (replicationHistoryHandler != null &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                                ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
-                                historyHandler.executeHistoryUpdate(
+                                replicationHistoryHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
                                     record,
@@ -207,11 +210,10 @@ public class PreparedStatementExecutor {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
-                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        if (replicationHistoryHandler != null) {
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
                             // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
-                            ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, this.serverTimeZone);
-                            historyHandler.executeHistoryUpdate(
+                            replicationHistoryHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
                                     record,
