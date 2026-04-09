@@ -10,6 +10,7 @@ import org.apache.logging.log4j.Logger;
 import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.zone.ZoneOffsetTransition;
 import java.time.temporal.ChronoUnit;
 import java.util.TimeZone;
 
@@ -57,18 +58,32 @@ public class DebeziumConverter {
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
 
-            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimezone);
-            int sourceOffset = sourceTZ.getRawOffset();
+            if (sourceTimezone.equals(serverTimezone)) {
+                // Replication: Debezium encoded local digits as UTC epoch; decode back to the same digits by
+                // formatting as UTC. Preserves gap times (e.g. 02:00 on spring-forward day) that no real zone
+                // can format as local wall clock.
+                long seconds = epochMicroSeconds / 1_000_000L;
+                long nanos = (epochMicroSeconds % 1_000_000L) * 1_000L;
+                Instant i = Instant.ofEpochSecond(seconds, nanos);
+                boolean[] rangeExceeded = new boolean[1];
+                Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+            }
 
-            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochSecond(epochSeconds, nanoOffset)))) {
-                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            // sourceTimezone != serverTimezone: offset correction for "wrong epoch" encoding
+            LocalDateTime localDT = LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds, nanoOffset), ZoneOffset.UTC);
+            ZonedDateTime zonedInSource = localDT.atZone(sourceTimezone);
+            ZoneOffsetTransition transition = sourceTimezone.getRules().getTransition(localDT);
+            int sourceOffset;
+            if (transition != null && transition.isGap()) {
+                sourceOffset = transition.getOffsetBefore().getTotalSeconds() * 1000;
+            } else {
+                sourceOffset = zonedInSource.getOffset().getTotalSeconds() * 1000;
             }
 
             long sourceOffsetMicros = sourceOffset * 1000L;
 
-            // Add this offset to wrongly calculated epoch.
             Long epochMicrosWithOffset = epochMicroSeconds - sourceOffsetMicros;
-            // Convert microseconds to seconds and nanoseconds
             long seconds = epochMicrosWithOffset / 1_000_000;
             long nanos = (epochMicrosWithOffset % 1_000_000) * 1_000;
 
@@ -77,7 +92,6 @@ public class DebeziumConverter {
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
             if(rangeExceeded[0]) {
-                // return the modifiedDT as a string without timezone conversion
                 return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();

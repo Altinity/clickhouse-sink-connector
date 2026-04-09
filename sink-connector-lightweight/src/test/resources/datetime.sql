@@ -178,6 +178,20 @@ CREATE TABLE `temporal_types_DATETIME6` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
+CREATE TABLE test_2 (
+id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+gates_from DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+PRIMARY KEY (id, gates_from)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_general_cs;
+
+INSERT INTO test_2 (id, gates_from) VALUES
+  (1, '2026-03-17 13:34:41.000000'),
+  (2, '2026-03-08 03:00:00.000000'),
+  (3, '2026-03-08 01:59:59.000000'),
+  (4, '2026-03-08 02:00:00.000000'),
+  (5, '2026-03-08 07:59:59.000000'),
+  (6, '2026-03-08 08:00:00.000000');
+
 --
 -- Dumping data for table `temporal_types_DATETIME6`
 --

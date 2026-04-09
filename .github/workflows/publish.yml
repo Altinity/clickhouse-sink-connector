@@ -19,22 +19,11 @@ on:
         required: false
       DOCKERHUB_TOKEN:
         required: false
-  workflow_dispatch:
-    inputs: 
-      release_tag:
-        required: true
-        type: string
-      prerelease:
-        required: true
-        type: boolean
-        default: true
-      draft:
-        required: true
-        type: boolean
-        default: false
 
 env:
   release_tag: ${{ inputs.release_tag }}
+  # Must match IMAGE_TAG passed to docker-build.yml from release.yml (${{ inputs.release_tag }}-test).
+  build_image_tag: ${{ inputs.release_tag }}-test
 
 jobs:
   publish-docker:
@@ -78,8 +67,20 @@ jobs:
       - name: Download Lightweight jar artifact
         uses: actions/download-artifact@v4
         with:
-          name: clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+          name: clickhouse-sink-connector-lt-${{ env.build_image_tag }}.jar
           path: ./artifacts/lightweight
+
+      - name: Download sink-connector-client (AMD64)
+        uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-client-${{ env.build_image_tag }}.bin
+          path: clickhouse-sink-connector-client-${{ env.build_image_tag }}.bin
+
+      - name: Download sink-connector-client (ARM64)
+        uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-client-${{ env.build_image_tag }}-arm64.bin
+          path: clickhouse-sink-connector-client-${{ env.build_image_tag }}-arm64.bin
 
       - name: Upload sink-connector-client binary to release (ARM64)
         uses: actions/upload-release-asset@v1
@@ -88,7 +89,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64
-          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}-arm64.bin/sink-connector-client-arm64
+          asset_path: clickhouse-sink-connector-client-${{ env.build_image_tag }}-arm64.bin/sink-connector-client-arm64
           asset_content_type: application/octet-stream
 
       - name: Upload sink-connector-client binary to release (AMD64)
@@ -98,13 +99,12 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_name: clickhouse-sink-connector-client-${{ env.release_tag }}-amd64
-          asset_path: clickhouse-sink-connector-client-${{ env.release_tag }}.bin/sink-connector-client-amd64
+          asset_path: clickhouse-sink-connector-client-${{ env.build_image_tag }}.bin/sink-connector-client-amd64
           asset_content_type: application/octet-stream
 
       - name: Zip Lightweight jar
-        run: |
-          zip ./artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip \
-            ./artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}-test.jar
+        working-directory: ./artifacts/lightweight
+        run: zip "clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip" *.jar
 
       - name: Upload Lightweight jar to release
         uses: actions/upload-release-asset@v1
