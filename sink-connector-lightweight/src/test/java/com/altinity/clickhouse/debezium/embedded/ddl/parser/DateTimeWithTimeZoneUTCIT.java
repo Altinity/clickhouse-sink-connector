@@ -106,7 +106,25 @@ public class DateTimeWithTimeZoneUTCIT {
                 "2026-03-08 01:59:59.0",       // id=3
                 "2026-03-08 02:00:00.0",       // id=4: 02:00 stored as-is (no DST in UTC)
                 "2026-03-08 07:59:59.0",       // id=5
-                "2026-03-08 08:00:00.0"        // id=6
+                "2026-03-08 08:00:00.0",       // id=6
+                "2025-11-02 00:59:59.0",       // id=7:  fall-back 2025 - before ambiguous hour
+                "2025-11-02 01:00:00.0",       // id=8:  fall-back 2025 - start of ambiguous hour
+                "2025-11-02 01:30:00.0",       // id=9:  fall-back 2025 - middle of ambiguous hour
+                "2025-11-02 01:59:59.0",       // id=10: fall-back 2025 - end of ambiguous hour
+                "2025-11-02 02:00:00.0",       // id=11: fall-back 2025 - first unambiguous second after
+                "2025-11-02 03:00:00.0",       // id=12: fall-back 2025 - well after
+                "2026-11-01 00:59:59.0",       // id=13: fall-back 2026 - before ambiguous hour
+                "2026-11-01 01:00:00.0",       // id=14: fall-back 2026 - start of ambiguous hour
+                "2026-11-01 01:30:00.0",       // id=15: fall-back 2026 - middle of ambiguous hour
+                "2026-11-01 01:59:59.0",       // id=16: fall-back 2026 - end of ambiguous hour
+                "2026-11-01 02:00:00.0",       // id=17: fall-back 2026 - first unambiguous second after
+                "2026-11-01 03:00:00.0",       // id=18: fall-back 2026 - well after
+                "2027-11-07 00:59:59.0",       // id=19: fall-back 2027 - before ambiguous hour
+                "2027-11-07 01:00:00.0",       // id=20: fall-back 2027 - start of ambiguous hour
+                "2027-11-07 01:30:00.0",       // id=21: fall-back 2027 - middle of ambiguous hour
+                "2027-11-07 01:59:59.0",       // id=22: fall-back 2027 - end of ambiguous hour
+                "2027-11-07 02:00:00.0",       // id=23: fall-back 2027 - first unambiguous second after
+                "2027-11-07 03:00:00.0"        // id=24: fall-back 2027 - well after
         };
 
         ResultSet test2Result = ITCommon.executeQueryWithResultSet(
@@ -120,7 +138,7 @@ public class DateTimeWithTimeZoneUTCIT {
                     actual.equalsIgnoreCase(expectedGatesFrom[id - 1]));
             test2RowCount++;
         }
-        Assert.assertEquals("test_2 should have 6 rows", 6, test2RowCount);
+        Assert.assertEquals("test_2 should have 24 rows", 24, test2RowCount);
 
         if(engine.get() != null) {
             engine.get().stop();
