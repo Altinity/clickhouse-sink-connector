@@ -18,6 +18,7 @@ import org.testcontainers.utility.MountableFile;
 
 import java.sql.ResultSet;
 import java.util.Properties;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,6 +31,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
 @DisplayName("Integration Test that tests replication of data types and validates datetime, date limits when the timezone is set to America/Chicago in ClickHouse")
 public class DateTimeWithTimeZoneIT {
     protected MySQLContainer mySqlContainer;
+    private TimeZone originalTimeZone;
 
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
@@ -43,6 +45,9 @@ public class DateTimeWithTimeZoneIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
+        originalTimeZone = TimeZone.getDefault();
+        TimeZone.setDefault(TimeZone.getTimeZone("America/Chicago"));
+
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
@@ -60,6 +65,7 @@ public class DateTimeWithTimeZoneIT {
     public void tearDown() {
         mySqlContainer.stop();
         clickHouseContainer.stop();
+        TimeZone.setDefault(originalTimeZone);
     }
 
     @Test
