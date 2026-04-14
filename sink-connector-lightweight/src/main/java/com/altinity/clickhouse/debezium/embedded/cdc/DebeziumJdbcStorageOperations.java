@@ -83,14 +83,14 @@ public class DebeziumJdbcStorageOperations {
         String createSchemaHistoryTableQuery = props.getProperty(
                 JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                         JdbcSchemaHistoryConfig.PROP_TABLE_DDL.name());
-        String formattedCreateSchemaHistoryTableQuery = String.format(createSchemaHistoryTableQuery, dbName, dbName + "." + tableName);
-
         if (createSchemaHistoryTableQuery == null ||
-                createSchemaHistoryTableQuery.isEmpty() == true) {
+                createSchemaHistoryTableQuery.isEmpty()) {
             log.warn("Skipping creating schema history table as the query " +
                     "was not provided in configuration");
             return;
         }
+        String formattedCreateSchemaHistoryTableQuery = String.format(
+                createSchemaHistoryTableQuery, dbName, dbName + "." + tableName);
         try {
             new DBMetadata(props).executeSystemQuery(conn, formattedCreateSchemaHistoryTableQuery);
         } catch (Exception e) {
@@ -138,9 +138,15 @@ public class DebeziumJdbcStorageOperations {
      *         name as the right element.
      */
     private Pair<String, String> getDebeziumOffsetStorageDatabaseName(Properties props) {
-        String tableName = props.getProperty(
-                JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                        JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+        String propKey = JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name();
+        String tableName = props.getProperty(propKey);
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Required configuration property '" + propKey + "' is not set. "
+                    + "Please add it to your config file (e.g. "
+                    + "offset.storage.jdbc.table.name: \"altinity_sink_connector.replica_source_info\").");
+        }
         return splitTableName(tableName);
     }
 
@@ -399,9 +405,14 @@ public class DebeziumJdbcStorageOperations {
      *         element is the database name.
      */
     private Pair<String, String> getDebeziumSchemaHistoryDatabaseName(Properties props) {
-        String tableName = props.getProperty(
-                SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
-                        JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name());
+        String propKey = SchemaHistory.CONFIGURATION_FIELD_PREFIX_STRING +
+                JdbcSchemaHistoryConfig.PROP_TABLE_NAME.name();
+        String tableName = props.getProperty(propKey);
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Required configuration property '" + propKey + "' is not set. "
+                    + "Please add it to your config file.");
+        }
         return splitTableName(tableName);
     }
 

@@ -50,7 +50,7 @@ public class BinLogHistory {
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(3, 'UTC')";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(0, 'UTC')";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
@@ -125,9 +125,9 @@ public class BinLogHistory {
         String columnDefinitions = HISTORY_COLUMNS.entrySet().stream()
                 .map(entry -> {
                     String dataType = entry.getValue();
-                    // Add timezone to TIME_COLUMN with DateTime64 for nanosecond precision
+                    // Add timezone to TIME_COLUMN with DateTime64 for second precision
                     if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
-                        dataType = "DateTime64(9, '" + serverTimeZone + "')";
+                        dataType = "DateTime64(0, '" + serverTimeZone + "')";
                     }
                     return "`" + entry.getKey() + "` " + dataType;
                 })
@@ -209,8 +209,8 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustmentNanos(struct.getSequenceNumber(), 
-                        ClickHouseDataType.DateTime64,  ZoneId.of(serverTimeZone));
+                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convert(struct.getTs_ms(),
+                        ClickHouseDataType.DateTime64, ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
                             ps.setString(paramIndex++, convertedDateTime64Time);
                     } 
                     else {
@@ -256,20 +256,14 @@ public class BinLogHistory {
             case DDL_COLUMN:
                 return ""; // DDL might need special handling
             case BEFORE_COLUMN:
-                if(struct.beforeModifiedFieldsToJson() == null) {
-                    return "";
-                }
-                return struct.beforeModifiedFieldsToJson();
+                String beforeJson = struct.beforeModifiedFieldsToJson();
+                return beforeJson != null ? beforeJson : "";
             case AFTER_COLUMN:
-                if(struct.afterModifiedFieldsToJson() == null) {
-                    return "";
-                }
-                return struct.afterModifiedFieldsToJson();
+                String afterJson = struct.afterModifiedFieldsToJson();
+                return afterJson != null ? afterJson : "";
             case RAW_COLUMN:
-                if(struct.sourceRecordToJson() == null) {
-                    return "";
-                }
-                return struct.sourceRecordToJson();
+                String rawJson = struct.sourceRecordToJson();
+                return rawJson != null ? rawJson : "";
             case TIME_COLUMN:
                 return struct.getTsSec();
             case IS_DELETED_COLUMN:
