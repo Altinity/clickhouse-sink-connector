@@ -211,6 +211,13 @@ public class DebeziumChangeEventCapture {
         // when it's bundled as a shaded JAR.
         Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
 
+        // Ensure ClickHouse JDBC URLs used by Debezium storage have
+        // jdbc_ignore_unsupported_values=true so that setAutoCommit(false)
+        // calls from Debezium's RetriableConnection don't throw
+        // SQLFeatureNotSupportedException (ClickHouse has no transactions).
+        ensureIgnoreUnsupportedValuesParam(props, "offset.storage.jdbc.url");
+        ensureIgnoreUnsupportedValuesParam(props, "schema.history.internal.jdbc.url");
+
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
@@ -435,6 +442,31 @@ public class DebeziumChangeEventCapture {
         }
 
         Metrics.stop();
+    }
+
+    /**
+     * JDBC driver property key — tells ClickHouse JDBC 0.9.x to silently
+     * ignore unsupported calls (setAutoCommit, commit, rollback).
+     * Keep in sync with SinkConnectorDataSource.IGNORE_UNSUPPORTED_KEY.
+     */
+    private static final String IGNORE_UNSUPPORTED_KEY = "jdbc_ignore_unsupported_values";
+
+    /**
+     * Ensures the ClickHouse JDBC URL in the given property key has the
+     * {@code jdbc_ignore_unsupported_values=true} parameter, which prevents
+     * the driver from throwing SQLFeatureNotSupportedException on calls
+     * like setAutoCommit(false) that ClickHouse does not support.
+     */
+    static void ensureIgnoreUnsupportedValuesParam(Properties props, String key) {
+        String url = props.getProperty(key);
+        if (url == null || !url.startsWith("jdbc:clickhouse:")) {
+            return;
+        }
+        if (url.contains(IGNORE_UNSUPPORTED_KEY)) {
+            return;
+        }
+        String separator = url.contains("?") ? "&" : "?";
+        props.setProperty(key, url + separator + IGNORE_UNSUPPORTED_KEY + "=true");
     }
 
     /**
