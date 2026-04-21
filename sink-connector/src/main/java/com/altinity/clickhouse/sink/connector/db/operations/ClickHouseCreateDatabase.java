@@ -24,9 +24,14 @@ public class ClickHouseCreateDatabase extends ClickHouseTableOperationsBase {
      */
     public void createNewDatabase(Connection conn, String dbName, Boolean useOnCluster, ClickHouseSinkConnectorConfig config)
             throws SQLException {
-        String onCluster = useOnCluster ? " ON CLUSTER `{cluster}`" : "";
-        String query = String.format("CREATE DATABASE IF NOT EXISTS %s%s", dbName, onCluster);
+        String query = createDatabaseSyntax(dbName, useOnCluster);
         DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(conn, query);
+    }
+
+    String createDatabaseSyntax(String dbName, Boolean useOnCluster) {
+        String onCluster = useOnCluster ? " ON CLUSTER `{cluster}`" : "";
+        return String.format("CREATE DATABASE IF NOT EXISTS %s%s",
+                quoteIdentifier(dbName), onCluster);
     }
 }

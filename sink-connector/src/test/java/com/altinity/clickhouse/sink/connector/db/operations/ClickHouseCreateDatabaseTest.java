@@ -91,4 +91,14 @@ public class ClickHouseCreateDatabaseTest {
         ResultSet rs = stmt.executeQuery(query);
         Assert.assertTrue(rs.next());
     }
+
+    @Test
+    public void testCreateDatabaseSyntaxQuotesDatabaseName() {
+        ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
+
+        Assert.assertEquals("CREATE DATABASE IF NOT EXISTS `default`",
+                act.createDatabaseSyntax("default", false));
+        Assert.assertEquals("CREATE DATABASE IF NOT EXISTS `order-db` ON CLUSTER `{cluster}`",
+                act.createDatabaseSyntax("order-db", true));
+    }
 }

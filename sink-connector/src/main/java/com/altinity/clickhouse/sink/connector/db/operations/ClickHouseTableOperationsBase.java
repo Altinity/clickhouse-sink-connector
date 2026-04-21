@@ -199,4 +199,14 @@ public class ClickHouseTableOperationsBase {
 
         return columnToDataTypesMap;
     }
+
+    /**
+     * Quotes a ClickHouse identifier using backticks.
+     *
+     * @param identifier the database, table, or column identifier
+     * @return the quoted identifier
+     */
+    protected String quoteIdentifier(String identifier) {
+        return "`" + identifier.replace("`", "``") + "`";
+    }
 }

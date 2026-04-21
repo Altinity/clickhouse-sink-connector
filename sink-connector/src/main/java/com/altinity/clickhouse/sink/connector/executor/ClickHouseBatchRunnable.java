@@ -218,7 +218,8 @@ public class ClickHouseBatchRunnable implements Runnable {
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
+                    "CREATE DATABASE IF NOT EXISTS `"
+                            + databaseName.replace("`", "``") + "`");
         } catch (Exception e) {
             log.error("Error creating database " + e);
         } finally {
