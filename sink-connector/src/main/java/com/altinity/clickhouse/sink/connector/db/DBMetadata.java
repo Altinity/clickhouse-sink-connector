@@ -636,7 +636,14 @@ public class DBMetadata {
         ResultSet rs = null;
         while (retryCount < MAX_RETRIES) {
             try {
-                rs = conn.prepareStatement(sql).executeQuery();
+                PreparedStatement ps = conn.prepareStatement(sql);
+                // Use execute() so DDL/DML statements (e.g. CREATE DATABASE, CREATE TABLE,
+                // INSERT, SYSTEM ...) that do not produce a ResultSet are supported by
+                // strict JDBC drivers (clickhouse-jdbc >= 0.9.x, which rejects executeQuery()
+                // for statements that do not return a ResultSet).
+                if (ps.execute()) {
+                    rs = ps.getResultSet();
+                }
                 break;
             } catch (SQLException sqle) {
                 try {
