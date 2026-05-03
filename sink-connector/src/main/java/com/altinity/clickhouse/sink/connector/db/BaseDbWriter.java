@@ -4,7 +4,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 
-import java.net.URLEncoder;
 import java.sql.Connection;
 import java.time.ZoneId;
 import java.util.Arrays;
@@ -263,20 +262,22 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            String encodedUserName = null;
-            String encodedPassword = null;
 
-            // if username is empty don't encode it
-            if(userName != null && !userName.isEmpty()) {
-                encodedUserName = URLEncoder.encode(userName, "UTF-8");
+            // Pass credentials via standard JDBC Properties (user/password)
+            // rather than URL parameters. Required by clickhouse-jdbc 0.9.x
+            // (v2 client): when neither URL nor Properties carry credentials
+            // it sends an incorrect default password and fails with
+            // "AUTHENTICATION_FAILED". Properties also work for empty
+            // passwords (e.g. legacy ClickHouseContainer's default user),
+            // which the previous URL-only logic skipped entirely because it
+            // required BOTH user and password to be non-empty.
+            if (userName != null && !userName.isEmpty()) {
+                properties.setProperty("user", userName);
             }
-            if(password != null && !password.isEmpty()) {
-                encodedPassword = URLEncoder.encode(password, "UTF-8");
+            if (password != null) {
+                properties.setProperty("password", password);
             }
-            if(encodedUserName != null && encodedPassword != null) {
-                url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
-            }
-            
+
             SinkConnectorDataSource dataSource =
                     new SinkConnectorDataSource(url, properties);
 

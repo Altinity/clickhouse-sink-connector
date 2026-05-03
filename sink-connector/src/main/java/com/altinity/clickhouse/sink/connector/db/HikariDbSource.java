@@ -81,7 +81,17 @@ public class HikariDbSource {
         }
         HikariDataSource dbSource = instance.get(databaseName);
         if (dbSource == null) {
-            // No pool exists for the database.
+            // No dedicated pool for this database; fall back to the system pool
+            // which is always seeded first by BaseDbWriter.createConnection.
+            dbSource = instance.get(BaseDbWriter.SYSTEM_DB);
+            if (dbSource == null) {
+                log.warn("No connection pool exists for database '{}' and no '{}' " +
+                        "fallback pool is available; returning null.",
+                        databaseName, BaseDbWriter.SYSTEM_DB);
+                return null;
+            }
+            log.debug("No pool for database '{}', using '{}' fallback pool.",
+                    databaseName, BaseDbWriter.SYSTEM_DB);
         }
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
@@ -158,17 +168,12 @@ public class HikariDbSource {
 
         HikariConfig poolConfig = new HikariConfig();
         poolConfig.setPoolName("clickhouse" + "-" + databaseName);
-        String jdbcUrl = String.format(
-                "jdbc:ch:{hostname}:{port}/%s?insert_quorum=auto&server_time_zone" +
-                        "&http_connection_provider=HTTP_URL_CONNECTION&server_version=" +
-                        "22.13.1.24495", databaseName);
-        poolConfig.setJdbcUrl(jdbcUrl);
-        poolConfig.setDriverClassName(
-                "com.clickhouse.jdbc.ClickHouseDriver"); // Ensure driver is set
-        // poolConfig.setUsername(dataSource.getConnection().getCurrentUser());
-        // Optional, if already in JDBC URL
-        // poolConfig.setPassword(dataSource.getConnection().());
-        // Optional, if already in JDBC URL
+        // The pool is seeded with a SinkConnectorDataSource that already carries the
+        // real jdbc:clickhouse://host:port/db URL and properties. Do NOT also call
+        // setJdbcUrl/setDriverClassName: when a DataSource is provided, HikariCP uses
+        // it directly. The previous template "jdbc:ch:{hostname}:{port}/..." was a
+        // leftover that the clickhouse-jdbc 0.9.x v2 driver does not expand, causing
+        // connections to fall back to localhost:8123.
         poolConfig.setConnectionTimeout(poolConnectionTimeout);
         poolConfig.setMaximumPoolSize(maxPoolSize);
         // poolConfig.setMinimumIdle(minIdle);
