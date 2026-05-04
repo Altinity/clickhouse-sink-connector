@@ -42,23 +42,35 @@ public class ReplicationHistoryHandler {
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
     /**
-     * Creates a new ReplicationHistoryHandler with default dependencies.
+     * Creates a new ReplicationHistoryHandler with default dependencies (creates its own {@link DBMetadata}).
      *
      * @param config The connector configuration
      */
     public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config, ZoneId serverTimeZone) {
+        this(config, serverTimeZone, new DBMetadata(config));
+    }
+
+    /**
+     * Creates a new ReplicationHistoryHandler reusing an existing {@link DBMetadata} instance.
+     * Prefer this constructor from batch executors that already hold a {@code DBMetadata} for the same connection
+     * to avoid per-record allocation of metadata helpers.
+     *
+     * @param config The connector configuration
+     * @param serverTimeZone ClickHouse server time zone
+     * @param dbMetadata Shared database metadata (e.g. same instance as {@code PreparedStatementExecutor}'s batch metadata)
+     */
+    public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config, ZoneId serverTimeZone, DBMetadata dbMetadata) {
         this.queryFormatter = new QueryFormatter();
-        this.dbMetadata = new DBMetadata(config);
+        this.dbMetadata = dbMetadata;
 
-
-        String sourceTimeZone = "UTC";
-        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+        String sourceTz = "UTC";
+        if (config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null) {
             String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTimeZone = configSourceTimeZone;
+            if (configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                sourceTz = configSourceTimeZone;
             }
         }
-        this.sourceTimeZone = ZoneId.of(sourceTimeZone);
+        this.sourceTimeZone = ZoneId.of(sourceTz);
         this.serverTimeZone = serverTimeZone;
     }
 
@@ -171,6 +183,11 @@ public class ReplicationHistoryHandler {
     /**
      * Executes the replication history update for a single record.
      * This creates and executes a prepared statement with the UNION ALL query pattern.
+     * <p>
+     * Per-record {@link PreparedStatement} creation is required today because {@code QueryFormatter}
+     * embeds primary key, timestamps, and version literals in the SQL; see
+     * {@code doc/replication_history_prepared_statement_reuse.md} for a path to reuse statements across records.
+     * </p>
      *
      * @param conn The database connection
      * @param tableName The target table name

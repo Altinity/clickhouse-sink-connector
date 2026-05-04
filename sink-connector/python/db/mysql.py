@@ -20,7 +20,8 @@ def is_binary_datatype(datatype):
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
         host=mysql_host, user=mysql_user, passwd=mysql_passwd, port=int(mysql_port), db=mysql_database)
-    engine = create_engine(url)
+    # Ensure session wait_timeout is large enough for long-running flushes
+    engine = create_engine(url, connect_args={"init_command": "SET SESSION wait_timeout=28000"})
     conn = engine.connect()
     return conn
 
