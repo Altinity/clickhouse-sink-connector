@@ -71,6 +71,8 @@ public class BinLogHistory {
     public static final String ROW_COLUMN_DATA_TYPE = "UInt32";
     public static final String SEQUENCE_COLUMN = "sequence";
     public static final String SEQUENCE_COLUMN_DATA_TYPE = "UInt64";
+    public static final String DB_TIME_COLUMN = "db_time";
+    public static final String DB_TIME_COLUMN_DATA_TYPE = "DateTime MATERIALIZED now()";
 
     public static final Map<String, String> HISTORY_COLUMNS = new LinkedHashMap<String, String>() {{
         put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
@@ -133,7 +135,8 @@ public class BinLogHistory {
                 })
                 .collect(Collectors.joining(","));
         sb.append(columnDefinitions);
-        
+        sb.append(",`").append(DB_TIME_COLUMN).append("` ").append(DB_TIME_COLUMN_DATA_TYPE);
+
         sb.append(") ").append(ENGINE_REPLACING_MERGE_TREE);
 
         // ORDER BY gtid
