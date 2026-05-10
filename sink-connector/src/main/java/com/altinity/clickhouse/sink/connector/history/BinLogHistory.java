@@ -127,7 +127,7 @@ public class BinLogHistory {
                     String dataType = entry.getValue();
                     // Add timezone to TIME_COLUMN with DateTime64 for second precision
                     if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
-                        dataType = "DateTime64(9, '" + serverTimeZone + "')";
+                        dataType = "DateTime64(0, '" + serverTimeZone + "')";
                     }
                     return "`" + entry.getKey() + "` " + dataType;
                 })
@@ -256,20 +256,14 @@ public class BinLogHistory {
             case DDL_COLUMN:
                 return ""; // DDL might need special handling
             case BEFORE_COLUMN:
-                if(struct.beforeModifiedFieldsToJson() == null) {
-                    return "";
-                }
-                return struct.beforeModifiedFieldsToJson();
+                String beforeJson = struct.beforeModifiedFieldsToJson();
+                return beforeJson != null ? beforeJson : "";
             case AFTER_COLUMN:
-                if(struct.afterModifiedFieldsToJson() == null) {
-                    return "";
-                }
-                return struct.afterModifiedFieldsToJson();
+                String afterJson = struct.afterModifiedFieldsToJson();
+                return afterJson != null ? afterJson : "";
             case RAW_COLUMN:
-                if(struct.sourceRecordToJson() == null) {
-                    return "";
-                }
-                return struct.sourceRecordToJson();
+                String rawJson = struct.sourceRecordToJson();
+                return rawJson != null ? rawJson : "";
             case TIME_COLUMN:
                 return struct.getTsSec();
             case IS_DELETED_COLUMN:

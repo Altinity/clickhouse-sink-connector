@@ -40,13 +40,13 @@ jobs:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-kafka-tests.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-kafka
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-kafka
       
   java-tests-lightweight:
     needs: [build-kafka-lightweight]
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
     with:
-      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ inputs.release_tag }}-test-lt
 
   publish:
     needs: [testflows-lightweight, java-tests-kafka, java-tests-lightweight]

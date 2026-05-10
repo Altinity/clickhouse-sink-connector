@@ -324,8 +324,6 @@ public class DebeziumChangeEventCapture {
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                                 try {
                                     ClickHouseAutoCreateTable clickHouseAutoCreateTable = new ClickHouseAutoCreateTable();
-                                    // props.getPropertyOrDefault(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "binlog_history");
-                                    // props.getPropertyOrDefault(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
                                     String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     clickHouseAutoCreateTable.createHistoryDatabase(binlogHistoryDatabase, systemDbConnection, config);
@@ -824,104 +822,6 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    /**
-     * Transforms the first occurrence of ALTER TABLE or CREATE TABLE in the
-     * original SQL by appending "_history" to the captured table name.
-     *
-     * @param original the original SQL statement
-     * @return the transformed SQL statement, or the original if no match was found
-     */
-    private static String transformTableName(String original) {
-        // Build a regex that matches 'ALTER TABLE ' or 'CREATE TABLE ',
-        // captures the schema.table identifier, and asserts that the next character
-        // is either a space or an opening parenthesis.
-        Pattern pattern = Pattern.compile(
-                "((?:ALTER TABLE|CREATE TABLE)\\s+)" +  // group(1): the clause + trailing whitespace
-                        "([\\w\\.]+)" +                         // group(2): schema.table
-                        "(?=\\s|\\()",                          // lookahead: ensure next char is space or '('
-                Pattern.CASE_INSENSITIVE                // allow case-insensitive matching
-        );
-
-        Matcher matcher = pattern.matcher(original);
-        if (matcher.find()) {
-            String clause   = matcher.group(1); // e.g. "ALTER TABLE " or "CREATE TABLE "
-            String table    = matcher.group(2); // e.g. "employees.contacts"
-            // Rebuild the prefix + table + "_history", then replace only the first occurrence
-            return matcher.replaceFirst(clause + table + "_history");
-        }
-
-        // No ALTER/CREATE TABLE match -> return unchanged
-        return original;
-    }
-
-    /**
-     * Modifies a dynamically generated CREATE TABLE statement when creating TM history table:
-     * 1. Modifies the ENGINE from ReplacingMergeTree to MergeTree.
-     * 2. Adds new columns before the ENGINE clause: operation, database, table, _raw, _time, host, logfile, position, primary_host.
-     * 3. Keeps the original ORDER BY clause intact.
-     * 4. Only performs the transformation if the SQL starts with CREATE TABLE.
-     *
-     * @param createTableSql The original CREATE TABLE SQL statement.
-     * @return The modified CREATE TABLE SQL statement.
-     */
-    private static String modifySqlStatement(String createTableSql) {
-        // 1. Only process if the SQL starts with CREATE TABLE
-        if (!createTableSql.trim().toUpperCase().startsWith("CREATE TABLE")) {
-            // If it's not CREATE TABLE, return the original SQL
-            return createTableSql;
-        }
-
-        // 2. Locate the ENGINE=ReplacingMergeTree part in the SQL
-        Pattern enginePattern = Pattern.compile("(?i)ENGINE\\s*=\\s*ReplacingMergeTree\\(.*\\)");
-        Matcher engineMatcher = enginePattern.matcher(createTableSql);
-
-        if (engineMatcher.find()) {
-            // 3. Extract the part before ENGINE (column definitions part)
-            String beforeEngine = createTableSql.substring(0, engineMatcher.start()).trim();
-
-            // Remove the last ')' from the column definitions (before the engine part)
-            if (beforeEngine.endsWith(")")) {
-                beforeEngine = beforeEngine.substring(0, beforeEngine.length() - 1).trim(); // Remove the last ')'
-            }
-
-            // 4. Locate the ORDER BY clause
-            Pattern orderByPattern = Pattern.compile("(?i)ORDER\\s+BY\\s+.*");
-            Matcher orderByMatcher = orderByPattern.matcher(createTableSql);
-            String orderByClause = "";
-            if (orderByMatcher.find()) {
-                orderByClause = createTableSql.substring(orderByMatcher.start()).trim(); // Get ORDER BY clause
-            }
-
-            // 5. Add the new columns before the ENGINE part, ensuring correct placement of parentheses
-            String extraColumns = ", "
-                    + OPERATION_COLUMN + " " + OPERATION_COLUMN_DATA_TYPE + ", "
-                    + DATABASE_COLUMN  + " " + DATABASE_COLUMN_DATA_TYPE  + ", "
-                    + TABLE_COLUMN     + " " + TABLE_COLUMN_DATA_TYPE     + ", "
-                    + RAW_COLUMN       + " " + RAW_COLUMN_DATA_TYPE       + ", "
-                    + TIME_COLUMN      + " " + TIME_COLUMN_DATA_TYPE      + ", "
-                    + HOST_COLUMN      + " " + HOST_COLUMN_DATA_TYPE      + ", "
-                    + LOGFILE_COLUMN   + " " + LOGFILE_COLUMN_DATA_TYPE   + ", "
-                    + POSITION_COLUMN  + " " + POSITION_COLUMN_DATA_TYPE  + ", "
-                    + PRIMARY_HOST_COLUMN + " " +PRIMARY_HOST_COLUMN_DATA_TYPE;
-
-            // 6. Replace ENGINE with "ENGINE = MergeTree()" and add a closing parenthesis before ENGINE
-            String modifiedEngine = ") ENGINE = MergeTree()";
-
-            // 7. Combine the modified SQL with the new columns and the original ORDER BY clause
-            // Ensure the parentheses are correctly closed and combine the modified SQL
-            String modifiedSql = beforeEngine + extraColumns + modifiedEngine;
-
-            // 8. Add the ORDER BY clause if it exists
-            if (!orderByClause.isEmpty()) {
-                modifiedSql += " " + orderByClause;
-            }
-
-            return modifiedSql;
-        } else {
-            // Throw an exception if ENGINE=ReplacingMergeTree is not found
-            throw new IllegalArgumentException("The original SQL does not contain ENGINE=ReplacingMergeTree part: " + createTableSql);
-        }
-    }
 
     /**
      * Updates the DDL metrics using the Metrics class.

@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: "latest"
+      attach_stable_lightweight_jar_artifact:
+        description: "Re-upload lightweight JAR as clickhouse-sink-connector-lt.jar (PR pipeline)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -61,6 +66,7 @@ jobs:
         with:
           name: clickhouse-sink-connector-kafka-${{ env.IMAGE_TAG }}.jar
           path: sink-connector/target/clickhouse-kafka-sink-connector-${{ env.PROJECT_VERSION }}.jar
+          if-no-files-found: error
 
       - name: Build Docker image (Kafka)
         working-directory: sink-connector
@@ -134,3 +140,22 @@ jobs:
       #- name: Upload Docker image (Lightweight)
       #  if: ${{ env.DOCKERHUB_USERNAME != '' }}
       #  run: docker image push altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
+
+  # Same workflow as `build` so download-artifact sees the lightweight JAR (caller jobs cannot
+  # reliably resolve artifacts produced inside this reusable workflow on some runs).
+  publish-lightweight-jar:
+    if: inputs.attach_stable_lightweight_jar_artifact
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Lightweight jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt-${{ inputs.IMAGE_TAG }}.jar
+          path: ./artifacts
+
+      - name: Upload Lightweight jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt.jar
+          path: ./artifacts/*.jar
