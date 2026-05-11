@@ -14,11 +14,13 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
+import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
 import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
+import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
@@ -41,6 +43,7 @@ import javax.xml.transform.Source;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -534,12 +537,26 @@ public class DebeziumChangeEventCapture {
                     if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                         String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
                         String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-                        BinLogHistory binLogHistory = new BinLogHistory();
                         // Add the chStruct to the list
                         List<ClickHouseStruct> currentBatch = new ArrayList<>();
                         currentBatch.add(chStruct);
-                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, 
-                        currentBatch, sourceTimeZone, serverTimeZone);
+                        PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(
+                                null,
+                                false,
+                                null,
+                                null,
+                                replicationHistoryDatabaseName,
+                                ZoneId.of(BinLogHistory.normalizeTimeZone(serverTimeZone)));
+                        preparedStatementExecutor.addToHistoryPreparedStatementBatch(
+                                replicationHistoryDatabaseName + "." + historyTableName,
+                                currentBatch,
+                                new BlockMetaData(),
+                                config,
+                                replicationHistoryDbConnection,
+                                historyTableName,
+                                DDL,
+                                sourceTimeZone,
+                                serverTimeZone);
                     }
                 } catch (Exception e) {
                     log.error("Error adding DDL records to history table", e);

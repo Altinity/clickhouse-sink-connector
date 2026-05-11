@@ -8,7 +8,6 @@ import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
-import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
@@ -475,8 +474,27 @@ public class ClickHouseBatchRunnable implements Runnable {
             DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                     records.get(0), databaseConn);
 
-            BinLogHistory binLogHistory = new BinLogHistory();
-            binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
+            PreparedStatementExecutor preparedStatementExecutor = new PreparedStatementExecutor(
+                    writer.getReplacingMergeTreeDeleteColumn(),
+                    writer.isReplacingMergeTreeWithIsDeletedColumn(),
+                    writer.getSignColumn(),
+                    writer.getVersionColumn(),
+                    writer.getDatabaseName(),
+                    getServerTimeZone(this.config));
+            try {
+                preparedStatementExecutor.addToHistoryPreparedStatementBatch(
+                        databaseName + "." + tableName,
+                        records,
+                        new BlockMetaData(),
+                        config,
+                        writer.getConnection(),
+                        tableName,
+                        "",
+                        sourceTimeZone,
+                        serverTimeZone);
+            } catch (Exception e) {
+                throw new SQLException("Error adding records to history table", e);
+            }
         }
     }
 

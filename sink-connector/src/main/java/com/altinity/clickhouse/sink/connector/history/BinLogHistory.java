@@ -6,24 +6,15 @@ import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
-import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.clickhouse.data.ClickHouseDataType;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.time.Instant;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 public class BinLogHistory {
 
-    private static final Logger log = LogManager.getLogger(BinLogHistory.class);
     public static final String CREATE_TABLE = "CREATE TABLE";
     public static final String IF_NOT_EXISTS = "IF NOT EXISTS";
     public static final String NULL = "NULL";
@@ -157,83 +148,13 @@ public class BinLogHistory {
     }
 
     /**
-     * Adds records to the history table using QueryFormatter to generate the insert query.
-     *
-     * @param currentBatch list of ClickHouseStruct objects to insert into history table
-     */
-    public void addRecordsToHistoryTable(ClickHouseSinkConnectorConfig config, String historyTableName, Connection conn, 
-    String DDL, List<ClickHouseStruct> currentBatch, String sourceTimeZone, String serverTimeZone) throws SQLException {
-        if (currentBatch == null || currentBatch.isEmpty()) {
-            return;
-        }
-
-        QueryFormatter queryFormatter = new QueryFormatter();
-
-        // Get the column to data type mapping
-        Map<String, String> columnToDataTypeMap = this.getColumnToDataTypeMap();
-
-        // Generate insert query using QueryFormatter
-        String insertQuery = queryFormatter.getInsertQueryUsingInputFunction(historyTableName, columnToDataTypeMap);
-
-        this.executeInsertWithStructs(config, conn, insertQuery, DDL, currentBatch, sourceTimeZone, serverTimeZone);
-    }
-
-    /**
-     * Creates and executes a PreparedStatement for inserting ClickHouseStruct data
-     * into a history table using the input() function pattern.
-     *
-     * @param conn database connection
-     * @param insertSql the SQL insert query with input() function  
-     * @param clickHouseStructs list of ClickHouseStruct objects to insert
-     * @param sourceTimeZone source timezone
-     * @param serverTimeZone server timezone
-     * @throws SQLException if database operation fails
-     */
-    public void executeInsertWithStructs(ClickHouseSinkConnectorConfig config, Connection conn, String insertSql, String DDL, 
-    List<ClickHouseStruct> clickHouseStructs, String sourceTimeZone, String serverTimeZone) throws SQLException {
-        // if serverTimeZone is empty, default to UTC.
-        if(serverTimeZone == null || serverTimeZone.isEmpty()) {
-            serverTimeZone = "UTC";
-        }
-        if(sourceTimeZone == null || sourceTimeZone.isEmpty()) {
-            sourceTimeZone = "UTC";
-        }
-        try (PreparedStatement ps = conn.prepareStatement(insertSql)) {
-            for (ClickHouseStruct struct : clickHouseStructs) {
-                int paramIndex = 1;
-                // Set values based on the HISTORY_COLUMNS mapping
-                for (Map.Entry<String, String> entry : HISTORY_COLUMNS.entrySet()) {
-                    String columnName = entry.getKey();
-                    // If the column name is DDL_COLUMN, set the value to the DDL
-                    if (columnName.equals(DDL_COLUMN)) {
-                        ps.setString(paramIndex++, DDL);
-
-                    }   else if(columnName.equals(TIME_COLUMN)) {
-                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convert(struct.getTs_ms(),
-                        ClickHouseDataType.DateTime64, ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
-                            ps.setString(paramIndex++, convertedDateTime64Time);
-                    } 
-                    else {
-                        Object value = getValueFromStruct(struct, columnName, config);
-                        ps.setObject(paramIndex++, value);
-                    }
-                }
-                ps.addBatch();
-            }
-            
-            ps.executeBatch();
-        }
-    }
-
-
-    /**
      * Extracts the appropriate value from ClickHouseStruct based on column name.
      *
      * @param struct the ClickHouseStruct object
      * @param columnName name of the column to extract
      * @return the value for the specified column
      */
-    private Object getValueFromStruct(ClickHouseStruct struct, String columnName, ClickHouseSinkConnectorConfig config) {
+    public static Object getValueFromStruct(ClickHouseStruct struct, String columnName, ClickHouseSinkConnectorConfig config) {
         switch (columnName) {
             case GTID_COLUMN:
                 return struct.getGtid();
@@ -300,5 +221,38 @@ public class BinLogHistory {
             default:
                 return null;
         }
+    }
+
+    /**
+     * Extracts the history-column value, including values that need caller context
+     * such as DDL text and source/server time zones.
+     */
+    public static Object getValueFromStruct(
+            ClickHouseStruct struct,
+            String columnName,
+            ClickHouseSinkConnectorConfig config,
+            String DDL,
+            String sourceTimeZone,
+            String serverTimeZone) {
+        if (columnName.equals(DDL_COLUMN)) {
+            return DDL != null ? DDL : "";
+        }
+        if (columnName.equals(TIME_COLUMN)) {
+            String normalizedSourceTimeZone = normalizeTimeZone(sourceTimeZone);
+            String normalizedServerTimeZone = normalizeTimeZone(serverTimeZone);
+            return DebeziumConverter.TimestampConverter.convert(
+                    struct.getTs_ms(),
+                    ClickHouseDataType.DateTime64,
+                    ZoneId.of(normalizedSourceTimeZone),
+                    ZoneId.of(normalizedServerTimeZone));
+        }
+        return getValueFromStruct(struct, columnName, config);
+    }
+
+    public static String normalizeTimeZone(String timeZone) {
+        if (timeZone == null || timeZone.isEmpty()) {
+            return "UTC";
+        }
+        return timeZone;
     }
 }
