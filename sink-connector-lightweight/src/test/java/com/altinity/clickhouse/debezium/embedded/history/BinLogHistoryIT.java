@@ -137,6 +137,9 @@ public class BinLogHistoryIT {
         // Validate DELETE operations are recorded in history
         validateDeleteOperationPresent(writer.getConnection());
 
+        // Validate unified prepared statement path populated fixed history columns
+        validateHistoryRowsHaveMappedPayload(writer.getConnection());
+
         // Validate _time is in seconds and matches ts_sec (same as ts_ms/1000)
         //validateTimeColumnMatchesTsSec(writer.getConnection());
 
@@ -327,6 +330,32 @@ public class BinLogHistoryIT {
         while (opsRs.next()) {
             log.info("Operation found: {}", opsRs.getString("_operation"));
         }
+    }
+
+    /**
+     * Validates that fixed-schema history rows were populated through the
+     * unified PreparedStatement path for both DDL and DML events.
+     */
+    private void validateHistoryRowsHaveMappedPayload(Connection clickhouseConn) throws Exception {
+        String dmlQuery = "SELECT COUNT(*) as cnt FROM binlog_history.history " +
+                "WHERE _raw != '' AND `database` != '' AND `table` != '' AND position > 0";
+        ResultSet dmlRs = ITCommon.executeQueryWithResultSet(dmlQuery, clickhouseConn);
+        int dmlCount = 0;
+        if (dmlRs.next()) {
+            dmlCount = dmlRs.getInt("cnt");
+        }
+        assertTrue("Expected DML history rows with mapped payload columns, but found: " + dmlCount,
+                dmlCount >= 1);
+
+        String ddlQuery = "SELECT COUNT(*) as cnt FROM binlog_history.history " +
+                "WHERE ddl != '' AND _raw != '' AND _time > toDateTime(0)";
+        ResultSet ddlRs = ITCommon.executeQueryWithResultSet(ddlQuery, clickhouseConn);
+        int ddlCount = 0;
+        if (ddlRs.next()) {
+            ddlCount = ddlRs.getInt("cnt");
+        }
+        assertTrue("Expected DDL history rows with mapped DDL and _time columns, but found: " + ddlCount,
+                ddlCount >= 1);
     }
 
     /** Validates _time is in seconds and matches ts_sec from source offset (ts_ms/1000). */

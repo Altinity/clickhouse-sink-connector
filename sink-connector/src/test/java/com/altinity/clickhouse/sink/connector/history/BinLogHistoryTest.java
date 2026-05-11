@@ -1,10 +1,14 @@
 package com.altinity.clickhouse.sink.connector.history;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.ZoneId;
+import java.util.HashMap;
 
 import static org.junit.Assert.assertEquals;
 
@@ -48,5 +52,29 @@ public class BinLogHistoryTest {
         //Assert.assertTrue(result.contains("ENGINE = MergeTree()"));
     }
 
+    @Test
+    public void testHistoryColumnValuesAreMappedForUnifiedPreparedStatementPath() {
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setTopic("server1.employees.newtable");
+        record.setDatabase("employees");
+        record.setCdcOperation(ClickHouseConverter.CDC_OPERATION.DELETE);
+        record.setTs_ms(1700000000000L);
+        record.setGtid(12345L);
+        record.setFile("mysql-bin.000001");
+        record.setPos(42L);
+        record.setServerId(99L);
+        record.setRow(2);
+        record.setSequenceNumber(7L);
+
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+
+        assertEquals("employees", BinLogHistory.getValueFromStruct(record, BinLogHistory.DATABASE_COLUMN, config));
+        assertEquals("newtable", BinLogHistory.getValueFromStruct(record, BinLogHistory.TABLE_COLUMN, config));
+        assertEquals(1, BinLogHistory.getValueFromStruct(record, BinLogHistory.IS_DELETED_COLUMN, config));
+        assertEquals("mysql-bin.000001", BinLogHistory.getValueFromStruct(record, BinLogHistory.LOGFILE_COLUMN, config));
+        assertEquals("CREATE TABLE newtable(id Int32)",
+                BinLogHistory.getValueFromStruct(record, BinLogHistory.DDL_COLUMN, config,
+                        "CREATE TABLE newtable(id Int32)", "", ""));
+    }
 
 }

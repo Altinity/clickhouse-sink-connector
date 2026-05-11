@@ -5,6 +5,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -124,6 +126,102 @@ public class PreparedStatementExecutor {
         }
 
         return result;
+    }
+
+    /**
+     * Inserts rows into the fixed-schema binlog history table using the same
+     * PreparedStatement batching path as regular replication inserts.
+     */
+    public boolean addToHistoryPreparedStatementBatch(String topicName,
+                                                      List<ClickHouseStruct> records,
+                                                      BlockMetaData bmd,
+                                                      ClickHouseSinkConnectorConfig config,
+                                                      Connection conn,
+                                                      String tableName,
+                                                      String DDL,
+                                                      String sourceTimeZone,
+                                                      String serverTimeZone) throws Exception {
+        if (records == null || records.isEmpty()) {
+            return true;
+        }
+
+        Map<String, String> columnToDataTypeMap = BinLogHistory.HISTORY_COLUMNS;
+        String insertQuery = new QueryFormatter().getInsertQueryUsingInputFunction(tableName, columnToDataTypeMap);
+        Map<String, Integer> columnToIndexMap = buildColumnIndexMap(columnToDataTypeMap);
+
+        return executeHistoryPreparedStatement(insertQuery, topicName, records, bmd, config,
+                conn, tableName, columnToIndexMap, DDL, sourceTimeZone, serverTimeZone);
+    }
+
+    private Map<String, Integer> buildColumnIndexMap(Map<String, String> columnToDataTypeMap) {
+        Map<String, Integer> columnToIndexMap = new LinkedHashMap<>();
+        int index = 1;
+        for (String columnName : columnToDataTypeMap.keySet()) {
+            columnToIndexMap.put(columnName, index++);
+        }
+        return columnToIndexMap;
+    }
+
+    private boolean executeHistoryPreparedStatement(String insertQuery,
+                                                    String topicName,
+                                                    List<ClickHouseStruct> records,
+                                                    BlockMetaData bmd,
+                                                    ClickHouseSinkConnectorConfig config,
+                                                    Connection conn,
+                                                    String tableName,
+                                                    Map<String, Integer> columnToIndexMap,
+                                                    String DDL,
+                                                    String sourceTimeZone,
+                                                    String serverTimeZone) throws Exception {
+        AtomicBoolean result = new AtomicBoolean(false);
+        long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
+        DBMetadata metadata = new DBMetadata(config);
+
+        Lists.partition(records, (int) maxRecordsInBatch).forEach(batch -> {
+            String databaseName = null;
+            try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
+                for (ClickHouseStruct record : batch) {
+                    if (record.getDatabase() != null) {
+                        databaseName = record.getDatabase();
+                    }
+                    try {
+                        bmd.update(record);
+                    } catch (Exception e) {
+                        log.error("**** ERROR: updating Prometheus", e);
+                    }
+
+                    bindHistoryRecord(ps, record, columnToIndexMap, config, DDL, sourceTimeZone, serverTimeZone);
+                    ps.addBatch();
+                }
+
+                int[] batchResult = ps.executeBatch();
+                log.info("*************** EXECUTED HISTORY BATCH Successfully Records: {} Result: {} Database: {} Table: {}",
+                        batch.size(), Arrays.toString(batchResult), databaseName, tableName);
+                result.set(true);
+            } catch (Exception e) {
+                Metrics.updateErrorCounters(topicName, records.size());
+                log.error(String.format("******* ERROR inserting History Batch Database(%s), Table(%s) *****************",
+                        databaseName, tableName), e);
+                throw new RuntimeException(e);
+            }
+        });
+
+        Metrics.updateCounters(topicName, records.size());
+        return result.get();
+    }
+
+    private void bindHistoryRecord(PreparedStatement ps,
+                                   ClickHouseStruct record,
+                                   Map<String, Integer> columnToIndexMap,
+                                   ClickHouseSinkConnectorConfig config,
+                                   String DDL,
+                                   String sourceTimeZone,
+                                   String serverTimeZone) throws SQLException {
+        for (String columnName : BinLogHistory.HISTORY_COLUMNS.keySet()) {
+            int index = columnToIndexMap.get(columnName);
+            Object value = BinLogHistory.getValueFromStruct(record, columnName, config, DDL, sourceTimeZone, serverTimeZone);
+            ps.setObject(index, value);
+        }
     }
 
     /**
