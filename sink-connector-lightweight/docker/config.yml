@@ -204,7 +204,7 @@ database.ssl.mode: "disabled"
 non.default.value: "true"
 
 # Enable replication mergetree history table.
-replication.history.enable: "true"
+replication.history.enable: "false"
 replication.history.table.name: "replication_history"
 replication.history.database.name: "replication_history_db"
 #replication.history.replication_log_only: "true"
