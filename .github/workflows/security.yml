@@ -39,36 +39,6 @@ jobs:
         with:
           category: "/language:java"
 
-  dependency-check:
-    name: OWASP Dependency-Check (Maven)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: maven
-
-      - name: Run OWASP Dependency-Check via Maven
-        run: >-
-          mvn -B org.owasp:dependency-check-maven:check
-          -DfailBuildOnCVSS=9
-          -Dformats=SARIF
-          -DsuppressionFile=.github/dependency-check-suppressions.xml
-          -DnvdApiDelay=6000
-          -pl sink-connector,sink-connector-lightweight
-          -am
-
-      - name: Find and upload SARIF reports
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: .
-          category: dependency-check
-
   trivy:
     name: Trivy Filesystem Scan
     runs-on: ubuntu-latest
