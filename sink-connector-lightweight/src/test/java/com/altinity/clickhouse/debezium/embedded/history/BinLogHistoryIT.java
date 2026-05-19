@@ -309,7 +309,7 @@ public class BinLogHistoryIT {
     private void validateDeleteOperationPresent(Connection clickhouseConn) throws Exception {
         log.info("Validating DELETE operation presence in binlog_history.history table");
         
-        String query = "SELECT COUNT(*) as cnt FROM binlog_history.history WHERE _operation = 'DELETE'";
+        String query = "SELECT COUNT(*) as cnt FROM binlog_history.history final WHERE _operation = 'DELETE'";
         ResultSet rs = ITCommon.executeQueryWithResultSet(query, clickhouseConn);
         
         int deleteCount = 0;
