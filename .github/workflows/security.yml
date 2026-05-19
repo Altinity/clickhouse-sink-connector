@@ -40,28 +40,34 @@ jobs:
           category: "/language:java"
 
   dependency-check:
-    name: OWASP Dependency-Check
+    name: OWASP Dependency-Check (Maven)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run OWASP Dependency-Check
-        uses: dependency-check/Dependency-Check_Action@main
-        env:
-          JAVA_HOME: /opt/jdk
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          project: clickhouse-sink-connector
-          path: .
-          format: SARIF
-          args: >-
-            --failOnCVSS 9
-            --suppression /github/workspace/.github/dependency-check-suppressions.xml
+          distribution: temurin
+          java-version: "17"
+          cache: maven
 
-      - name: Upload SARIF to GitHub Security
+      - name: Run OWASP Dependency-Check via Maven
+        run: >-
+          mvn -B org.owasp:dependency-check-maven:check
+          -DfailBuildOnCVSS=9
+          -Dformats=SARIF
+          -DsuppressionFile=.github/dependency-check-suppressions.xml
+          -DnvdApiDelay=6000
+          -pl sink-connector,sink-connector-lightweight
+          -am
+
+      - name: Find and upload SARIF reports
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: reports/dependency-check-report.sarif
+          sarif_file: .
+          category: dependency-check
 
   trivy:
     name: Trivy Filesystem Scan
