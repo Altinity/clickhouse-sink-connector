@@ -188,7 +188,8 @@ public class BinLogHistoryIT {
             {BinLogHistory.PRIMARY_HOST_COLUMN, BinLogHistory.PRIMARY_HOST_COLUMN_DATA_TYPE},
             {BinLogHistory.SERVER_ID_COLUMN, BinLogHistory.SERVER_ID_COLUMN_DATA_TYPE},
             {BinLogHistory.ROW_COLUMN, BinLogHistory.ROW_COLUMN_DATA_TYPE},
-            {BinLogHistory.SEQUENCE_COLUMN, BinLogHistory.SEQUENCE_COLUMN_DATA_TYPE}
+            {BinLogHistory.SEQUENCE_COLUMN, BinLogHistory.SEQUENCE_COLUMN_DATA_TYPE},
+            {BinLogHistory.DB_TIME_COLUMN, "DateTime"}
         };
         
         int columnCount = 0;
@@ -217,8 +218,8 @@ public class BinLogHistoryIT {
             columnCount++;
         }
         
-        assertTrue("Expected 18 columns in binlog_history.history table, but found: " + columnCount,
-            columnCount == 18);
+        assertTrue("Expected 19 columns in binlog_history.history table, but found: " + columnCount,
+            columnCount == 19);
         
         log.info("Successfully validated binlog_history.history table has all {} required columns", columnCount);
     }
