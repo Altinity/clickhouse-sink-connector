@@ -74,3 +74,34 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+  grype:
+    name: Grype Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Grype (table output for logs)
+        uses: anchore/scan-action@v6
+        with:
+          path: .
+          fail-build: "true"
+          severity-cutoff: high
+          output-format: table
+
+      - name: Run Grype (SARIF for GitHub Security tab)
+        uses: anchore/scan-action@v6
+        if: always()
+        id: grype-sarif
+        with:
+          path: .
+          fail-build: "false"
+          severity-cutoff: high
+          output-format: sarif
+
+      - name: Upload Grype SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: ${{ steps.grype-sarif.outputs.sarif }}
+          category: grype
