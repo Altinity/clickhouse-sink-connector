@@ -66,6 +66,25 @@ public class SinkConnectorLightWeightConfig {
     public static final String IGNORE_DDL_REGEX = "ignore.ddl.regex";
 
     /**
+     * Flag to enable REST API authentication.
+     * <p>
+     * If set to true, REST API endpoints require HTTP Basic Auth credentials.
+     * Defaults to false (authentication disabled).
+     * </p>
+     */
+    public static final String REST_API_AUTH_ENABLED = "rest.api.auth.enabled";
+
+    /**
+     * Username for REST API Basic Auth.
+     */
+    public static final String REST_API_AUTH_USERNAME = "rest.api.auth.username";
+
+    /**
+     * Password for REST API Basic Auth.
+     */
+    public static final String REST_API_AUTH_PASSWORD = "rest.api.auth.password";
+
+    /**
      * A map that holds all configuration variables and their descriptions.
      * <p>
      * This map is used to provide detailed information about each configuration
@@ -88,6 +107,12 @@ public class SinkConnectorLightWeightConfig {
                 "If set to true, the sink connector will retry executing DDL after a failure.");
         configVariables.put(IGNORE_DDL_REGEX,
                 "If set, the sink connector will ignore DDL statements matching the regex.");
+        configVariables.put(REST_API_AUTH_ENABLED,
+                "If set to true, REST API endpoints require HTTP Basic Auth. Defaults to false.");
+        configVariables.put(REST_API_AUTH_USERNAME,
+                "Username for REST API Basic Auth (required when rest.api.auth.enabled=true).");
+        configVariables.put(REST_API_AUTH_PASSWORD,
+                "Password for REST API Basic Auth (required when rest.api.auth.enabled=true).");
     }
 
     /**
