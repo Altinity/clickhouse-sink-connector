@@ -52,6 +52,11 @@ public class DataTypeConverter {
 
     static {
         overriddenDataTypesMap.put("tinyint", "Int8");
+        overriddenDataTypesMap.put("tinyint unsigned", "UInt8");
+        overriddenDataTypesMap.put("smallint unsigned", "UInt16");
+        overriddenDataTypesMap.put("mediumint unsigned", "UInt32");
+        overriddenDataTypesMap.put("int unsigned", "UInt32");
+        overriddenDataTypesMap.put("integer unsigned", "UInt32");
         overriddenDataTypesMap.put("bigint unsigned", "UInt64");
     }
     /**

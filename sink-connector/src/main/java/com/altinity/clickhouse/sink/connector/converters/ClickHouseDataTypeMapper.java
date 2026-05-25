@@ -282,6 +282,9 @@ public class ClickHouseDataTypeMapper {
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
+            } else if (isWiderIntegerTarget(clickHouseDataType)) {
+                // Debezium schema may lag after ALTER (e.g. INT32) while CH column is UInt64
+                ps.setObject(index, value);
             } else {
                 ps.setInt(index, (Integer) value);
             }
@@ -493,5 +496,19 @@ public class ClickHouseDataTypeMapper {
             }
         }
         return matchingDataType;
+    }
+
+    /**
+     * True when the ClickHouse column is wider than a narrow Debezium integer schema
+     * (e.g. INT32 after ALTER to BIGINT UNSIGNED / UInt64).
+     */
+    private static boolean isWiderIntegerTarget(ClickHouseDataType chType) {
+        if (chType == null) {
+            return false;
+        }
+        return chType == ClickHouseDataType.Int64
+                || chType == ClickHouseDataType.UInt64
+                || chType == ClickHouseDataType.UInt32
+                || chType == ClickHouseDataType.Int32;
     }
 }
