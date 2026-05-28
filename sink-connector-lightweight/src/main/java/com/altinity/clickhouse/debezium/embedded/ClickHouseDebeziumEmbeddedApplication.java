@@ -13,6 +13,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -178,6 +180,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     ConfigurationService.class).parse();
         }
 
+        embeddedApplication.loadEnvs();
+
         setupMonitoringThread(
                 new ClickHouseSinkConnectorConfig(
                         PropertiesHelper.toMap(props)
@@ -229,6 +233,16 @@ public class ClickHouseDebeziumEmbeddedApplication {
         props.putAll(defaultProperties);
         Properties fileProps = new ConfigLoader().loadFromFile(filePath);
         props.putAll(fileProps);
+    }
+
+    private static void loadEnvs() {
+        Map<String, String> envProperties = System.getenv().entrySet().stream()
+                                                  .collect(Collectors.toMap(
+                                                      entry -> entry.getKey().replace('_', '.').toLowerCase(),
+                                                      Map.Entry::getValue,
+                                                      (existing, replacement) -> existing // Merge rule for duplicate keys
+                                                  ));
+        props.putAll(envProperties);
     }
 
     /**
