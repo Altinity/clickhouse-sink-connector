@@ -361,7 +361,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            this.query.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+            this.query.append(" TTL `").append(DELETED_TIME_COLUMN)
+                      .append("` + toIntervalDay(").append(config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()))
+                      .append(")");
         }
         
 
