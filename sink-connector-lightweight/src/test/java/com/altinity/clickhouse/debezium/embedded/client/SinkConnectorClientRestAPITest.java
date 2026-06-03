@@ -1,11 +1,13 @@
 package com.altinity.clickhouse.debezium.embedded.client;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -19,20 +21,14 @@ import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
-import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
-import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import com.altinity.clickhouse.sink.connector.db.DBMetadata;
-import com.clickhouse.jdbc.ClickHouseConnection;
 
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.core5.http.io.entity.StringEntity;
 import com.google.inject.Guice;
-import org.aopalliance.reflect.Metadata;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.classic.methods.HttpGet;
 import com.github.dockerjava.zerodep.shaded.org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -411,5 +407,88 @@ public class SinkConnectorClientRestAPITest {
         int chCount = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.temporal_types_DATETIME FINAL");
         System.out.printf("MySQL: %d, ClickHouse: %d - %s%n", mysqlCount, chCount, message);
         Assert.assertEquals(message, mysqlCount, chCount);
+    }
+
+    private static String basicAuthHeader(String username, String password) {
+        String credentials = username + ":" + password;
+        return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void restartApiWithAuth(String username, String password) {
+        DebeziumEmbeddedRestApi.stop();
+        Properties authProps = new Properties();
+        authProps.putAll(props);
+        authProps.setProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_ENABLED, "true");
+        authProps.setProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_USERNAME, username);
+        authProps.setProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_PASSWORD, password);
+        DebeziumEmbeddedRestApi.startRestApi(
+                authProps,
+                Guice.createInjector(new AppInjector()),
+                engine.get().getDebeziumEventCapture(),
+                new Properties());
+    }
+
+    private static void restartApiWithoutAuth() {
+        DebeziumEmbeddedRestApi.stop();
+        startApi();
+    }
+
+    @Test
+    @DisplayName("Validate REST API Basic Auth: unauthenticated, wrong credentials, and valid credentials")
+    public void testRestApiAuthentication() throws Exception {
+        final String authUser = "admin";
+        final String authPass = "s3cret";
+
+        try {
+            restartApiWithAuth(authUser, authPass);
+
+            // Unauthenticated request should return 401
+            HttpGet noAuthRequest = new HttpGet("http://localhost:7000/status");
+            try (CloseableHttpResponse response = HttpClientBuilder.create().build().execute(noAuthRequest)) {
+                Assert.assertEquals("Unauthenticated request should be 401",
+                        401, response.getCode());
+            }
+
+            // Wrong credentials should return 401
+            HttpGet wrongCredsRequest = new HttpGet("http://localhost:7000/status");
+            wrongCredsRequest.setHeader("Authorization", basicAuthHeader("wrong", "creds"));
+            try (CloseableHttpResponse response = HttpClientBuilder.create().build().execute(wrongCredsRequest)) {
+                Assert.assertEquals("Wrong credentials should be 401",
+                        401, response.getCode());
+            }
+
+            // Correct credentials should succeed
+            HttpGet validRequest = new HttpGet("http://localhost:7000/status");
+            validRequest.setHeader("Authorization", basicAuthHeader(authUser, authPass));
+            try (CloseableHttpResponse response = HttpClientBuilder.create().build().execute(validRequest)) {
+                Assert.assertEquals("Valid credentials should be 200",
+                        200, response.getCode());
+            }
+
+            // Correct credentials on root endpoint
+            HttpGet rootRequest = new HttpGet("http://localhost:7000/");
+            rootRequest.setHeader("Authorization", basicAuthHeader(authUser, authPass));
+            try (CloseableHttpResponse response = HttpClientBuilder.create().build().execute(rootRequest)) {
+                Assert.assertEquals("Valid credentials on root should be 200",
+                        200, response.getCode());
+                String body = new String(response.getEntity().getContent().readAllBytes());
+                Assert.assertEquals("Hello World", body);
+            }
+        } finally {
+            restartApiWithoutAuth();
+        }
+    }
+
+    @Test
+    @DisplayName("Validate REST API works without auth when rest.api.auth.enabled is false")
+    public void testRestApiNoAuth() throws Exception {
+        // Default setup has auth disabled — requests should succeed without credentials
+        HttpGet request = new HttpGet("http://localhost:7000/");
+        try (CloseableHttpResponse response = HttpClientBuilder.create().build().execute(request)) {
+            Assert.assertEquals("Request without auth should succeed when auth is disabled",
+                    200, response.getCode());
+            String body = new String(response.getEntity().getContent().readAllBytes());
+            Assert.assertEquals("Hello World", body);
+        }
     }
 }

@@ -5,7 +5,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.clickhouse.data.ClickHouseDataType;
 import org.apache.logging.log4j.LogManager;
@@ -71,6 +70,8 @@ public class BinLogHistory {
     public static final String ROW_COLUMN_DATA_TYPE = "UInt32";
     public static final String SEQUENCE_COLUMN = "sequence";
     public static final String SEQUENCE_COLUMN_DATA_TYPE = "UInt64";
+    public static final String DB_TIME_COLUMN = "db_time";
+    public static final String DB_TIME_COLUMN_DATA_TYPE = "DateTime MATERIALIZED now()";
 
     public static final Map<String, String> HISTORY_COLUMNS = new LinkedHashMap<String, String>() {{
         put(GTID_COLUMN, GTID_COLUMN_DATA_TYPE);
@@ -133,7 +134,8 @@ public class BinLogHistory {
                 })
                 .collect(Collectors.joining(","));
         sb.append(columnDefinitions);
-        
+        sb.append(",`").append(DB_TIME_COLUMN).append("` ").append(DB_TIME_COLUMN_DATA_TYPE);
+
         sb.append(") ").append(ENGINE_REPLACING_MERGE_TREE);
 
         // ORDER BY gtid
@@ -267,10 +269,10 @@ public class BinLogHistory {
             case TIME_COLUMN:
                 return struct.getTsSec();
             case IS_DELETED_COLUMN:
-                if(struct.getCdcOperation() == null) {
-                    return 0;
-                }
-                return struct.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ? 1 : 0;
+                // History is append-only: never mark rows as deleted so ReplacingMergeTree
+                // FINAL / cleanup does not drop DELETE-operation audit records.
+                // The DELETE nature of an event is preserved via the `_operation` column.
+                return 0;
             case OPERATION_COLUMN:
                 if(struct.getCdcOperation() == null) {
                     return "";
