@@ -172,7 +172,7 @@ public class QueryFormatter {
      */
     private String extractDateTime64Precision(String dataType) {
         // Find the opening parenthesis
-        int start = dataType.indexOf('(');
+        int start = dataType.lastIndexOf('(');
         if (start == -1) {
             return "3"; // Default precision
         }
