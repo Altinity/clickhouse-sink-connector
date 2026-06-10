@@ -121,7 +121,7 @@ position:     35924824
 primary_host: 940
 ```
 
-### 2. Data Table with _valid_to - Time Travel Enabled
+### 2. Data Table with _valid_from, _valid_to - Time Travel Enabled
 
 Data tables store both **current** and **historical** versions of records, enabling efficient temporal queries.
 
@@ -133,6 +133,7 @@ CREATE TABLE users (
     `name` String,
     `email` String,
     -- Temporal tracking columns:
+    `_valid_from` DateTime DEFAULT '2100-01-01 00:00:00',
     `_valid_to` DateTime DEFAULT '2100-01-01 00:00:00',
     `_operation` String,
     `_version` UInt64,
@@ -151,6 +152,11 @@ TTL _valid_to + toIntervalDay(30);
 - Active records have `_valid_to > now()` (far future default)
 - Superseded records have `_valid_to` set to the timestamp of the next change
 - Enables efficient "as-of" queries without scanning entire history
+
+**The `_valid_from` Column:**
+- Indicates **when this version of the record was valid**
+- Both active and superseded records have `_valid_from = mysql_commit_ts`
+- Enables "effective-from" queries
 
 **Partitioning Strategy:**
 - **Active Partition** (`2100-01-01`): Contains all current, live records
@@ -212,7 +218,7 @@ SELECT id, name, email
 FROM users
 WHERE _valid_to > '2025-11-06 10:45:00'
   AND _version = (
-    SELECT MAX(_version)
+    SELECT MIN(_version)
     FROM users AS u2
     WHERE u2.id = users.id
       AND u2._valid_to > '2025-11-06 10:45:00'
@@ -229,8 +235,8 @@ See what changed during a specific period:
 -- Find all records that were modified between 10:00 and 11:00
 SELECT id, name, _valid_to, _version
 FROM users
-WHERE toDate(_valid_to) = '2025-11-06'
-  AND _valid_to BETWEEN '2025-11-06 10:00:00' AND '2025-11-06 11:00:00'
+WHERE toDate(_valid_to) >= '2025-11-06'
+  AND _valid_from BETWEEN '2025-11-06 10:00:00' AND '2025-11-06 11:00:00'
 ORDER BY _valid_to;
 ```
 
@@ -338,7 +344,7 @@ replication.history.database.name=binlog_history
 replication.history.table.name=history
 
 # TTL days for history retention (default: 30)
-replication.history.ttl.days=30
+replication.history.ttl=30
 
 # Server timezone for DateTime columns
 clickhouse.datetime.timezone=America/Chicago
