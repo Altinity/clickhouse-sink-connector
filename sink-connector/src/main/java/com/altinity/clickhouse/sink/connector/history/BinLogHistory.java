@@ -175,7 +175,7 @@ public class BinLogHistory {
         Map<String, String> columnToDataTypeMap = this.getColumnToDataTypeMap();
 
         // Generate insert query using QueryFormatter
-        String insertQuery = queryFormatter.getInsertQueryUsingInputFunction(historyTableName, columnToDataTypeMap);
+        String insertQuery = queryFormatter.getInsertQuery(historyTableName, columnToDataTypeMap);
 
         this.executeInsertWithStructs(config, conn, insertQuery, DDL, currentBatch, sourceTimeZone, serverTimeZone);
     }

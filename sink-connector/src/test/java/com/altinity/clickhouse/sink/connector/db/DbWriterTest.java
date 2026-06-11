@@ -130,10 +130,14 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 sinkConnectorConfig, null, conn2);
-        Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
+        Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn2, "employees", "employees2");
 
+        // employees2.employees has exactly 2 columns (emp1, _version_employees).
+        // clickhouse-jdbc 0.6.x ignored the schemaPattern argument and returned
+        // matching tables from every database (44 unique column names across the
+        // four employees tables); the 0.9.x driver filters by database correctly.
         Assert.assertTrue(columnDataTypesMap2.isEmpty() == false);
-        Assert.assertTrue(columnDataTypesMap2.size() ==44);
+        Assert.assertTrue(columnDataTypesMap2.size() == 2);
 
     }
 

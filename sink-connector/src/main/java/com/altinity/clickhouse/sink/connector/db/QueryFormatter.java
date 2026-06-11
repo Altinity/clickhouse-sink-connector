@@ -150,8 +150,16 @@ public class QueryFormatter {
         if (upperDataType.contains("DATETIME64")) {
             // Extract precision from DateTime64(precision) or DateTime64(precision, 'timezone')
             String precision = extractDateTime64Precision(dataType);
+            String timeZone = extractTimeZone(dataType);
+            if (timeZone != null) {
+                return "toDateTime64(?, " + precision + ", '" + timeZone + "')";
+            }
             return "toDateTime64(?, " + precision + ")";
         } else if (upperDataType.contains("DATETIME")) {
+            String timeZone = extractTimeZone(dataType);
+            if (timeZone != null) {
+                return "toDateTime(?, '" + timeZone + "')";
+            }
             return "toDateTime(?)";
         } else if (upperDataType.contains("DATE32")) {
             return "toDate32(?)";
@@ -185,6 +193,25 @@ public class QueryFormatter {
             return "3"; // Default precision
         }
         return dataType.substring(start + 1, end).trim();
+    }
+
+    /**
+     * Extracts the timezone from a DateTime/DateTime64 data type, e.g.
+     * "DateTime64(0, 'UTC')" or "DateTime('America/Chicago')".
+     *
+     * @param dataType the data type string
+     * @return the timezone, or null if the type does not carry one
+     */
+    private String extractTimeZone(String dataType) {
+        int start = dataType.indexOf('\'');
+        if (start == -1) {
+            return null;
+        }
+        int end = dataType.indexOf('\'', start + 1);
+        if (end == -1) {
+            return null;
+        }
+        return dataType.substring(start + 1, end);
     }
 
     /**
@@ -339,35 +366,39 @@ public class QueryFormatter {
     }
 
     /**
-     * Generates an INSERT SQL query using input functions for the specified table and columns.
+     * Generates a parameterized INSERT SQL query for the specified table and columns.
      * <p>
-     * This method constructs an INSERT query based on the provided column names and data types.
+     * Parameters are bound positionally in the iteration order of the supplied map.
+     * The query uses explicit {@code ?} placeholders instead of the
+     * {@code select ... from input('...')} form: clickhouse-jdbc 0.6.x special-cased
+     * parameter binding for input() statements, but the 0.9.x (jdbc-v2) driver
+     * derives parameters from {@code ?} placeholders only, so an input()-based
+     * statement has zero bindable parameters and any setXxx() call fails with
+     * ArrayIndexOutOfBoundsException (see ClickHouse/clickhouse-java#2726).
      * </p>
      *
      * @param tableName               the name of the ClickHouse table.
      * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
      * @return the generated INSERT SQL query.
      */
-    public String getInsertQueryUsingInputFunction(String tableName, Map<String, String> columnNameToDataTypeMap) {
+    public String getInsertQuery(String tableName, Map<String, String> columnNameToDataTypeMap) {
         StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesToDataTypes = new StringBuilder();
+        StringBuilder placeholders = new StringBuilder();
 
         // Loop over each column to generate the insert query
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = "`" + entry.getKey() + "`";
             colNamesDelimited.append(columnName).append(",");
-            // Escape single quotes in data types (e.g., DateTime64(3, 'UTC') -> DateTime64(3, ''UTC''))
-            String escapedDataType = ClickHouseUtils.escape(entry.getValue(), '\'');
-            colNamesToDataTypes.append(columnName).append(" ").append(escapedDataType).append(",");
+            placeholders.append(formatParameterPlaceholder(entry.getValue())).append(",");
         }
 
         // Remove the terminating commas
         removeTrailingComma(colNamesDelimited);
-        removeTrailingComma(colNamesToDataTypes);
+        removeTrailingComma(placeholders);
 
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
-        return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
+        return String.format("insert into %s(%s) values (%s)", tableWithBackTicks, colNamesDelimited, placeholders);
     }
 
     /**

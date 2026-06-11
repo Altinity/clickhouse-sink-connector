@@ -68,7 +68,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
                         this.getConnection(),
                         database
                 );
-        this.query = new QueryFormatter().getInsertQueryUsingInputFunction(
+        this.query = new QueryFormatter().getInsertQuery(
                 tableName, columnNamesToDataTypesMap
         );
     }

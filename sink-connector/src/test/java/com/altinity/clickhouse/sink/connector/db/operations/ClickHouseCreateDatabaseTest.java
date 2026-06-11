@@ -39,6 +39,12 @@ public class ClickHouseCreateDatabaseTest {
             .waitingFor(new HttpWaitStrategy().forPort(8123));
     @BeforeAll
     static void initialize() throws Exception {
+        // Defensive: earlier test classes may have seeded the static
+        // HikariDbSource cache with a "system" pool pointing at config-default
+        // localhost:8123 (lazy connect under jdbc-v2 caches dead pools).
+        // Clear it so createConnection below builds a pool against the
+        // testcontainer instead of reusing a stale one.
+        HikariDbSource.close();
         clickHouseContainer.start();
 
         String hostName = clickHouseContainer.getHost();

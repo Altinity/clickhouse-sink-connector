@@ -2,12 +2,14 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -23,6 +25,16 @@ public class ClickHouseBatchRunnableTest {
 
     LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
     Map<String, String> topic2TableMap = new HashMap<>();
+
+    @AfterAll
+    public static void cleanup() {
+        // The ClickHouseBatchRunnable constructor creates a "system" connection
+        // pool from config defaults (localhost:8123). With the jdbc-v2 driver,
+        // connection creation is lazy, so this dead pool gets cached in the
+        // static HikariDbSource map and poisons later containerized tests that
+        // look up pools by database name. Clear it.
+        HikariDbSource.close();
+    }
 
     @Before
     public void initTest() {
