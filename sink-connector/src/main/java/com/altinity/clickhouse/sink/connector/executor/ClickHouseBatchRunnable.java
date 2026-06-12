@@ -325,7 +325,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                 currentBatch = null;
                 // Rethrow to stop the scheduled executor -- silent swallowing causes
                 // binlog advancement to stall and blocks replication for ALL tables
-                throw e;
+                throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
             } else {
                 log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
                          "batch will be retried on next scheduled run.", errorCode, category);
