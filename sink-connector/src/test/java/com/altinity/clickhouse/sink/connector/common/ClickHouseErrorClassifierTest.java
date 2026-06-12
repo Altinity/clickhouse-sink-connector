@@ -1,4 +1,4 @@
-package java.com.altinity.clickhouse.sink.connector.common;
+package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier.ErrorCategory;
