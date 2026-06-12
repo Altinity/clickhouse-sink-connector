@@ -1,4 +1,4 @@
-package com.altinity.clickhouse.sink.connector.executor;
+package com.altinity.clickhouse.sink.connector.common;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
