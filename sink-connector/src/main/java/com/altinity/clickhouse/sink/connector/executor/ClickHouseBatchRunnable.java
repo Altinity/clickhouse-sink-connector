@@ -306,15 +306,33 @@ public class ClickHouseBatchRunnable implements Runnable {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
-            // insert data into error table
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
+
+            // Classify the error to decide whether to retry or stop
+            ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
+            int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
+
+            if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
+                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
+                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Manual intervention required.", errorCode);
+                // Clear the stuck batch so it is not retried forever
+                currentBatch = null;
+                // Rethrow to stop the scheduled executor -- silent swallowing causes
+                // binlog advancement to stall and blocks replication for ALL tables
+                throw e;
+            } else {
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
+                         "batch will be retried on next scheduled run.", errorCode, category);
+            }
         }
     }
+
 
     /**
      * Run loop for hash-based routing mode.
