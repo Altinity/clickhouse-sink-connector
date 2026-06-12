@@ -1,4 +1,0 @@
-metrics.enable: true
-offset.flush.interval.ms: 5000
-database.port: 3306
-name: "test-connector"

@@ -1,5 +1,0 @@
-startDelaySeconds: 0
-lowercaseOutputName: false
-lowercaseOutputLabelNames: false
-ssl: false
-jmxUrl: service:jmx:rmi:///jndi/rmi://sink:39999/jmxrmi

@@ -1,3 +1,0 @@
-FROM quay.io/debezium/connect:2.1.0.Alpha1
-
-ENTRYPOINT ["tail", "-f", "/dev/null"]

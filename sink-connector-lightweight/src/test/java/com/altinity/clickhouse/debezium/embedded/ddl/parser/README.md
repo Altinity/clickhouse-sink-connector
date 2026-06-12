@@ -1,8 +1,0 @@
-# Date Time tests.
-DateTimeWithUserProvidedTimeZoneSchemaOnlyIT
-CreateTableDataTypesIT
-CreateTableDataTypesTimeZoneIT
-DateTimeWithTimeZoneColumnSchemaOnlyIT
-DateTimeWithZoneIT
-DateTimeWithTimeZoneSchemaOnlyIT
-DateTimeWithUserProvidedDifferentTimeZoneIT
