@@ -757,6 +757,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String sql = "drop table add_test";
+        String expectedClickHouseQuery = "DROP TABLE employees.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
@@ -768,8 +769,8 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "drop table if exists add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        String expectedSql = "DROP TABLE IF EXISTS employees.add_test";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedSql));
     }
 
     @Test
@@ -779,7 +780,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table add_test, add_test2";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table add_test,add_test2"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table employees.add_test,employees.add_test2"));
     }
 
     @Test
