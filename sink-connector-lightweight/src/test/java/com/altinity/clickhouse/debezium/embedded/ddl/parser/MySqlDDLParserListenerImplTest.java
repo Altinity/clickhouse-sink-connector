@@ -760,7 +760,7 @@ public class MySqlDDLParserListenerImplTest {
         String expectedClickHouseQuery = "DROP TABLE employees.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
     }
 
     @Test
