@@ -710,13 +710,57 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    public void dropTable() {
+    public void truncateTableWithQualifiedName() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "truncate table mydb.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        // When the table name is already qualified (mydb.add_test), the method should
+        // strip the source database and use the configured databaseName instead,
+        // producing employees.add_test (not employees.mydb.add_test).
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE employees.add_test"));
+    }
+
+    @Test
+    public void dropTableWithQualifiedName() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "drop table mydb.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+    }
+
+    @Test
+    public void renameTableWithMixedQualification() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "rename table mydb.old_table to new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.old_table to employees.new_table"));
+    }
+
+    @Test
+    public void dropTableUnqualifiedName() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String sql = "drop table add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+    }
+
+    @Test
+    public void dropTable() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "drop table add_test";
+        String expectedClickHouseQuery = "DROP TABLE employees.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
     }
 
     @Test
@@ -725,8 +769,8 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "drop table if exists add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        String expectedSql = "DROP TABLE IF EXISTS employees.add_test";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedSql));
     }
 
     @Test
@@ -736,7 +780,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table add_test, add_test2";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table add_test,add_test2"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table employees.add_test,employees.add_test2"));
     }
 
     @Test

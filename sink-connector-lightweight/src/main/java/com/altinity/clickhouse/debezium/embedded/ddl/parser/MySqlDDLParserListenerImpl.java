@@ -387,7 +387,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             partitioningKeys = matcher.group(1);
             log.info("Partitioning key (RANGE COLUMNS): " + partitioningKeys);
         }
-        
+
         // If not found, try to match function-based partitioning like PARTITION BY RANGE( YEAR(...) )
         if (partitioningKeys == null) {
             // Match PARTITION BY RANGE( <function_or_expression> ) but stop before the partition definitions
@@ -403,14 +403,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-        
+
         String partitioningOptions = "";
         if (partitioningKeys != null) {
             partitioningOptions = "PARTITION BY " + partitioningKeys;
         }
         return partitioningOptions;
     }
-    
+
     /**
      * Convert MySQL partition function expressions to ClickHouse equivalents
      * @param mysqlFunction MySQL partition function expression (e.g., "YEAR(order_date)")
@@ -420,15 +420,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (mysqlFunction == null || mysqlFunction.isEmpty()) {
             return null;
         }
-        
+
         // Extract column name from function like YEAR(column_name) or TO_DAYS(column_name)
         Pattern columnPattern = Pattern.compile("(\\w+)\\s*\\(\\s*([\\w`]+)\\s*\\)", Pattern.CASE_INSENSITIVE);
         Matcher columnMatcher = columnPattern.matcher(mysqlFunction);
-        
+
         if (columnMatcher.find()) {
             String function = columnMatcher.group(1).toUpperCase();
             String columnName = columnMatcher.group(2).replaceAll("`", "");
-            
+
             // Convert MySQL functions to ClickHouse equivalents
             switch (function) {
                 case "YEAR":
@@ -448,7 +448,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     return columnName;
             }
         }
-        
+
         // If no function pattern matches, return the expression as-is
         log.info("Could not parse partition function, using expression as-is: " + mysqlFunction);
         return mysqlFunction;
@@ -1054,7 +1054,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
-                        this.query.append(tableNameChild.getText());
+                        String tableName = tableNameChild.getText();
+                        if (tableName.contains(".")) {
+                            String[] parts = tableName.split("\\.");
+                            this.query.append(databaseName).append(".").append(parts[1]);
+                        } else {
+                            this.query.append(databaseName).append(".").append(tableName);
+                        }
                     } else if (tableNameChild instanceof TerminalNodeImpl) {
                         this.query.append(tableNameChild.getText());
                     }
@@ -1084,12 +1090,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
                     // If the table name already includes the database name don't include it in the query.
-                    if (originalTableName.contains(".") && newTableName.contains(".")) {
+                    if (originalTableName.contains(".") || newTableName.contains(".")) {
                         // Split database and table name.
-                        String[] databaseAndTableNameArray = originalTableName.split("\\.");
-                        String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
-                        this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").append(this.databaseName)
-                                .append(".").append(newDatabaseAndTableNameArray[1]);
+                        String origTable = originalTableName.contains(".")
+                                ? originalTableName.split("\\.")[1] : originalTableName;
+                        String newTable = newTableName.contains(".")
+                                ? newTableName.split("\\.")[1] : newTableName;
+                        this.query.append(this.databaseName).append(".").append(origTable).append(" to ").append(this.databaseName)
+                                .append(".").append(newTable);
                     } else {
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").append(databaseName)
                                 .append(".").append(newTableName);
@@ -1113,7 +1121,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
-                this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + child.getText()));
+                String tableName = child.getText();
+                if (tableName.contains(".")) {
+                    String[] parts = tableName.split("\\.");
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + parts[1]));
+                } else {
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + tableName));
+                }
             }
         }
     }
