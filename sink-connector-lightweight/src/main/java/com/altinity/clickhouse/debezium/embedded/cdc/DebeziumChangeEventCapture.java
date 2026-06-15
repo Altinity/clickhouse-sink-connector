@@ -6,6 +6,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserServic
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorErrorReporter;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -199,6 +200,13 @@ public class DebeziumChangeEventCapture {
         } catch (SQLException e) {
             log.error("Error creating Debezium storage database", e);
         }
+        try {
+            ErrorLogger.createErrorTable(systemDbConnection, config);
+        } catch (SQLException e) {
+            log.error("Error creating error table", e);
+        }
+        ConnectorErrorReporter.setReporter((error, sourceDatabase, query) ->
+                ReplicationStatusSingleton.getInstance().setLastErrorDetails(error, sourceDatabase, query));
         try {
             DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
@@ -506,7 +514,7 @@ public class DebeziumChangeEventCapture {
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
-        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        String errorTableName = ErrorLogger.getErrorTableName(config);
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -554,6 +562,8 @@ public class DebeziumChangeEventCapture {
                     ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
                         sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                    ReplicationStatusSingleton.getInstance().setLastErrorDetails(
+                            e.getMessage(), databaseName, clickHouseQuery.toString());
                 } catch (SQLException ex) {
                     log.error("Failed to log DDL error to ClickHouse", ex);
                 }

@@ -23,6 +23,25 @@ public class ErrorLogger {
     private static final String DEFAULT_ERROR_TABLE = "replica_source_error";
 
     /**
+     * Resolves the configured error table name, falling back to the default when unset.
+     *
+     * @param config the connector configuration
+     * @return the error table name
+     */
+    public static String getErrorTableName(ClickHouseSinkConnectorConfig config) {
+        if (config == null) {
+            return DEFAULT_ERROR_TABLE;
+        }
+        String errorTableName = config.getString(
+                ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        if (errorTableName == null || errorTableName.isEmpty()
+                || ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString().equals(errorTableName)) {
+            return DEFAULT_ERROR_TABLE;
+        }
+        return errorTableName;
+    }
+
+    /**
      * Creates the error table if it doesn't exist.
      *
      * @param connection The ClickHouse connection
@@ -38,10 +57,7 @@ public class ErrorLogger {
             throw new SQLException("Config cannot be null");
         }
         // Read error table name from config
-        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        if (errorTableName == null || errorTableName.isEmpty()) {
-            errorTableName = DEFAULT_ERROR_TABLE;
-        }
+        String errorTableName = getErrorTableName(config);
 
         String createTableQuery = String.format(
             "CREATE TABLE IF NOT EXISTS %s.%s (" +
@@ -88,6 +104,10 @@ public class ErrorLogger {
 
         if (error == null || error.isEmpty()) {
             error = "Unknown error";
+        }
+
+        if (errorTableName == null || errorTableName.isEmpty()) {
+            errorTableName = DEFAULT_ERROR_TABLE;
         }
 
         String insertQuery = String.format(

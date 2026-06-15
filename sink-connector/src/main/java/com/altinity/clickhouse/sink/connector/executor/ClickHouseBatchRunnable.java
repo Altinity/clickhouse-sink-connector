@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
+import com.altinity.clickhouse.sink.connector.common.ConnectorErrorReporter;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -294,8 +295,8 @@ public class ClickHouseBatchRunnable implements Runnable {
         String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        
+        String errorTableName = ErrorLogger.getErrorTableName(config);
+
         // Determine which mode we're in: hash-based routing or legacy
         boolean useHashRouting = (threadId >= 0 && routedRecords != null);
         useHashRouting = false;
@@ -759,6 +760,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     "", // No query field available
                     "", // No offset key field available
                     errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), databaseName, "");
             } else {
                 ErrorLogger.logError(dbCon,
                     String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
@@ -766,6 +768,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     "",
                     "", "",
                     errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), "", "");
             }
 
             Thread.sleep(ERROR_SLEEP_TIME_MS);

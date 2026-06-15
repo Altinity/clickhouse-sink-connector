@@ -174,4 +174,90 @@ public class ReplicationStatusSingleton {
     public String getGtid() {
         return this.status.getGtid();
     }
+
+    /**
+     * Sets the last error message.
+     *
+     * @param lastError the last error message.
+     */
+    public void setLastError(String lastError) {
+        this.status.setLastError(lastError);
+    }
+
+    /**
+     * Gets the last error message.
+     *
+     * @return the last error message.
+     */
+    public String getLastError() {
+        return this.status.getLastError();
+    }
+
+    /**
+     * Sets the timestamp of the last error.
+     *
+     * @param lastErrorTimestamp the last error timestamp in epoch milliseconds.
+     */
+    public void setLastErrorTimestamp(long lastErrorTimestamp) {
+        this.status.setLastErrorTimestamp(lastErrorTimestamp);
+    }
+
+    /**
+     * Gets the timestamp of the last error.
+     *
+     * @return the last error timestamp in epoch milliseconds.
+     */
+    public long getLastErrorTimestamp() {
+        return this.status.getLastErrorTimestamp();
+    }
+
+    /**
+     * Sets the source database associated with the last error.
+     *
+     * @param lastErrorSourceDatabase the source database name.
+     */
+    public void setLastErrorSourceDatabase(String lastErrorSourceDatabase) {
+        this.status.setLastErrorSourceDatabase(lastErrorSourceDatabase);
+    }
+
+    /**
+     * Gets the source database associated with the last error.
+     *
+     * @return the source database name.
+     */
+    public String getLastErrorSourceDatabase() {
+        return this.status.getLastErrorSourceDatabase();
+    }
+
+    /**
+     * Sets the query associated with the last error.
+     *
+     * @param lastErrorQuery the query string.
+     */
+    public void setLastErrorQuery(String lastErrorQuery) {
+        this.status.setLastErrorQuery(lastErrorQuery);
+    }
+
+    /**
+     * Gets the query associated with the last error.
+     *
+     * @return the query string.
+     */
+    public String getLastErrorQuery() {
+        return this.status.getLastErrorQuery();
+    }
+
+    /**
+     * Updates all last-error fields from a single error event.
+     *
+     * @param error the error message.
+     * @param sourceDatabase the source database name.
+     * @param query the query that caused the error.
+     */
+    public void setLastErrorDetails(String error, String sourceDatabase, String query) {
+        this.status.setLastError(error != null ? error : "");
+        this.status.setLastErrorTimestamp(System.currentTimeMillis());
+        this.status.setLastErrorSourceDatabase(sourceDatabase != null ? sourceDatabase : "");
+        this.status.setLastErrorQuery(query != null ? query : "");
+    }
 }
