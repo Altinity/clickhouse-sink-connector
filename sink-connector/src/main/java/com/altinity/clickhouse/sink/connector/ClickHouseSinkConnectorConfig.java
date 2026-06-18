@@ -212,7 +212,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      *
      * @return A new ConfigDef with all connector configuration definitions.
      */
-    public static ConfigDef newConfigDef() {
+    static ConfigDef newConfigDef() {
         return new ConfigDef()
 
                 // Config Group "Connector config"

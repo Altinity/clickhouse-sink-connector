@@ -13,10 +13,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -239,25 +236,13 @@ public class ClickHouseDebeziumEmbeddedApplication {
     }
 
     private static void loadEnvs() {
-        Map<String, String> envProperties = ClickHouseSinkConnectorConfig.newConfigDef().names()
-                                                                         .stream()
-                                                                         .map(key -> {
-                                                                             String value = getPropertyFromEnv(key);
-                                                                             return value == null ? null : new SimpleEntry<>(key, value);
-                                                                         })
-                                                                         .filter(Objects::nonNull)
-                                                                         .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
-
+        Map<String, String> envProperties = System.getenv().entrySet().stream()
+                                                  .collect(Collectors.toMap(
+                                                      entry -> entry.getKey().replace('_', '.').toLowerCase(),
+                                                      Map.Entry::getValue,
+                                                      (existing, replacement) -> existing // Merge rule for duplicate keys
+                                                  ));
         props.putAll(envProperties);
-    }
-
-    private static String getPropertyFromEnv(String propertyKey) {
-        String expectedEnvVar = propertyKey
-            .replace(".", "_")
-            .replaceAll("([A-Z])", "$1")
-            .toUpperCase();
-
-        return System.getenv(expectedEnvVar);
     }
 
     /**
