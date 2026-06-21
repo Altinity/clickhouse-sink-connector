@@ -188,28 +188,30 @@ public class DebeziumJdbcStorageOperations {
             log.warn("Error table query failed, returning in-memory status only", e);
         }
 
+        ReplicationStatusSingleton replicationStatus = ReplicationStatusSingleton.getInstance();
+
         JSONArray result = new JSONArray();
         JSONObject replicationLag = new JSONObject();
         replicationLag.put("Seconds_Behind_Source",
-                ReplicationStatusSingleton.getInstance().getReplicationLag() / 1000);
+                replicationStatus.getReplicationLag() / 1000);
         result.add(replicationLag);
 
         JSONObject replicationRunning = new JSONObject();
         replicationRunning.put("Replica_Running",
-                ReplicationStatusSingleton.getInstance().isReplicationRunning());
+                replicationStatus.isReplicationRunning());
         result.add(replicationRunning);
 
         JSONObject binlogFile = new JSONObject();
-        binlogFile.put("Binlog_File", ReplicationStatusSingleton.getInstance().getBinLogFile());
+        binlogFile.put("Binlog_File", replicationStatus.getBinLogFile());
         result.add(binlogFile);
 
         JSONObject binlogPosition = new JSONObject();
         binlogPosition.put("Binlog_Position",
-                ReplicationStatusSingleton.getInstance().getBinLogPosition());
+                replicationStatus.getBinLogPosition());
         result.add(binlogPosition);
 
         JSONObject gtid = new JSONObject();
-        gtid.put("GTID", ReplicationStatusSingleton.getInstance().getGtid());
+        gtid.put("GTID", replicationStatus.getGtid());
         result.add(gtid);
 
         JSONObject connectorId = new JSONObject();
@@ -229,16 +231,16 @@ public class DebeziumJdbcStorageOperations {
                 row.put(columnName, value);
             }
             result.add(row);
-        } else if (!ReplicationStatusSingleton.getInstance().getLastError().isEmpty()) {
+        } else if (!replicationStatus.getLastError().isEmpty()) {
             JSONObject lastError = new JSONObject();
-            lastError.put("error", ReplicationStatusSingleton.getInstance().getLastError());
-            lastError.put("error_timestamp", ReplicationStatusSingleton.getInstance().getLastErrorTimestamp());
+            lastError.put("error", replicationStatus.getLastError());
+            lastError.put("error_timestamp", replicationStatus.getLastErrorTimestamp());
             lastError.put("source_database",
-                    ReplicationStatusSingleton.getInstance().getLastErrorSourceDatabase());
-            lastError.put("database_query", ReplicationStatusSingleton.getInstance().getLastErrorQuery());
-            lastError.put("binlog_file", ReplicationStatusSingleton.getInstance().getBinLogFile());
-            lastError.put("binlog_position", ReplicationStatusSingleton.getInstance().getBinLogPosition());
-            lastError.put("gtid", ReplicationStatusSingleton.getInstance().getGtid());
+                    replicationStatus.getLastErrorSourceDatabase());
+            lastError.put("database_query", replicationStatus.getLastErrorQuery());
+            lastError.put("binlog_file", replicationStatus.getBinLogFile());
+            lastError.put("binlog_position", replicationStatus.getBinLogPosition());
+            lastError.put("gtid", replicationStatus.getGtid());
             lastError.put("offset_key", props.getProperty("name", ""));
             result.add(lastError);
         }

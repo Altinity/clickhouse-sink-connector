@@ -213,5 +213,5 @@ replication.history.database.name: "replication_history_db"
 #single.threaded: "true"
 
 # Error table for storing connector errors (similar to SHOW SLAVE STATUS last error)
-default.error.table: "replica_source_error"
-error.logging.enable: "true"
+#default.error.table: "altinity_sink_connector.replica_source_error"
+#error.logging.enable: "true"

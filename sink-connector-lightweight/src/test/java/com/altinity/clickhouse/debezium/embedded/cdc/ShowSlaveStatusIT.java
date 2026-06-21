@@ -2,7 +2,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
-import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;

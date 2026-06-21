@@ -559,7 +559,7 @@ public class DebeziumChangeEventCapture {
                 log.error("Error executing DDL", e);
                 // insert data into the error table
                 try {
-                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                   // ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
                         sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
                     ReplicationStatusSingleton.getInstance().setLastErrorDetails(

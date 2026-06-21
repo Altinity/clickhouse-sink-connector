@@ -2,15 +2,14 @@ package com.altinity.clickhouse.sink.connector.db;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.altinity.clickhouse.sink.connector.model.DBCredentials;
+
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.Map;
+
 
 /**
  * Static class to handle error logging in ClickHouse.

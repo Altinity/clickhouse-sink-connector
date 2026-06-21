@@ -165,7 +165,7 @@ clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_obj
 non.default.value: "true"
 
 # Enable replication mergetree history table.
-replication.history.enable: "true"
+replication.history.enable: "false"
 #replication.history.replication_log_only: "true"
 
 replication.history.table.name: "replication_history"
@@ -174,4 +174,6 @@ replication.history.database.name: "replication_history_db"
 # Single threaded mode.
 #single.threaded: "true"
 
+default.error.table: "replica_source_error"
+error.logging.enable: true
 connection.pool.disable: "true"
