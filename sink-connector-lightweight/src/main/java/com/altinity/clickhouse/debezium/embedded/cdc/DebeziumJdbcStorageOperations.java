@@ -41,6 +41,13 @@ public class DebeziumJdbcStorageOperations {
     private static final Logger log = LogManager.getLogger(
             DebeziumJdbcStorageOperations.class);
 
+    private static final String SECONDS_BEHIND_SOURCE_COL = "Seconds_Behind_Source";
+    private static final String REPLICA_RUNNING_COL = "Replica_Running";
+    private static final String BINLOG_FILE_COL = "Binlog_File";
+    private static final String BINLOG_POSITION_COL = "Binlog_Position";
+    private static final String GTID_COL = "GTID";
+    private static final String CONNECTOR_ID_COL = "Connector_Id";
+
     /**
      * Instance of DebeziumOffsetStorage for performing storage ops.
      */
@@ -192,30 +199,30 @@ public class DebeziumJdbcStorageOperations {
 
         JSONArray result = new JSONArray();
         JSONObject replicationLag = new JSONObject();
-        replicationLag.put("Seconds_Behind_Source",
+        replicationLag.put(SECONDS_BEHIND_SOURCE_COL,
                 replicationStatus.getReplicationLag() / 1000);
         result.add(replicationLag);
 
         JSONObject replicationRunning = new JSONObject();
-        replicationRunning.put("Replica_Running",
+        replicationRunning.put(REPLICA_RUNNING_COL,
                 replicationStatus.isReplicationRunning());
         result.add(replicationRunning);
 
         JSONObject binlogFile = new JSONObject();
-        binlogFile.put("Binlog_File", replicationStatus.getBinLogFile());
+        binlogFile.put(BINLOG_FILE_COL, replicationStatus.getBinLogFile());
         result.add(binlogFile);
 
         JSONObject binlogPosition = new JSONObject();
-        binlogPosition.put("Binlog_Position",
+        binlogPosition.put(BINLOG_POSITION_COL,
                 replicationStatus.getBinLogPosition());
         result.add(binlogPosition);
 
         JSONObject gtid = new JSONObject();
-        gtid.put("GTID", replicationStatus.getGtid());
+        gtid.put(GTID_COL, replicationStatus.getGtid());
         result.add(gtid);
 
         JSONObject connectorId = new JSONObject();
-        connectorId.put("Connector_Id", props.getProperty("name", ""));
+        connectorId.put(CONNECTOR_ID_COL, props.getProperty("name", ""));
         result.add(connectorId);
 
         if (errorRow != null && errorRow.next()) {
@@ -287,11 +294,11 @@ public class DebeziumJdbcStorageOperations {
                     .collect(Collectors.toList());
             JSONArray result = new JSONArray();
             JSONObject replicationLag = new JSONObject();
-            replicationLag.put("Seconds_Behind_Source",
+            replicationLag.put(SECONDS_BEHIND_SOURCE_COL,
                     ReplicationStatusSingleton.getInstance().getReplicationLag() / 1000);
             result.add(replicationLag);
             JSONObject replicationRunning = new JSONObject();
-            replicationRunning.put("Replica_Running",
+            replicationRunning.put(REPLICA_RUNNING_COL,
                     ReplicationStatusSingleton.getInstance().isReplicationRunning());
             result.add(replicationRunning);
             // Add Database name and table name.
