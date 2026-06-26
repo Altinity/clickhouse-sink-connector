@@ -2,614 +2,277 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
+import com.altinity.clickhouse.sink.connector.db.DDLSchemaChangeWaiter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
+import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
-import com.clickhouse.jdbc.ClickHouseConnection;
+import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import io.debezium.engine.spi.OffsetCommitPolicy;
-import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
-import org.apache.commons.lang3.tuple.Pair;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.ParseException;
 
+import javax.xml.transform.Source;
 import java.io.IOException;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.text.SimpleDateFormat;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
+
 /**
- * Setup Debezium engine with the configuration passed by the user
- * Create a separate thread pool to read the records
- * that are inserted from the setup function.
+ * Sets up Debezium engine with the configuration passed by the user,
+ * and creates a separate thread pool to read the records that are
+ * inserted from the setup function.
  */
 public class DebeziumChangeEventCapture {
 
-    private static final Logger log = LogManager.getLogger(DebeziumChangeEventCapture.class);
+    /**
+     * Logger for DebeziumChangeEventCapture class.
+     */
+    private static final Logger log = LogManager.getLogger(
+            DebeziumChangeEventCapture.class);
 
+    /**
+     * Executor for scheduling batch tasks.
+     */
     private ClickHouseBatchExecutor executor;
 
-    // Records grouped by Topic Name
+    /**
+     * Queue to hold records grouped by topic.
+     * Records grouped by Topic Name (used in legacy mode)
+     */
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
+    /**
+     * Queue to hold routed batches with thread assignment.
+     * Used for hash-based routing to ensure all records for the same table
+     * are processed by the same thread.
+     */
+    private LinkedBlockingQueue<RoutedBatch> routedRecords;
 
-    private BaseDbWriter writer = null;
+    /**
+     * Number of threads in the thread pool (for hash-based routing).
+     */
+    private int threadPoolSize;
 
+    /**
+     * Flag indicating if a new replacing merge tree engine is used.
+     */
     static public boolean isNewReplacingMergeTreeEngine = true;
 
-    private long replicationLag = 0;
-
-    private long lastRecordTimestamp = -1;
-
-    private boolean isReplicationRunning = false;
-
+    /**
+     * Executor service for single-thread Debezium event processing.
+     */
     final ExecutorService singleThreadDebeziumEventExecutor;
 
-    private String binLogFile = "";
-
-    private String binLogPosition = "";
-
-    private String gtid = "";
-
+    /**
+     * Debezium engine for capturing change events.
+     */
     DebeziumEngine<ChangeEvent<SourceRecord, SourceRecord>> engine;
 
-    // Keep one clickhouse connection.
-    private ClickHouseConnection conn;
+    /**
+     * Writer for single-threaded batch processing.
+     */
+    ClickHouseBatchWriter singleThreadedWriter;
 
+    /**
+     * JDBC storage operations for Debezium.
+     */
+    DebeziumJdbcStorageOperations debeziumJdbcStorageOperations;
+
+    /**
+     * Database writer instance.
+     */
+    BaseDbWriter writer;
+
+    /**
+     * Connection to the system database.
+     */
+    Connection systemDbConnection;
+
+    /**
+     * Connection to the replication history database.
+     */
+    Connection replicationHistoryDbConnection;
+
+    /**
+     * Last ignored DDL statement.
+     */
+    @Getter
+    @Setter
+    private String lastIgnoredDDL;
+
+    /**
+     * Constructor. Initializes the DebeziumChangeEventCapture by creating
+     * a single thread executor and initializing JDBC storage operations.
+     */
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
-    }
-
-
-    /**
-     * Function to perform DDL operation on the main thread.
-     * @param DDL DDL to be executed.
-     * @param props
-     * @param sr
-     * @param config
-     */
-    private void performDDLOperation(String DDL, Properties props, SourceRecord sr, ClickHouseSinkConnectorConfig config) {
-
-        String databaseName = "system";
-        if(sr != null && sr.key() != null) {
-            if(sr.key() instanceof Struct) {
-                Struct keyStruct = (Struct) sr.key();
-                String recordDbName = (String) keyStruct.get("databaseName");
-                if(recordDbName != null && recordDbName.isEmpty() == false) {
-                    databaseName = recordDbName;
-                }
-            }
-        }
-
-        if(writer == null) {
-
-            DBCredentials dbCredentials = parseDBConfiguration(config);
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName);
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName, dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config, conn);
-        }
-
-        StringBuffer clickHouseQuery = new StringBuffer();
-        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, databaseName);
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
-        ClickHouseAlterTable cat = new ClickHouseAlterTable();
-
-        if (checkIfDDLNeedsToBeIgnored(props, sr, isDropOrTruncate)) {
-            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-            return;
-        } else {
-            log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-        }
-
-        long currentTime = System.currentTimeMillis();
-        boolean ddlProcessingResult = true;
-        Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
-        try {
-            String formattedQuery = clickHouseQuery.toString().replaceAll(",$", "");
-            if (formattedQuery != null && formattedQuery.isEmpty() == false) {
-                if (formattedQuery.contains("\n")) {
-                    String[] queries = formattedQuery.split("\n");
-                    for (String query : queries) {
-                        if (query != null && query.isEmpty() == false) {
-                            log.info("ClickHouse DDL: " + query);
-                            cat.runQuery(query, writer.getConnection());
-                        }
-                    }
-                } else {
-                    log.info("ClickHouse DDL: " + formattedQuery);
-                    cat.runQuery(formattedQuery, writer.getConnection());
-                }
-            } else {
-                log.error("DDL translation failed: " + DDL);
-            }
-        } catch (Exception e) {
-            log.error("Error running DDL Query: " + e);
-            ddlProcessingResult = false;
-        }
-
-        try {
-            String clickHouseVersion = writer.getClickHouseVersion();
-            isNewReplacingMergeTreeEngine = new DBMetadata()
-                    .checkIfNewReplacingMergeTree(clickHouseVersion);
-        } catch (Exception e) {
-            log.error("Error retrieving version");
-        }
-
-        long elapsedTime = System.currentTimeMillis() - currentTime;
-        Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
+        this.debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
     }
 
     /**
-     * Function to process every change event record
-     * as received from Debezium
-     *
-     * @param record ChangeEvent Record
+     * Maximum number of retries for Debezium setup and other operations.
+     * Default value, can be overridden by errors.max.retries configuration.
      */
-    private ClickHouseStruct processEveryChangeRecord(Properties props, ChangeEvent<SourceRecord, SourceRecord> record,
-                                          DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config,
-                                          DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
-                                                  recordCommitter, boolean lastRecordInBatch) {
-        ClickHouseStruct chStruct = null;
-
-        try {
-
-            SourceRecord sr = record.value();
-            Struct struct = (Struct) sr.value();
-
-            if (struct == null) {
-                log.warn(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
-                return null;
-            }
-            if (struct.schema() == null) {
-                log.error("SCHEMA EMPTY");
-            }
-
-            List<Field> schemaFields = struct.schema().fields();
-            if (schemaFields == null) {
-                return null;
-            }
-            Field matchingDDLField = schemaFields.stream()
-                    .filter(f -> "DDL".equalsIgnoreCase(f.name()))
-                    .findAny()
-                    .orElse(null);
-            if (matchingDDLField != null) {
-                String DDL = (String) struct.get("ddl");
-                log.debug("Source DB DDL: " + DDL);
-
-
-                if (DDL != null && DDL.isEmpty() == false)
-                {
-                    log.info("***** DDL received, Flush all existing records");
-                    this.executor.shutdown();
-                    this.executor.awaitTermination(60, TimeUnit.SECONDS);
-
-                    performDDLOperation(DDL, props, sr, config);
-                    setupProcessingThread(config);
-                }
-
-            } else {
-                chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
-                try {
-                    if(chStruct != null) {
-                        this.replicationLag = chStruct.getReplicationLag();
-                        this.lastRecordTimestamp = chStruct.getTs_ms();
-                        this.binLogFile = chStruct.getFile();
-                        this.binLogPosition = String.valueOf(chStruct.getPos());
-                        this.gtid = String.valueOf(chStruct.getGtid());
-                    }
-                } catch(Exception e) {
-                    log.error("Error retrieving status metrics: Exception" + e.toString());
-                }
-            }
-
-        } catch (Exception e) {
-            log.error("Exception processing record", e);
-        }
-
-        return chStruct;
-    }
-
-    @VisibleForTesting
-    void setWriter(BaseDbWriter writer) {
-        this.writer = writer;
-    }
-
-    private boolean isSnapshotDDL(SourceRecord sr) {
-        boolean snapshotDDL = false;
-
-        if(sr.sourceOffset() != null) {
-            if (sr.sourceOffset().containsKey("snapshot")) {
-                snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
-            }
-        }
-
-        return snapshotDDL;
-    }
-    /***
-     * Function that checks if the DDL needs to be ignored.
-     * @param props Properties (passed by user)
-     * @param sr
-     * @return
-     */
-    private boolean checkIfDDLNeedsToBeIgnored(Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
-
-        String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
-        if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
-            log.debug("Ignoring DDL");
-            return true;
-        }
-
-        boolean isSnapshotDDL = isSnapshotDDL(sr);
-
-        String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
-        boolean enableSnapshotDDLPropertyFlag = false;
-        if(enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true" )) {
-            enableSnapshotDDLPropertyFlag = true;
-        }
-
-        String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
-        if(disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get()== true) {
-            log.debug("Ignoring Drop or Truncate");
-            return true;
-        }
-        if(isSnapshotDDL== true && enableSnapshotDDLPropertyFlag == false) {
-            // User wants to ignore snapshot
-            return true;
-        } else {
-            return false;
-        }
-
-    }
+    public static int MAX_RETRIES = 10;
 
     /**
-     * Function to create database for Debezium storage.
-     * @param config
+     * Sleep time (in milliseconds) between retries.
      */
-    private void createDatabaseForDebeziumStorage(ClickHouseSinkConnectorConfig config, Properties props) {
-        try {
-            DBCredentials dbCredentials = parseDBConfiguration(config);
-
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "system");
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                        "system", dbCredentials.getUserName(),
-                        dbCredentials.getPassword(), config, conn);
-
-            Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-            String databaseName = tableNameDatabaseName.getRight();
-
-            String createDbQuery = String.format("create database if not exists %s", databaseName);
-            log.info("CREATING DEBEZIUM STORAGE Database: " + createDbQuery);
-            writer.executeQuery(createDbQuery);
-
-        } catch(Exception e) {
-            log.error("Error creating Debezium storage database", e);
-        }
-    }
-
-    /**
-     * Function to create view for show_replica_status
-     * @param config
-     * @param props
-     */
-    private void createViewForShowReplicaStatus(ClickHouseSinkConnectorConfig config, Properties props) {
-        String view = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString());
-        if(view == null || view.isEmpty() == true) {
-            log.warn("Skipping creating view for replica_status as the query was not provided in configuration");
-            return;
-        }
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-
-        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                "system");
-        ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                "system", dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, conn);
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-
-        String tableName = tableNameDatabaseName.getLeft();
-        String dbName = tableNameDatabaseName.getRight();
-
-        String formattedView = String.format(view, dbName, dbName + "." + tableName);
-        // Remove quotes.
-        formattedView = formattedView.replace("\"", "");
-        try {
-            writer.executeQuery(formattedView);
-        } catch(Exception e) {
-            log.error("**** Error creating VIEW **** " + formattedView);
-        }
-    }
-
-    /**
-     *
-     * @param props
-     * @return
-     */
-    private Pair<String, String> getDebeziumStorageDatabaseName(Properties props) {
-
-
-        String tableName = props.getProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
-                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
-        // if tablename is dbname.tablename and contains a dot.
-        String databaseName = "system";
-        // split tablename with dot.
-        if(tableName.contains(".")) {
-            String[] dbTableNameArray = tableName.split("\\.");
-            if(dbTableNameArray.length >= 2) {
-                databaseName = dbTableNameArray[0].replace("\"", "");
-                tableName = dbTableNameArray[1].replace("\"", "");
-            }
-        }
-
-        return Pair.of(tableName, databaseName);
-    }
-
-    /**
-     * Function to get the status of Debezium storage.
-     * @param props
-     * @return
-     */
-    public String getDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props) throws Exception {
-        String response = "";
-
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-        String tableName = tableNameDatabaseName.getLeft();
-        String databaseName = tableNameDatabaseName.getRight();
-
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-
-        if (writer == null  || writer.getConnection().isClosed() == true) {
-            // Json error string
-            log.error("**** Connection to ClickHouse is not established, re-initiating ****");
-            String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName);
-            ClickHouseConnection conn = BaseDbWriter.createConnection(jdbcUrl, "Client_1",
-                    dbCredentials.getUserName(), dbCredentials.getPassword(), config);
-            writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                    databaseName, dbCredentials.getUserName(),
-                    dbCredentials.getPassword(), config, conn);
-        }
-        //DBCredentials dbCredentials = parseDBConfiguration(config);
-        String debeziumStorageStatusQuery = String.format("select * from %s limit 1", databaseName + "." + tableName);
-        ResultSet resultSet = writer.executeQueryWithResultSet(debeziumStorageStatusQuery);
-
-        if(resultSet != null) {
-            ResultSetMetaData md = resultSet.getMetaData();
-            int numCols = md.getColumnCount();
-            List<String> colNames = IntStream.range(0, numCols)
-                    .mapToObj(i -> {
-                        try {
-                            return md.getColumnName(i + 1);
-                        } catch (SQLException e) {
-                            e.printStackTrace();
-                            return "?";
-                        }
-                    })
-                    .collect(Collectors.toList());
-
-            JSONArray result = new JSONArray();
-            JSONObject replicationLag = new JSONObject();
-            replicationLag.put("Seconds_Behind_Source", this.replicationLag / 1000);
-            result.add(replicationLag);
-
-            JSONObject replicationRunning = new JSONObject();
-            replicationRunning.put("Replica_Running", this.isReplicationRunning);
-            result.add(replicationRunning);
-            // Add Database name and table name.
-            JSONObject dbName = new JSONObject();
-
-            dbName.put("Database", dbCredentials.getDatabase());
-            result.add(dbName);
-
-            while (resultSet.next()) {
-                JSONObject row = new JSONObject();
-                colNames.forEach(cn -> {
-                    try {
-                        row.put(cn, resultSet.getObject(cn));
-                    } catch (SQLException e) {
-                        e.printStackTrace();
-                    }
-                });
-                result.add(row);
-            }
-
-            response = result.toJSONString();
-        }
-        return response;
-    }
-
-    /**
-     * Function to get the latest timestamp from Debezium storage.
-     */
-    public long getLatestRecordTimestamp(ClickHouseSinkConnectorConfig config, Properties props) throws SQLException {
-
-        long result = -1;
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-        String tableName = tableNameDatabaseName.getLeft();
-        String databaseName = tableNameDatabaseName.getRight();
-
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                databaseName, dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, this.conn);
-
-        String latestRecordTs = new DebeziumOffsetStorage().getDebeziumLatestRecordTimestamp(props, writer);
-
-        // Convert date string from  2024-01-26 21:57:47 format to milliseconds.
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        Date date = null;
-        try {
-            date = sdf.parse(latestRecordTs);
-            this.lastRecordTimestamp = date.getTime();
-        } catch ( java.text.ParseException e) {
-            log.error("Error parsing date", e);
-        }
-
-        // Convert from date to long milliseconds
-        if(date != null) {
-            result = date.getTime();
-        }
-        return result;
-    }
-    /**
-     * Function to update the status of Debezium storage.
-     *
-     * @param props
-     * @param binlogFile
-     * @param binLogPosition
-     * @param gtid
-     */
-    public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String binlogFile, String binLogPosition, String gtid) throws SQLException, ParseException {
-
-
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-        String tableName = tableNameDatabaseName.getLeft();
-        String databaseName = tableNameDatabaseName.getRight();
-
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                databaseName, dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
-
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateBinLogInformation(offsetValue,
-                binlogFile, binLogPosition, gtid);
-
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
-                System.currentTimeMillis());
-
-    }
-
-    /**
-     * Function to update the status of Debezium storage (LSN).
-     * @param config
-     * @param props
-     * @param lsn
-     * @throws SQLException
-     * @throws ParseException
-     */
-    public void updateDebeziumStorageStatus(ClickHouseSinkConnectorConfig config, Properties props,
-                                            String lsn) throws SQLException, ParseException {
-
-
-        Pair<String, String> tableNameDatabaseName = getDebeziumStorageDatabaseName(props);
-        String tableName = tableNameDatabaseName.getLeft();
-        String databaseName = tableNameDatabaseName.getRight();
-        DBCredentials dbCredentials = parseDBConfiguration(config);
-
-        BaseDbWriter writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
-                databaseName, dbCredentials.getUserName(),
-                dbCredentials.getPassword(), config, this.conn);
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, writer);
-
-        String offsetKey = new DebeziumOffsetStorage().getOffsetKey(props);
-        String updateOffsetValue = new DebeziumOffsetStorage().updateLsnInformation(offsetValue,
-                Long.parseLong(lsn));
-
-        new DebeziumOffsetStorage().deleteOffsetStorageRow(offsetKey, props, writer);
-        new DebeziumOffsetStorage().updateDebeziumStorageRow(writer, tableName, offsetKey, updateOffsetValue,
-                System.currentTimeMillis());
-
-    }
-
-    public static int MAX_RETRIES = 25;
     public static int SLEEP_TIME = 10000;
 
+    /**
+     * This field tracks how many times an operation has been retried.
+     */
     public int numRetries = 0;
 
     /**
-     *
-     * @param props
-     * @param debeziumRecordParserService
-     * @param config
-     * @throws IOException
-     * @throws ClassNotFoundException
+     * Starting sequence number for versioning.
      */
-    public void setupDebeziumEventCapture(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                                          ClickHouseSinkConnectorConfig config) throws IOException, ClassNotFoundException {
+    public static final long SEQUENCE_START = 1000000000;
 
-        createDatabaseForDebeziumStorage(config, props);
+    /**
+    * Initial starting sequence number.
+    */
+    public static final long SEQUENCE_START_INITIAL = 500000000;
+    
+    /**
+         * Global sequence number.
+    */
+    public static long sequenceNumber = SEQUENCE_START;
+
+
+    /**
+     * Sets up the Debezium event capture engine using the provided properties,
+     * Debezium record parser service, and connector configuration.
+     *
+     * @param props                       The connector properties.
+     * @param debeziumRecordParserService The service to parse change records.
+     * @param config                      The ClickHouse sink connector config.
+     * @throws IOException            If an I/O error occurs.
+     * @throws ClassNotFoundException If a required class is not found.
+     */
+    public void setupDebeziumEventCapture(Properties props,
+                                          DebeziumRecordParserService debeziumRecordParserService,
+                                          ClickHouseSinkConnectorConfig config)
+            throws IOException, ClassNotFoundException {
+
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        systemDbConnection = setSystemDbConnection(dbCredentials, config);
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
+        }
+
+        try {
+            this.debeziumJdbcStorageOperations.createDatabaseForDebeziumStorage(systemDbConnection, props);
+        } catch (SQLException e) {
+            log.error("Error creating Debezium storage database", e);
+        }
+        try {
+            DBMetadata dbMetadata = new DBMetadata(config);
+            String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
+            isNewReplacingMergeTreeEngine = new DBMetadata(config).checkIfNewReplacingMergeTree(clickHouseVersion);
+        } catch (Exception e) {
+            log.error("Error retrieving version", e);
+        }
+
         // This is required for Debezium JDBC storage to identify the clickhouse driver.
         // when it's bundled as a shaded JAR.
-        Class chDriver = Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
-        // Create the engine with this configuration ...
+        Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+
         try {
-            DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder = DebeziumEngine.create(Connect.class);
+            DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
+                    DebeziumEngine.create(Connect.class);
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
-                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter) throws InterruptedException {
+                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter)
+                        throws InterruptedException {
 
-                    List<ClickHouseStruct> batch = new ArrayList<ClickHouseStruct>();
-                    for(int i = 0; i < list.size(); i++) {
+                    if(list.isEmpty()) {
+                        return;
+                    }
+
+                    ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
+                    long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
+                    long sequenceStartTime = debeziumTsMs ;
+                    
+                    List<ClickHouseStruct> batch = new ArrayList<>();
+                    for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
                         boolean lastRecordInBatch = false;
-                        if(i == list.size() - 1) {
+                        if (i == list.size() - 1) {
                             lastRecordInBatch = true;
                         }
-                        ClickHouseStruct chStruct = processEveryChangeRecord(props, record, debeziumRecordParserService, config, recordCommitter, lastRecordInBatch);
-                        if(chStruct != null) {
+                        long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
+                        int diff = (int) ((recordTs - sequenceStartTime) / 1000);
+                        if (diff > 1) {
+                            sequenceNumber = SEQUENCE_START;
+                            sequenceStartTime = recordTs;
+                        } else
+                            sequenceNumber++;
+
+                        long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+
+                        ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
+                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
+                        if (chStruct != null) {
                             batch.add(chStruct);
                         }
                     }
-                        // Add sequence number.
-                    addVersion(batch);
+                    // Add sequence number.
+                    //addVersion(batch);
 
-
-                    if(batch.size() > 0) {
-                        appendToRecords(batch);
+                    if (batch.size() > 0) {
+                        appendToRecords(batch, config);
                     }
                 }
             });
             this.engine = changeEventBuilder
-                    .using(new DebeziumConnectorCallback()).using(new DebeziumEngine.CompletionCallback() {
+                    .using(new DebeziumConnectorCallback())
+                    .using(new DebeziumEngine.CompletionCallback() {
                         @Override
-                        public void handle(boolean b, String s, Throwable throwable) {
-                            if (b == false) {
-
-                                log.error("Error starting connector" + throwable + " Message:" + s);
-                                if(throwable != null && throwable.getCause() != null && throwable.getCause().getLocalizedMessage() != null)
-                                    log.error("Error stating connector: Cause" + throwable.getCause().getLocalizedMessage());
-
+                        public void handle(boolean success, String message, Throwable throwable) {
+                            if (success == false) {
+                                log.error("Error starting connector" + throwable + " Message:" + message);
+                                if (throwable != null && throwable.getCause() != null &&
+                                        throwable.getCause().getLocalizedMessage() != null)
+                                    log.error("Error stating connector: Cause" +
+                                            throwable.getCause().getLocalizedMessage());
                                 log.error("Retrying - try number:" + numRetries);
                                 if (numRetries++ <= MAX_RETRIES) {
                                     try {
@@ -628,86 +291,130 @@ public class DebeziumChangeEventCapture {
                             }
                             log.debug("Completion callback");
                         }
-
-                    }).using(
-                            new DebeziumEngine.ConnectorCallback() {
-                                @Override
-                                public void connectorStarted() {
-                                    isReplicationRunning = true;
-                                    log.debug("Connector started");
-                                    // Create view.
-                                    createViewForShowReplicaStatus(config, props);
-                                }
-
-                                @Override
-                                public void connectorStopped() {
-                                    isReplicationRunning = false;
-                                    log.debug("Connector stopped");
+                    })
+                    .using(new DebeziumEngine.ConnectorCallback() {
+                        @Override
+                        public void connectorStarted() {
+                            ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+                            log.debug("Connector started");
+                            // Create view.
+                            try {
+                                DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                                debeziumJdbcStorageOperations.createViewForShowReplicaStatus(systemDbConnection, config, props);
+                            } catch (Exception e) {
+                                log.error("Error creating view for replica status", e);
+                            }
+                            try {
+                                DebeziumJdbcStorageOperations debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
+                                debeziumJdbcStorageOperations.createSchemaHistoryTable(systemDbConnection, props);
+                            } catch (Exception e) {
+                                log.error("Error creating schema history table", e);
+                            }
+                            // If replication history is enabled, create the history table.
+                            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                                try {
+                                    ClickHouseAutoCreateTable clickHouseAutoCreateTable = new ClickHouseAutoCreateTable();
+                                    String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
+                                    String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
+                                    clickHouseAutoCreateTable.createHistoryDatabase(binlogHistoryDatabase, systemDbConnection, config);
+                                    clickHouseAutoCreateTable.createHistoryTable(binlogHistoryTable, binlogHistoryDatabase, systemDbConnection, config);
+                                } catch (Exception e) {
+                                    log.error("Error creating history table", e);
                                 }
                             }
-                    )
-                    //.build();
-                    .using(OffsetCommitPolicy.always()).build();
+                        }
+
+                        @Override
+                        public void connectorStopped() {
+                            ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);
+                            log.debug("Connector stopped");
+                        }
+                    })
+                    .using(OffsetCommitPolicy.always())
+                    .build();
             singleThreadDebeziumEventExecutor.submit(() -> {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
+                    Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
+
                     engine.run();
                 } catch (Exception e) {
                     log.error("Debezium event capture starting Exception", e);
                 }
-
             });
-            //engine.run();
-
         } catch (Exception e) {
             log.error("Exception", e);
-            //   throw new RuntimeException(e);
-            if(this.engine != null) {
-                this.engine.close();;
+            if (this.engine != null) {
+                this.engine.close();
             }
         }
-
     }
 
     /**
-     * Setup Debezium engine
+     * Sets up the Debezium engine and processing thread.
      *
-     * @param props
-     * @param debeziumRecordParserService
+     * @param props                       The connector properties.
+     * @param debeziumRecordParserService The service to parse change events.
+     * @param forceStart                  If true, forces the engine to start.
+     * @throws IOException            If an I/O error occurs.
+     * @throws ClassNotFoundException If a required class is not found.
      */
-    public void setup(Properties props, DebeziumRecordParserService debeziumRecordParserService,
-                      DDLParserService ddlParserService, boolean forceStart) throws IOException, ClassNotFoundException {
+    public void setup(Properties props,
+                      DebeziumRecordParserService debeziumRecordParserService,
+                      boolean forceStart)
+            throws IOException, ClassNotFoundException {
 
         // Check if max queue size was defined by the user.
-        if(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
+        if (props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
             int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
             this.records = new LinkedBlockingQueue<>(maxQueueSize);
         } else {
             this.records = new LinkedBlockingQueue<>();
         }
 
+        try {
+            if (props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()) != null) {
+                Integer maxRetries = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString()));
+                DBMetadata.setMaxRetries(maxRetries);
+                MAX_RETRIES = maxRetries;  // Update the static MAX_RETRIES for Debezium setup and DDL operations
+            }
+        } catch (Exception e) {
+            log.error("Error retrieving max retries", e);
+        }
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+        
+        // Log if replication history mode is enabled
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            log.info("************** HISTORY MODE ENABLED **************");
+            log.info("*************only history will be tracked ***************");
+        }
+        
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
                 props.getProperty(ClickHouseSinkConnectorConfigVariables.METRICS_ENDPOINT_PORT.toString()));
 
-        // Start debezium event loop if its requested from REST API.
-        if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString()) || forceStart) {
+        // Start Debezium event loop if it is requested from REST API.
+        if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
+                || forceStart) {
             this.setupProcessingThread(config);
             setupDebeziumEventCapture(props, debeziumRecordParserService, config);
         } else {
-            log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() + " variable set to true, Replication is skipped, use sink-connector-client to start replication");
+            log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() +
+                    " variable set to true, Replication is skipped, use sink-connector-client to start replication");
         }
     }
 
+    /**
+     * Stops the Debezium engine and shuts down all executor services.
+     *
+     * @throws IOException If an I/O error occurs during shutdown.
+     */
     public void stop() throws IOException {
-
-
         try {
             if (this.executor != null) {
                 this.executor.shutdown();
                 this.executor.awaitTermination(60, TimeUnit.SECONDS);
             }
-        } catch(Exception e) {
+        } catch (Exception e) {
             log.error("Error stopping executor", e);
         }
 
@@ -724,38 +431,19 @@ public class DebeziumChangeEventCapture {
             if (this.engine != null) {
                 this.engine.close();
             }
-        } catch(Exception e) {
+        } catch (Exception e) {
             log.error("Error stopping debezium engine", e);
-        }
-
-
-        try {
-            if (this.conn != null) {
-                this.conn.close();
-            }
-        } catch(Exception e) {
-            log.error("Error closing clickhouse connection", e);
         }
 
         Metrics.stop();
     }
 
-    public long getReplicationLag() {
-        return this.replicationLag;
-    }
-
-    public long getReplicationLagInSecs() {
-        return this.replicationLag / 1000;
-    }
-
-    public long getLastRecordTimestamp() {
-        return this.lastRecordTimestamp;
-    }
-
-    public boolean isReplicationRunning() {
-        return this.isReplicationRunning;
-    }
-
+    /**
+     * Parses the database configuration from the connector configuration.
+     *
+     * @param config The ClickHouse sink connector configuration.
+     * @return A DBCredentials object with the database connection details.
+     */
     DBCredentials parseDBConfiguration(ClickHouseSinkConnectorConfig config) {
         DBCredentials dbCredentials = new DBCredentials();
 
@@ -769,66 +457,576 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Function to setup separate processing thread/thread pool.
+     * Function to perform DDL operation on the main thread.
      *
-     * @param config
+     * @param DDL             The DDL statement to be executed.
+     * @param props           The connector properties.
+     * @param sr              The source record.
+     * @param config          The connector configuration.
+     * @param recordCommitter The record committer for offset management.
+     * @param cdcRecord       The CDC change event record.
+     * @param lastRecordInBatch True if this is the last record in the batch.
+     */
+    private void performDDLOperation(String DDL, Properties props, SourceRecord sr,
+                                     ClickHouseSinkConnectorConfig config,
+                                     DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
+                                     ChangeEvent<SourceRecord, SourceRecord> cdcRecord,
+                                     boolean lastRecordInBatch, ClickHouseStruct chStruct) {
+        String databaseName = getDatabaseName(sr);
+        // Get source timezone from config
+        String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+        // Get server timezone from config
+        String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+
+        // if serverTimezone is empty default to UTC.
+//        if(serverTimeZone.isEmpty()) {
+//            serverTimeZone = "UTC";
+//        }
+        // If replication histry is enabled, set database name to the replication history database name
+        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
+        StringBuffer clickHouseQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+
+        if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
+            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
+            return;
+        }
+
+        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
+        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+
+
+        log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
+        // Use the configured MAX_RETRIES value for DDL operations
+        int MAX_DDL_RETRIES = MAX_RETRIES;
+        int SLEEP_TIME = 10000;
+        int numRetries = 0;
+
+        // Check if configuration is set to retry DDL
+        String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
+        String errorTableName = props.getProperty(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+        boolean retryDDLProperty = false;
+        if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
+            retryDDLProperty = true;
+        }
+
+        while (numRetries < MAX_DDL_RETRIES) {
+            try {
+
+                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
+                    executeDDL(clickHouseQuery.toString(), writer, config);
+
+                // Invalidate cached DbWriter for this table so that subsequent inserts
+                // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
+                try {
+                    String tableName = getTableName(sr);
+                    if (tableName != null) {
+                        CacheInvalidationManager.getInstance().invalidateTable(databaseName + "." + tableName);
+                    }
+                } catch (Exception e) {
+                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                }
+
+                try {
+                    // if replication history is enabled, add to the binlog history table.
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+                        String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+                        BinLogHistory binLogHistory = new BinLogHistory();
+                        // Add the chStruct to the list
+                        List<ClickHouseStruct> currentBatch = new ArrayList<>();
+                        currentBatch.add(chStruct);
+                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, 
+                        currentBatch, sourceTimeZone, serverTimeZone);
+                    }
+                } catch (Exception e) {
+                    log.error("Error adding DDL records to history table", e);
+                }
+
+                DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
+                break;
+            } catch (Exception e) {
+                log.error("Error executing DDL", e);
+                // insert data into the error table
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, e.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
+                if (retryDDLProperty == false) {
+                    break;
+                }
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException ex) {
+                    log.error("Error sleeping", ex);
+                }
+                numRetries++;
+            }
+            if (numRetries >= MAX_DDL_RETRIES) {
+                throw new RuntimeException("Max retries exceeded for DDL");
+            }
+        }
+        updateMetrics(DDL);
+    }
+
+    /**
+     * Sets up the system database connection using the provided database
+     * credentials and connector configuration.
+     *
+     * @param dbCredentials The database credentials.
+     * @param config        The ClickHouse sink connector configuration.
+     * @return The system database {@link Connection}.
+     */
+    private Connection setSystemDbConnection(DBCredentials dbCredentials, ClickHouseSinkConnectorConfig config) {
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
+                dbCredentials.getPort(), BaseDbWriter.SYSTEM_DB);
+
+        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
+        writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
+                BaseDbWriter.SYSTEM_DB, dbCredentials.getUserName(), dbCredentials.getPassword(),
+                config, conn);
+        return conn;
+    }
+
+    /**
+     * Sets up the replication history database connection using the provided database
+     * credentials and connector configuration.
+     *
+     * @param dbCredentials The database credentials.
+     * @param config        The ClickHouse sink connector configuration.
+     * @return The replication history database {@link Connection}.
+     */
+    private Connection setReplicationHistoryDbConnection(DBCredentials dbCredentials, ClickHouseSinkConnectorConfig config) {
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
+                dbCredentials.getPort(), config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()));
+        return BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(), 
+                config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString()), config);
+    }
+
+    /**
+     * Function to get the database name from the SourceRecord.
+     * <p>
+     * If the database name is not present in the SourceRecord, then the
+     * database name is set to "system". Also, if a database is overridden
+     * in the configuration, then the database name is set to the overridden
+     * database name.
+     * </p>
+     *
+     * @param sr The source record.
+     * @return The database name.
+     */
+    private String getDatabaseName(SourceRecord sr) {
+        if (sr != null && sr.key() instanceof Struct) {
+            String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
+            if (recordDbName != null && !recordDbName.isEmpty()) {
+                return recordDbName;
+            }
+        }
+        return "system";
+    }
+
+    /**
+     * Function to get the table name from the SourceRecord.
+     *
+     * @param sr The source record.
+     * @return The table name, or null if not found.
+     */
+    private String getTableName(SourceRecord sr) {
+        if (sr != null && sr.key() instanceof Struct) {
+            try {
+                String tableName = (String) ((Struct) sr.key()).get("tableName");
+                if (tableName != null && !tableName.isEmpty()) {
+                    return tableName;
+                }
+            } catch (Exception e) {
+                // tableName field may not exist in the struct
+                log.debug("tableName field not found in source record key");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Executes the given DDL query by splitting it into individual queries
+     * and executing each one.
+     *
+     * @param clickHouseQuery The DDL query string.
+     * @param writer          The {@link BaseDbWriter} used to execute the query.
+     * @throws SQLException If a database access error occurs.
+     */
+    private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
+        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+        DBMetadata dbMetadata = new DBMetadata(config);
+        DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter();
+        String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
+        for (String query : queries) {
+            if (!query.isEmpty()) {
+                log.info("ClickHouse DDL: " + query);
+                dbMetadata.executeSystemQuery(writer.getConnection(), query);
+                // Wait for schema change to become visible in system.columns
+                // before cache invalidation proceeds. Without this, the batch
+                // insert thread may rebuild its column metadata cache before
+                // the ALTER TABLE has propagated, silently dropping values
+                // for newly added columns. See GitHub issue #1222.
+                schemaWaiter.waitForSchemaVisibility(writer.getConnection(), query);
+            }
+        }
+    }
+
+
+    /**
+     * Updates the DDL metrics using the Metrics class.
+     *
+     * @param DDL The DDL statement that was executed.
+     */
+    private void updateMetrics(String DDL) {
+        long currentTime = System.currentTimeMillis();
+        boolean ddlProcessingResult = true;
+        Metrics.updateDdlMetrics(DDL, currentTime, 0, ddlProcessingResult);
+
+        long elapsedTime = System.currentTimeMillis() - currentTime;
+        Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
+    }
+
+    /**
+     * Processes every change event record as received from Debezium.
+     * <p>
+     * If the record contains a DDL field, the DDL is processed; otherwise,
+     * the record is parsed into a {@link ClickHouseStruct}. Also updates replication
+     * status metrics.
+     * </p>
+     *
+     * @param props                       The connector properties.
+     * @param record                      The change event record.
+     * @param debeziumRecordParserService The service to parse change events.
+     * @param config                      The connector configuration.
+     * @param recordCommitter             The record committer for offset management.
+     * @param lastRecordInBatch           True if this is the last record in the batch.
+     * @return A {@link ClickHouseStruct} representing the processed record,
+     *         or null if the record is invalid.
+     */
+    private ClickHouseStruct processEveryChangeRecord(Properties props,
+                                                      ChangeEvent<SourceRecord, SourceRecord> record,
+                                                      DebeziumRecordParserService debeziumRecordParserService,
+                                                      ClickHouseSinkConnectorConfig config,
+                                                      DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
+                                                      boolean lastRecordInBatch,
+                                                      long sequenceNumber) {
+        ClickHouseStruct chStruct = null;
+
+        try {
+            SourceRecord sr = record.value();
+            Struct struct = (Struct) sr.value();
+
+            if (struct == null) {
+                log.debug(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                return null;
+            }
+            if (struct.schema() == null) {
+                log.error("SCHEMA EMPTY");
+            }
+
+            java.util.List<Field> schemaFields = struct.schema().fields();
+            if (schemaFields == null) {
+                return null;
+            }
+            Field matchingDDLField = schemaFields.stream()
+                    .filter(f -> "DDL".equalsIgnoreCase(f.name()))
+                    .findAny()
+                    .orElse(null);
+            if (matchingDDLField != null) {
+                String DDL = (String) struct.get("ddl");
+                log.debug("Source DB DDL: " + DDL);
+
+                if (DDL != null && !DDL.isEmpty()) {
+                    log.info("***** DDL received, Flush all existing records");
+                    this.executor.pause();
+
+                    Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
+
+                    ClickHouseStruct ddlStruct = new ClickHouseStruct();
+                    ddlStruct.setAdditionalMetaData(sourceObjStruct);
+                    ddlStruct.setSequenceNumber(sequenceNumber);
+                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
+                    this.executor.resume();
+                }
+            } else {
+                chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                chStruct.setSequenceNumber(sequenceNumber);
+                try {
+                    if (chStruct != null) {
+                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
+                        rss.setReplicationLag(chStruct.getReplicationLag());
+                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
+                        rss.setBinLogFile(chStruct.getFile());
+                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
+                        rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    }
+                } catch (Exception e) {
+                    log.error("Error retrieving status metrics: Exception" + e.toString());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Exception processing record", e);
+        }
+
+        return chStruct;
+    }
+
+    /**
+     * Sets the writer for testing purposes.
+     *
+     * @param writer The {@link BaseDbWriter} to be set.
+     */
+    @VisibleForTesting
+    void setWriter(BaseDbWriter writer) {
+        this.writer = writer;
+    }
+
+    /**
+     * Determines whether the given SourceRecord represents a snapshot DDL.
+     *
+     * @param sr The source record.
+     * @return true if the record is a snapshot DDL; false otherwise.
+     */
+    private boolean isSnapshotDDL(SourceRecord sr) {
+        boolean snapshotDDL = false;
+
+        if (sr.sourceOffset() != null) {
+            if (sr.sourceOffset().containsKey("snapshot")) {
+                String snapshotMode = (String) sr.sourceOffset().get("snapshot");
+                if (snapshotMode.equalsIgnoreCase("INITIAL")) {
+                    snapshotDDL = true;
+                }
+                // snapshotDDL = (Boolean) sr.sourceOffset().get("snapshot");
+            }
+        }
+
+        return snapshotDDL;
+    }
+
+    public boolean checkDDLAgainstRegexPatterns(String DDL) {
+        IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
+        List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
+        for (String regex : ignoreDDLRegexList) {
+            Pattern p = Pattern.compile(regex);
+            Matcher m = p.matcher(DDL);
+            if (m.find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
+        String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
+        if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
+            log.debug("Ignoring DDL");
+            return true;
+        }
+
+        boolean isSnapshotDDL = isSnapshotDDL(sr);
+
+        String enableSnapshotDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL);
+        boolean enableSnapshotDDLPropertyFlag = false;
+        if (enableSnapshotDDLProperty != null && enableSnapshotDDLProperty.equalsIgnoreCase("true")) {
+            enableSnapshotDDLPropertyFlag = true;
+        }
+
+        // Also if the DDL matches the regex, then ignore it.
+        String ignoreDDLRegexProperty = props.getProperty(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX);
+        // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipe(##).
+        // Example: ^ALTER TABLE .* ADD COLUMN .*##^ALTER TABLE .* DROP COLUMN .*##^ALTER TABLE .* MODIFY COLUMN .*
+        // Separate the list.
+        if (ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
+            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
+            for (String regex : separatedIgnoreDDLRegexList) {
+                Pattern p = Pattern.compile(regex);
+                Matcher m = p.matcher(DDL);
+                if (m.find()) {
+                    lastIgnoredDDL = DDL;
+                    log.info("Ignoring DDL: " + DDL + " as it matches the regex: " + regex);
+                    return true;
+                }
+            }
+        }
+
+        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        if (checkDDLAgainstRegexPatterns(DDL)) {
+            return true;
+        }
+
+        String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+        if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get() == true) {
+            log.debug("Ignoring Drop or Truncate");
+            return true;
+        }
+        if (isSnapshotDDL == true && enableSnapshotDDLPropertyFlag == false) {
+            // User wants to ignore snapshot
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Sets up a separate processing thread or thread pool based on the connector configuration.
+     *
+     * @param config The ClickHouse sink connector configuration.
      */
     private void setupProcessingThread(ClickHouseSinkConnectorConfig config) {
-
-        // Setup separate thread to read messages from shared buffer.
-        // this.records = new ConcurrentLinkedQueue<>();
-        //this.runnable = new ClickHouseBatchRunnable(this.records, config, new HashMap());
-        ThreadFactory namedThreadFactory =
-                new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
-        this.executor = new ClickHouseBatchExecutor(config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()), namedThreadFactory);
-        for(int i = 0; i < config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString()); i++) {
-            this.executor.scheduleAtFixedRate(new ClickHouseBatchRunnable(this.records, config, new HashMap()), 0,
-                    config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            log.info("********* Running in Single Threaded mode *********");
+            singleThreadedWriter = new ClickHouseBatchWriter(config, new HashMap<>());
+            return;
         }
-        //this.executor.scheduleAtFixedRate(this.runnable, 0, config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), TimeUnit.MILLISECONDS);
+        
+        ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
+        this.threadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+        this.executor = new ClickHouseBatchExecutor(this.threadPoolSize, namedThreadFactory);
+        
+        // Use hash-based routing if we have multiple threads
+        if (this.threadPoolSize > 1) {
+            log.info("********* Using hash-based routing with {} threads *********", this.threadPoolSize);
+            int maxQueueSize = config.getInt(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
+            for (int i = 0; i < this.threadPoolSize; i++) {
+                this.executor.scheduleAtFixedRate(
+                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
+                        TimeUnit.MILLISECONDS);
+            }
+        } else {
+            // Single thread - use legacy mode
+            log.info("********* Using legacy mode with single thread *********");
+            for (int i = 0; i < this.threadPoolSize; i++) {
+                this.executor.scheduleAtFixedRate(
+                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        0, 
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), 
+                        TimeUnit.MILLISECONDS);
+            }
+        }
     }
 
-    private void appendToRecords(List<ClickHouseStruct> convertedRecords) {
-
-        synchronized (this.records) {
-            this.records.add(convertedRecords);
-        }
-
-
-    }
-
-    public static final long SEQUENCE_START = 1000000000;
-    public static final long SEQUENCE_START_INITIAL = 500000000;
-
-    public static long sequenceNumber = SEQUENCE_START;
     /**
-     * Function to add version to every record.
-     * @param chStructs
+     * Appends the given records to the processing queue.
+     *
+     * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     * @param config           The connector configuration.
+     */
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
+        // If config is set to single threaded.
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            singleThreadedWriter.persistRecords(convertedRecords);
+        } else if (this.threadPoolSize > 1 && this.routedRecords != null) {
+            // Hash-based routing mode: group records by table and route to specific threads
+            appendToRecordsWithHashRouting(convertedRecords);
+        } else {
+            // Legacy mode: single queue
+            synchronized (this.records) {
+                try {
+                    int remainingCapacity = this.records.remainingCapacity();
+                    int currentSize = this.records.size();
+                    int totalCapacity = remainingCapacity + currentSize;
+                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                        log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                    }
+                    if (remainingCapacity == 0) {
+                        log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
+                    }
+                    this.records.put(convertedRecords);
+                }catch(Exception e){
+                    log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Appends records using hash-based routing.
+     * Groups records by table and assigns each group to a specific thread.
+     *
+     * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     */
+    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords) {
+        // Group records by routing key (database.table)
+        Map<String, List<ClickHouseStruct>> routingGroups = new HashMap<>();
+        
+        for (ClickHouseStruct record : convertedRecords) {
+            String routingKey = RoutedBatch.createRoutingKey(record.getTopic());
+            routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
+        }
+        
+        // Create a RoutedBatch for each group and add to queue
+        synchronized (this.routedRecords) {
+            try {
+                int remainingCapacity = this.routedRecords.remainingCapacity();
+                int currentSize = this.routedRecords.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Routed queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                }
+                if (remainingCapacity == 0) {
+                    log.warn("Routed queue is full! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
+                }
+                
+                for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
+                    String routingKey = entry.getKey();
+                    List<ClickHouseStruct> batch = entry.getValue();
+                    
+                    // Calculate which thread should process this table
+                    int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
+                    String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
+                    
+                    // Create routed batch and add to queue
+                    RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
+                    this.routedRecords.put(routedBatch);
+                    
+                    log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
+                }
+            } catch (Exception e) {
+                log.error("An unexpected error occurred while putting batch into routed records queue. Error: {}", e.getMessage(), e);
+            }
+        }
+    }
+
+
+
+    /**
+     * Adds a version (sequence number) to every record.
+     * <p>
+     * The sequence starts at SEQUENCE_START, increments for every record,
+     * and resets if more than one second has elapsed since the first record.
+     * </p>
+     *
+     * @param chStructs The list of {@link ClickHouseStruct} records.
      */
     public static void addVersion(List<ClickHouseStruct> chStructs) {
-
-        // Start the sequence from 1 million and increment for every record
-        // and reset the sequence back to 1 million in the next second
-        if(chStructs.isEmpty()) {
+        // Start the sequence from SEQUENCE_START and increment for every record
+        if (chStructs.isEmpty()) {
             return;
         }
         long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
-        //long sequence = SEQUENCE_START;
-
-        for(ClickHouseStruct chStruct: chStructs) {
-            // Get the first ts_ms from chStruct
-            // Subsequent records add 1 to sequence.
-            // If its been more than a second from the first
-            // ts_ms then reset the sequence.
-            // Get diff in seconds
-            int diff = (int) (chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000;
-            if(diff > 1) {
+        for (ClickHouseStruct chStruct : chStructs) {
+            // Get diff in seconds from the first record's Debezium timestamp.
+            int diff = (int) ((chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000);
+            if (diff > 1) {
                 sequenceNumber = SEQUENCE_START;
                 sequenceStartTime = chStruct.getDebezium_ts_ms();
-            }   else {
+            } else {
                 sequenceNumber++;
             }
-            // Pad the sequence number with 0s
+            // Pad the sequence number with zeros and set the sequence number in the record.
             chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
         }
     }
