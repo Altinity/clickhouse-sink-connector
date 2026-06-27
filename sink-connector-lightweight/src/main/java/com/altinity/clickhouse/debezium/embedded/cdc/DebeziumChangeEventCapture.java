@@ -665,7 +665,11 @@ public class DebeziumChangeEventCapture {
     private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
         DBMetadata dbMetadata = new DBMetadata(config);
-        DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter();
+        long schemaChangeTimeoutMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString());
+        long schemaChangePollIntervalMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString());
+        DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter(schemaChangeTimeoutMs, schemaChangePollIntervalMs);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {
