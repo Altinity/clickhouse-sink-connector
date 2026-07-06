@@ -18,24 +18,48 @@ import java.sql.SQLException;
 public class ErrorLogger {
     private static final Logger log = LogManager.getLogger(ErrorLogger.class);
 
-    // Default table name if not specified in config
+    private static final String DEFAULT_ERROR_DATABASE = "altinity_sink_connector";
     private static final String DEFAULT_ERROR_TABLE = "replica_source_error";
 
     /**
-     * Resolves the configured error table name, falling back to the default when unset.
+     * Resolves the configured error table name (table part only), falling back to the default.
+     * If the config value is in `databaseName.tableName` format, only the table part is returned.
      *
      * @param config the connector configuration
-     * @return the error table name
+     * @return the error table name (without database prefix)
      */
     public static String getErrorTableName(ClickHouseSinkConnectorConfig config) {
+        String raw = getRawErrorTableConfig(config);
+        if (raw.contains(".")) {
+            return raw.substring(raw.indexOf('.') + 1);
+        }
+        return raw;
+    }
+
+    /**
+     * Resolves the configured error database name, falling back to the default.
+     * If the config value is in `databaseName.tableName` format, the database part is returned.
+     *
+     * @param config the connector configuration
+     * @return the error database name
+     */
+    public static String getErrorDatabaseName(ClickHouseSinkConnectorConfig config) {
+        String raw = getRawErrorTableConfig(config);
+        if (raw.contains(".")) {
+            return raw.substring(0, raw.indexOf('.'));
+        }
+        return DEFAULT_ERROR_DATABASE;
+    }
+
+    private static String getRawErrorTableConfig(ClickHouseSinkConnectorConfig config) {
         if (config == null) {
-            return DEFAULT_ERROR_TABLE;
+            return DEFAULT_ERROR_DATABASE + "." + DEFAULT_ERROR_TABLE;
         }
         String errorTableName = config.getString(
                 ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
         if (errorTableName == null || errorTableName.isEmpty()
                 || ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString().equals(errorTableName)) {
-            return DEFAULT_ERROR_TABLE;
+            return DEFAULT_ERROR_DATABASE + "." + DEFAULT_ERROR_TABLE;
         }
         return errorTableName;
     }
@@ -55,7 +79,7 @@ public class ErrorLogger {
         if (config == null) {
             throw new SQLException("Config cannot be null");
         }
-        // Read error table name from config
+        String errorDatabaseName = getErrorDatabaseName(config);
         String errorTableName = getErrorTableName(config);
 
         String createTableQuery = String.format(
@@ -71,7 +95,7 @@ public class ErrorLogger {
                 "database_query String" +
             ") ENGINE = MergeTree() " +
             "ORDER BY (error_timestamp, server)", 
-            BaseDbWriter.SYSTEM_DB, 
+            errorDatabaseName, 
             errorTableName
         );
 
@@ -96,6 +120,7 @@ public class ErrorLogger {
                               String sourceDatabase,
                               String query, 
                               String offsetKey,
+                              String errorDatabaseName,
                               String errorTableName) throws SQLException {
         if (connection == null) {
             throw new SQLException("Connection cannot be null");
@@ -105,6 +130,9 @@ public class ErrorLogger {
             error = "Unknown error";
         }
 
+        if (errorDatabaseName == null || errorDatabaseName.isEmpty()) {
+            errorDatabaseName = DEFAULT_ERROR_DATABASE;
+        }
         if (errorTableName == null || errorTableName.isEmpty()) {
             errorTableName = DEFAULT_ERROR_TABLE;
         }
@@ -120,7 +148,7 @@ public class ErrorLogger {
                 "source_database, " +
                 "database_query" +
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
-            BaseDbWriter.SYSTEM_DB, 
+            errorDatabaseName, 
             errorTableName
         );
 

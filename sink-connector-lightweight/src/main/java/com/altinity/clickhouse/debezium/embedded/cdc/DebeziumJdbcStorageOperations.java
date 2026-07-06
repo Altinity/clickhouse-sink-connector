@@ -4,7 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
-import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.relational.history.SchemaHistory;
@@ -184,9 +184,10 @@ public class DebeziumJdbcStorageOperations {
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(
                 com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props));
         String errorTableName = ErrorLogger.getErrorTableName(config);
+        String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
         String errorTableStatusQuery = String.format(
                 "SELECT * FROM %s.%s ORDER BY error_timestamp DESC LIMIT 1",
-                BaseDbWriter.SYSTEM_DB, errorTableName);
+                errorDatabaseName, errorTableName);
         DBMetadata metadata = new DBMetadata(config);
         ResultSet errorRow = null;
         try {

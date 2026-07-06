@@ -515,6 +515,7 @@ public class DebeziumChangeEventCapture {
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
         String errorTableName = ErrorLogger.getErrorTableName(config);
+        String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
         boolean retryDDLProperty = false;
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
@@ -561,7 +562,8 @@ public class DebeziumChangeEventCapture {
                 try {
                    // ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
-                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"),
+                        errorDatabaseName, errorTableName);
                     ReplicationStatusSingleton.getInstance().setLastErrorDetails(
                             e.getMessage(), databaseName, clickHouseQuery.toString());
                 } catch (SQLException ex) {

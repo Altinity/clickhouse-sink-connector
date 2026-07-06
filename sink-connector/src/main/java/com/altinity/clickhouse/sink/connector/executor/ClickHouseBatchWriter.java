@@ -261,6 +261,7 @@ public class ClickHouseBatchWriter {
     private void logErrorToClickHouse(Exception e, List<ClickHouseStruct> records) {
         try {
             String errorTableName = ErrorLogger.getErrorTableName(config);
+            String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
             ErrorLogger.createErrorTable(systemConnection, config);
             if (records != null && !records.isEmpty()) {
                 ClickHouseStruct firstRecord = records.get(0);
@@ -273,6 +274,7 @@ public class ClickHouseBatchWriter {
                         databaseName,
                         "",
                         "",
+                        errorDatabaseName,
                         errorTableName);
                 ConnectorErrorReporter.reportError(e.getMessage(), databaseName, "");
             } else {
@@ -282,6 +284,7 @@ public class ClickHouseBatchWriter {
                         "",
                         "",
                         "",
+                        errorDatabaseName,
                         errorTableName);
                 ConnectorErrorReporter.reportError(e.getMessage(), "", "");
             }

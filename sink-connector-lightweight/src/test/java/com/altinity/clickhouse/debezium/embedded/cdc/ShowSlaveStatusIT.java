@@ -117,14 +117,16 @@ public class ShowSlaveStatusIT {
         }
         Assert.assertTrue("Error table should be created at connector startup", errorTableExists);
 
+        ClickHouseSinkConnectorConfig testConfig = new ClickHouseSinkConnectorConfig(
+                com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props));
         ErrorLogger.logError(chConn,
                 "integration test error",
                 null,
                 "employees",
                 "ALTER TABLE employees.test ADD COLUMN x Int32",
                 props.getProperty("name"),
-                ErrorLogger.getErrorTableName(new ClickHouseSinkConnectorConfig(
-                        com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props))));
+                ErrorLogger.getErrorDatabaseName(testConfig),
+                ErrorLogger.getErrorTableName(testConfig));
 
         ReplicationStatusSingleton.getInstance().setBinLogFile("mysql-bin.000003");
         ReplicationStatusSingleton.getInstance().setBinLogPosition("1156385");

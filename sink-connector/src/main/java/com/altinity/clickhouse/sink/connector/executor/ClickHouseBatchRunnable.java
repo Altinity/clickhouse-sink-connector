@@ -296,6 +296,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = ErrorLogger.getErrorTableName(config);
+        String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
 
         // Determine which mode we're in: hash-based routing or legacy
         boolean useHashRouting = (threadId >= 0 && routedRecords != null);
@@ -312,7 +313,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
-                logErrorToClickHouse(e, taskId, errorTableName);
+                logErrorToClickHouse(e, taskId, errorDatabaseName, errorTableName);
             }
 
             // Classify the error to decide whether to retry or stop
@@ -733,11 +734,12 @@ public class ClickHouseBatchRunnable implements Runnable {
      *
      * @param e exception that occurred
      * @param taskId task identifier
+     * @param errorDatabaseName name of the error database
      * @param errorTableName name of the error table
      */
-    private void logErrorToClickHouse(Exception e, Long taskId, String errorTableName) {
+    private void logErrorToClickHouse(Exception e, Long taskId, String errorDatabaseName, String errorTableName) {
         try {
-            Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
+            Connection dbCon = getClickHouseConnection(errorDatabaseName);
             // Create error table if it doesn't exist
             ErrorLogger.createErrorTable(dbCon, config);
 
@@ -759,6 +761,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     databaseName,
                     "", // No query field available
                     "", // No offset key field available
+                    errorDatabaseName,
                     errorTableName);
                 ConnectorErrorReporter.reportError(e.getMessage(), databaseName, "");
             } else {
@@ -767,6 +770,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                     null,
                     "",
                     "", "",
+                    errorDatabaseName,
                     errorTableName);
                 ConnectorErrorReporter.reportError(e.getMessage(), "", "");
             }
