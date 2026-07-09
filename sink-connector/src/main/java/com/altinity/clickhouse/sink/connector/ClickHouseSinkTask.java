@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +59,15 @@ public class ClickHouseSinkTask extends SinkTask {
      * Queue used to store batches of records to be processed.
      */
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
+
+    /**
+     * Highest Kafka offset per TopicPartition that has been DURABLY inserted
+     * into ClickHouse (fed by the ClickHouseBatchRunnable after each successful
+     * flush). preCommit() returns offsets derived from this map instead of the
+     * offsets Kafka Connect merely delivered to put(), so a crash/restart never
+     * skips records that were consumed but not yet persisted.
+     */
+    private ConcurrentHashMap<TopicPartition, Long> durablyInsertedOffsets;
 
     /**
      * A de-duplicator utility to detect and skip duplicate messages.
@@ -113,9 +123,11 @@ public class ClickHouseSinkTask extends SinkTask {
                 ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
 
         this.records = new LinkedBlockingQueue<>(maxQueueSize);
+        this.durablyInsertedOffsets = new ConcurrentHashMap<>();
 
         ClickHouseBatchRunnable runnable = new ClickHouseBatchRunnable(
-                this.records, this.config, topic2TableMap);
+                this.records, this.config, topic2TableMap,
+                this.durablyInsertedOffsets);
 
         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder()
                 .setNameFormat("Sink Connector thread-pool-%d")
@@ -195,6 +207,19 @@ public class ClickHouseSinkTask extends SinkTask {
         List<ClickHouseStruct> batch = new ArrayList<>();
 
         for (SinkRecord record : records) {
+            // Establish the per-partition durable baseline the first time we see
+            // a partition in this run. Kafka delivers records to put() in offset
+            // order per partition, so the first record's offset is the resume
+            // point: everything strictly before it was already durably committed
+            // in a previous run. Seeding the watermark to (firstOffset - 1) means
+            // preCommit holds at the resume point until a real insert advances it,
+            // instead of blindly trusting the offsets Connect delivered (which
+            // would lose records consumed-but-not-yet-inserted, e.g. if CH is down
+            // right from task start).
+            TopicPartition tp = new TopicPartition(
+                    record.topic(), record.kafkaPartition());
+            this.durablyInsertedOffsets.putIfAbsent(tp, record.kafkaOffset() - 1L);
+
             if (this.deduplicator.isNew(record.topic(), record)) {
                 ClickHouseStruct c = converter.convert(record);
                 if (c != null) {
@@ -260,8 +285,23 @@ public class ClickHouseSinkTask extends SinkTask {
 
         try {
             currentOffsets.forEach((topicPartition, offsetAndMetadata) -> {
+                // Kafka commits the "next offset to consume" = lastOffset + 1.
+                Long durable = this.durablyInsertedOffsets.get(topicPartition);
+                long committed;
+                if (durable == null) {
+                    // No durable insert recorded for this partition yet in the
+                    // current run (e.g. right after a restart): trust the offset
+                    // Connect gives us — it already reflects the last durably
+                    // committed position from the previous run, because we only
+                    // ever commit durable offsets.
+                    committed = offsetAndMetadata.offset();
+                } else {
+                    // Only advance up to what was actually inserted into CH,
+                    // never beyond what Connect delivered.
+                    committed = Math.min(offsetAndMetadata.offset(), durable + 1);
+                }
                 committedOffsets.put(topicPartition,
-                        new OffsetAndMetadata(offsetAndMetadata.offset()));
+                        new OffsetAndMetadata(committed));
             });
         } catch (Exception e) {
             log.error("preCommit({}):{}", this.id, e.getMessage());

@@ -93,6 +93,13 @@ public class ClickHouseBatchRunnable implements Runnable {
     private List<ClickHouseStruct> currentBatch = null;
 
     /**
+     * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
+     * TopicPartition durably inserted into ClickHouse. Updated after each
+     * successful flush so preCommit() only commits persisted offsets.
+     */
+    private final Map<TopicPartition, Long> durablyInsertedOffsets;
+
+    /**
      * Map for overriding database names from source to destination.
      */
     private Map<String, String> databaseOverrideMap = new HashMap<>();
@@ -105,6 +112,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     /**
      * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
      *
+     * <p>Backward-compatible overload for callers that do not track durable
+     * offsets: a private (unshared) watermark is used, so the durable-offset
+     * gating in {@code ClickHouseSinkTask.preCommit()} is a no-op for this
+     * instance (pre-existing behaviour is preserved).</p>
+     *
      * @param records        the queue of record batches
      * @param config         the connector configuration
      * @param topic2TableMap a map of topic names to table names
@@ -113,7 +125,23 @@ public class ClickHouseBatchRunnable implements Runnable {
             LinkedBlockingQueue<List<ClickHouseStruct>> records,
             ClickHouseSinkConnectorConfig config,
             Map<String, String> topic2TableMap) {
-        this(records, null, -1, config, topic2TableMap);
+        this(records, null, -1, config, topic2TableMap, new ConcurrentHashMap<>());
+    }
+
+    /**
+     * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
+     *
+     * @param records                the queue of record batches
+     * @param config                 the connector configuration
+     * @param topic2TableMap         a map of topic names to table names
+     * @param durablyInsertedOffsets shared watermark of durably-inserted offsets
+     */
+    public ClickHouseBatchRunnable(
+            LinkedBlockingQueue<List<ClickHouseStruct>> records,
+            ClickHouseSinkConnectorConfig config,
+            Map<String, String> topic2TableMap,
+            Map<TopicPartition, Long> durablyInsertedOffsets) {
+        this(records, null, -1, config, topic2TableMap, durablyInsertedOffsets);
     }
 
     /**
@@ -129,7 +157,8 @@ public class ClickHouseBatchRunnable implements Runnable {
             int threadId,
             ClickHouseSinkConnectorConfig config,
             Map<String, String> topic2TableMap) {
-        this(null, routedRecords, threadId, config, topic2TableMap);
+        this(null, routedRecords, threadId, config, topic2TableMap,
+                new ConcurrentHashMap<>());
     }
 
     /**
@@ -146,11 +175,13 @@ public class ClickHouseBatchRunnable implements Runnable {
             LinkedBlockingQueue<RoutedBatch> routedRecords,
             int threadId,
             ClickHouseSinkConnectorConfig config,
-            Map<String, String> topic2TableMap) {
+            Map<String, String> topic2TableMap,
+            Map<TopicPartition, Long> durablyInsertedOffsets) {
         this.records = records;
         this.routedRecords = routedRecords;
         this.threadId = threadId;
         this.config = config;
+        this.durablyInsertedOffsets = durablyInsertedOffsets;
         if (topic2TableMap == null) {
             this.topic2TableMap = new HashMap();
         } else {
@@ -649,6 +680,13 @@ public class ClickHouseBatchRunnable implements Runnable {
         result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap,
                 bmd, maxBufferSize, preparedStatementExecutor);
         if (result) {
+            // Records are now DURABLY in ClickHouse: advance the shared watermark
+            // (max offset per TopicPartition) so ClickHouseSinkTask.preCommit()
+            // only commits offsets that were actually persisted. Without this the
+            // offset advances on consume, and a crash/restart silently loses the
+            // records that were consumed but never inserted.
+            partitionToOffsetMap.forEach((tp, offset) ->
+                    this.durablyInsertedOffsets.merge(tp, offset, Math::max));
             // Remove the entry.
             queryToRecordsMap.remove(topicName);
         }
