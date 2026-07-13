@@ -33,13 +33,14 @@ def validate_config(config):
         # Check source section
         source = config['source']
         mysql = source['mysql']
-        host = mysql['host'] 
+        host = mysql['host']
         # Check replicas section
+
         replicas = config['replicas']
         if not isinstance(replicas, list):
             logging.error("Error: 'replicas' must be a list")
             return False
-            
+
         for i, replica in enumerate(replicas):
             if 'clickhouse' not in replica:
                 logging.error(f"Error: 'clickhouse' missing in replica {i+1}")
@@ -47,7 +48,7 @@ def validate_config(config):
             if 'host' not in replica['clickhouse']:
                 logging.error(f"Error: 'host' missing in replica {i+1}")
                 return False
-                
+
         return True
     except KeyError as e:
         logging.error(f"Error: Missing required configuration key: {e}")
@@ -63,16 +64,16 @@ def parse_checksum(data, table):
     row_count = None
     if len(parts) == 3:
         # Extract the three values
-        table = parts[0]      
-        checksum = parts[1]   
-        row_count = int(parts[2]) 
+        table = parts[0]
+        checksum = parts[1]
+        row_count = int(parts[2])
     else:
         logging.error(f"Invalid checksum output from {data} for table {table}")
     return (table, checksum, row_count)
 
 
 def run_quick_safe_checksum(cmd, host, table):
-    start = time.perf_counter()    
+    start = time.perf_counter()
     (rc, stdout) = run_quick_safe_command(cmd)
     duration = time.perf_counter() - start
     if rc == '0':
@@ -82,12 +83,12 @@ def run_quick_safe_checksum(cmd, host, table):
     else:
         logging.error(f"{cmd}. failed")
         return None
-    
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None):
+
+
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
-    commands = []
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
         if where is None:
             where =''
@@ -95,10 +96,12 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
             where+= " and "
         logging.info(f"Where override found for {table_name}")
         where+= table_overrides_map[table_name]['where']
-    cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
-   
-    commands.append((mysql_host,cmd))
-    
+
+    # Build MySQL checksum command
+    mysql_cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
+
+    # Build ClickHouse checksum commands
+    ch_commands = []
     for ch_host in replica_hosts:
         ch_database = mysql_database
         if ch_host in database_override_map and mysql_database in database_override_map[ch_host]:
@@ -111,20 +114,48 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
                     break
             logging.info(f"Overriding database for host {ch_host} from {mysql_database} to {ch_database}")
         cmd = get_clickhouse_checksum_command(ch_host, ch_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key)
-        commands.append((ch_host, cmd))
-    results = []    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(commands)) as executor:
-            futures = []
-            for (host, cmd) in commands:
-                future = executor.submit(
-                    run_quick_safe_checksum, cmd, host, table)
-                futures.append(future)
+        ch_commands.append((ch_host, cmd))
+
+    # Lock held during all checksums (MySQL source + ClickHouse replicas)
+    # to ensure a consistent comparison. The sleep_after_lock allows
+    # replication lag to settle before checksumming — unlocking early would
+    # let new writes reach ClickHouse and invalidate the comparison.
+    lock_conn = None
+    try:
+        if lock_enabled:
+            lock_conn = get_mysql_connection(mysql_host, mysql_user,
+                                             mysql_password, mysql_port, mysql_database)
+            logging.info(f"Locking table {table} on source {mysql_host}")
+            lock_tables(lock_conn, table)
+            time.sleep(sleep_after_lock)
+
+        # Run the MySQL source checksum and all ClickHouse replica checksums
+        # concurrently under the lock. The lock keeps the source frozen so
+        # every checksum sees the same snapshot; running them in parallel
+        # (instead of MySQL-first-then-ClickHouse) minimizes how long the
+        # lock must be held — the lock duration becomes the slowest single
+        # checksum rather than the sum of MySQL + ClickHouse.
+        all_commands = [(mysql_host, mysql_cmd)] + ch_commands
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(all_commands)) as executor:
+            futures = [
+                executor.submit(run_quick_safe_checksum, cmd, host, table)
+                for (host, cmd) in all_commands
+            ]
+            # Surface the first exception, if any, so the caller can react.
             for future in concurrent.futures.as_completed(futures):
                 if future.exception() is not None:
                     raise future.exception()
-                else:
-                    results.append(future.result())
-    return results
+            # Results in submission order: MySQL source first, then replicas
+            # (analyze_differences relies on the source being identifiable).
+
+            results = [future.result() for future in futures]
+        return results
+    finally:
+        if lock_conn:
+            try:
+                unlock_tables(lock_conn, table)
+            finally:
+                close_connection(lock_conn, table_name)
 
 
 def get_tables_from_regexp(conn, database, tables_regexp):
@@ -139,48 +170,50 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     if partition_date:
       where_argument += f""" and {{partition_expression}}={partition_date:%Y%m%d}"""
     where_argument += '"'
-    
+
     ignored_columns_clause = ""
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
         ignored_columns_clause = "--exclude_columns "+",".join(ignored_columns)
-        
+
     debug_output_clause = ""
     if debug_output:
         debug_output_clause = "--debug_output"
-    
+
     defaults_file_clause = ""
     if defaults_file:
         defaults_file_clause = f"--defaults_file={defaults_file}"
-    cmd = f"""set -e pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    cmd = f"""set -e pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """
     logging.debug(f"MySQL command: {cmd}")
-    return cmd 
+    return cmd
+
 
 
 def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None):
-    partition_date = args.partition_date   
+    partition_date = args.partition_date
     where_argument = '--where " 1=1 '
     if where:
         where_argument += f" and {where} "
     if partition_date:
       where_argument += f""" and {{partition_expression}}="""+f"""toDate(\\\\'{partition_date:%Y-%m-%d}\\\\') """
 
+
     where_argument += '"'
-    
+
     ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted,__is_deleted"
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
         ignored_columns_clause += ","+",".join(ignored_columns)
-    
+
     debug_output_clause = ""
     if debug_output:
         debug_output_clause = "--debug_output"
-        
+
     partition_key_clause = ""
     if partition_key:
         partition_key_clause = f" --partition_key {partition_key.replace('`','')}"
-    cmd = f"""set -e pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
-    return cmd 
+    cmd = f"""set -e pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """
+    return cmd
 
 
 def analyze_differences(results, mysql_host, replica_hosts):
@@ -196,34 +229,42 @@ def analyze_differences(results, mysql_host, replica_hosts):
                 is_difference = True
         if not is_difference:
             logging.info(f"No difference for {source_results[0][1]}")
-   
-    
+
+
 def lock_tables(conn, table):
     lock_stmt = f"FLUSH TABLE `{table}` WITH READ LOCK"
     logging.info(f"Locking table with statement {lock_stmt}")
     execute_mysql(conn, lock_stmt)
-    
-    
+
+
 def unlock_tables(conn, table):
     unlock_stmt = "UNLOCK TABLES"
     logging.info(f"Unlocking table {table} with statement {unlock_stmt}")
     execute_mysql(conn, unlock_stmt)
 
+
+def close_connection(conn, table_name):
+    """Safely close a MySQL connection."""
+    try:
+        conn.close()
+    except Exception as e:
+        logging.warning(f"Failed to close connection for {table_name}: {e}")
+
 def match_table_include_list(database, table, table_include_list):
     """
     Check if a table matches any regex pattern in the include list.
-    
+
     Args:
         database: The database name
         table: The table object or dict with 'table_name' key
         table_include_list: List of regex patterns for table names in format "database.table"
-    
+
     Returns:
         True if the table matches any pattern in the include list, False otherwise
     """
     table_name = table['table_name'] if isinstance(table, dict) else table
     full_table_name = f"{database}.{table_name}"
-    
+
     for pattern in table_include_list:
         try:
             rex = re.compile(pattern.strip())
@@ -232,51 +273,51 @@ def match_table_include_list(database, table, table_include_list):
         except re.error as e:
             logging.error(f"Invalid regex pattern '{pattern}': {e}")
             continue
-    
+
     return False
 
 def run_config(config):
     """Display the parsed configuration."""
     logging.info("\nConfiguration Details:")
-    
+
     mysql_host = config['source']['mysql']['host']
     logging.info(f"Source MySQL Host: {mysql_host}")
-    
+
     replica_hosts = []
     database_override_map = {}
     mysql_table_include_list = None
-    
+
     if "table_include_list" in  config['source']['mysql']:
             mysql_table_include_list = config['source']['mysql']['table_include_list'].split(',')
-    
+
     for i, replica in enumerate(config['replicas']):
         replica_hosts.append(replica['clickhouse']['host'])
         if "database_override_map" in replica['clickhouse']:
             database_override_map[replica['clickhouse']['host']] = replica['clickhouse']['database_override_map']
-            
-   
+
+
     logging.info(f"\nFound {len( config['replicas'])} ClickHouse replicas: {replica_hosts}")
-    
+
     mysql_user = args.mysql_user
     config_file = args.defaults_file
     (mysql_user, mysql_password) = resolve_credentials_from_config(config_file)
 
     database = args.mysql_database
     databases = []
-    if not database:    
+    if not database:
         databases = config['source']['mysql']['databases'] if 'databases' in config['source']['mysql'] else []
         if len(databases) == 0:
             logging.error("If not specifying --mysql_database, there must at least one database in the config file under mysql:databases")
             sys.exit(1)
-        logging.info(f"Using MySQL databases: {databases}") 
+        logging.info(f"Using MySQL databases: {databases}")
     else:
-        databases = [database]  
-    
+        databases = [database]
+
     ignored_columns = config['source']['mysql']['ignored_columns'] if 'ignored_columns' in config['source']['mysql'] else []
     ignored_columns_map = {}
     for ignored_column in ignored_columns:
         logging.info(f"Ignoring column {ignored_column}")
-        ignored_columns_split = ignored_column.split('.')  
+        ignored_columns_split = ignored_column.split('.')
         db = ignored_columns_split[0]
         table = ignored_columns_split[1]
         col = ignored_columns_split[2]
@@ -304,23 +345,15 @@ def run_config(config):
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
                 futures = []
                 future_to_table = {}
-                future_to_conn = {}
-                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
+                table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else []
                 for table_row in tables.fetchall():
                     table = table_row['table_name']
                     table_name = f"{database}.{table}"
-                    if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):  
+                    if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):
                         logging.info(f"Skipping table {database}.{table} since not in include list")
                         continue
-                    if args.lock_tables_on_source:
-                        # we need a new connection for each table since the lock is per connection
-                        conn = get_mysql_connection(mysql_host, mysql_user,
-                                    mysql_password, args.mysql_port, database)
-                        logging.info(f"Locking table {table} on source {mysql_host}")
-                        lock_tables(conn, table)
-                        time.sleep(args.sleep_after_lock)  # slight delay for the sink-connector to catch up
-                        future_to_conn[table_name] = conn
-                        
+
+                    # Pre-fetch metadata on shared connection (no lock needed)
                     pk = mysql_pk_columns(conn, database, table)
                     pk_column = pk[0] if len(pk) > 0 else 'NULL'
                     (min_pk, max_pk) = get_min_max_pk_value(conn, table, pk_column, '1=1')
@@ -328,25 +361,23 @@ def run_config(config):
                     ignored_columns = []
                     if database in ignored_columns_map and table in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table].keys())
-                        
+
                     logging.info(f"Ignored columns for table {table_name}: {ignored_columns}")
+                    # Lock lifecycle is now managed inside compute_checksum per table.
+                    # Each future acquires its own lock, runs both MySQL and
+                    # ClickHouse checksums under the lock, then releases it.
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key)
+                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port)
                     futures.append(future)
                     future_to_table[future] = table_name
                 for future in concurrent.futures.as_completed(futures):
-                    conn =  future_to_conn.get(future_to_table[future], None)
                     table_name = future_to_table[future]
                     if future.exception() is not None:
                         logging.error("Exception in table " + table_name)
                         logging.error(future.exception())
-                        if conn:
-                            unlock_tables(conn, table_name)
                         raise future.exception()
                     else:
-                        if conn:
-                            unlock_tables(conn, table_name)
-                        analyze_differences(future.result(), mysql_host, replica_hosts)      
+                        analyze_differences(future.result(), mysql_host, replica_hosts)
 
         except (KeyboardInterrupt, SystemExit):
             logging.info("Received interrupt")
@@ -358,7 +389,7 @@ def run_config(config):
 
     logging.debug("Exiting Main Thread")
     sys.exit(0)
-    
+
 def run_quick_safe_command(cmd):
     logging.debug("cmd " + cmd)
     process = subprocess.Popen(cmd,
@@ -439,7 +470,7 @@ def main():
     parser.add_argument('--lock_tables_on_source', action='store_true', default=False,
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
-    
+
     global args
     args = parser.parse_args()
 
@@ -457,10 +488,10 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
-        
+
     # Parse the configuration file
     config = parse_config(args.config_file)
-    
+
     # Validate the configuration
     if validate_config(config):
         logging.info("Configuration is valid.")

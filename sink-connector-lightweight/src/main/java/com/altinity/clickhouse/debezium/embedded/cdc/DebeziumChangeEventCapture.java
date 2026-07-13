@@ -223,6 +223,15 @@ public class DebeziumChangeEventCapture {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
 
+            // Propagate the original MySQL column type (e.g. "INT UNSIGNED")
+            // as a schema parameter (__debezium.source.column.type) so the
+            // record-schema auto-create path can map unsigned integers to the
+            // correct ClickHouse UInt types. Only set a default when the user
+            // has not configured propagation themselves.
+            if (props.getProperty("column.propagate.source.type") == null) {
+                props.setProperty("column.propagate.source.type", ".*");
+            }
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
