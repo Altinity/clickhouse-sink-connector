@@ -35,6 +35,19 @@ Refer [Debezium](https://debezium.io/documentation/reference/stable/connectors/m
 | SET                |                                                      | Array(String)                   |
 | ENUM               |                                                      | Array(String)                   |
 
+> **Unsigned integers:** MySQL unsigned integers are promoted by Debezium to a
+> wider signed Kafka Connect type (for example `INT UNSIGNED` becomes `INT64`
+> and `SMALLINT UNSIGNED` becomes `INT32`), and that promotion is ambiguous.
+> To preserve the unsigned range, the connector reads the original MySQL column
+> type from the `__debezium.source.column.type` schema parameter and maps it to
+> the corresponding ClickHouse `UInt` type.
+>
+> The lightweight (embedded) connector enables `column.propagate.source.type=.*`
+> automatically. For the classic Kafka Connect sink connector you must enable
+> source-type propagation on your **source** Debezium connector
+> (`column.propagate.source.type=.*`); otherwise unsigned columns created from
+> the record schema fall back to the signed ClickHouse types.
+
 
 ### PostgreSQL Data Types
 

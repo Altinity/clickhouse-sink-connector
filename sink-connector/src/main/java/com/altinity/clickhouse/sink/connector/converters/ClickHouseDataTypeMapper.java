@@ -45,6 +45,40 @@ import java.util.*;
 public class ClickHouseDataTypeMapper {
 
     /**
+     * Schema parameter key populated by Debezium (when source-type
+     * propagation is enabled) with the original MySQL column type,
+     * e.g. {@code "INT UNSIGNED"} or {@code "SMALLINT UNSIGNED"}.
+     */
+    public static final String DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM =
+            "__debezium.source.column.type";
+
+    /**
+     * Mapping of MySQL unsigned integer types (lower-cased) to the
+     * appropriate unsigned ClickHouse type.
+     *
+     * <p>MySQL unsigned integers cannot be represented faithfully by the
+     * signed Kafka Connect schema type that Debezium promotes them to
+     * (e.g. {@code INT UNSIGNED} arrives as {@code INT64}, {@code SMALLINT
+     * UNSIGNED} as {@code INT32}), and the promotion is ambiguous
+     * ({@code SMALLINT UNSIGNED} and {@code MEDIUMINT} both become
+     * {@code INT32}). Callers that have access to the MySQL source column
+     * type should therefore use this mapping to preserve unsignedness.
+     */
+    public static final Map<String, String> UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE;
+
+    static {
+        Map<String, String> unsignedMap = new HashMap<>();
+        unsignedMap.put("tinyint unsigned", "UInt8");
+        unsignedMap.put("smallint unsigned", "UInt16");
+        unsignedMap.put("mediumint unsigned", "UInt32");
+        unsignedMap.put("int unsigned", "UInt32");
+        unsignedMap.put("integer unsigned", "UInt32");
+        unsignedMap.put("bigint unsigned", "UInt64");
+        UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE =
+                Collections.unmodifiableMap(unsignedMap);
+    }
+
+    /**
      * A map linking pairs of Kafka Connect schema type and schema name
      * to a corresponding ClickHouseDataType.
      */
@@ -496,6 +530,51 @@ public class ClickHouseDataTypeMapper {
             }
         }
         return matchingDataType;
+    }
+
+    /**
+     * Resolves the unsigned ClickHouse type for a MySQL source column type
+     * such as {@code "SMALLINT UNSIGNED"} (optionally with a {@code ZEROFILL}
+     * suffix or a display width, e.g. {@code "int(10) unsigned"}).
+     *
+     * @param mysqlSourceColumnType the raw MySQL column type, typically the
+     *                              value of the {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}
+     *                              schema parameter
+     * @return the corresponding ClickHouse unsigned type string
+     *         (e.g. {@code "UInt16"}), or {@code null} when the type is not a
+     *         recognized unsigned integer
+     */
+    public static String getUnsignedClickHouseType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return null;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase();
+        if (!normalized.contains("unsigned")) {
+            return null;
+        }
+        // Strip any display width, e.g. "int(10) unsigned" -> "int unsigned".
+        normalized = normalized.replaceAll("\\(.*?\\)", "");
+        // Collapse whitespace introduced by removing the width.
+        normalized = normalized.replaceAll("\\s+", " ").trim();
+
+        String direct = UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE.get(normalized);
+        if (direct != null) {
+            return direct;
+        }
+        // Fall back to a prefix match to tolerate suffixes such as ZEROFILL.
+        if (normalized.startsWith("tinyint")) {
+            return "UInt8";
+        } else if (normalized.startsWith("smallint")) {
+            return "UInt16";
+        } else if (normalized.startsWith("mediumint")) {
+            return "UInt32";
+        } else if (normalized.startsWith("bigint")) {
+            return "UInt64";
+        } else if (normalized.startsWith("integer")
+                || normalized.startsWith("int")) {
+            return "UInt32";
+        }
+        return null;
     }
 
     /**
