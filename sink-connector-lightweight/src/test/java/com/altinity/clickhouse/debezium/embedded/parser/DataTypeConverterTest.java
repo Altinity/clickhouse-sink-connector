@@ -101,7 +101,10 @@ public class DataTypeConverterTest {
         testCases.add(new TestCase("BIGINT UNSIGNED data type - should be overridden to UInt64", "BIGINT UNSIGNED", "UInt64"));
         testCases.add(new TestCase("BIGINT (regular) data type", "BIGINT", "Int64"));
         testCases.add(new TestCase("SMALLINT data type", "SMALLINT", "Int16"));
-        testCases.add(new TestCase("SMALLINT UNSIGNED data type", "SMALLINT UNSIGNED", "Int32"));
+        testCases.add(new TestCase("SMALLINT UNSIGNED data type", "SMALLINT UNSIGNED", "UInt16"));
+        testCases.add(new TestCase("INT UNSIGNED data type", "INT UNSIGNED", "UInt32"));
+        testCases.add(new TestCase("TINYINT UNSIGNED data type", "TINYINT UNSIGNED", "UInt8"));
+        testCases.add(new TestCase("MEDIUMINT UNSIGNED data type", "MEDIUMINT UNSIGNED", "UInt32"));
         testCases.add(new TestCase("MEDIUMINT data type", "MEDIUMINT", "Int32"));
         
         // String types

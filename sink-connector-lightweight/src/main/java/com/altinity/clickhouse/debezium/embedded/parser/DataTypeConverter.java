@@ -52,7 +52,10 @@ public class DataTypeConverter {
 
     static {
         overriddenDataTypesMap.put("tinyint", "Int8");
-        overriddenDataTypesMap.put("bigint unsigned", "UInt64");
+        // Centralized MySQL-unsigned -> ClickHouse-UInt mapping, shared with
+        // the record-schema auto-create path so both stay in lockstep.
+        overriddenDataTypesMap.putAll(
+                ClickHouseDataTypeMapper.UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE);
     }
     /**
      * Converts the given MySQL parser context to a ClickHouse data type string.

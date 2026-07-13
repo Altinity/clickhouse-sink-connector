@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
@@ -43,5 +44,55 @@ public class ClickHouseTableOperationsBaseTest {
         Assert.assertTrue(result.get("date_milli").equalsIgnoreCase("DateTime64(3)"));
         Assert.assertTrue(result.get("date_micro").equalsIgnoreCase("DateTime64(6)"));
 
+    }
+
+    @Test
+    public void getColumnNameToCHDataTypeMappingUnsignedTest() {
+        ClickHouseTableOperationsBase base = new ClickHouseTableOperationsBase();
+
+        Field[] fields = new Field[6];
+        // MySQL unsigned integers are promoted to a wider signed Kafka Connect
+        // type by Debezium; the original type is carried in the
+        // __debezium.source.column.type schema parameter.
+        fields[0] = unsignedField("tiny_col", 1, Schema.Type.INT16, "TINYINT UNSIGNED");
+        fields[1] = unsignedField("small_col", 2, Schema.Type.INT32, "SMALLINT UNSIGNED");
+        fields[2] = unsignedField("medium_col", 3, Schema.Type.INT32, "MEDIUMINT UNSIGNED");
+        fields[3] = unsignedField("int_col", 4, Schema.Type.INT64, "INT UNSIGNED");
+        fields[4] = unsignedField("big_col", 5, Schema.Type.INT64, "BIGINT UNSIGNED");
+        // Signed column must keep its signed mapping.
+        fields[5] = new Field("signed_int_col", 6, SchemaBuilder.type(Schema.Type.INT32).build());
+
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(
+                fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        Assert.assertEquals("UInt8", result.get("tiny_col"));
+        Assert.assertEquals("UInt16", result.get("small_col"));
+        Assert.assertEquals("UInt32", result.get("medium_col"));
+        Assert.assertEquals("UInt32", result.get("int_col"));
+        Assert.assertEquals("UInt64", result.get("big_col"));
+        Assert.assertEquals("Int32", result.get("signed_int_col"));
+    }
+
+    @Test
+    public void getColumnNameToCHDataTypeMappingUnsignedFallbackTest() {
+        ClickHouseTableOperationsBase base = new ClickHouseTableOperationsBase();
+
+        // No __debezium.source.column.type parameter -> falls back to the
+        // signed mapping derived purely from the Kafka Connect schema type.
+        Field[] fields = new Field[1];
+        fields[0] = new Field("small_col", 1, SchemaBuilder.type(Schema.Type.INT32).build());
+
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(
+                fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        Assert.assertEquals("Int32", result.get("small_col"));
+    }
+
+    private static Field unsignedField(String name, int index, Schema.Type type,
+                                       String sourceColumnType) {
+        return new Field(name, index, SchemaBuilder.type(type)
+                .parameter(ClickHouseDataTypeMapper.DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM,
+                        sourceColumnType)
+                .build());
     }
 }
