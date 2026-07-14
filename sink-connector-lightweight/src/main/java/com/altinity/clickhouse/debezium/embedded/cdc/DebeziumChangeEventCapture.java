@@ -22,6 +22,7 @@ import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -36,6 +37,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import javax.xml.transform.Source;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -155,6 +157,21 @@ public class DebeziumChangeEventCapture {
      */
     public int numRetries = 0;
 
+    /**
+     * Starting sequence number for versioning.
+     */
+    public static final long SEQUENCE_START = 1000000000;
+
+    /**
+    * Initial starting sequence number.
+    */
+    public static final long SEQUENCE_START_INITIAL = 500000000;
+    
+    /**
+         * Global sequence number.
+    */
+    public static long sequenceNumber = SEQUENCE_START;
+
 
     /**
      * Sets up the Debezium event capture engine using the provided properties,
@@ -198,27 +215,55 @@ public class DebeziumChangeEventCapture {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
 
+            // Propagate the original MySQL column type (e.g. "INT UNSIGNED")
+            // as a schema parameter (__debezium.source.column.type) so the
+            // record-schema auto-create path can map unsigned integers to the
+            // correct ClickHouse UInt types. Only set a default when the user
+            // has not configured propagation themselves.
+            if (props.getProperty("column.propagate.source.type") == null) {
+                props.setProperty("column.propagate.source.type", ".*");
+            }
+
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
                 @Override
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter)
                         throws InterruptedException {
-                    List<ClickHouseStruct> batch = new ArrayList<ClickHouseStruct>();
+
+                    if(list.isEmpty()) {
+                        return;
+                    }
+
+                    ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
+                    long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
+                    long sequenceStartTime = debeziumTsMs ;
+                    
+                    List<ClickHouseStruct> batch = new ArrayList<>();
                     for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
                         boolean lastRecordInBatch = false;
                         if (i == list.size() - 1) {
                             lastRecordInBatch = true;
                         }
+                        long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
+                        int diff = (int) ((recordTs - sequenceStartTime) / 1000);
+                        if (diff > 1) {
+                            sequenceNumber = SEQUENCE_START;
+                            sequenceStartTime = recordTs;
+                        } else
+                            sequenceNumber++;
+
+                        long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+
                         ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
-                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch);
+                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
                         if (chStruct != null) {
                             batch.add(chStruct);
                         }
                     }
                     // Add sequence number.
-                    addVersion(batch);
+                    //addVersion(batch);
 
                     if (batch.size() > 0) {
                         appendToRecords(batch, config);
@@ -277,8 +322,6 @@ public class DebeziumChangeEventCapture {
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                                 try {
                                     ClickHouseAutoCreateTable clickHouseAutoCreateTable = new ClickHouseAutoCreateTable();
-                                    // props.getPropertyOrDefault(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "binlog_history");
-                                    // props.getPropertyOrDefault(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
                                     String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     clickHouseAutoCreateTable.createHistoryDatabase(binlogHistoryDatabase, systemDbConnection, config);
@@ -481,7 +524,8 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
-                executeDDL(clickHouseQuery.toString(), writer, config);
+                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
+                    executeDDL(clickHouseQuery.toString(), writer, config);
 
                 // Invalidate cached DbWriter for this table so that subsequent inserts
                 // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
@@ -638,104 +682,6 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    /**
-     * Transforms the first occurrence of ALTER TABLE or CREATE TABLE in the
-     * original SQL by appending "_history" to the captured table name.
-     *
-     * @param original the original SQL statement
-     * @return the transformed SQL statement, or the original if no match was found
-     */
-    private static String transformTableName(String original) {
-        // Build a regex that matches 'ALTER TABLE ' or 'CREATE TABLE ',
-        // captures the schema.table identifier, and asserts that the next character
-        // is either a space or an opening parenthesis.
-        Pattern pattern = Pattern.compile(
-                "((?:ALTER TABLE|CREATE TABLE)\\s+)" +  // group(1): the clause + trailing whitespace
-                        "([\\w\\.]+)" +                         // group(2): schema.table
-                        "(?=\\s|\\()",                          // lookahead: ensure next char is space or '('
-                Pattern.CASE_INSENSITIVE                // allow case-insensitive matching
-        );
-
-        Matcher matcher = pattern.matcher(original);
-        if (matcher.find()) {
-            String clause   = matcher.group(1); // e.g. "ALTER TABLE " or "CREATE TABLE "
-            String table    = matcher.group(2); // e.g. "employees.contacts"
-            // Rebuild the prefix + table + "_history", then replace only the first occurrence
-            return matcher.replaceFirst(clause + table + "_history");
-        }
-
-        // No ALTER/CREATE TABLE match -> return unchanged
-        return original;
-    }
-
-    /**
-     * Modifies a dynamically generated CREATE TABLE statement when creating TM history table:
-     * 1. Modifies the ENGINE from ReplacingMergeTree to MergeTree.
-     * 2. Adds new columns before the ENGINE clause: operation, database, table, _raw, _time, host, logfile, position, primary_host.
-     * 3. Keeps the original ORDER BY clause intact.
-     * 4. Only performs the transformation if the SQL starts with CREATE TABLE.
-     *
-     * @param createTableSql The original CREATE TABLE SQL statement.
-     * @return The modified CREATE TABLE SQL statement.
-     */
-    private static String modifySqlStatement(String createTableSql) {
-        // 1. Only process if the SQL starts with CREATE TABLE
-        if (!createTableSql.trim().toUpperCase().startsWith("CREATE TABLE")) {
-            // If it's not CREATE TABLE, return the original SQL
-            return createTableSql;
-        }
-
-        // 2. Locate the ENGINE=ReplacingMergeTree part in the SQL
-        Pattern enginePattern = Pattern.compile("(?i)ENGINE\\s*=\\s*ReplacingMergeTree\\(.*\\)");
-        Matcher engineMatcher = enginePattern.matcher(createTableSql);
-
-        if (engineMatcher.find()) {
-            // 3. Extract the part before ENGINE (column definitions part)
-            String beforeEngine = createTableSql.substring(0, engineMatcher.start()).trim();
-
-            // Remove the last ')' from the column definitions (before the engine part)
-            if (beforeEngine.endsWith(")")) {
-                beforeEngine = beforeEngine.substring(0, beforeEngine.length() - 1).trim(); // Remove the last ')'
-            }
-
-            // 4. Locate the ORDER BY clause
-            Pattern orderByPattern = Pattern.compile("(?i)ORDER\\s+BY\\s+.*");
-            Matcher orderByMatcher = orderByPattern.matcher(createTableSql);
-            String orderByClause = "";
-            if (orderByMatcher.find()) {
-                orderByClause = createTableSql.substring(orderByMatcher.start()).trim(); // Get ORDER BY clause
-            }
-
-            // 5. Add the new columns before the ENGINE part, ensuring correct placement of parentheses
-            String extraColumns = ", "
-                    + OPERATION_COLUMN + " " + OPERATION_COLUMN_DATA_TYPE + ", "
-                    + DATABASE_COLUMN  + " " + DATABASE_COLUMN_DATA_TYPE  + ", "
-                    + TABLE_COLUMN     + " " + TABLE_COLUMN_DATA_TYPE     + ", "
-                    + RAW_COLUMN       + " " + RAW_COLUMN_DATA_TYPE       + ", "
-                    + TIME_COLUMN      + " " + TIME_COLUMN_DATA_TYPE      + ", "
-                    + HOST_COLUMN      + " " + HOST_COLUMN_DATA_TYPE      + ", "
-                    + LOGFILE_COLUMN   + " " + LOGFILE_COLUMN_DATA_TYPE   + ", "
-                    + POSITION_COLUMN  + " " + POSITION_COLUMN_DATA_TYPE  + ", "
-                    + PRIMARY_HOST_COLUMN + " " +PRIMARY_HOST_COLUMN_DATA_TYPE;
-
-            // 6. Replace ENGINE with "ENGINE = MergeTree()" and add a closing parenthesis before ENGINE
-            String modifiedEngine = ") ENGINE = MergeTree()";
-
-            // 7. Combine the modified SQL with the new columns and the original ORDER BY clause
-            // Ensure the parentheses are correctly closed and combine the modified SQL
-            String modifiedSql = beforeEngine + extraColumns + modifiedEngine;
-
-            // 8. Add the ORDER BY clause if it exists
-            if (!orderByClause.isEmpty()) {
-                modifiedSql += " " + orderByClause;
-            }
-
-            return modifiedSql;
-        } else {
-            // Throw an exception if ENGINE=ReplacingMergeTree is not found
-            throw new IllegalArgumentException("The original SQL does not contain ENGINE=ReplacingMergeTree part: " + createTableSql);
-        }
-    }
 
     /**
      * Updates the DDL metrics using the Metrics class.
@@ -773,7 +719,8 @@ public class DebeziumChangeEventCapture {
                                                       DebeziumRecordParserService debeziumRecordParserService,
                                                       ClickHouseSinkConnectorConfig config,
                                                       DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
-                                                      boolean lastRecordInBatch) {
+                                                      boolean lastRecordInBatch,
+                                                      long sequenceNumber) {
         ClickHouseStruct chStruct = null;
 
         try {
@@ -804,24 +751,25 @@ public class DebeziumChangeEventCapture {
                     log.info("***** DDL received, Flush all existing records");
                     this.executor.pause();
 
-//                    chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
                     Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
                     ClickHouseStruct ddlStruct = new ClickHouseStruct();
                     ddlStruct.setAdditionalMetaData(sourceObjStruct);
-
+                    ddlStruct.setSequenceNumber(sequenceNumber);
                     performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
                     this.executor.resume();
                 }
             } else {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                chStruct.setSequenceNumber(sequenceNumber);
                 try {
                     if (chStruct != null) {
-                        ReplicationStatusSingleton.getInstance().setReplicationLag(chStruct.getReplicationLag());
-                        ReplicationStatusSingleton.getInstance().setLastRecordTimestamp(chStruct.getTs_ms());
-                        ReplicationStatusSingleton.getInstance().setBinLogFile(chStruct.getFile());
-                        ReplicationStatusSingleton.getInstance().setBinLogPosition(String.valueOf(chStruct.getPos()));
-                        ReplicationStatusSingleton.getInstance().setGtid(String.valueOf(chStruct.getGtid()));
+                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
+                        rss.setReplicationLag(chStruct.getReplicationLag());
+                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
+                        rss.setBinLogFile(chStruct.getFile());
+                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
+                        rss.setGtid(String.valueOf(chStruct.getGtid()));
                     }
                 } catch (Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
@@ -1053,20 +1001,7 @@ public class DebeziumChangeEventCapture {
         }
     }
 
-    /**
-     * Starting sequence number for versioning.
-     */
-    public static final long SEQUENCE_START = 1000000000;
 
-    /**
-     * Initial starting sequence number.
-     */
-    public static final long SEQUENCE_START_INITIAL = 500000000;
-
-    /**
-     * Global sequence number.
-     */
-    public static long sequenceNumber = SEQUENCE_START;
 
     /**
      * Adds a version (sequence number) to every record.

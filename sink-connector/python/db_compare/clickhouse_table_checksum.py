@@ -323,8 +323,7 @@ def record_factory(*args, **kwargs):
 
 logging.setLogRecordFactory(record_factory)
 
-create_function_format_decimal = '''CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),if(scale=0,'','.'),repeat('0',toUInt8(scale))))'''
-
+create_function_format_decimal = '''CREATE FUNCTION if not exists format_decimal AS (x, scale) -> toDecimalString(x, scale)'''
 
 def main():
 

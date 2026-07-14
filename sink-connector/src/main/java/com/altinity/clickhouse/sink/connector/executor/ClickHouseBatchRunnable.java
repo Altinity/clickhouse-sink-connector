@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -306,15 +307,33 @@ public class ClickHouseBatchRunnable implements Runnable {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
-            // insert data into error table
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
+
+            // Classify the error to decide whether to retry or stop
+            ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
+            int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
+
+            if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
+                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
+                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Manual intervention required.", errorCode);
+                // Clear the stuck batch so it is not retried forever
+                currentBatch = null;
+                // Rethrow to stop the scheduled executor -- silent swallowing causes
+                // binlog advancement to stall and blocks replication for ALL tables
+                throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
+            } else {
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
+                         "batch will be retried on next scheduled run.", errorCode, category);
+            }
         }
     }
+
 
     /**
      * Run loop for hash-based routing mode.
@@ -424,18 +443,30 @@ public class ClickHouseBatchRunnable implements Runnable {
         boolean result = true;
         // For each topic, process the records.
         // topic name syntax is server.database.table
-        for (Map.Entry<String, List<ClickHouseStruct>> entry :
-                topicToRecordsMap.entrySet()) {
 
-            result = processRecordsByTopic(entry.getKey(),
+        boolean replicationHistoryEnabled = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+        if(replicationLogOnly && replicationHistoryEnabled)  { 
+            // skip the following for loop and continue to the next step
+            log.debug("Replication log only mode is enabled, skipping the processing of records");
+        } else {
+            for (Map.Entry<String, List<ClickHouseStruct>> entry :
+                    topicToRecordsMap.entrySet()) {
+
+                result = processRecordsByTopic(entry.getKey(),
                         entry.getValue());
 
-            if (result == false) {
-                log.error("Error processing records for topic: " +
-                        entry.getKey());
-                break;
+                if (result == false) {
+                    log.error("Error processing records for topic: " +
+                            entry.getKey());
+                    break;
+                }
             }
         }
+            
+        
         if (result) {
             // Step 2: Check if the batch can be committed.
             if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {

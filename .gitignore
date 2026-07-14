@@ -52,3 +52,23 @@ tests/image/cache
 
 # Visual studio code
 .vscode/
+
+sink-connector/python/db_compare/__tmp
+
+# ch-sink-tools package (sink-connector/python)
+sink-connector/python/dist/
+sink-connector/python/build/
+*.egg-info/
+*.egg
+*.whl
+
+*.py[cod]
+.eggs/
+.venv/
+env/
+*.swp
+*.swo
+*~
+.pytest_cache/
+.mypy_cache/
+.env

@@ -10,6 +10,7 @@ import org.apache.logging.log4j.Logger;
 import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.zone.ZoneOffsetTransition;
 import java.time.temporal.ChronoUnit;
 import java.util.TimeZone;
 
@@ -57,18 +58,32 @@ public class DebeziumConverter {
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
 
-            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimezone);
-            int sourceOffset = sourceTZ.getRawOffset();
+            if (sourceTimezone.equals(serverTimezone)) {
+                // Replication: Debezium encoded local digits as UTC epoch; decode back to the same digits by
+                // formatting as UTC. Preserves gap times (e.g. 02:00 on spring-forward day) that no real zone
+                // can format as local wall clock.
+                long seconds = epochMicroSeconds / 1_000_000L;
+                long nanos = (epochMicroSeconds % 1_000_000L) * 1_000L;
+                Instant i = Instant.ofEpochSecond(seconds, nanos);
+                boolean[] rangeExceeded = new boolean[1];
+                Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+            }
 
-            if(sourceTZ.inDaylightTime(Date.from(Instant.ofEpochSecond(epochSeconds, nanoOffset)))) {
-                sourceOffset = sourceTZ.getRawOffset() + sourceTZ.getDSTSavings();
+            // sourceTimezone != serverTimezone: offset correction for "wrong epoch" encoding
+            LocalDateTime localDT = LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds, nanoOffset), ZoneOffset.UTC);
+            ZonedDateTime zonedInSource = localDT.atZone(sourceTimezone);
+            ZoneOffsetTransition transition = sourceTimezone.getRules().getTransition(localDT);
+            int sourceOffset;
+            if (transition != null && transition.isGap()) {
+                sourceOffset = transition.getOffsetBefore().getTotalSeconds() * 1000;
+            } else {
+                sourceOffset = zonedInSource.getOffset().getTotalSeconds() * 1000;
             }
 
             long sourceOffsetMicros = sourceOffset * 1000L;
 
-            // Add this offset to wrongly calculated epoch.
             Long epochMicrosWithOffset = epochMicroSeconds - sourceOffsetMicros;
-            // Convert microseconds to seconds and nanoseconds
             long seconds = epochMicrosWithOffset / 1_000_000;
             long nanos = (epochMicrosWithOffset % 1_000_000) * 1_000;
 
@@ -77,7 +92,6 @@ public class DebeziumConverter {
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
             if(rangeExceeded[0]) {
-                // return the modifiedDT as a string without timezone conversion
                 return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
             return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
@@ -153,7 +167,62 @@ public class DebeziumConverter {
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
 
+        /**
+         * Converts timestamp with nanosecond precision for DateTime64 columns.
+         * 
+         * @param epochSeconds seconds from epoch
+         * @param nanoAdjustment nanoseconds within the second (0-999999999)
+         * @param clickHouseDataType the target ClickHouse data type
+         * @param sourceTimeZone source timezone
+         * @param serverTimezone server timezone
+         * @return formatted timestamp string with nanosecond precision
+         */
+        public static String convertWithoutTimeZoneAdjustmentNanos(long epochSeconds, int nanoAdjustment, 
+                ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
+            // Use 9-digit nanosecond precision for DateTime64
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
+                // DateTime64 supports up to nanosecond precision
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            }
+
+            Instant i = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
+
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            if (rangeExceeded[0]) {
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
+            }
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
+        }
+
+        public static String convertWithoutTimeZoneAdjustmentNanos(long epochNanoseconds,
+                                                                   ClickHouseDataType clickHouseDataType,  ZoneId serverTimezone) {
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+            if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
+                // DateTime64 supports up to nanosecond precision
+                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            }
+            Instant instant = Instant.ofEpochSecond(
+                    epochNanoseconds / 1_000_000_000,
+                    epochNanoseconds % 1_000_000_000);
+
+            boolean[] rangeExceeded = new boolean[1];
+            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(instant, clickHouseDataType, rangeExceeded);
+            if (rangeExceeded[0]) {
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
+            }
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
+        }
     }
+
+
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
         rangeExceeded[0] = false;
 

@@ -308012,6 +308012,38 @@ insert  into `payments`(`customerNumber`,`checkNumber`,`paymentDate`,`amount`) v
 
 (496,'MN89921','2004-12-31','52166.00');
 
+CREATE TABLE `ferrari` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `suffix` varchar(8) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `dir` text CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `cmd` text CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `host` varchar(40) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `port` int NOT NULL,
+  `web_server_port` int DEFAULT NULL,
+  `rpc_server_port` int DEFAULT NULL,
+  `user` varchar(20) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `jcs_user` varchar(20) CHARACTER SET latin1 COLLATE latin1_general_cs DEFAULT NULL,
+  `status` varchar(40) CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `gui_args` text CHARACTER SET latin1 COLLATE latin1_general_cs NOT NULL,
+  `create_date` datetime NOT NULL,
+  `last_alive_date` datetime NOT NULL,
+  `state_counts` text CHARACTER SET latin1 COLLATE latin1_general_cs,
+  `root_state` varchar(19) CHARACTER SET latin1 COLLATE latin1_general_cs DEFAULT NULL,
+  `last_pid` int DEFAULT NULL COMMENT 'The most recently reported PID for the FProgram',
+  PRIMARY KEY (`id`),
+  KEY `ferrari_user_IDX` (`user`) USING BTREE,
+  KEY `ferrari_last_alive_date_IDX` (`last_alive_date`) USING BTREE,
+  KEY `ferrari_status_last_alive_date_IDX` (`status`,`last_alive_date`,`web_server_port`),
+  KEY `ferrari_user_status_last_alive_date_IDX` (`user`,`last_alive_date`)
+) ENGINE=InnoDB AUTO_INCREMENT=3641129 DEFAULT CHARSET=latin1 COLLATE=latin1_general_cs ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8;
+
+INSERT INTO `ferrari` (`suffix`, `dir`, `cmd`, `host`, `port`, `web_server_port`, `rpc_server_port`, `user`, `jcs_user`, `status`, `gui_args`, `create_date`, `last_alive_date`, `state_counts`, `root_state`, `last_pid`) VALUES
+('a1b2c3d4', '/opt/ferrari/instances/prod01', './fprogram --config prod.yml', 'ferrari-node-01.example.com', 8080, 9090, 9091, 'jsmith', 'jsmith_jcs', 'running', '--enable-gui --theme=dark', '2026-01-27 10:30:00', '2026-01-27 16:14:00', '{"active":45,"pending":12,"completed":203}', 'operational', 12345),
+('e5f6g7h8', '/opt/ferrari/instances/dev02', './fprogram --config dev.yml', 'ferrari-node-02.example.com', 8081, 9092, 9093, 'mdoe', 'mdoe_jcs', 'idle', '--enable-gui --debug-mode', '2026-01-26 14:20:00', '2026-01-27 16:10:00', '{"active":2,"pending":0,"completed":89}', 'standby', 12346),
+('i9j0k1l2', '/opt/ferrari/instances/test03', './fprogram --config test.yml', 'ferrari-node-03.example.com', 8082, 9094, 9095, 'alee', NULL, 'stopped', '--enable-gui', '2026-01-25 09:15:00', '2026-01-27 08:30:00', '{"active":0,"pending":0,"completed":156}', 'terminated', 12347),
+('m3n4o5p6', '/opt/ferrari/instances/prod04', './fprogram --config prod.yml --workers=4', 'ferrari-node-04.example.com', 8083, 9096, 9097, 'jsmith', 'jsmith_jcs', 'running', '--enable-gui --theme=light --verbose', '2026-01-27 08:00:00', '2026-01-27 16:13:00', '{"active":78,"pending":23,"completed":512}', 'operational', 12348),
+('q7r8s9t0', '/opt/ferrari/instances/staging05', './fprogram --config staging.yml', 'ferrari-node-05.example.com', 8084, NULL, 9099, 'rbrown', 'rbrown_jcs', 'error', '--enable-gui --safe-mode', '2026-01-26 16:45:00', '2026-01-27 15:22:00', '{"active":5,"pending":8,"completed":34}', 'error_recovery', NULL);
+
 -- Init SYSBENCH tables ---
 CREATE SCHEMA sbtest;
 

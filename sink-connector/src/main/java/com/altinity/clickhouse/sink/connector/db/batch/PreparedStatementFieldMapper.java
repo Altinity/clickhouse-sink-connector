@@ -294,19 +294,15 @@ public class PreparedStatementFieldMapper {
 
         // Handle deleted_time column
         if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
-            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
-                    record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                
-                if(beforeSection) {
-                    ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                            ZoneId.of(sourceTimeZone), serverTimeZone));
-                }
-                else {
-                    ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                            DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                    ZoneId.of(sourceTimeZone), serverTimeZone));                        
-                }
+            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
+                                ZoneId.of(sourceTimeZone), serverTimeZone));
+            } else if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
+                ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
+                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
+                                ZoneId.of(sourceTimeZone), serverTimeZone));
+
             } else {
                 ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
                         DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
@@ -325,8 +321,6 @@ public class PreparedStatementFieldMapper {
                 ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
                         DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
                                 ZoneId.of(sourceTimeZone), serverTimeZone));
-//                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-//                                ZoneId.of(sourceTimeZone), serverTimeZone));
             }
         }
 

@@ -15,6 +15,7 @@ jobs:
     secrets: inherit
     with:
       IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
+      attach_stable_lightweight_jar_artifact: true
 
 #  testflows-kafka:
 #    needs: [build-kafka-lightweight]

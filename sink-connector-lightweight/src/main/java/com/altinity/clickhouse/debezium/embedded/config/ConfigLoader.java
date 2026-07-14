@@ -1,9 +1,11 @@
 package com.altinity.clickhouse.debezium.embedded.config;
 
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 import java.util.Properties;
@@ -14,6 +16,28 @@ import java.util.Properties;
  * the classpath and another that loads from a specified file path.
  */
 public class ConfigLoader {
+
+    private static Yaml createSafeYaml() {
+        return new Yaml(new SafeConstructor(new LoaderOptions()));
+    }
+
+    private static Properties toProperties(Map<String, Object> yamlFile) {
+        final Properties props = new Properties();
+        if (yamlFile == null) {
+            return props;
+        }
+        for (Map.Entry<String, Object> entry : yamlFile.entrySet()) {
+            Object value = entry.getValue();
+            if (value != null) {
+                String strValue = String.valueOf(value);
+                if (value instanceof String) {
+                    strValue = strValue.replace("\"", "");
+                }
+                props.setProperty(entry.getKey(), strValue);
+            }
+        }
+        return props;
+    }
 
     /**
      * Loads properties from a YAML file located on the classpath.
@@ -27,25 +51,8 @@ public class ConfigLoader {
                 .getClassLoader()
                 .getResourceAsStream(resourceFileName);
 
-        Map<String, Object> yamlFile = new Yaml().load(fis);
-
-        final Properties props = new Properties();
-
-        for (Map.Entry<String, Object> entry : yamlFile.entrySet()) {
-            if (entry.getValue() instanceof Integer) {
-                props.setProperty(
-                        entry.getKey(),
-                        Integer.toString((Integer) entry.getValue())
-                );
-            } else {
-                String value = (String) entry.getValue();
-                props.setProperty(
-                        entry.getKey(),
-                        value.replace("\"", "")
-                );
-            }
-        }
-        return props;
+        Map<String, Object> yamlFile = createSafeYaml().load(fis);
+        return toProperties(yamlFile);
     }
 
     /**
@@ -54,30 +61,14 @@ public class ConfigLoader {
      * @param fileName The full path of the YAML file.
      * @return A {@link Properties} object containing the configuration
      *         key-value pairs.
-     * @throws FileNotFoundException If the specified file does not exist.
+     * @throws IOException If the specified file cannot be read.
      */
     public Properties loadFromFile(String fileName)
-            throws FileNotFoundException {
+            throws IOException {
 
-        InputStream fis = new FileInputStream(fileName);
-        Map<String, Object> yamlFile = new Yaml().load(fis);
-
-        final Properties props = new Properties();
-
-        for (Map.Entry<String, Object> entry : yamlFile.entrySet()) {
-            if (entry.getValue() instanceof Integer) {
-                props.setProperty(
-                        entry.getKey(),
-                        Integer.toString((Integer) entry.getValue())
-                );
-            } else {
-                String value = (String) entry.getValue();
-                props.setProperty(
-                        entry.getKey(),
-                        value.replace("\"", "")
-                );
-            }
+        try (InputStream fis = new FileInputStream(fileName)) {
+            Map<String, Object> yamlFile = createSafeYaml().load(fis);
+            return toProperties(yamlFile);
         }
-        return props;
     }
 }

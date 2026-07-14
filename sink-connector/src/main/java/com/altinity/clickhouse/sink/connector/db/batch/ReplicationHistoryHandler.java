@@ -5,7 +5,6 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
-import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
@@ -14,13 +13,13 @@ import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Struct;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.ZoneId;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -43,23 +42,35 @@ public class ReplicationHistoryHandler {
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
     /**
-     * Creates a new ReplicationHistoryHandler with default dependencies.
+     * Creates a new ReplicationHistoryHandler with default dependencies (creates its own {@link DBMetadata}).
      *
      * @param config The connector configuration
      */
     public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config, ZoneId serverTimeZone) {
+        this(config, serverTimeZone, new DBMetadata(config));
+    }
+
+    /**
+     * Creates a new ReplicationHistoryHandler reusing an existing {@link DBMetadata} instance.
+     * Prefer this constructor from batch executors that already hold a {@code DBMetadata} for the same connection
+     * to avoid per-record allocation of metadata helpers.
+     *
+     * @param config The connector configuration
+     * @param serverTimeZone ClickHouse server time zone
+     * @param dbMetadata Shared database metadata (e.g. same instance as {@code PreparedStatementExecutor}'s batch metadata)
+     */
+    public ReplicationHistoryHandler(ClickHouseSinkConnectorConfig config, ZoneId serverTimeZone, DBMetadata dbMetadata) {
         this.queryFormatter = new QueryFormatter();
-        this.dbMetadata = new DBMetadata(config);
+        this.dbMetadata = dbMetadata;
 
-
-        String sourceTimeZone = "UTC";
-        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
+        String sourceTz = "UTC";
+        if (config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null) {
             String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTimeZone = configSourceTimeZone;
+            if (configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
+                sourceTz = configSourceTimeZone;
             }
         }
-        this.sourceTimeZone = ZoneId.of(sourceTimeZone);
+        this.sourceTimeZone = ZoneId.of(sourceTz);
         this.serverTimeZone = serverTimeZone;
     }
 
@@ -96,7 +107,14 @@ public class ReplicationHistoryHandler {
 
         // Get the primary key column name and its value from the record
         String primaryKeyColumnName = record.getPrimaryKey().get(0);
-        Object primaryKeyValue = record.getAfterStruct().get(primaryKeyColumnName);
+
+        Object primaryKeyValue = null;
+        Struct afterStruct = record.getAfterStruct();
+        if(afterStruct == null) {
+            primaryKeyValue = record.getBeforeStruct().get(primaryKeyColumnName);
+        } else {
+            primaryKeyValue = afterStruct.get(primaryKeyColumnName);
+        }
 
         return new UpdateQueryParams(
                 validToMax,
@@ -125,7 +143,6 @@ public class ReplicationHistoryHandler {
 
         return queryFormatter.getInsertQueryForUpdate(
                 tableName,
-                fields,
                 columnToDataTypeMap,
                 params.getPrimaryKeyColumnName(),
                 params.getPrimaryKeyValue(),
@@ -138,8 +155,39 @@ public class ReplicationHistoryHandler {
     }
 
     /**
+     * Generates the 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
+     * No parameter binding is needed; both SELECTs read from the table.
+     *
+     * @param tableName The target table name
+     * @param columnToDataTypeMap Map of column names to their ClickHouse data types
+     * @param params The query parameters
+     * @return A pair containing the query string and empty column-to-index map
+     */
+    public MutablePair<String, Map<String, Integer>> generateDeleteQuery(
+            String tableName,
+            Map<String, String> columnToDataTypeMap,
+            UpdateQueryParams params) {
+
+        return queryFormatter.getInsertQueryForDelete(
+                tableName,
+                columnToDataTypeMap,
+                params.getPrimaryKeyColumnName(),
+                params.getPrimaryKeyValue(),
+                params.getValidToMax(),
+                params.getBinlogRecordTimestamp(),
+                params.getVersion(),
+                serverTimeZone.getId()
+        );
+    }
+
+    /**
      * Executes the replication history update for a single record.
      * This creates and executes a prepared statement with the UNION ALL query pattern.
+     * <p>
+     * Per-record {@link PreparedStatement} creation is required today because {@code QueryFormatter}
+     * embeds primary key, timestamps, and version literals in the SQL; see
+     * {@code doc/replication_history_prepared_statement_reuse.md} for a path to reuse statements across records.
+     * </p>
      *
      * @param conn The database connection
      * @param tableName The target table name
@@ -160,125 +208,59 @@ public class ReplicationHistoryHandler {
             PreparedStatementFieldMapper fieldMapper,
             Map<String, Integer> columnIndexMap,
             ClickHouseSinkConnectorConfig config,
-            DBMetadata.TABLE_ENGINE engine ) throws Exception {
+            DBMetadata.TABLE_ENGINE engine, boolean isDelete ) throws Exception {
 
         // Build query parameters from the record
         UpdateQueryParams params = buildUpdateQueryParams(record);
 
-        // Generate the UNION ALL query
-        MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
-                tableName,
-                record.getAfterModifiedFields(),
-                columnToDataTypeMap,
-                params
-        );
+        final String insertQuery;
+        final Map<String, Integer> queryColumnIndexMap;
 
-        String insertQuery = queryResult.left;
-        Map<String, Integer> queryColumnIndexMap = queryResult.right;
+        if (isDelete) {
+            MutablePair<String, Map<String, Integer>> queryResult = generateDeleteQuery(tableName, columnToDataTypeMap, params);
 
-        log.debug("Executing replication history update query: {}", insertQuery);
+            insertQuery = queryResult.left;
+            queryColumnIndexMap = queryResult.right;
+        } else {
+            MutablePair<String, Map<String, Integer>> queryResult = generateUpdateQuery(
+                    tableName,
+                    record.getAfterModifiedFields(),
+                    columnToDataTypeMap,
+                    params
+            );
+            insertQuery = queryResult.left;
+            queryColumnIndexMap = queryResult.right;
+        }
+
+        log.debug("Executing replication history {} query: {}", isDelete ? "delete" : "update", insertQuery);
 
         try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, insertQuery)) {
-            // Populate the prepared statement with after values (second SELECT)
-            // Filter the column index map to only include non-prefixed keys (after image)
-            Map<String, Integer> afterColumnIndexMap = filterAfterImageColumns(queryColumnIndexMap);
-            // increase the version by 1 for record. 
-            record.setVersion(record.getVersion() + 1);
-            fieldMapper.insertPreparedStatement(
-                    afterColumnIndexMap,
-                    ps,
-                    record.getAfterModifiedFields(),
-                    record,
-                    record.getAfterStruct(),
-                    false,  // isBeforeSection = false for after image
-                    config,
-                    columnToDataTypeMap,
-                    engine,
-                    tableName
-            );
-
-            // Revert the version by 1 for record. 
-            record.setVersion(record.getVersion() - 1);
-
-            // Populate the prepared statement with before values (third SELECT)
-            // Translate "before_" prefixed keys to regular column names for the fieldMapper
-            if (record.getBeforeStruct() != null && record.getBeforeModifiedFields() != null) {
-                Map<String, Integer> beforeColumnIndexMap = translateBeforeImageColumns(queryColumnIndexMap);
+            if (!isDelete)
+            {
+                // Populate the prepared statement with after values (second SELECT only)
                 fieldMapper.insertPreparedStatement(
-                        beforeColumnIndexMap,
+                        queryColumnIndexMap,
                         ps,
-                        record.getBeforeModifiedFields(),
+                        record.getAfterModifiedFields(),
                         record,
-                        record.getBeforeStruct(),
-                        true,  // isBeforeSection = true for before image
+                        record.getAfterStruct(),
+                        false,
                         config,
                         columnToDataTypeMap,
                         engine,
                         tableName
                 );
-
-
-                // Override _valid_to for before image: should be max date, not binlog timestamp
-                // The before image represents a "canceled" record that should have open-ended _valid_to
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                    //String validToMax = DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL);
-                    //ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN), validToMax);
-
-                    ps.setString(beforeColumnIndexMap.get(ClickHouseDbConstants.DELETED_TIME_COLUMN),
-                    DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                            sourceTimeZone, serverTimeZone));
-                }
-
-                // After the fieldMapper call for before image, add:
-                if (beforeColumnIndexMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                    ps.setInt(beforeColumnIndexMap.get(ClickHouseDbConstants.IS_DELETED_COLUMN), 1);
-                }
             }
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
 
-            log.debug("Replication history update executed successfully for table: {}", tableName);
+            log.debug("Replication history {} executed successfully for table: {}", isDelete ? "delete" : "update", tableName);
             return batchResult.length > 0;
         }
     }
 
-    /**
-     * Filters the column index map to only include after image columns (non-prefixed keys).
-     *
-     * @param columnIndexMap The full column-to-index map
-     * @return A new map containing only after image columns
-     */
-    private Map<String, Integer> filterAfterImageColumns(Map<String, Integer> columnIndexMap) {
-        Map<String, Integer> afterColumns = new HashMap<>();
-        for (Map.Entry<String, Integer> entry : columnIndexMap.entrySet()) {
-            String key = entry.getKey();
-            if (!key.startsWith("before_")) {
-                afterColumns.put(key, entry.getValue());
-            }
-        }
-        return afterColumns;
-    }
 
-    /**
-     * Translates the before image columns from "before_columnName" to "columnName"
-     * so they can be used with the standard field mapper.
-     *
-     * @param columnIndexMap The full column-to-index map
-     * @return A new map with translated column names pointing to before image indices
-     */
-    private Map<String, Integer> translateBeforeImageColumns(Map<String, Integer> columnIndexMap) {
-        Map<String, Integer> beforeColumns = new HashMap<>();
-        for (Map.Entry<String, Integer> entry : columnIndexMap.entrySet()) {
-            String key = entry.getKey();
-            if (key.startsWith("before_")) {
-                // Remove "before_" prefix so fieldMapper can match by column name
-                String columnName = key.substring("before_".length());
-                beforeColumns.put(columnName, entry.getValue());
-            }
-        }
-        return beforeColumns;
-    }
 
     /**
      * Container class for update query parameters.

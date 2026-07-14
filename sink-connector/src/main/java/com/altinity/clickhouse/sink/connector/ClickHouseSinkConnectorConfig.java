@@ -642,7 +642,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                 "formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, " +
                                 "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
                                 "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM " +
-                                "merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC",
+                                "merge(altinity_sink_connector, 'replica_source_info.*') FINAL) AS U ORDER BY offset_key ASC",
                         Importance.HIGH,
                         "SQL query to get replica status, lag etc.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -796,6 +796,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.MEDIUM,
+                        "If enabled, only track binlog position without inserting data to ClickHouse",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()
                 )
                 .define(
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),

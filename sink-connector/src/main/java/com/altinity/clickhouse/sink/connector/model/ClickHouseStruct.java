@@ -58,6 +58,11 @@ public class ClickHouseStruct {
     private static final int GTID_SEGMENT_INDEX = 1;
 
     /**
+     * Shared ObjectMapper for JSON serialization. Thread-safe for read/serialization operations.
+     */
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+
+    /**
      * Offset in Kafka. Matches the SinkRecord offset.
      */
     @Getter
@@ -525,6 +530,24 @@ public class ClickHouseStruct {
                 .toString();
     }
 
+
+    /**
+     * Gets the Debezium timestamp from the change event.   
+     * @param changeEvent The change event.
+     * @return The Debezium timestamp, or 0 if the change event is null or the value is null.
+     */
+    public static Long getDebeziumTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return 0L;
+        }
+        SourceRecord srd = changeEvent.value();
+        Struct kafkaStruct = (Struct) srd.value();
+        if(kafkaStruct == null) {
+            return 0L;
+        }
+        return (Long) kafkaStruct.get(SinkRecordColumns.TS_MS);
+    }
+
     /**
      * Converts a Kafka Connect Struct to a Map for JSON serialization.
      *
@@ -561,50 +584,42 @@ public class ClickHouseStruct {
         if (sourceRecord == null) {
             return null;
         }
-        
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            ObjectNode jsonNode = mapper.createObjectNode();
-            
+            ObjectNode jsonNode = JSON_MAPPER.createObjectNode();
             SourceRecord record = sourceRecord.value();
             if (record != null) {
                 // Add key information
                 if (record.key() != null) {
                     if (record.key() instanceof Struct) {
-                        jsonNode.set("key", mapper.valueToTree(structToMap((Struct) record.key())));
+                        jsonNode.set("key", JSON_MAPPER.valueToTree(structToMap((Struct) record.key())));
                     } else {
                         jsonNode.put("key", record.key().toString());
                     }
                 }
-                
                 // Add value information
                 if (record.value() != null) {
                     if (record.value() instanceof Struct) {
-                        jsonNode.set("value", mapper.valueToTree(structToMap((Struct) record.value())));
+                        jsonNode.set("value", JSON_MAPPER.valueToTree(structToMap((Struct) record.value())));
                     } else {
                         jsonNode.put("value", record.value().toString());
                     }
                 }
-                
                 // Add topic, partition, and offset
                 jsonNode.put("topic", record.topic());
                 if (record.kafkaPartition() != null) {
                     jsonNode.put("partition", record.kafkaPartition());
                 }
                 if (record.sourceOffset() != null) {
-                    jsonNode.set("sourceOffset", mapper.valueToTree(record.sourceOffset()));
+                    jsonNode.set("sourceOffset", JSON_MAPPER.valueToTree(record.sourceOffset()));
                 }
                 if (record.sourcePartition() != null) {
-                    jsonNode.set("sourcePartition", mapper.valueToTree(record.sourcePartition()));
+                    jsonNode.set("sourcePartition", JSON_MAPPER.valueToTree(record.sourcePartition()));
                 }
-                
-                // Add timestamp if available
                 if (record.timestamp() != null) {
                     jsonNode.put("timestamp", record.timestamp());
                 }
             }
-            
-            return mapper.writeValueAsString(jsonNode);
+            return JSON_MAPPER.writeValueAsString(jsonNode);
         } catch (Exception e) {
             log.error("Error serializing sourceRecord to JSON", e);
             return null;
@@ -620,19 +635,14 @@ public class ClickHouseStruct {
         if (beforeModifiedFields == null) {
             return "";
         }
-        
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            ArrayNode jsonArray = mapper.createArrayNode();
-            
+            ArrayNode jsonArray = JSON_MAPPER.createArrayNode();
             for (Field field : beforeModifiedFields) {
-                ObjectNode fieldNode = mapper.createObjectNode();
+                ObjectNode fieldNode = JSON_MAPPER.createObjectNode();
                 fieldNode.put("name", field.name());
                 fieldNode.put("index", field.index());
-                
-                // Add schema information
                 if (field.schema() != null) {
-                    ObjectNode schemaNode = mapper.createObjectNode();
+                    ObjectNode schemaNode = JSON_MAPPER.createObjectNode();
                     schemaNode.put("type", field.schema().type().toString());
                     if (field.schema().name() != null) {
                         schemaNode.put("name", field.schema().name());
@@ -640,30 +650,26 @@ public class ClickHouseStruct {
                     schemaNode.put("optional", field.schema().isOptional());
                     fieldNode.set("schema", schemaNode);
                 }
-                
-                // Add field value from beforeStruct if available
                 if (beforeStruct != null) {
                     try {
                         Object value = beforeStruct.get(field);
                         if (value != null) {
                             if (value instanceof Struct) {
-                                fieldNode.set("value", mapper.valueToTree(structToMap((Struct) value)));
+                                fieldNode.set("value", JSON_MAPPER.valueToTree(structToMap((Struct) value)));
                             } else {
-                                fieldNode.set("value", mapper.valueToTree(value));
+                                fieldNode.set("value", JSON_MAPPER.valueToTree(value));
                             }
                         }
                     } catch (Exception e) {
                         log.debug("Could not get value for field: " + field.name(), e);
                     }
                 }
-                
                 jsonArray.add(fieldNode);
             }
-            
-            return mapper.writeValueAsString(jsonArray);
+            return JSON_MAPPER.writeValueAsString(jsonArray);
         } catch (Exception e) {
             log.error("Error serializing beforeModifiedFields to JSON", e);
-            return null;
+            return "";
         }
     }
 
@@ -676,19 +682,14 @@ public class ClickHouseStruct {
         if (afterModifiedFields == null) {
             return "";
         }
-        
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            ArrayNode jsonArray = mapper.createArrayNode();
-            
+            ArrayNode jsonArray = JSON_MAPPER.createArrayNode();
             for (Field field : afterModifiedFields) {
-                ObjectNode fieldNode = mapper.createObjectNode();
+                ObjectNode fieldNode = JSON_MAPPER.createObjectNode();
                 fieldNode.put("name", field.name());
                 fieldNode.put("index", field.index());
-                
-                // Add schema information
                 if (field.schema() != null) {
-                    ObjectNode schemaNode = mapper.createObjectNode();
+                    ObjectNode schemaNode = JSON_MAPPER.createObjectNode();
                     schemaNode.put("type", field.schema().type().toString());
                     if (field.schema().name() != null) {
                         schemaNode.put("name", field.schema().name());
@@ -696,30 +697,26 @@ public class ClickHouseStruct {
                     schemaNode.put("optional", field.schema().isOptional());
                     fieldNode.set("schema", schemaNode);
                 }
-                
-                // Add field value from afterStruct if available
                 if (afterStruct != null) {
                     try {
                         Object value = afterStruct.get(field);
                         if (value != null) {
                             if (value instanceof Struct) {
-                                fieldNode.set("value", mapper.valueToTree(structToMap((Struct) value)));
+                                fieldNode.set("value", JSON_MAPPER.valueToTree(structToMap((Struct) value)));
                             } else {
-                                fieldNode.set("value", mapper.valueToTree(value));
+                                fieldNode.set("value", JSON_MAPPER.valueToTree(value));
                             }
                         }
                     } catch (Exception e) {
                         log.debug("Could not get value for field: " + field.name(), e);
                     }
                 }
-                
                 jsonArray.add(fieldNode);
             }
-            
-            return mapper.writeValueAsString(jsonArray);
+            return JSON_MAPPER.writeValueAsString(jsonArray);
         } catch (Exception e) {
             log.error("Error serializing afterModifiedFields to JSON", e);
-            return null;
+            return "";
         }
     }
 

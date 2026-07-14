@@ -230,7 +230,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float32),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(Int64),UIntmax Nullable(Int64),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(Int16),UTIntmax Nullable(Int16),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(Int32),USIntmax Nullable(Int32),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(Int32),UMIntmax Nullable(Int32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float32),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -710,13 +710,57 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
-    public void dropTable() {
+    public void truncateTableWithQualifiedName() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "truncate table mydb.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        // When the table name is already qualified (mydb.add_test), the method should
+        // strip the source database and use the configured databaseName instead,
+        // producing employees.add_test (not employees.mydb.add_test).
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE employees.add_test"));
+    }
+
+    @Test
+    public void dropTableWithQualifiedName() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "drop table mydb.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+    }
+
+    @Test
+    public void renameTableWithMixedQualification() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "rename table mydb.old_table to new_table";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.old_table to employees.new_table"));
+    }
+
+    @Test
+    public void dropTableUnqualifiedName() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String sql = "drop table add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+    }
+
+    @Test
+    public void dropTable() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "drop table add_test";
+        String expectedClickHouseQuery = "DROP TABLE employees.add_test";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
     }
 
     @Test
@@ -725,8 +769,8 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "drop table if exists add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(sql));
+        String expectedSql = "DROP TABLE IF EXISTS employees.add_test";
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedSql));
     }
 
     @Test
@@ -736,7 +780,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table add_test, add_test2";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table add_test,add_test2"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table employees.add_test,employees.add_test2"));
     }
 
     @Test
@@ -1670,8 +1714,8 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery);
-        //String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` Int32 NOT NULL ,`incomplete_lookup_type_id` Int32 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
-        String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` Int32 NOT NULL ,`incomplete_lookup_type_id` Int32 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        //String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        String expectedQuery = "CREATE TABLE employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
@@ -2270,8 +2314,8 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` Int32 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` Int32 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(Int32),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(Int64),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(Int32),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(Int64),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
-        //String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` Int32 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` Int32 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(Int32),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(Int64),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(Int32),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(Int64),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
+        String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
+        //String expectedQuery = "CREATE TABLE employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 

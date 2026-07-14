@@ -167,7 +167,7 @@ def fstr(template, partition_expression):
 
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
-    statements = ['set names utf8mb4']
+    statements = ['set names utf8mb4', 'set session wait_timeout=28000']
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
     limit = ""

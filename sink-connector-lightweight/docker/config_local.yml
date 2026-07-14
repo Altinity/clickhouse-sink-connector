@@ -115,6 +115,8 @@ persist.raw.bytes: "false"
 # auto.create.tables: If set to true, the connector will create tables in the target based on the schema received in the incoming message.
 auto.create.tables: "true"
 
+
+
 # database.connectionTimeZone: The timezone of the MySQL database server used to correctly shift the commit transaction timestamp.
 database.connectionTimeZone: "America/Chicago"
 database.serverTimezone: "America/Chicago"
@@ -153,22 +155,23 @@ clickhouse.jdbc.params: "max_buffer_size=1000000,socket_timeout=10000,input_form
 clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1"
 
 # The maximum number of records that should be loaded into memory while streaming data from MySQL to ClickHouse.
-sink.connector.max.queue.size: "100000"
 
 # Skip schema history capturing
-schema.history.internal.store.only.captured.tables.ddl: "true"
+#schema.history.internal.store.only.captured.tables.ddl: "true"
 
-schema.history.internal.store.only.captured.databases.ddl: "true"
+#schema.history.internal.store.only.captured.databases.ddl: "true"
 
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"
 
 # Enable replication mergetree history table.
 replication.history.enable: "true"
+#replication.history.replication_log_only: "true"
+
 replication.history.table.name: "replication_history"
 replication.history.database.name: "replication_history_db"
 
-connection.pool.disable: "true"
-thread.pool.size: "1"
+# Single threaded mode.
+#single.threaded: "true"
 
-sink.connector.max.queue.size: 500
+connection.pool.disable: "true"
