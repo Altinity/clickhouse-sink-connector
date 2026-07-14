@@ -7,6 +7,7 @@ import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserServ
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -520,11 +521,24 @@ public class DebeziumChangeEventCapture {
 
                 // Invalidate cached DbWriter for the affected table(s) so that subsequent
                 // inserts use the updated schema after DDL changes (e.g., ADD/DROP COLUMN).
-                // Use the real source-mapped database (getDatabaseName(sr)), not the
-                // replication-history override above, so the key matches what the batch
-                // consumer looks up.
+                // The invalidation key must match the key the batch consumers use when
+                // they look up the writer's cache version. Those consumers
+                // (ClickHouseBatchRunnable/ClickHouseBatchWriter) apply
+                // clickhouse.database.override.map to the source database name before
+                // building the "database.table" key, so we must apply the same override
+                // here. We intentionally start from the real source-mapped database
+                // (getDatabaseName(sr)), not the replication-history override above.
                 try {
                     String invalidationDatabaseName = getDatabaseName(sr);
+                    String overrideMapConfig = config.getString(
+                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+                    if (overrideMapConfig != null) {
+                        Map<String, String> databaseOverrideMap =
+                                Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                        if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
+                            invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
+                        }
+                    }
                     for (String tableName : getTableNamesFromDDL(sr)) {
                         CacheInvalidationManager.getInstance()
                                 .invalidateTable(invalidationDatabaseName + "." + tableName);
