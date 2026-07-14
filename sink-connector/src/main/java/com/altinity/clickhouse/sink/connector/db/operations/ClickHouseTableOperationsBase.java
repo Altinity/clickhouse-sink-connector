@@ -106,6 +106,24 @@ public class ClickHouseTableOperationsBase {
                 );
                 continue;
             }
+
+            // MySQL unsigned integers are promoted by Debezium to a signed
+            // Kafka Connect type (e.g. INT UNSIGNED -> INT64, SMALLINT UNSIGNED
+            // -> INT32), which loses the unsigned range and is ambiguous. When
+            // the original source column type is propagated, map it to the
+            // matching ClickHouse UInt type so this path agrees with the DDL
+            // parser path. Falls back to the signed mapping when the source
+            // type is not available.
+            if (f.schema().parameters() != null) {
+                String sourceColumnType = f.schema().parameters().get(
+                        ClickHouseDataTypeMapper.DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM);
+                String unsignedType = ClickHouseDataTypeMapper
+                        .getUnsignedClickHouseType(sourceColumnType);
+                if (unsignedType != null) {
+                    columnToDataTypesMap.put(colName, unsignedType);
+                    continue;
+                }
+            }
             // Input:
             ClickHouseDataType dataType =
                     mapper.getClickHouseDataType(type, schemaName);
