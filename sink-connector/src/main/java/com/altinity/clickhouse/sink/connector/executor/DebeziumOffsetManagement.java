@@ -4,7 +4,6 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -39,26 +38,6 @@ public class DebeziumOffsetManagement {
      */
     static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
             completedBatches = new ConcurrentHashMap<>();
-
-    /**
-     * Message fragment thrown by Kafka Connect's {@code OffsetStorageWriter}
-     * when {@code beginFlush()} is called while a previous flush is still in
-     * progress. See {@code org.apache.kafka.connect.storage.OffsetStorageWriter}.
-     */
-    private static final String ALREADY_FLUSHING_MESSAGE =
-            "OffsetStorageWriter is already flushing";
-
-    /**
-     * Maximum number of attempts to complete an offset flush that collides with
-     * an in-progress flush on the shared, non-thread-safe OffsetStorageWriter.
-     */
-    private static final int MAX_FLUSH_RETRIES = 5;
-
-    /**
-     * Delay (in milliseconds) between retries when the OffsetStorageWriter is
-     * busy flushing.
-     */
-    private static final long FLUSH_RETRY_DELAY_MS = 50L;
 
     /**
      * Shared lock that serializes every offset commit driven by the connector
@@ -268,19 +247,16 @@ public class DebeziumOffsetManagement {
     }
 
     /**
-     * Finishes a Debezium batch (which triggers an offset flush) in a way that
-     * tolerates concurrent flushes on the shared, non-thread-safe
-     * {@code OffsetStorageWriter}.
+     * Finishes a Debezium batch (which triggers an offset flush).
      * <p>
      * All connector-driven commits are serialized on {@link #OFFSET_COMMIT_LOCK}
-     * so that worker threads never overlap each other. The Debezium embedded
-     * engine may still flush on its own thread (it is built with
-     * {@code OffsetCommitPolicy.always()}), which can cause
-     * {@code beginFlush()} to throw {@code "OffsetStorageWriter is already
-     * flushing"}. When that happens, the commit is retried a bounded number of
-     * times; if the writer is still busy, the exception is downgraded from an
-     * aborting ERROR to a WARN, because the pending offsets are committed on a
-     * subsequent flush anyway.
+     * so that worker threads never issue overlapping
+     * {@code markBatchFinished()} / {@code beginFlush()} calls against the same,
+     * non-thread-safe {@code OffsetStorageWriter}. This serialization, combined
+     * with Debezium's own single {@code RecordCommitter} whose methods are
+     * {@code synchronized}, prevents concurrent flushes. Any exception is
+     * allowed to propagate so it is handled by the caller's existing
+     * retriable-error path rather than being silently swallowed.
      *
      * @param committer The Debezium record committer.
      * @throws InterruptedException If the commit is interrupted.
@@ -293,43 +269,7 @@ public class DebeziumOffsetManagement {
             return;
         }
         synchronized (OFFSET_COMMIT_LOCK) {
-            ConnectException lastFlushingError = null;
-            for (int attempt = 1; attempt <= MAX_FLUSH_RETRIES; attempt++) {
-                try {
-                    committer.markBatchFinished();
-                    return;
-                } catch (ConnectException e) {
-                    if (!isAlreadyFlushing(e)) {
-                        // Not the flush-collision case: surface the real error.
-                        throw e;
-                    }
-                    lastFlushingError = e;
-                    log.debug("OffsetStorageWriter is busy flushing (attempt {}/{}); "
-                                    + "retrying markBatchFinished after {} ms",
-                            attempt, MAX_FLUSH_RETRIES, FLUSH_RETRY_DELAY_MS);
-                    Thread.sleep(FLUSH_RETRY_DELAY_MS);
-                }
-            }
-            // Exhausted retries: the OffsetStorageWriter is still flushing.
-            // The offsets remain buffered and will be committed by the next
-            // flush, so treat this as non-fatal instead of aborting the batch.
-            log.warn("OffsetStorageWriter still flushing after {} attempts; "
-                            + "skipping this offset commit. Offsets will be "
-                            + "committed on the next flush.",
-                    MAX_FLUSH_RETRIES, lastFlushingError);
+            committer.markBatchFinished();
         }
-    }
-
-    /**
-     * Returns true if the given throwable represents the Kafka Connect
-     * "OffsetStorageWriter is already flushing" condition.
-     *
-     * @param throwable The throwable to inspect.
-     * @return true if the throwable is the already-flushing collision.
-     */
-    private static boolean isAlreadyFlushing(Throwable throwable) {
-        return throwable != null
-                && throwable.getMessage() != null
-                && throwable.getMessage().contains(ALREADY_FLUSHING_MESSAGE);
     }
 }

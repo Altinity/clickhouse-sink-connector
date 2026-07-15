@@ -23,9 +23,9 @@ import java.util.Map;
 public class DebeziumOffsetManagementTest {
 
     /**
-     * Fake {@link DebeziumEngine.RecordCommitter} whose {@code markBatchFinished()}
-     * throws a configurable number of "OffsetStorageWriter is already flushing"
-     * errors before succeeding, and records how many times it was invoked.
+     * Fake {@link DebeziumEngine.RecordCommitter} that records how many times
+     * its methods were invoked and, optionally, throws a supplied error from
+     * {@code markBatchFinished()} so we can verify that exceptions propagate.
      */
     private static class FakeRecordCommitter
             implements DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> {
@@ -33,15 +33,14 @@ public class DebeziumOffsetManagementTest {
         int markBatchFinishedCalls = 0;
         int markProcessedCalls = 0;
 
-        private int flushingErrorsToThrow;
-        private final boolean alwaysThrowFlushing;
-        private final RuntimeException nonFlushingError;
+        private final RuntimeException errorToThrow;
 
-        FakeRecordCommitter(int flushingErrorsToThrow, boolean alwaysThrowFlushing,
-                            RuntimeException nonFlushingError) {
-            this.flushingErrorsToThrow = flushingErrorsToThrow;
-            this.alwaysThrowFlushing = alwaysThrowFlushing;
-            this.nonFlushingError = nonFlushingError;
+        FakeRecordCommitter() {
+            this(null);
+        }
+
+        FakeRecordCommitter(RuntimeException errorToThrow) {
+            this.errorToThrow = errorToThrow;
         }
 
         @Override
@@ -52,12 +51,8 @@ public class DebeziumOffsetManagementTest {
         @Override
         public void markBatchFinished() {
             markBatchFinishedCalls++;
-            if (nonFlushingError != null) {
-                throw nonFlushingError;
-            }
-            if (alwaysThrowFlushing || flushingErrorsToThrow > 0) {
-                flushingErrorsToThrow--;
-                throw new ConnectException("OffsetStorageWriter is already flushing");
+            if (errorToThrow != null) {
+                throw errorToThrow;
             }
         }
 
@@ -102,40 +97,39 @@ public class DebeziumOffsetManagementTest {
     }
 
     @Test
-    public void testAcknowledgeRetriesWhenAlreadyFlushing() throws InterruptedException {
-        // First two flushes collide with an in-progress flush, then it succeeds.
-        FakeRecordCommitter committer = new FakeRecordCommitter(2, false, null);
+    public void testAcknowledgeMarksBatchFinishedOnce() throws InterruptedException {
+        // Happy path: the last record in the batch is processed and the batch
+        // is finished exactly once (serialized on OFFSET_COMMIT_LOCK).
+        FakeRecordCommitter committer = new FakeRecordCommitter();
 
         DebeziumOffsetManagement.acknowledgeRecords(committer, dummyChangeEvent(), true);
 
-        // 2 failed attempts + 1 successful attempt.
-        Assert.assertEquals(3, committer.markBatchFinishedCalls);
         Assert.assertEquals(1, committer.markProcessedCalls);
+        Assert.assertEquals(1, committer.markBatchFinishedCalls);
     }
 
     @Test
-    public void testAcknowledgePersistentFlushingIsDowngraded() throws InterruptedException {
-        // OffsetStorageWriter is always busy flushing.
-        FakeRecordCommitter committer = new FakeRecordCommitter(0, true, null);
+    public void testAcknowledgeDoesNotFinishBatchWhenNotLastRecord() throws InterruptedException {
+        // Not the last record: process it but do not finish/flush the batch.
+        FakeRecordCommitter committer = new FakeRecordCommitter();
 
-        // Should NOT throw: the collision is downgraded and the offsets will be
-        // committed on a subsequent flush.
-        DebeziumOffsetManagement.acknowledgeRecords(committer, dummyChangeEvent(), true);
+        DebeziumOffsetManagement.acknowledgeRecords(committer, dummyChangeEvent(), false);
 
-        // Bounded retry: markBatchFinished attempted MAX_FLUSH_RETRIES (5) times.
-        Assert.assertEquals(5, committer.markBatchFinishedCalls);
+        Assert.assertEquals(1, committer.markProcessedCalls);
+        Assert.assertEquals(0, committer.markBatchFinishedCalls);
     }
 
     @Test
-    public void testAcknowledgePropagatesNonFlushingError() {
-        // A genuine ConnectException (not the flushing collision) must surface.
-        RuntimeException realError = new ConnectException("Some real offset error");
-        FakeRecordCommitter committer = new FakeRecordCommitter(0, false, realError);
+    public void testAcknowledgePropagatesCommitError() {
+        // We no longer inspect the exception message: any error from
+        // markBatchFinished propagates and is handled by the caller's
+        // existing retriable-error path.
+        RuntimeException error = new ConnectException("OffsetStorageWriter is already flushing");
+        FakeRecordCommitter committer = new FakeRecordCommitter(error);
 
         Assertions.assertThrows(ConnectException.class, () ->
                 DebeziumOffsetManagement.acknowledgeRecords(committer, dummyChangeEvent(), true));
 
-        // No retry for a non-flushing error.
         Assert.assertEquals(1, committer.markBatchFinishedCalls);
     }
 
