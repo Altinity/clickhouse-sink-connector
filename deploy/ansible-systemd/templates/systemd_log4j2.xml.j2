@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+  <Appenders>
+    <!-- Console appender: captured by the systemd journal -->
+    <Console name="Console" target="SYSTEM_OUT">
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+    </Console>
+
+    <!-- Main application log -->
+    <RollingFile name="FileAppender"
+                 fileName="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector.log"
+                 filePattern="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector-%d{yyyy-MM-dd}-%i.log.gz">
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="1"/>
+        <SizeBasedTriggeringPolicy size="100MB"/>
+      </Policies>
+      <DefaultRolloverStrategy max="7">
+        <Delete basePath="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs" maxDepth="1">
+          <IfFileName glob="sink-connector-*.log.gz"/>
+          <IfLastModified age="7d"/>
+        </Delete>
+      </DefaultRolloverStrategy>
+    </RollingFile>
+
+    <!-- Error log (WARN and above) -->
+    <RollingFile name="ErrorFileAppender"
+                 fileName="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector-error.log"
+                 filePattern="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector-error-%d{yyyy-MM-dd}-%i.log.gz">
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+      <ThresholdFilter level="WARN" onMatch="ACCEPT" onMismatch="DENY"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="1"/>
+        <SizeBasedTriggeringPolicy size="50MB"/>
+      </Policies>
+      <DefaultRolloverStrategy max="5">
+        <Delete basePath="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs" maxDepth="1">
+          <IfFileName glob="sink-connector-error-*.log.gz"/>
+          <IfLastModified age="3d"/>
+        </Delete>
+      </DefaultRolloverStrategy>
+    </RollingFile>
+
+    <!-- Metrics log -->
+    <RollingFile name="MetricsAppender"
+                 fileName="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector-metrics.log"
+                 filePattern="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs/sink-connector-metrics-%d{yyyy-MM-dd}-%i.log.gz">
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="1"/>
+        <SizeBasedTriggeringPolicy size="100MB"/>
+      </Policies>
+      <DefaultRolloverStrategy max="7">
+        <Delete basePath="/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs" maxDepth="1">
+          <IfFileName glob="sink-connector-metrics-*.log.gz"/>
+          <IfLastModified age="7d"/>
+        </Delete>
+      </DefaultRolloverStrategy>
+    </RollingFile>
+  </Appenders>
+
+  <Loggers>
+    <Logger name="com.altinity.clickhouse" level="INFO" additivity="false">
+      <AppenderRef ref="Console"/>
+      <AppenderRef ref="FileAppender"/>
+      <AppenderRef ref="ErrorFileAppender"/>
+    </Logger>
+
+    <Logger name="io.debezium" level="INFO" additivity="false">
+      <AppenderRef ref="Console"/>
+      <AppenderRef ref="FileAppender"/>
+      <AppenderRef ref="ErrorFileAppender"/>
+    </Logger>
+
+    <!-- Metrics logging for monitoring -->
+    <Logger name="metrics" level="INFO" additivity="false">
+      <AppenderRef ref="MetricsAppender"/>
+    </Logger>
+
+    <Root level="INFO">
+      <AppenderRef ref="Console"/>
+      <AppenderRef ref="FileAppender"/>
+      <AppenderRef ref="ErrorFileAppender"/>
+    </Root>
+  </Loggers>
+</Configuration>

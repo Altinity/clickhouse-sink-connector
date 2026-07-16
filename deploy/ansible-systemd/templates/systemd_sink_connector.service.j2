@@ -1,0 +1,61 @@
+{% set _deploy_base_dir = '/home/' ~ ansible_user ~ '/sink-connector' %}
+[Unit]
+Description=ClickHouse Sink Connector - {{ item.name }}
+After=network.target
+Wants=network-online.target
+After=network-online.target
+StartLimitInterval=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory={{ _deploy_base_dir }}/{{ item.name }}
+
+# JAR symlink gives version-independent reference: upgrade = repoint symlink + restart
+ExecStart=/bin/bash -c '{{ item.systemd.local_java_bin_dir | default('/usr/bin') }}/java \
+  -Duser.timezone={{ item.systemd.timezone | default('UTC') }} \
+{% if item.systemd.java_debug_enabled | default(false) %}
+  -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:{{ item.systemd.java_debug_port | default('5005') }} \
+{% endif %}
+  {{ item.systemd.sink_connector_java_opts | default('-Xmx4G -Xms4G') }} \
+  -Dlog4j2.configurationFile={{ _deploy_base_dir }}/{{ item.name }}/config/log4j2.xml \
+{% if item.systemd.jmx_enabled | default(true) %}
+  -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port={{ item.systemd.jmx_port | default('9127') }} \
+{% endif %}
+  -jar {{ _deploy_base_dir }}/{{ item.name }}/{{ sink_connector_jar_symlink_name }} \
+  {{ _deploy_base_dir }}/{{ item.name }}/config/config.yml \
+  com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication'
+
+# Restart and failure handling
+Restart=always
+RestartSec=30
+
+# Logging: Log4j2 is the sole owner of log file writing and rotation.
+# systemd journal captures stdout/stderr for debugging
+# (journalctl --user -u sink-connector-<name>)
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+{% if item.systemd.local_sink_connector_bin_dir is defined %}
+ReadWritePaths={{ item.systemd.local_sink_connector_bin_dir }}
+{% endif %}
+ReadWritePaths={{ _deploy_base_dir }}/{{ item.name }}
+
+# Environment variables
+Environment="CONFIG_PATH={{ _deploy_base_dir }}/{{ item.name }}/config/config.yml"
+Environment="LOG_DIR={{ _deploy_base_dir }}/{{ item.name }}/logs"
+Environment="DEPLOYMENT_MODE=systemd"
+Environment="DEPLOYMENT_NAME={{ item.name }}"
+Environment="TZ={{ item.systemd.timezone | default('UTC') }}"
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+[Install]
+WantedBy=default.target
