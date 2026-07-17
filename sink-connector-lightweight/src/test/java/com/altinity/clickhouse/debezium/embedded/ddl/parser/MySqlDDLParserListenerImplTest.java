@@ -529,7 +529,7 @@ public class MySqlDDLParserListenerImplTest {
         String alterTableModifyColumn = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT;";
         mySQLDDLParserService.parseSql(alterTableModifyColumn, "add_test", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Nullable(Int32)"));
     }
 
     @Test
@@ -556,7 +556,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
-        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 String\n" +
+        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 Nullable(String) \n" +
                 "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN col1 to new_col"));
     }
 
@@ -612,7 +612,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool\n" +
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
                 "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
         String sql = "alter table add_test change column stocks options bool";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
@@ -624,7 +624,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnFirst() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool first\n" +
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  first\n" +
                 "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
         String sql = "alter table add_test change column stocks options bool first";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
@@ -636,7 +636,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnAfter() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool after col1\n" +
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  after col1\n" +
                 "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
         String sql = "alter table add_test change column stocks options bool after col1";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
@@ -650,9 +650,39 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.ship_class MODIFY COLUMN tonange Decimal(10,10)\n" +
+        String expectedCHQuery = "ALTER TABLE employees.ship_class MODIFY COLUMN tonange Nullable(Decimal(10,10)) \n" +
                 "ALTER TABLE employees.ship_class RENAME COLUMN tonange to tonange_new";
 
+        mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
+    }
+
+    @Test
+    public void testModifyColumnWithNotNull() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT NOT NULL;";
+        mySQLDDLParserService.parseSql(sql, "add_test", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+    }
+
+    @Test
+    public void testModifyColumnWithExplicitNull() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT NULL;";
+        mySQLDDLParserService.parseSql(sql, "add_test", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Nullable(Int32)"));
+    }
+
+    @Test
+    public void testChangeColumnWithNotNull() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool\n" +
+                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+        String sql = "alter table add_test change column stocks options bool not null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
