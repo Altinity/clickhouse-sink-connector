@@ -539,25 +539,54 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         String databaseName,
                                         ClickHouseStruct record,
                                         Connection connection) {
-        DbWriter writer = null;
-        if (this.topicToDbWriterMap.containsKey(topicName)) {
-            // Check if this table needs cache invalidation after DDL
-            String fullyQualifiedTableName = databaseName + "." + tableName;
-            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
-                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
-                this.topicToDbWriterMap.remove(topicName);
-            } else {
-                writer = this.topicToDbWriterMap.get(topicName);
+        // Compare the cached writer's build version against the shared, monotonic
+        // table version. A mismatch means a DDL invalidated this table after the
+        // writer was built, so it must be rebuilt with the fresh schema.
+        String fullyQualifiedTableName = databaseName + "." + tableName;
+        long currentVersion = CacheInvalidationManager.getInstance()
+                .getVersion(fullyQualifiedTableName);
+        DbWriter writer = this.topicToDbWriterMap.get(topicName);
+        boolean invalidated = false;
+        if (writer != null) {
+            if (writer.getCacheInvalidationVersion() == currentVersion) {
                 return writer;
             }
+            log.info("Invalidating cached DbWriter for {} after DDL (version {} -> {})",
+                    topicName, writer.getCacheInvalidationVersion(), currentVersion);
+            this.topicToDbWriterMap.remove(topicName);
+            invalidated = true;
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), this.config, record,
                 connection);
+        writer.setCacheInvalidationVersion(currentVersion);
         this.topicToDbWriterMap.put(topicName, writer);
+        // Log the resolved schema whenever this table has seen a DDL (version > 0).
+        // This covers both rebuilding a stale writer and building a fresh writer at
+        // the current version after a burst of DDLs, so the post-DDL schema is always
+        // observable regardless of which thread ends up owning the writer.
+        if (invalidated || currentVersion > 0) {
+            logRefreshedColumns(topicName, writer, invalidated);
+        }
         return writer;
+    }
+
+    /**
+     * Logs the refreshed column name and type map of a DbWriter that was rebuilt
+     * after a DDL cache invalidation.
+     *
+     * @param topicName the topic whose writer was rebuilt
+     * @param writer    the freshly constructed DbWriter
+     */
+    private void logRefreshedColumns(String topicName, DbWriter writer, boolean rebuilt) {
+        Map<String, String> cols = writer.getColumnNameToDataTypeMap();
+        if (cols != null) {
+            log.info("{} DbWriter schema for {} at cache version {} ({} columns): {}",
+                    rebuilt ? "Rebuilt" : "Built", topicName,
+                    writer.getCacheInvalidationVersion(), cols.size(), cols);
+        }
     }
 
     /**

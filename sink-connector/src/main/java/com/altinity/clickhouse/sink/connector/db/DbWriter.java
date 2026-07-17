@@ -46,6 +46,15 @@ public class DbWriter extends BaseDbWriter {
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 
     /**
+     * The cache invalidation version this writer was built at. Compared against
+     * {@link com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager}
+     * to detect when the writer is stale and must be rebuilt after a DDL.
+     */
+    @Getter
+    @Setter
+    private long cacheInvalidationVersion = 0;
+
+    /**
      * The engine type of the target table in ClickHouse (e.g., MergeTree,
      * ReplacingMergeTree, CollapsingMergeTree).
      */

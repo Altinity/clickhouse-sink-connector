@@ -248,7 +248,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            if(!jdbcSettings.isEmpty()) {
+            if(jdbcSettings != null && !jdbcSettings.isEmpty()) {
                 properties.setProperty("custom_settings", jdbcSettings);
             } else {
                 properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
@@ -258,7 +258,7 @@ public class BaseDbWriter {
             if(!connectionPoolDisable) {
                 properties.setProperty("http_connection_provider", "HTTP_URL_CONNECTION");
             }
-            if (!jdbcParams.isEmpty()) {
+            if (jdbcParams != null && !jdbcParams.isEmpty()) {
                 log.info("**** JDBC PARAMS from configuration:" + jdbcParams);
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);

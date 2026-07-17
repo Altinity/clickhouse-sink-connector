@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ConnectorErrorReporter;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -536,12 +537,29 @@ public class DebeziumChangeEventCapture {
                 if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
                     executeDDL(clickHouseQuery.toString(), writer, config);
 
-                // Invalidate cached DbWriter for this table so that subsequent inserts
-                // use the updated schema after DDL changes (e.g., ADD/DROP COLUMN)
+                // Invalidate cached DbWriter for the affected table(s) so that subsequent
+                // inserts use the updated schema after DDL changes (e.g., ADD/DROP COLUMN).
+                // The invalidation key must match the key the batch consumers use when
+                // they look up the writer's cache version. Those consumers
+                // (ClickHouseBatchRunnable/ClickHouseBatchWriter) apply
+                // clickhouse.database.override.map to the source database name before
+                // building the "database.table" key, so we must apply the same override
+                // here. We intentionally start from the real source-mapped database
+                // (getDatabaseName(sr)), not the replication-history override above.
                 try {
-                    String tableName = getTableName(sr);
-                    if (tableName != null) {
-                        CacheInvalidationManager.getInstance().invalidateTable(databaseName + "." + tableName);
+                    String invalidationDatabaseName = getDatabaseName(sr);
+                    String overrideMapConfig = config.getString(
+                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+                    if (overrideMapConfig != null) {
+                        Map<String, String> databaseOverrideMap =
+                                Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                        if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
+                            invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
+                        }
+                    }
+                    for (String tableName : getTableNamesFromDDL(sr)) {
+                        CacheInvalidationManager.getInstance()
+                                .invalidateTable(invalidationDatabaseName + "." + tableName);
                     }
                 } catch (Exception e) {
                     log.warn("Error invalidating cache for DDL: " + DDL, e);
@@ -672,6 +690,67 @@ public class DebeziumChangeEventCapture {
             }
         }
         return null;
+    }
+
+    /**
+     * Resolves the table name(s) affected by a DDL/schema-change event from the record
+     * value. DDL events carry the affected table(s) in the value's {@code tableChanges}
+     * array (each entry's {@code id} is a fully qualified name such as
+     * {@code "employees"."race_test"}), with {@code source.table} as a fallback. The
+     * record key only carries {@code databaseName}, which is why {@link #getTableName}
+     * cannot be used here.
+     *
+     * @param sr The source record.
+     * @return The distinct table names affected by the DDL, or an empty list.
+     */
+    private List<String> getTableNamesFromDDL(SourceRecord sr) {
+        java.util.LinkedHashSet<String> tables = new java.util.LinkedHashSet<>();
+        if (sr != null && sr.value() instanceof Struct) {
+            Struct value = (Struct) sr.value();
+            try {
+                List<Object> tableChanges = value.getArray("tableChanges");
+                if (tableChanges != null) {
+                    for (Object change : tableChanges) {
+                        if (change instanceof Struct) {
+                            String t = extractTableFromId((String) ((Struct) change).get("id"));
+                            if (t != null) {
+                                tables.add(t);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // tableChanges field may not exist; fall back to source.table below
+            }
+            if (tables.isEmpty()) {
+                try {
+                    Struct source = (Struct) value.get("source");
+                    String t = source != null ? (String) source.get("table") : null;
+                    if (t != null && !t.isEmpty()) {
+                        tables.add(t);
+                    }
+                } catch (Exception ignored) {
+                    // source.table may not exist
+                }
+            }
+        }
+        return new ArrayList<>(tables);
+    }
+
+    /**
+     * Extracts the bare table name from a fully qualified table id such as
+     * {@code "employees"."race_test"} or {@code `employees`.`race_test`}.
+     *
+     * @param id The fully qualified table id.
+     * @return The bare table name, or null if the id is empty.
+     */
+    private String extractTableFromId(String id) {
+        if (id == null || id.isEmpty()) {
+            return null;
+        }
+        String cleaned = id.replace("\"", "").replace("`", "");
+        int dot = cleaned.lastIndexOf('.');
+        return dot >= 0 ? cleaned.substring(dot + 1) : cleaned;
     }
 
     /**
