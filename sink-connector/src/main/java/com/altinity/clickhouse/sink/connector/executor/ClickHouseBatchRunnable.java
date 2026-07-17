@@ -321,9 +321,16 @@ public class ClickHouseBatchRunnable implements Runnable {
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
-                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
+                // Code -1 indicates a deterministic client-side conversion error
+                // (no ClickHouse "Code:"); surface the root exception type so it is
+                // clear why the batch is being discarded.
+                Throwable rootCause = e;
+                while (rootCause.getCause() != null) {
+                    rootCause = rootCause.getCause();
+                }
+                log.error("FATAL ClickHouse error (Code: {}, cause: {}) -- this batch will never succeed. " +
                           "Discarding batch and stopping task to prevent silent data loss. " +
-                          "Manual intervention required.", errorCode);
+                          "Manual intervention required.", errorCode, rootCause.getClass().getName());
                 // Clear the stuck batch so it is not retried forever
                 currentBatch = null;
                 // Rethrow to stop the scheduled executor -- silent swallowing causes

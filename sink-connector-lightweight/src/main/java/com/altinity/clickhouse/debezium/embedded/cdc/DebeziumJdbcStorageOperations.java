@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -182,7 +183,7 @@ public class DebeziumJdbcStorageOperations {
     public String getErrorTableStatus(Connection conn, Properties props)
             throws SQLException {
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(
-                com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props));
+                PropertiesHelper.toMap(props));
         String errorTableName = ErrorLogger.getErrorTableName(config);
         String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
         String errorTableStatusQuery = String.format(

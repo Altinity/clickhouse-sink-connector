@@ -3,7 +3,9 @@ package com.altinity.clickhouse.sink.connector.common;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,6 +64,18 @@ public class ClickHouseErrorClassifier {
         FATAL_ERROR_CODES.add(349);  // INVALID_PARTITION_VALUE
     }
 
+    /**
+     * Deterministic client-side data-conversion exceptions thrown while mapping a
+     * source value onto a ClickHouse column (e.g. the JDBC driver parsing a
+     * non-numeric string into an integer column). These never carry a ClickHouse
+     * "Code:" and will never succeed on retry, so they are treated as fatal.
+     */
+    private static final List<Class<? extends Throwable>> FATAL_CLIENT_SIDE_EXCEPTIONS = Arrays.asList(
+            NumberFormatException.class,
+            java.time.format.DateTimeParseException.class,
+            java.time.DateTimeException.class,
+            ArithmeticException.class);
+
     public enum ErrorCategory {
         /** Error is transient — retry may succeed (network, timeout, etc.) */
         RETRIABLE,
@@ -80,6 +94,12 @@ public class ClickHouseErrorClassifier {
     public static ErrorCategory classify(Exception e) {
         if (e == null) {
             return ErrorCategory.UNKNOWN;
+        }
+
+        // Deterministic client-side conversion errors have no ClickHouse "Code:"
+        // but retrying the same batch will never succeed.
+        if (isFatalClientSideException(e)) {
+            return ErrorCategory.FATAL;
         }
 
         int errorCode = extractErrorCode(e);
@@ -131,5 +151,26 @@ public class ClickHouseErrorClassifier {
      */
     public static boolean isFatal(int errorCode) {
         return FATAL_ERROR_CODES.contains(errorCode);
+    }
+
+    /**
+     * Check whether the exception (or anything in its cause chain) is a
+     * deterministic client-side data-conversion error that will never succeed
+     * on retry.
+     *
+     * @param e the exception
+     * @return true if the exception chain contains a fatal client-side conversion error
+     */
+    public static boolean isFatalClientSideException(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            for (Class<? extends Throwable> fatalType : FATAL_CLIENT_SIDE_EXCEPTIONS) {
+                if (fatalType.isInstance(current)) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

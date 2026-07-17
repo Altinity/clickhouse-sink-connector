@@ -107,18 +107,24 @@ public class ShowSlaveStatusIT {
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
                 BaseDbWriter.SYSTEM_DB, config);
 
+        ClickHouseSinkConnectorConfig testConfig = new ClickHouseSinkConnectorConfig(
+                com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props));
+        String errorDb = ErrorLogger.getErrorDatabaseName(testConfig);
+        String errorTbl = ErrorLogger.getErrorTableName(testConfig);
+
         boolean errorTableExists = false;
-        try (ResultSet tables = chConn.prepareStatement(
-                "SELECT count(*) as cnt FROM system.tables WHERE database = 'system' AND name = 'replica_source_error'"
-        ).executeQuery()) {
-            if (tables.next()) {
-                errorTableExists = tables.getInt("cnt") > 0;
+        try (java.sql.PreparedStatement ps = chConn.prepareStatement(
+                "SELECT count(*) as cnt FROM system.tables WHERE database = ? AND name = ?")) {
+            ps.setString(1, errorDb);
+            ps.setString(2, errorTbl);
+            try (ResultSet tables = ps.executeQuery()) {
+                if (tables.next()) {
+                    errorTableExists = tables.getInt("cnt") > 0;
+                }
             }
         }
         Assert.assertTrue("Error table should be created at connector startup", errorTableExists);
 
-        ClickHouseSinkConnectorConfig testConfig = new ClickHouseSinkConnectorConfig(
-                com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper.toMap(props));
         ErrorLogger.logError(chConn,
                 "integration test error",
                 null,
