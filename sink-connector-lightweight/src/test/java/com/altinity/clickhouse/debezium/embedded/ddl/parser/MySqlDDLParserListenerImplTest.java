@@ -687,6 +687,19 @@ public class MySqlDDLParserListenerImplTest {
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
     }
+
+    @Test
+    public void testChangeColumnWithExplicitNull() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
+                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+        String sql = "alter table add_test change column stocks options bool null";
+        mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedCHQuery));
+    }
+
     @Test
     public void testAddConstraints() {
         StringBuffer clickHouseQuery = new StringBuffer();

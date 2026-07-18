@@ -793,6 +793,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             isAlterChangeColumn = true;
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
+            // Same MySQL semantics as MODIFY COLUMN above.
             isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
             modifier = Constants.ADD_INDEX;
