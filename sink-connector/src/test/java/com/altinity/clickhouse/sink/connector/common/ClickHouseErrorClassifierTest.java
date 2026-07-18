@@ -4,6 +4,8 @@ import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier.ErrorCategory;
 import org.junit.jupiter.api.Test;
 
+import java.time.format.DateTimeParseException;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 public class ClickHouseErrorClassifierTest {
@@ -84,5 +86,41 @@ public class ClickHouseErrorClassifierTest {
         Exception mid = new RuntimeException("Insert batch failed", inner);
         Exception outer = new RuntimeException("ClickHouseBatchRunnable error", mid);
         assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(outer));
+    }
+
+    @Test
+    public void testClassifyClientSideConversionFatal() {
+        // Direct client-side conversion error (no ClickHouse "Code:").
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(
+                new NumberFormatException("For input string: \"not-a-number\"")));
+
+        // Wrapped exactly like the real ClickHouseBatchRunnable stack:
+        // RuntimeException -> NumberFormatException.
+        Exception wrapped = new RuntimeException("insert batch failed",
+                new NumberFormatException("For input string: \"not-a-number\""));
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(wrapped));
+
+        // Other deterministic conversion exceptions.
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(
+                new DateTimeParseException("Text 'bad' could not be parsed", "bad", 0)));
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(
+                new java.time.DateTimeException("Invalid value for field")));
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(
+                new ArithmeticException("long overflow")));
+
+        // A plain exception without a conversion cause and without a code stays UNKNOWN.
+        assertEquals(ErrorCategory.UNKNOWN, ClickHouseErrorClassifier.classify(
+                new RuntimeException("Some random Java exception without ClickHouse error code")));
+    }
+
+    @Test
+    public void testIsFatalClientSideException() {
+        assertTrue(ClickHouseErrorClassifier.isFatalClientSideException(
+                new NumberFormatException("For input string: \"x\"")));
+        assertTrue(ClickHouseErrorClassifier.isFatalClientSideException(
+                new RuntimeException("wrapper", new NumberFormatException("x"))));
+        assertFalse(ClickHouseErrorClassifier.isFatalClientSideException(
+                new RuntimeException("Code: 210. Connection refused.")));
+        assertFalse(ClickHouseErrorClassifier.isFatalClientSideException(null));
     }
 }

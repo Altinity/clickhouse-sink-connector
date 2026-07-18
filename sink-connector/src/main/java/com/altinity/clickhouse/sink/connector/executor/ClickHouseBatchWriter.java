@@ -2,8 +2,10 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ConnectorErrorReporter;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -16,6 +18,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
@@ -249,6 +252,44 @@ public class ClickHouseBatchWriter {
             }
         } catch (Exception e) {
             log.error("Error persisting records to ClickHouse" + e);
+            if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())) {
+                logErrorToClickHouse(e, records);
+            }
+        }
+    }
+
+    private void logErrorToClickHouse(Exception e, List<ClickHouseStruct> records) {
+        try {
+            String errorTableName = ErrorLogger.getErrorTableName(config);
+            String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
+            ErrorLogger.createErrorTable(systemConnection, config);
+            if (records != null && !records.isEmpty()) {
+                ClickHouseStruct firstRecord = records.get(0);
+                SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                String databaseName = firstRecord.getDatabase();
+                ErrorLogger.logError(systemConnection,
+                        String.format("Error processing batch in single-threaded mode. Database: %s, Error: %s",
+                                databaseName, e.getMessage()),
+                        sourceRecord,
+                        databaseName,
+                        "",
+                        "",
+                        errorDatabaseName,
+                        errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), databaseName, "");
+            } else {
+                ErrorLogger.logError(systemConnection,
+                        String.format("Error processing batch in single-threaded mode. Error: %s", e.getMessage()),
+                        null,
+                        "",
+                        "",
+                        "",
+                        errorDatabaseName,
+                        errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), "", "");
+            }
+        } catch (SQLException ex) {
+            log.error("Failed to log error to ClickHouse", ex);
         }
     }
 

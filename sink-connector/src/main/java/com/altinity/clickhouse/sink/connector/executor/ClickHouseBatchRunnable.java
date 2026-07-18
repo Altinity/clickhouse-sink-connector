@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
+import com.altinity.clickhouse.sink.connector.common.ConnectorErrorReporter;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -294,8 +295,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        
+        String errorTableName = ErrorLogger.getErrorTableName(config);
+        String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
+
         // Determine which mode we're in: hash-based routing or legacy
         boolean useHashRouting = (threadId >= 0 && routedRecords != null);
         useHashRouting = false;
@@ -311,7 +313,7 @@ public class ClickHouseBatchRunnable implements Runnable {
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
-                logErrorToClickHouse(e, taskId, errorTableName);
+                logErrorToClickHouse(e, taskId, errorDatabaseName, errorTableName);
             }
 
             // Classify the error to decide whether to retry or stop
@@ -319,19 +321,57 @@ public class ClickHouseBatchRunnable implements Runnable {
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
-                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
-                          "Discarding batch and stopping task to prevent silent data loss. " +
-                          "Manual intervention required.", errorCode);
-                // Clear the stuck batch so it is not retried forever
+                // Surface the root exception type so it is clear why the batch is
+                // being discarded.
+                Throwable rootCause = e;
+                while (rootCause.getCause() != null) {
+                    rootCause = rootCause.getCause();
+                }
+                // Clear the stuck batch so it is not retried forever.
                 currentBatch = null;
-                // Rethrow to stop the scheduled executor -- silent swallowing causes
-                // binlog advancement to stall and blocks replication for ALL tables
-                throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
+
+                if (shouldStopTaskOnFatalError(e)) {
+                    log.error("FATAL ClickHouse error (Code: {}, cause: {}) -- this batch will never succeed. "
+                            + "Discarding batch and stopping task to prevent silent data loss. "
+                            + "Manual intervention required.", errorCode, rootCause.getClass().getName());
+                    // Rethrow to stop the scheduled executor -- silent swallowing causes
+                    // binlog advancement to stall and blocks replication for ALL tables.
+                    throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
+                } else {
+                    // Deterministic client-side conversion error (e.g. a bad
+                    // datetime/number in a single record). Retrying will never
+                    // succeed, but this is isolated to the offending batch -- it
+                    // must NOT take down the whole worker, otherwise one bad
+                    // record halts replication for ALL tables. Discard the batch
+                    // (already logged to the error table when error logging is
+                    // enabled) and keep the scheduled worker alive.
+                    log.error("FATAL client-side conversion error (cause: {}) -- this batch will "
+                            + "never succeed. Discarding the offending batch and continuing "
+                            + "replication.", rootCause.getClass().getName());
+                }
             } else {
                 log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
                          "batch will be retried on next scheduled run.", errorCode, category);
             }
         }
+    }
+
+    /**
+     * Decides whether a FATAL-classified error should stop the scheduled worker.
+     * <p>
+     * A ClickHouse server-side fatal error (bad schema/config/permissions, e.g.
+     * "table doesn't exist") signals a misconfiguration that will never succeed
+     * and warrants stopping the task for manual intervention. A deterministic
+     * client-side conversion error (a single bad datetime/number in one record)
+     * is isolated to the offending batch; discarding that batch and continuing
+     * is preferable to halting replication for all tables. Such errors therefore
+     * must NOT stop the worker.
+     *
+     * @param e the fatal error
+     * @return true if the worker should stop; false to discard the batch and continue
+     */
+    static boolean shouldStopTaskOnFatalError(Throwable e) {
+        return !ClickHouseErrorClassifier.isFatalClientSideException(e);
     }
 
 
@@ -761,11 +801,12 @@ public class ClickHouseBatchRunnable implements Runnable {
      *
      * @param e exception that occurred
      * @param taskId task identifier
+     * @param errorDatabaseName name of the error database
      * @param errorTableName name of the error table
      */
-    private void logErrorToClickHouse(Exception e, Long taskId, String errorTableName) {
+    private void logErrorToClickHouse(Exception e, Long taskId, String errorDatabaseName, String errorTableName) {
         try {
-            Connection dbCon = getClickHouseConnection(DbWriter.SYSTEM_DB);
+            Connection dbCon = getClickHouseConnection(errorDatabaseName);
             // Create error table if it doesn't exist
             ErrorLogger.createErrorTable(dbCon, config);
 
@@ -787,14 +828,18 @@ public class ClickHouseBatchRunnable implements Runnable {
                     databaseName,
                     "", // No query field available
                     "", // No offset key field available
+                    errorDatabaseName,
                     errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), databaseName, "");
             } else {
                 ErrorLogger.logError(dbCon,
                     String.format("Error processing batch. Task: %s, Error: %s", taskId, e.getMessage()),
                     null,
                     "",
                     "", "",
+                    errorDatabaseName,
                     errorTableName);
+                ConnectorErrorReporter.reportError(e.getMessage(), "", "");
             }
 
             Thread.sleep(ERROR_SLEEP_TIME_MS);

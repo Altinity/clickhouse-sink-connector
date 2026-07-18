@@ -42,6 +42,26 @@ public class ReplicationStatus {
     private String gtid = "";
 
     /**
+     * The last error message encountered during replication.
+     */
+    private String lastError = "";
+
+    /**
+     * The timestamp of the last error in epoch milliseconds.
+     */
+    private long lastErrorTimestamp = -1;
+
+    /**
+     * The source database associated with the last error.
+     */
+    private String lastErrorSourceDatabase = "";
+
+    /**
+     * The query associated with the last error.
+     */
+    private String lastErrorQuery = "";
+
+    /**
      * Gets the replication lag in milliseconds.
      *
      * @return the replication lag in milliseconds.
@@ -156,5 +176,77 @@ public class ReplicationStatus {
      */
     public void setGtid(String gtid) {
         this.gtid = gtid;
+    }
+
+    /**
+     * Gets the last error message.
+     *
+     * @return the last error message.
+     */
+    public String getLastError() {
+        return lastError;
+    }
+
+    /**
+     * Sets the last error message.
+     *
+     * @param lastError the last error message.
+     */
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
+    }
+
+    /**
+     * Gets the timestamp of the last error.
+     *
+     * @return the last error timestamp in epoch milliseconds.
+     */
+    public long getLastErrorTimestamp() {
+        return lastErrorTimestamp;
+    }
+
+    /**
+     * Sets the timestamp of the last error.
+     *
+     * @param lastErrorTimestamp the last error timestamp in epoch milliseconds.
+     */
+    public void setLastErrorTimestamp(long lastErrorTimestamp) {
+        this.lastErrorTimestamp = lastErrorTimestamp;
+    }
+
+    /**
+     * Gets the source database associated with the last error.
+     *
+     * @return the source database name.
+     */
+    public String getLastErrorSourceDatabase() {
+        return lastErrorSourceDatabase;
+    }
+
+    /**
+     * Sets the source database associated with the last error.
+     *
+     * @param lastErrorSourceDatabase the source database name.
+     */
+    public void setLastErrorSourceDatabase(String lastErrorSourceDatabase) {
+        this.lastErrorSourceDatabase = lastErrorSourceDatabase;
+    }
+
+    /**
+     * Gets the query associated with the last error.
+     *
+     * @return the query string.
+     */
+    public String getLastErrorQuery() {
+        return lastErrorQuery;
+    }
+
+    /**
+     * Sets the query associated with the last error.
+     *
+     * @param lastErrorQuery the query string.
+     */
+    public void setLastErrorQuery(String lastErrorQuery) {
+        this.lastErrorQuery = lastErrorQuery;
     }
 }

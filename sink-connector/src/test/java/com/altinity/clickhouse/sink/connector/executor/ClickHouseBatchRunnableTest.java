@@ -92,4 +92,26 @@ public class ClickHouseBatchRunnableTest {
         Assert.assertTrue(tableName.equalsIgnoreCase("customers"));
 
     }
+
+    @Test
+    public void testClientSideConversionFatalDoesNotStopWorker() {
+        // A deterministic client-side conversion error (bad datetime/number in a
+        // single record) is isolated to the offending batch and must NOT halt the
+        // worker, otherwise one bad record stops replication for all tables.
+        Assert.assertFalse(ClickHouseBatchRunnable.shouldStopTaskOnFatalError(
+                new NumberFormatException("For input string: \"not-a-number\"")));
+
+        // Same when wrapped like the real batch-processing stack.
+        Assert.assertFalse(ClickHouseBatchRunnable.shouldStopTaskOnFatalError(
+                new RuntimeException("insert batch failed",
+                        new java.time.DateTimeException("Invalid value for field"))));
+    }
+
+    @Test
+    public void testClickHouseServerFatalStopsWorker() {
+        // A ClickHouse server-side fatal error (bad schema/config) should still
+        // stop the worker for manual intervention.
+        Assert.assertTrue(ClickHouseBatchRunnable.shouldStopTaskOnFatalError(
+                new RuntimeException("Code: 60. DB::Exception: Table default.foo doesn't exist.")));
+    }
 }

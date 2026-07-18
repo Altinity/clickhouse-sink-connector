@@ -150,3 +150,7 @@ database.keep.alive.interval.`ms: "30000"  #Send keepalive every 30 seconds
 database.connection.reconnect.backoff.ms: "1000"
 database.connection.reconnect.backoff.max.ms: "10000"
 database.ssl.mode: "disabled"
+
+# Error table for storing connector errors (similar to SHOW SLAVE STATUS last error)
+default.error.table: "replica_source_error"
+error.logging.enable: "true"

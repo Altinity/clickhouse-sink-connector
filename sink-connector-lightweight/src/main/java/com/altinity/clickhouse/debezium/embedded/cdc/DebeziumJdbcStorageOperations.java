@@ -1,8 +1,11 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
+
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.relational.history.SchemaHistory;
@@ -38,6 +41,13 @@ public class DebeziumJdbcStorageOperations {
      */
     private static final Logger log = LogManager.getLogger(
             DebeziumJdbcStorageOperations.class);
+
+    private static final String SECONDS_BEHIND_SOURCE_COL = "Seconds_Behind_Source";
+    private static final String REPLICA_RUNNING_COL = "Replica_Running";
+    private static final String BINLOG_FILE_COL = "Binlog_File";
+    private static final String BINLOG_POSITION_COL = "Binlog_Position";
+    private static final String GTID_COL = "GTID";
+    private static final String CONNECTOR_ID_COL = "Connector_Id";
 
     /**
      * Instance of DebeziumOffsetStorage for performing storage ops.
@@ -172,54 +182,79 @@ public class DebeziumJdbcStorageOperations {
      */
     public String getErrorTableStatus(Connection conn, Properties props)
             throws SQLException {
-        String response = "";
-
-        String errorTableName = props.getProperty(
-                ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        if (errorTableName == null || errorTableName.isEmpty() == true) {
-            log.warn("Skipping getting error table status as the query " +
-                    "was not provided in configuration");
-            return response;
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(
+                PropertiesHelper.toMap(props));
+        String errorTableName = ErrorLogger.getErrorTableName(config);
+        String errorDatabaseName = ErrorLogger.getErrorDatabaseName(config);
+        String errorTableStatusQuery = String.format(
+                "SELECT * FROM %s.%s ORDER BY error_timestamp DESC LIMIT 1",
+                errorDatabaseName, errorTableName);
+        DBMetadata metadata = new DBMetadata(config);
+        ResultSet errorRow = null;
+        try {
+            errorRow = metadata.executeQueryWithResultSet(errorTableStatusQuery, conn);
+        } catch (SQLException e) {
+            log.warn("Error table query failed, returning in-memory status only", e);
         }
-        String errorTableStatusQuery = String.format("select * from %s limit 1", errorTableName);
-        DBMetadata metadata = new DBMetadata(props);
-        ResultSet resultSet = metadata.executeQueryWithResultSet(
-                errorTableStatusQuery, conn);
-        if (resultSet != null) {
-            ResultSetMetaData md = resultSet.getMetaData();
+
+        ReplicationStatusSingleton replicationStatus = ReplicationStatusSingleton.getInstance();
+
+        JSONArray result = new JSONArray();
+        JSONObject replicationLag = new JSONObject();
+        replicationLag.put(SECONDS_BEHIND_SOURCE_COL,
+                replicationStatus.getReplicationLag() / 1000);
+        result.add(replicationLag);
+
+        JSONObject replicationRunning = new JSONObject();
+        replicationRunning.put(REPLICA_RUNNING_COL,
+                replicationStatus.isReplicationRunning());
+        result.add(replicationRunning);
+
+        JSONObject binlogFile = new JSONObject();
+        binlogFile.put(BINLOG_FILE_COL, replicationStatus.getBinLogFile());
+        result.add(binlogFile);
+
+        JSONObject binlogPosition = new JSONObject();
+        binlogPosition.put(BINLOG_POSITION_COL,
+                replicationStatus.getBinLogPosition());
+        result.add(binlogPosition);
+
+        JSONObject gtid = new JSONObject();
+        gtid.put(GTID_COL, replicationStatus.getGtid());
+        result.add(gtid);
+
+        JSONObject connectorId = new JSONObject();
+        connectorId.put(CONNECTOR_ID_COL, props.getProperty("name", ""));
+        result.add(connectorId);
+
+        if (errorRow != null && errorRow.next()) {
+            ResultSetMetaData md = errorRow.getMetaData();
             int numCols = md.getColumnCount();
-            List<String> colNames = IntStream.range(0, numCols)
-                    .mapToObj(i -> {
-                        try {
-                            return md.getColumnName(i + 1);
-                        } catch (SQLException e) {
-                            e.printStackTrace();
-                            return "?";
-                        }
-                    })
-                    .collect(Collectors.toList());
-            JSONArray result = new JSONArray();
-            // convert the result set to a json array.
-            while (resultSet.next()) {
-                JSONObject row = new JSONObject();
-                colNames.forEach(cn -> {
-                    try {
-                        Object v = resultSet.getObject(cn);
-                        row.put(cn, v);
-                    } catch (SQLException e) {
-                        e.printStackTrace();
-                    }
-                });
-                result.add(row);
+            JSONObject row = new JSONObject();
+            for (int i = 1; i <= numCols; i++) {
+                String columnName = md.getColumnName(i);
+                Object value = errorRow.getObject(columnName);
+                if (value != null && value instanceof LocalDateTime) {
+                    value = ((LocalDateTime) value).toString();
+                }
+                row.put(columnName, value);
             }
-            response = result.toString();
+            result.add(row);
+        } else if (!replicationStatus.getLastError().isEmpty()) {
+            JSONObject lastError = new JSONObject();
+            lastError.put("error", replicationStatus.getLastError());
+            lastError.put("error_timestamp", replicationStatus.getLastErrorTimestamp());
+            lastError.put("source_database",
+                    replicationStatus.getLastErrorSourceDatabase());
+            lastError.put("database_query", replicationStatus.getLastErrorQuery());
+            lastError.put("binlog_file", replicationStatus.getBinLogFile());
+            lastError.put("binlog_position", replicationStatus.getBinLogPosition());
+            lastError.put("gtid", replicationStatus.getGtid());
+            lastError.put("offset_key", props.getProperty("name", ""));
+            result.add(lastError);
         }
 
-
-        return response;
-
-        // TODO: Return the status of the error table.
-
+        return result.toJSONString();
     }
 
     /**
@@ -261,11 +296,11 @@ public class DebeziumJdbcStorageOperations {
                     .collect(Collectors.toList());
             JSONArray result = new JSONArray();
             JSONObject replicationLag = new JSONObject();
-            replicationLag.put("Seconds_Behind_Source",
+            replicationLag.put(SECONDS_BEHIND_SOURCE_COL,
                     ReplicationStatusSingleton.getInstance().getReplicationLag() / 1000);
             result.add(replicationLag);
             JSONObject replicationRunning = new JSONObject();
-            replicationRunning.put("Replica_Running",
+            replicationRunning.put(REPLICA_RUNNING_COL,
                     ReplicationStatusSingleton.getInstance().isReplicationRunning());
             result.add(replicationRunning);
             // Add Database name and table name.

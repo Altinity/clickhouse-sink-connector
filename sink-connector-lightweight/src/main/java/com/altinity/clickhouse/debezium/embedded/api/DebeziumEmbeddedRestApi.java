@@ -96,6 +96,19 @@ public class DebeziumEmbeddedRestApi {
                     + "Set rest.api.auth.username and rest.api.auth.password.");
         }
 
+        // Idempotent start: stop any server already bound to the port before starting a new
+        // one. Without this a previously started (and not stopped) instance leaves the port
+        // bound, so the next start fails with "Port already in use". This is harmless in
+        // production (the API is started once) and prevents cross-test port leaks in the
+        // shared surefire JVM.
+        if (app != null) {
+            try {
+                app.stop();
+            } catch (Exception e) {
+                log.warn("Failed to stop existing REST API server before restart", e);
+            }
+        }
+
         app = Javalin.create().start(Integer.parseInt(cliPort));
 
         if (authEnabled) {
