@@ -783,10 +783,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
-            // In MySQL, MODIFY COLUMN without an explicit NULL/NOT NULL constraint
-            // makes the column nullable, so default to Nullable when the current
-            // schema cannot be retrieved from ClickHouse.
-            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
             modifier = Constants.RENAME_COLUMN;
             modifierWithNull = Constants.RENAME_COLUMN_NULLABLE;
@@ -795,8 +791,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             isAlterChangeColumn = true;
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
-            // Same MySQL semantics as MODIFY COLUMN above.
-            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
             modifier = Constants.ADD_INDEX;
         } else {
