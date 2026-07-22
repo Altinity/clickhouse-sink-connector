@@ -165,14 +165,14 @@ public class QueryFormatter {
 
     /**
      * Extracts the precision (scale) from a DateTime64 data type.
-     * Handles formats like "DateTime64(3)" or "DateTime64(3, 'UTC')".
+     * Handles formats like "DateTime64(3)", "DateTime64(3, 'UTC')" or "Nullable(DateTime64(3))".
      *
      * @param dataType the DateTime64 data type string
      * @return the precision value as a string, defaults to "3" if not found
      */
     private String extractDateTime64Precision(String dataType) {
         // Find the opening parenthesis
-        int start = dataType.indexOf('(');
+        int start = dataType.lastIndexOf('(');
         if (start == -1) {
             return "3"; // Default precision
         }

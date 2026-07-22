@@ -1,0 +1,168 @@
+---
+# Systemd deployment flow for the ClickHouse Sink Connector (lightweight).
+# Runs the connector as a systemd *user* service — no root daemon, no Docker.
+#
+# Flow:
+#   1. Select systemd deployments from inventory
+#   2. Enable user lingering (services survive logout)
+#   3. Create deployment directories
+#   4. Create the version-independent JAR symlink
+#   5. Render config.yml + log4j2.xml
+#   6. Render + install the systemd user unit
+#   7. daemon-reload, enable, start
+#   8. Verify status and show recent logs
+
+- name: Select systemd deployments
+  ansible.builtin.set_fact:
+    systemd_deployments: "{{ sink_connector_deployments | selectattr('deployment_mode', 'equalto', 'systemd') | list }}"
+
+- name: Display deployments to be processed
+  ansible.builtin.debug:
+    msg: "Processing systemd deployment: {{ item.name }}"
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ------------------------------------------------------------------
+# Systemd user setup
+# ------------------------------------------------------------------
+- name: Enable user lingering so user services run without a login session
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ ansible_user }}"
+  changed_when: false
+
+- name: Create user systemd directory
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.config/systemd/user"
+    state: directory
+    mode: '0755'
+
+# ------------------------------------------------------------------
+# Deployment directories
+# ------------------------------------------------------------------
+- name: Create deployment config directories
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/sink-connector/{{ item.name }}/config"
+    state: directory
+    mode: '0755'
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create log directories
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/sink-connector/{{ item.name }}/logs"
+    state: directory
+    mode: '0755'
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ------------------------------------------------------------------
+# JAR symlink: the unit file always points at the symlink, so upgrades
+# are: drop new JAR -> repoint symlink -> restart. No unit edits.
+# ------------------------------------------------------------------
+- name: Verify the connector JAR exists
+  ansible.builtin.stat:
+    path: "{{ item.systemd.local_sink_connector_bin_dir }}/{{ item.systemd.local_jar_filename | default('clickhouse-debezium-embedded.jar') }}"
+  register: jar_checks
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Fail early if a connector JAR is missing
+  ansible.builtin.fail:
+    msg: "Connector JAR not found for {{ item.item.name }}: {{ item.invocation.module_args.path }}"
+  loop: "{{ jar_checks.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not item.stat.exists
+
+- name: Create version-independent JAR symlink
+  ansible.builtin.file:
+    src: "{{ item.systemd.local_sink_connector_bin_dir }}/{{ item.systemd.local_jar_filename | default('clickhouse-debezium-embedded.jar') }}"
+    dest: "/home/{{ ansible_user }}/sink-connector/{{ item.name }}/{{ sink_connector_jar_symlink_name }}"
+    state: link
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ------------------------------------------------------------------
+# Configuration files
+# ------------------------------------------------------------------
+- name: Render connector config.yml
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "/home/{{ ansible_user }}/sink-connector/{{ item.name }}/config/config.yml"
+    mode: '0600'
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: restart sink connectors
+
+- name: Render log4j2 configuration
+  ansible.builtin.template:
+    src: systemd_log4j2.xml.j2
+    dest: "/home/{{ ansible_user }}/sink-connector/{{ item.name }}/config/log4j2.xml"
+    mode: '0644'
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: restart sink connectors
+
+# ------------------------------------------------------------------
+# Systemd unit
+# ------------------------------------------------------------------
+- name: Render systemd user unit files
+  ansible.builtin.template:
+    src: systemd_sink_connector.service.j2
+    dest: "/home/{{ ansible_user }}/.config/systemd/user/sink-connector-{{ item.name }}.service"
+    mode: '0644'
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: restart sink connectors
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+
+- name: Enable and start sink-connector services
+  ansible.builtin.systemd:
+    name: "sink-connector-{{ item.name }}.service"
+    enabled: "{{ start_service | bool }}"
+    state: "{{ 'started' if (start_service | bool) else 'stopped' }}"
+    scope: user
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ------------------------------------------------------------------
+# Verification
+# ------------------------------------------------------------------
+- name: Verify service status
+  ansible.builtin.systemd:
+    name: "sink-connector-{{ item.name }}.service"
+    scope: user
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: service_status_results
+
+- name: Display deployment summary
+  ansible.builtin.debug:
+    msg: |
+      {% for r in service_status_results.results %}
+      {{ r.item.name }}: {{ r.status.ActiveState | default('Unknown') }}
+      {% endfor %}
+
+- name: Check service logs for startup errors
+  ansible.builtin.command:
+    cmd: "journalctl --user -u sink-connector-{{ item.name }}.service --no-pager -n 20"
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: service_logs
+  changed_when: false
+  when: start_service | bool
