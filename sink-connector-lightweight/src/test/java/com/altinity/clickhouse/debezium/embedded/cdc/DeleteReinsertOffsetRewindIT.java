@@ -4,7 +4,6 @@ import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
-import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -32,11 +31,13 @@ import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Deterministic reproduction of the 2.9.1 delete+reinsert "stuck deleted" bug.
@@ -70,13 +71,31 @@ public class DeleteReinsertOffsetRewindIT {
     private static final Logger log = LoggerFactory.getLogger(DeleteReinsertOffsetRewindIT.class);
 
     private static final int ROWS = 100;
-    private static final int NOISE_BEFORE = 2000;
+    private static final int NOISE_BEFORE = 500;
+    // NOISE_MID is the binlog gap between the DELETE and the re-INSERT. It must be large enough
+    // that in Phase 4 the connector spends several seconds churning through it, giving the test a
+    // reliable window to observe stuck-deleted rows and stop the connector BEFORE the re-INSERT is
+    // replayed (which would un-stick them and mask the bug).
     private static final int NOISE_MID = 50000;
-    private static final int NOISE_AFTER = 2000;
+    private static final int NOISE_AFTER = 500;
+
+    /**
+     * If a progress-tracked {@code waitFor} sees no forward progress for this many seconds, it
+     * fails fast rather than blocking for the full timeout: a frozen offset means the sink batch
+     * worker has died (an uncaught error escaping the {@code scheduleAtFixedRate} task permanently
+     * cancels it) or the offset flush is wedged. Failing fast surfaces that as an actionable error.
+     */
+    private static final int STALL_SECONDS = 60;
 
     private static final String OFFSET_TABLE = "altinity_sink_connector.replica_source_info";
 
     protected MySQLContainer mySqlContainer;
+
+    /**
+     * Captures any exception thrown while starting the connector on the background thread so the
+     * test can fail fast with the real cause instead of blocking on a blind timeout.
+     */
+    private final AtomicReference<Throwable> connectorError = new AtomicReference<>();
 
     @Container
     public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(
@@ -144,7 +163,10 @@ public class DeleteReinsertOffsetRewindIT {
 
         // ---- Phase 2: full replay -> in-sync baseline; capture the final offset ----
         exec = startConnector(injector, props);
-        assertTrue(waitFor(() -> noiseCount(ch) >= NOISE_BEFORE + NOISE_MID + NOISE_AFTER, 180),
+        Thread.sleep(20000); // connector re-init (engine restart + offset load) before polling
+        int expectedNoise = NOISE_BEFORE + NOISE_MID + NOISE_AFTER;
+        assertTrue(
+                waitFor(() -> noiseCount(ch) >= expectedNoise, () -> noiseCount(ch), 300),
                 "replay: expected all noise rows to drain");
         assertTrue(waitFor(() -> targetLiveCount(ch) == ROWS && stuckDeletedCount(ch) == 0, 60),
                 "replay baseline: expected " + ROWS + " live rows, 0 stuck-deleted");
@@ -204,13 +226,17 @@ public class DeleteReinsertOffsetRewindIT {
     }
 
     private ExecutorService startConnector(Injector injector, Properties props) {
+        // Clear any error captured from a previous run so a stale failure does not trip the next
+        // phase's fail-fast check.
+        connectorError.set(null);
         ExecutorService exec = Executors.newFixedThreadPool(1);
         exec.execute(() -> {
             try {
                 ClickHouseDebeziumEmbeddedApplication.start(
                         injector.getInstance(DebeziumRecordParserService.class), props, false);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+            } catch (Throwable e) {
+                connectorError.set(e);
+                log.error("connector start() failed", e);
             }
         });
         return exec;
@@ -227,11 +253,14 @@ public class DeleteReinsertOffsetRewindIT {
         } catch (Exception e) {
             // best effort
         }
-        try {
-            HikariDbSource.close();
-        } catch (Exception e) {
-            // best effort
-        }
+        // NOTE: Deliberately do NOT call HikariDbSource.close() here. The ClickHouse container is
+        // shared across all phases of this test (started once in @BeforeEach), so the connection
+        // pool created in Phase 0 stays valid for every subsequent connector restart. Closing it
+        // between phases poisons the restart: the connection layer mishandles a cleared pool
+        // (HikariDbSource.initiateNewConnectionIfClosed dereferences a null datasource, and
+        // DBMetadata's schema lookup on the binlog-reader thread only catches SQLException), so
+        // Phase 2 would silently replicate nothing. Final cleanup happens in
+        // ResetSharedStateExtension.afterEach at end of the test.
     }
 
     // ------------------------------------------------------------------
@@ -311,13 +340,17 @@ public class DeleteReinsertOffsetRewindIT {
         return scalarInt(ch, "SELECT count() FROM repro_db.noise");
     }
 
+    /**
+     * Runs a scalar-int query, returning {@code -1} to signal "unknown" (query failed or the target
+     * table does not exist yet early in replay). Callers must treat a negative value as unknown --
+     * NOT as a real count of zero -- so a transient blip is never mistaken for "no rows".
+     */
     private int scalarInt(Connection ch, String sql) {
         try (Statement s = ch.createStatement();
              ResultSet rs = s.executeQuery(sql)) {
             rs.next();
             return rs.getInt(1);
         } catch (Exception e) {
-            // Table may not exist yet early in replay; treat as 0.
             return -1;
         }
     }
@@ -373,7 +406,34 @@ public class DeleteReinsertOffsetRewindIT {
 
     private boolean waitFor(Callable<Boolean> condition, int timeoutSeconds)
             throws InterruptedException {
-        for (int i = 0; i < timeoutSeconds * 5; i++) {
+        return waitFor(condition, null, timeoutSeconds);
+    }
+
+    /**
+     * Polls {@code condition} until it is true or {@code timeoutSeconds} elapses. On every poll it
+     * also (a) fails fast if the connector's background {@code start()} threw, and (b) when a
+     * {@code progress} supplier is given, fails fast if that value has not advanced for
+     * {@link #STALL_SECONDS} -- a frozen offset means the batch worker died, so blocking for the
+     * full timeout would only hide the real cause. Progress is logged every ~10s.
+     *
+     * @param condition the success predicate
+     * @param progress  optional monotonic progress metric (e.g. replicated row count); may be null
+     * @param timeoutSeconds overall timeout
+     * @return true if {@code condition} became true within the timeout
+     */
+    private boolean waitFor(Callable<Boolean> condition, Callable<Integer> progress,
+                            int timeoutSeconds) throws InterruptedException {
+        int iterations = timeoutSeconds * 5; // 200ms per poll
+        int stallIterations = STALL_SECONDS * 5;
+        int lastProgress = Integer.MIN_VALUE;
+        int iterationsSinceProgress = 0;
+        int iterationsUnknown = 0;
+        for (int i = 0; i < iterations; i++) {
+            Throwable err = connectorError.get();
+            if (err != null) {
+                fail("connector failed during replay: " + err, err);
+            }
+
             try {
                 if (Boolean.TRUE.equals(condition.call())) {
                     return true;
@@ -381,8 +441,52 @@ public class DeleteReinsertOffsetRewindIT {
             } catch (Exception e) {
                 // ignore transient errors (table not yet created, connection blips)
             }
+
+            if (progress != null) {
+                int current = safeProgress(progress);
+                if (current >= 0) {
+                    // Observed a real value: clear the "unknown" streak.
+                    iterationsUnknown = 0;
+                    if (current > lastProgress) {
+                        lastProgress = current;
+                        iterationsSinceProgress = 0;
+                    } else {
+                        iterationsSinceProgress++;
+                        if (iterationsSinceProgress >= stallIterations) {
+                            fail("connector appears STALLED at progress=" + lastProgress + " for "
+                                    + STALL_SECONDS + "s (batch worker likely died -- check the "
+                                    + "console log for 'Fatal ClickHouse error', 'stopping task', "
+                                    + "or 'Code: NNN')");
+                        }
+                    }
+                } else {
+                    // A negative reading means the query kept failing (see scalarInt): the target
+                    // table for progress does not exist. A brief blip is fine, but if it persists
+                    // for the entire stall window the connector is not replicating at all (e.g. the
+                    // table was never created), so fail fast rather than burning the full timeout.
+                    iterationsUnknown++;
+                    if (iterationsUnknown >= stallIterations) {
+                        fail("connector NOT replicating: progress query failed for " + STALL_SECONDS
+                                + "s (target table never created). Likely a connection/restart "
+                                + "issue -- check the console log for connection errors.");
+                    }
+                }
+                if (i % 50 == 0) { // ~ every 10s
+                    log.info("waitFor progress={} (elapsed ~{}s)", current, i / 5);
+                }
+            }
+
             Thread.sleep(200);
         }
         return false;
+    }
+
+    private int safeProgress(Callable<Integer> progress) {
+        try {
+            Integer v = progress.call();
+            return v == null ? Integer.MIN_VALUE : v;
+        } catch (Exception e) {
+            return Integer.MIN_VALUE;
+        }
     }
 }
