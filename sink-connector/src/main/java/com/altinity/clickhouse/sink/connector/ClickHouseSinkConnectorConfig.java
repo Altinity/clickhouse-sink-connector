@@ -634,7 +634,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
-                        "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status " +
+                        "CREATE OR REPLACE VIEW %s.show_replica_status " +
                                 "(`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), " +
                                 "`local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, " +
                                 "`record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM " +
@@ -642,7 +642,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                 "formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, " +
                                 "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
                                 "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM " +
-                                "merge(altinity_sink_connector, 'replica_source_info.*') FINAL) AS U ORDER BY offset_key ASC",
+                                "%s FINAL) AS U ORDER BY offset_key ASC",
                         Importance.HIGH,
                         "SQL query to get replica status, lag etc.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
