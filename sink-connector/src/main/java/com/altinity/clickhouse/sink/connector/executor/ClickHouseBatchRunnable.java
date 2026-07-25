@@ -255,7 +255,12 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("Error creating database " + e);
         } finally {
             try {
-                systemConn.close();
+                // createConnection() returns null when ClickHouse is
+                // unreachable, closing it would throw a NullPointerException
+                // that the handler below does not catch.
+                if (systemConn != null) {
+                    systemConn.close();
+                }
             } catch (SQLException e) {
                 log.error("Error closing connection when creating database" + e);
             }
@@ -267,7 +272,12 @@ public class ClickHouseBatchRunnable implements Runnable {
                 BaseDbWriter.DATABASE_CLIENT_NAME,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), databaseName, config);
-        this.databaseToConnectionMap.put(databaseName, conn);
+        // Only cache a usable connection. containsKey() above returns true for
+        // a key mapped to null, so caching a failed connection would keep
+        // returning null for this database until the connector restarts.
+        if (conn != null) {
+            this.databaseToConnectionMap.put(databaseName, conn);
+        }
         return conn;
     }
 

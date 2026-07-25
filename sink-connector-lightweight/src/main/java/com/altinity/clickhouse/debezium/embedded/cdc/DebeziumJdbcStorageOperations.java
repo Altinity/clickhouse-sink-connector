@@ -304,6 +304,14 @@ public class DebeziumJdbcStorageOperations {
             throws SQLException {
         long result = -1;
         String latestRecordTs = this.debeziumOffsetStorage.getDebeziumLatestRecordTimestamp(props, conn);
+        if (latestRecordTs == null || latestRecordTs.isEmpty()) {
+            // The query returned no result, e.g. because ClickHouse was not
+            // reachable. Without this guard SimpleDateFormat.parse() below
+            // throws a NullPointerException, which the ParseException handler
+            // does not catch.
+            log.error("Latest record timestamp is not available");
+            return result;
+        }
         // Convert date string from "yyyy-MM-dd HH:mm:ss" format to milliseconds.
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         Date date = null;

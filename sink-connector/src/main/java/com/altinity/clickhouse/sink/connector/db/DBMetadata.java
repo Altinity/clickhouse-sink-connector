@@ -622,6 +622,24 @@ public class DBMetadata {
     }
 
     /**
+     * Checks whether the connection pool is able to hand out a connection for
+     * the system database.
+     *
+     * @return true if pooling is enabled and a pool exists.
+     */
+    private boolean canReconnectFromPool() {
+        try {
+            if (config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                return false;
+            }
+            return HikariDbSource.getInstance(SYSTEM_DB) != null;
+        } catch (Exception e) {
+            log.error("Error checking the connection pool state", e);
+            return false;
+        }
+    }
+
+    /**
      * Executes a system query that returns a string result.
      *
      * @param conn The database connection.
@@ -636,9 +654,28 @@ public class DBMetadata {
         ResultSet rs = null;
         while (retryCount < MAX_RETRIES) {
             try {
+                if (conn == null) {
+                    // createConnection() returns null when ClickHouse is
+                    // unreachable. Report it as a SQLException so that the
+                    // retry below is applied and callers that already handle
+                    // SQLException are not hit by a NullPointerException.
+                    throw new SQLException(
+                            "ClickHouse connection is not available for query: "
+                                    + sql);
+                }
                 rs = conn.prepareStatement(sql).executeQuery();
                 break;
             } catch (SQLException sqle) {
+                // A missing connection can only be recovered from the pool. If
+                // no pool can supply one, the initial connection never
+                // succeeded and retrying would just sleep out the whole retry
+                // budget, so fail immediately instead.
+                if (conn == null && !canReconnectFromPool()) {
+                    log.error("ClickHouse connection is not available and no "
+                            + "connection pool can provide one, giving up on "
+                            + "query: {}", sql, sqle);
+                    break;
+                }
                 try {
                     log.error("Error executing query: Retrying ({}/{})" ,retryCount,MAX_RETRIES, sqle);
                     Thread.sleep(1000 * retryCount);
