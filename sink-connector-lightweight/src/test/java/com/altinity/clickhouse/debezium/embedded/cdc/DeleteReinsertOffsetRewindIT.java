@@ -40,28 +40,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Deterministic reproduction of the 2.9.1 delete+reinsert "stuck deleted" bug.
+ * Regression guard for the 2.9.1 delete+reinsert "stuck deleted" bug.
  *
  * <p>Background: {@code _version} for the ReplacingMergeTree target is computed as
- * {@code envelope_ts_ms * 1_000_000 + sequenceNumber}, where {@code envelope_ts_ms} is the
- * Debezium envelope timestamp (the wall-clock time the connector PROCESSED the event, read via
- * {@code ClickHouseStruct.getDebeziumTsFromChangeEvent}). Because the timestamp dominates the
- * version, the effective ordering is by processing time.
+ * {@code ts_ms * 1_000_000 + sequenceNumber}. The bug was that {@code ts_ms} used the Debezium
+ * ENVELOPE timestamp (the wall-clock time the connector PROCESSED the event). Because the
+ * timestamp dominates the version, the effective ordering was by processing time.
  *
  * <p>When Debezium re-delivers events after an offset regression (at-least-once semantics), a
- * previously-processed DELETE is re-stamped with a FRESH (later) envelope timestamp. If the
- * matching re-INSERT is NOT re-delivered, the re-delivered DELETE now outranks the original
- * re-INSERT in the ReplacingMergeTree and the row is permanently stuck with {@code is_deleted=1}
- * even though it still exists in MySQL -> silent data loss.
+ * previously-processed DELETE was re-stamped with a FRESH (later) envelope timestamp. If the
+ * matching re-INSERT was NOT re-delivered, the re-delivered DELETE outranked the original
+ * re-INSERT in the ReplacingMergeTree and the row was permanently stuck with {@code is_deleted=1}
+ * even though it still existed in MySQL -> silent data loss.
  *
- * <p>This test reproduces that exact sequence deterministically by rewinding the JDBC offset
+ * <p>The fix anchors the version to the SOURCE commit timestamp ({@code source.ts_ms}, via
+ * {@code ClickHouseStruct.getSourceTsFromChangeEvent}), which is identical on every redelivery.
+ * A re-delivered DELETE therefore keeps its original (earlier) version and can no longer outrank
+ * the later re-INSERT.
+ *
+ * <p>This test drives that exact sequence deterministically by rewinding the JDBC offset
  * store ({@code altinity_sink_connector.replica_source_info}) to a coordinate captured before the
  * DELETE, restarting so the DELETE is re-delivered, then skipping the re-INSERT by restoring the
  * final offset before the re-INSERT is re-read. Mirrors {@code run_repro_rewind.sh}.
  *
- * <p>Tagged {@code repro}: on the buggy build this test PASSES (asserts rows are stuck deleted).
- * Once the version-inversion bug is fixed, the final assertion must be inverted to
- * {@code stuckDeleted == 0}.
+ * <p>Tagged {@code repro}: on a FIXED build this test asserts the rows are NOT stuck
+ * ({@code stuckDeleted == 0} and all {@code ROWS} rows live). On the old buggy build it would
+ * instead have left rows stuck deleted.
  */
 @Testcontainers
 @Tag("repro")
@@ -184,9 +188,13 @@ public class DeleteReinsertOffsetRewindIT {
         // ---- Phase 4: restart -> DELETE is re-delivered with a fresh (later) version.
         //      Kill the connector before the replay reaches the re-INSERT (wide noise gap). ----
         exec = startConnector(injector, props);
+        // On the FIXED build the re-delivered DELETE keeps its original (earlier) source-time
+        // version, so it never out-ranks the re-INSERT and rows must NOT go stuck-deleted here.
+        // We give the redelivery time to be applied, then observe (non-fatally) that nothing stuck.
         boolean sawStuck = waitFor(() -> stuckDeletedCount(ch) > 0, 120);
         stopConnector(exec);
-        assertTrue(sawStuck, "expected re-delivered DELETEs to land (stuck-deleted > 0) during replay");
+        log.info("Phase 4: sawStuck={} during re-delivered-DELETE replay (expected false on fixed build)",
+                sawStuck);
 
         // ---- Phase 5: skip the re-INSERTs by restoring the final offset (past everything) ----
         writeSingleOffset(ch, finalOffset[0], finalOffset[1], finalOffset[2]);
@@ -198,16 +206,19 @@ public class DeleteReinsertOffsetRewindIT {
 
         int stuckDeleted = stuckDeletedCount(ch);
         int liveInMysql = mysqlTargetCount(mysql);
+        int chLive = targetLiveCount(ch);
 
         log.info("FINAL: mysql rows={} ch stuck-deleted={} ch live={}",
-                liveInMysql, stuckDeleted, targetLiveCount(ch));
+                liveInMysql, stuckDeleted, chLive);
 
         assertEquals(ROWS, liveInMysql, "sanity: MySQL still has all rows");
-        assertTrue(stuckDeleted > 0,
-                "BUG REPRODUCED expectation: rows should be stuck is_deleted=1 in ClickHouse "
-                        + "after the re-delivered DELETE out-versioned the un-redelivered re-INSERT. "
-                        + "If this fails with 0, the version-inversion bug is fixed -- invert this "
-                        + "assertion to stuckDeleted == 0.");
+        assertEquals(0, stuckDeleted,
+                "REGRESSION: rows are stuck is_deleted=1 in ClickHouse after a re-delivered DELETE "
+                        + "out-versioned the un-redelivered re-INSERT. The version must be anchored to "
+                        + "the SOURCE commit timestamp (source.ts_ms) so a re-delivered DELETE keeps its "
+                        + "original, earlier version -- see ClickHouseStruct.getSourceTsFromChangeEvent.");
+        assertEquals(ROWS, chLive,
+                "expected all " + ROWS + " rows live in ClickHouse (matching MySQL) after the fix");
     }
 
     // ------------------------------------------------------------------

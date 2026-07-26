@@ -549,6 +549,49 @@ public class ClickHouseStruct {
     }
 
     /**
+     * Gets the SOURCE commit timestamp ({@code source.ts_ms}) from the change event.
+     *
+     * <p>Unlike {@link #getDebeziumTsFromChangeEvent} (which returns the envelope/processing
+     * timestamp assigned when the connector reads the event), this returns the time the change was
+     * committed at the source database. That value is identical every time Debezium re-delivers an
+     * event, so basing the ReplacingMergeTree {@code _version} on it keeps the effective ordering
+     * stable across at-least-once redelivery (a re-delivered DELETE can no longer out-rank a
+     * later, un-redelivered re-INSERT).
+     *
+     * @param changeEvent The change event.
+     * @return the source commit timestamp in ms; falls back to the envelope {@code ts_ms} (and
+     *         finally 0) when the nested {@code source} struct or field is unavailable
+     *         (e.g. some snapshot/heartbeat records).
+     */
+    public static Long getSourceTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return 0L;
+        }
+        SourceRecord srd = changeEvent.value();
+        Struct kafkaStruct = (Struct) srd.value();
+        if (kafkaStruct == null) {
+            return 0L;
+        }
+        if (kafkaStruct.schema() != null
+                && kafkaStruct.schema().field(SinkRecordColumns.SOURCE) != null) {
+            Object sourceObj = kafkaStruct.get(SinkRecordColumns.SOURCE);
+            if (sourceObj instanceof Struct) {
+                Struct source = (Struct) sourceObj;
+                if (source.schema() != null
+                        && source.schema().field(SinkRecordColumns.TS_MS) != null) {
+                    Object sourceTs = source.get(SinkRecordColumns.TS_MS);
+                    if (sourceTs instanceof Long) {
+                        return (Long) sourceTs;
+                    }
+                }
+            }
+        }
+        // Fall back to the envelope timestamp when the source struct/field is absent.
+        Object envelopeTs = kafkaStruct.get(SinkRecordColumns.TS_MS);
+        return envelopeTs instanceof Long ? (Long) envelopeTs : 0L;
+    }
+
+    /**
      * Converts a Kafka Connect Struct to a Map for JSON serialization.
      *
      * @param struct The Kafka Connect Struct to convert
