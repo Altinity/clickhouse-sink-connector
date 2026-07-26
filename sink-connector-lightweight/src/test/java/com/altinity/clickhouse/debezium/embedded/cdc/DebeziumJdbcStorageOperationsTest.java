@@ -47,4 +47,21 @@ public class DebeziumJdbcStorageOperationsTest {
 
         assertDoesNotThrow(() -> ops.createSchemaHistoryTable(null, props));
     }
+
+    @Test
+    @DisplayName("getLatestRecordTimestamp returns -1 without NPE when the query has no result")
+    void getLatestRecordTimestamp_returnsSentinelWhenQueryHasNoResult() {
+        DebeziumJdbcStorageOperations ops = new DebeziumJdbcStorageOperations();
+        Properties props = new Properties();
+        String offsetTableKey = JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name();
+        props.setProperty(offsetTableKey, "altinity_sink_connector.replica_source_info");
+
+        // A null connection makes the underlying query return no result. That
+        // reached SimpleDateFormat.parse(null) and threw a NullPointerException,
+        // which the surrounding ParseException handler does not catch.
+        long result = assertDoesNotThrow(() -> ops.getLatestRecordTimestamp(null, props));
+
+        assertEquals(-1L, result);
+    }
 }

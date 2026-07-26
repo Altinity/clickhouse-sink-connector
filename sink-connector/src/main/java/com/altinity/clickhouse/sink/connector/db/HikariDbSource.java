@@ -81,7 +81,10 @@ public class HikariDbSource {
         }
         HikariDataSource dbSource = instance.get(databaseName);
         if (dbSource == null) {
-            // No pool exists for the database.
+            // No pool exists for the database. This happens when the initial
+            // connection to ClickHouse failed, so the pool was never created.
+            throw new SQLException(
+                    "No connection pool exists for database: " + databaseName);
         }
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
