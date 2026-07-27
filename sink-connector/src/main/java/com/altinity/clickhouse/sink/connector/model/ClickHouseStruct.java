@@ -439,8 +439,13 @@ public class ClickHouseStruct {
             if (fieldNames.contains(SNAPSHOT)
                     && source.get(SNAPSHOT) != null
                     && source.get(SNAPSHOT) instanceof String) {
-                this.setSnapshot(Boolean.parseBoolean(
-                        (String) source.get(SNAPSHOT)));
+                // Debezium emits the snapshot marker as an enum string, not a plain boolean:
+                // "true", "first", "first_in_data_collection", "last", "last_in_data_collection",
+                // "incremental" all denote a snapshot record, while "false" denotes streaming.
+                // Boolean.parseBoolean would incorrectly treat "first"/"last"/etc. as false, so we
+                // treat any non-"false" value as a snapshot record.
+                String snapshotValue = (String) source.get(SNAPSHOT);
+                this.setSnapshot(!"false".equalsIgnoreCase(snapshotValue));
             }
             if (fieldNames.contains(SERVER_ID)
                     && source.get(SERVER_ID) != null
@@ -801,20 +806,33 @@ public class ClickHouseStruct {
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
+        // Snapshot records carry a source clock (source.ts_ms) that MySQL emits in the server's
+        // local timezone, so it is NOT comparable to the real-UTC commit timestamps that streaming
+        // binlog events carry. Left unnormalized, a snapshot row's version can out-rank a later
+        // streaming UPDATE/DELETE, keeping the stale snapshot row active in the ReplacingMergeTree.
+        // For snapshots we therefore anchor the version to debezium_ts_ms (the connector's
+        // System.currentTimeMillis() processing time) which is always real-UTC epoch millis and thus
+        // directly comparable to a streaming record's source.ts_ms. Streaming records keep using
+        // source.ts_ms to preserve the redelivery-stable ordering (a re-delivered event must produce
+        // the same version, which debezium_ts_ms cannot guarantee).
+        long effectiveTsMs = this.ts_ms;
+        if (this.snapshot && this.debezium_ts_ms > 0) {
+            effectiveTsMs = this.debezium_ts_ms;
+        }
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
-                this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
+                this.version = SnowFlakeId.generate(effectiveTsMs, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }
-        } else if (this.pos != null && this.pos > 0 && this.ts_ms > 0) {
+        } else if (this.pos != null && this.pos > 0 && effectiveTsMs > 0) {
             // Redelivery-stable, commit-ordered version for binlog sources.
             // High 32 bits: source commit SECOND (source.ts_ms is second-granular for MySQL and
             // identical on every re-delivery). Low 32 bits: binlog position (monotonic within a
             // binlog file, stable per event). A re-delivered DELETE keeps its original lower
             // position and can never out-rank a later re-INSERT, which prevents rows from being
             // stuck is_deleted=1 after an offset rewind.
-            long sourceSec = this.ts_ms / 1000L;
+            long sourceSec = effectiveTsMs / 1000L;
             this.version = (sourceSec << 32) | (this.pos & 0xFFFFFFFFL);
         } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
             this.version = this.sequenceNumber;
