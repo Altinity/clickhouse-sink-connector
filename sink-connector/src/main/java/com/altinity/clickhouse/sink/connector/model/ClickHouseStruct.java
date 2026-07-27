@@ -807,6 +807,15 @@ public class ClickHouseStruct {
             } else {
                 this.version = this.gtid;
             }
+        } else if (this.pos != null && this.pos > 0 && this.ts_ms > 0) {
+            // Redelivery-stable, commit-ordered version for binlog sources.
+            // High 32 bits: source commit SECOND (source.ts_ms is second-granular for MySQL and
+            // identical on every re-delivery). Low 32 bits: binlog position (monotonic within a
+            // binlog file, stable per event). A re-delivered DELETE keeps its original lower
+            // position and can never out-rank a later re-INSERT, which prevents rows from being
+            // stuck is_deleted=1 after an offset rewind.
+            long sourceSec = this.ts_ms / 1000L;
+            this.version = (sourceSec << 32) | (this.pos & 0xFFFFFFFFL);
         } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
             this.version = this.sequenceNumber;
         } else if (this.lsn != UNINITIALIZED_VALUE) {
