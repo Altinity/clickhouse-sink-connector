@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
+import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
@@ -219,6 +220,8 @@ public class DeleteReinsertOffsetRewindIT {
                         + "original, earlier version -- see ClickHouseStruct.getSourceTsFromChangeEvent.");
         assertEquals(ROWS, chLive,
                 "expected all " + ROWS + " rows live in ClickHouse (matching MySQL) after the fix");
+
+        HikariDbSource.close();
     }
 
     // ------------------------------------------------------------------
