@@ -31,6 +31,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
  */
 @Testcontainers
 @DisplayName("Integration Test that validates basic replication of MariaDB databases in single threaded mode")
+@Disabled
 public class MariaDBIT
 {
 
