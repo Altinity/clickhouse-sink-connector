@@ -1,0 +1,6 @@
+pytest
+pymysql
+clickhouse-driver>=0.2.9
+sqlalchemy>=1.4
+pandas
+pyyaml
