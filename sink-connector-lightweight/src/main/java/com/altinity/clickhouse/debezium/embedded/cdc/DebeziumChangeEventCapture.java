@@ -237,12 +237,8 @@ public class DebeziumChangeEventCapture {
                     }
 
                     ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
-                    // Anchor the version to the SOURCE commit timestamp (source.ts_ms), not the
-                    // envelope/processing timestamp. The source timestamp is identical on every
-                    // Debezium re-delivery, so a re-delivered DELETE keeps its original version and
-                    // can no longer out-rank a later, un-redelivered re-INSERT in the RMT.
-                    long sourceTsMs = ClickHouseStruct.getSourceTsFromChangeEvent(changeEvent);
-                    long sequenceStartTime = sourceTsMs ;
+                    long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
+                    long sequenceStartTime = debeziumTsMs ;
                     
                     List<ClickHouseStruct> batch = new ArrayList<>();
                     for (int i = 0; i < list.size(); i++) {
@@ -251,7 +247,7 @@ public class DebeziumChangeEventCapture {
                         if (i == list.size() - 1) {
                             lastRecordInBatch = true;
                         }
-                        long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+                        long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
                         int diff = (int) ((recordTs - sequenceStartTime) / 1000);
                         if (diff > 1) {
                             sequenceNumber = SEQUENCE_START;
@@ -1100,20 +1096,18 @@ public class DebeziumChangeEventCapture {
         if (chStructs.isEmpty()) {
             return;
         }
-        // Anchor to the SOURCE commit timestamp (ts_ms), not the Debezium processing timestamp, so
-        // the version is stable across at-least-once redelivery (see getSourceTsFromChangeEvent).
-        long sequenceStartTime = chStructs.get(0).getTs_ms();
+        long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         for (ClickHouseStruct chStruct : chStructs) {
-            // Get diff in seconds from the first record's source timestamp.
-            int diff = (int) ((chStruct.getTs_ms() - sequenceStartTime) / 1000);
+            // Get diff in seconds from the first record's Debezium timestamp.
+            int diff = (int) ((chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000);
             if (diff > 1) {
                 sequenceNumber = SEQUENCE_START;
-                sequenceStartTime = chStruct.getTs_ms();
+                sequenceStartTime = chStruct.getDebezium_ts_ms();
             } else {
                 sequenceNumber++;
             }
             // Pad the sequence number with zeros and set the sequence number in the record.
-            chStruct.setSequenceNumber(chStruct.getTs_ms() * 1000000 + sequenceNumber);
+            chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
         }
     }
 }

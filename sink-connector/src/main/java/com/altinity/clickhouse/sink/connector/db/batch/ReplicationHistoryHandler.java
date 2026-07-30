@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -40,7 +41,6 @@ public class ReplicationHistoryHandler {
     private final DBMetadata dbMetadata;
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
-    private final boolean useSnowflakeId;
     /**
      * Creates a new ReplicationHistoryHandler with default dependencies (creates its own {@link DBMetadata}).
      *
@@ -72,7 +72,6 @@ public class ReplicationHistoryHandler {
         }
         this.sourceTimeZone = ZoneId.of(sourceTz);
         this.serverTimeZone = serverTimeZone;
-        this.useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
     }
 
     /**
@@ -87,7 +86,6 @@ public class ReplicationHistoryHandler {
         this.dbMetadata = dbMetadata;
         this.sourceTimeZone = ZoneId.of("UTC");
         this.serverTimeZone = ZoneId.of("UTC");
-        this.useSnowflakeId = true;
     }
 
     /**
@@ -104,13 +102,8 @@ public class ReplicationHistoryHandler {
         String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
                 sourceTimeZone, serverTimeZone);
 
-        // Generate the version using the SAME scheme as normal/snapshot inserts
-        // (ClickHouseStruct.calculateVersion), so that a later UPDATE after-image always
-        // outranks the older initial-snapshot row in the ReplacingMergeTree dedup. Using a
-        // different scheme here (e.g. raw SnowFlakeId) can produce a smaller version than the
-        // snapshot row and silently drop the update.
-        record.calculateVersion(useSnowflakeId);
-        long version = record.getVersion();
+        // Generate unique version using snowflake algorithm
+        long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
 
         // Get the primary key column name and its value from the record
         String primaryKeyColumnName = record.getPrimaryKey().get(0);
