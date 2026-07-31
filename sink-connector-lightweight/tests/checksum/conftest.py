@@ -267,10 +267,10 @@ def _sysbench_cmd(action):
     ])
     if SYSBENCH_LEGACY:
         # severalnines/sysbench 1.0.17: oltp_legacy parallel_prepare.lua.
-        # Each `run` event prepares one table; without --events the default
-        # --time=10 keeps firing events and recreates tables that already exist
-        # (MySQL error 1050). Cap events to the table count and disable the
-        # time limit so prepare stops after sbtest1..N are populated once.
+        # Each worker is pinned to a fixed table (thread_id % table_count). With
+        # threads>1, a thread that gets a second event re-CREATEs its table
+        # (MySQL 1050). Match the Hub example: single-threaded prepare, cap
+        # events/--max-requests to the table count, and disable the time limit.
         cmd.extend([
             "--db-driver=mysql",
             "--mysql-host=127.0.0.1",
@@ -280,8 +280,9 @@ def _sysbench_cmd(action):
             f"--mysql-db={DATABASE}",
             f"--oltp-tables-count={SYSBENCH_TABLE_COUNT}",
             f"--oltp-table-size={SYSBENCH_TABLE_SIZE}",
-            f"--threads={SYSBENCH_THREADS}",
+            "--threads=1",
             f"--events={SYSBENCH_TABLE_COUNT}",
+            f"--max-requests={SYSBENCH_TABLE_COUNT}",
             "--time=0",
             "/usr/share/sysbench/tests/include/oltp_legacy/parallel_prepare.lua",
             action,
