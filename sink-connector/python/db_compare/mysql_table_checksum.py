@@ -63,7 +63,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    row_list = [row for row in rowset]
+    row_list = [row for row in rowset.mappings()]
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
@@ -410,7 +410,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             future_to_table = {}
-            for table in tables.fetchall():
+            for table in tables.mappings().fetchall():
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
                 futures.append(future)
