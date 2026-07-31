@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import logging
 import warnings
 import os
@@ -107,7 +107,7 @@ def execute_mysql(conn, strSql):
     rowset = None
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        rowset = conn.execute(strSql)
+        rowset = conn.execute(text(strSql))
         rowcount = -1
     if len(w) > 0:
         logging.warning("SQL warnings : "+str(len(w)))

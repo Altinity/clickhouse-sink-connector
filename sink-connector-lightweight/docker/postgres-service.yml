@@ -4,6 +4,11 @@ services:
   postgres:
     image: debezium/postgres:15-alpine
     restart: always
+    healthcheck:
+      test: [ 'CMD-SHELL', 'pg_isready -U root -d public' ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     ports:
       - "5432:5432"
     environment:
