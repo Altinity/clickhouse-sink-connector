@@ -6,10 +6,13 @@ checksum scripts against both databases and asserts that every verified table ha
 an identical (md5, row-count) checksum.
 """
 
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from conftest import (
     CLICKHOUSE_HOST,
@@ -102,9 +105,33 @@ def _clickhouse_checksums():
     return _run_checksum(cmd)
 
 
+def _print_checksums(mysql_results, clickhouse_results):
+    """Print (and log) the MySQL vs ClickHouse checksum + row count per table.
+
+    Uses print() so the values are visible in pytest output (captured stdout is
+    shown on failure and always with `-s`); logger.info is swallowed by pytest's
+    default log capture.
+    """
+    header = f"{'table':<16} {'mysql_count':>12} {'ch_count':>12}  {'mysql_md5':<34} {'clickhouse_md5':<34}"
+    lines = ["", "=== MySQL -> ClickHouse checksums ===", header, "-" * len(header)]
+    for table in TABLES:
+        m = mysql_results.get(table)
+        c = clickhouse_results.get(table)
+        m_md5, m_cnt = (m if m else ("<missing>", "-"))
+        c_md5, c_cnt = (c if c else ("<missing>", "-"))
+        lines.append(
+            f"{table:<16} {str(m_cnt):>12} {str(c_cnt):>12}  {str(m_md5):<34} {str(c_md5):<34}"
+        )
+    report = "\n".join(lines)
+    print(report)
+    logger.info(report)
+
+
 def test_snapshot_checksum_matches(replicated_stack):
     mysql_results = _mysql_checksums()
     clickhouse_results = _clickhouse_checksums()
+
+    _print_checksums(mysql_results, clickhouse_results)
 
     mismatches = []
     for table in TABLES:

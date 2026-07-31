@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import logging
 import warnings
 import os
@@ -74,7 +74,7 @@ def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclud
 
 def get_table_partition_key(conn, database, table):
     partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
-    partitions = partitions.fetchall()
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
@@ -107,7 +107,7 @@ def execute_mysql(conn, strSql):
     rowset = None
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        rowset = conn.execute(strSql)
+        rowset = conn.execute(text(strSql))
         rowcount = -1
     if len(w) > 0:
         logging.warning("SQL warnings : "+str(len(w)))
