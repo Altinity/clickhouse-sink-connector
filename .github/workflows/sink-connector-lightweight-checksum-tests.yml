@@ -49,20 +49,37 @@ jobs:
       - name: Install test dependencies
         run: pip3 install -r sink-connector-lightweight/tests/checksum/requirements.txt
 
-      - name: Run checksum integration test
-        run: pytest -v -s sink-connector-lightweight/tests/checksum
+      # Each checksum suite owns its own compose stack (session fixture + KEEP_STACK=1),
+      # so they must run as separate pytest invocations with a teardown between them.
+      - name: Run checksum integration test (init_mysql seed)
+        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_checksum_replication.py
 
-      - name: Dump connector / compose logs on failure
+      - name: Dump connector / compose logs on init_mysql failure
         if: failure()
         working-directory: sink-connector-lightweight/docker
-        run: docker compose -f docker-compose.yml logs --no-color > compose-logs.txt 2>&1 || true
+        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-init-mysql.txt 2>&1 || true
+
+      - name: Tear down compose stack before sysbench
+        if: always()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml down -v --remove-orphans || true
+
+      - name: Run checksum integration test (sysbench seed)
+        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_sysbench_checksum_replication.py
+
+      - name: Dump connector / compose logs on sysbench failure
+        if: failure()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-sysbench.txt 2>&1 || true
 
       - name: Upload compose logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: checksum-lightweight-compose-logs
-          path: sink-connector-lightweight/docker/compose-logs.txt
+          path: |
+            sink-connector-lightweight/docker/compose-logs-init-mysql.txt
+            sink-connector-lightweight/docker/compose-logs-sysbench.txt
           if-no-files-found: ignore
 
       - name: Tear down compose stack

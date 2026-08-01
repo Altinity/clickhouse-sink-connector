@@ -6,6 +6,7 @@ ClickHouse, and tears the stack down afterwards.
 """
 
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -13,6 +14,9 @@ from pathlib import Path
 import pymysql
 import pytest
 from clickhouse_driver import Client
+
+_HOST_ARCH = platform.machine().lower()
+_IS_ARM = _HOST_ARCH in ("arm64", "aarch64")
 
 # --- Connection settings (host-side; ports are published by docker-compose) ---
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
@@ -49,6 +53,37 @@ REPLICATED_TABLES = [
 # Only these compose services are started (their depends_on pulls in clickhouse +
 # zookeeper), which skips the prometheus/grafana/jmx monitoring services.
 COMPOSE_SERVICES = ["mysql-master", "clickhouse-sink-connector-lt"]
+
+# --- sysbench data-generation settings (used by the sysbench checksum test) ---
+# Default image is severalnines/sysbench (sysbench 1.0.17, oltp_legacy) as requested.
+# That image is amd64-only and segfaults under qemu on Apple Silicon, so on arm64
+# hosts we fall back to a multi-arch image with modern sysbench flags. Override
+# any of these via env (SYSBENCH_IMAGE / SYSBENCH_PLATFORM / SYSBENCH_LEGACY).
+if os.environ.get("SYSBENCH_IMAGE"):
+    SYSBENCH_IMAGE = os.environ["SYSBENCH_IMAGE"]
+elif _IS_ARM:
+    SYSBENCH_IMAGE = "zyclonite/sysbench:1.0.21"
+else:
+    SYSBENCH_IMAGE = "severalnines/sysbench"
+
+# severalnines is amd64-only and needs an explicit platform pin on multi-arch hosts.
+# Set SYSBENCH_PLATFORM="" to disable the pin (required for native arm64 images).
+_DEFAULT_PLATFORM = "linux/amd64" if "severalnines" in SYSBENCH_IMAGE else ""
+SYSBENCH_PLATFORM = os.environ.get("SYSBENCH_PLATFORM", _DEFAULT_PLATFORM)
+
+# Legacy = oltp_legacy parallel_prepare.lua + --oltp-tables-count/--oltp-table-size.
+# Modern = oltp_read_write + --tables/--table-size (sysbench >= 1.0.20).
+if os.environ.get("SYSBENCH_LEGACY") is not None:
+    SYSBENCH_LEGACY = os.environ.get("SYSBENCH_LEGACY", "0") == "1"
+else:
+    SYSBENCH_LEGACY = "severalnines" in SYSBENCH_IMAGE
+
+SYSBENCH_TABLE_COUNT = int(os.environ.get("SYSBENCH_TABLE_COUNT", "4"))
+SYSBENCH_TABLE_SIZE = int(os.environ.get("SYSBENCH_TABLE_SIZE", "10000"))
+SYSBENCH_THREADS = int(os.environ.get("SYSBENCH_THREADS", "4"))
+# sysbench writes into the `test` database so the connector's database.include.list
+# (test) captures the tables with no config change. Tables are sbtest1..sbtestN.
+SYSBENCH_TABLES = [f"sbtest{i}" for i in range(1, SYSBENCH_TABLE_COUNT + 1)]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_DIR = REPO_ROOT / "sink-connector-lightweight" / "docker"
@@ -206,6 +241,111 @@ def replicated_stack():
         _wait_for_mysql()
         _wait_for_clickhouse()
         wait_for_replication(REPLICATED_TABLES)
+        yield
+    finally:
+        if os.environ.get("KEEP_STACK") != "1":
+            _run_compose("down", "-v", "--remove-orphans", check=False)
+        else:
+            print("KEEP_STACK=1 set; leaving compose stack running.")
+
+
+def _sysbench_cmd(action):
+    """Build a `docker run ... sysbench <lua> <action>` command.
+
+    Joins the running mysql-master container's network namespace so the DB is
+    reachable at 127.0.0.1 regardless of the compose project/network name.
+    """
+    # Force entrypoint to `sysbench` so this works for both severalnines
+    # (Entrypoint=null / Cmd=bash) and images that already ENTRYPOINT sysbench
+    # (e.g. zyclonite) without double-invoking the binary.
+    cmd = ["docker", "run", "--rm", "--entrypoint", "sysbench"]
+    if SYSBENCH_PLATFORM:
+        cmd.extend(["--platform", SYSBENCH_PLATFORM])
+    cmd.extend([
+        "--network", "container:mysql-master",
+        SYSBENCH_IMAGE,
+    ])
+    if SYSBENCH_LEGACY:
+        # severalnines/sysbench 1.0.17: oltp_legacy parallel_prepare.lua.
+        # One event creates ALL oltp_tables_count tables (sbtest1..N) in a single
+        # pass. With --events>1 the next pass re-CREATEs sbtest1 (MySQL 1050).
+        # Match the Hub example: single-threaded prepare, exactly one event, and
+        # disable the time limit so prepare stops after that one pass.
+        cmd.extend([
+            "--db-driver=mysql",
+            "--mysql-host=127.0.0.1",
+            "--mysql-port=3306",
+            f"--mysql-user={MYSQL_USER}",
+            f"--mysql-password={MYSQL_PASSWORD}",
+            f"--mysql-db={DATABASE}",
+            f"--oltp-tables-count={SYSBENCH_TABLE_COUNT}",
+            f"--oltp-table-size={SYSBENCH_TABLE_SIZE}",
+            "--threads=1",
+            "--events=1",
+            "--max-requests=1",
+            "--time=0",
+            "/usr/share/sysbench/tests/include/oltp_legacy/parallel_prepare.lua",
+            action,
+        ])
+    else:
+        # Modern sysbench (>=1.0.20): oltp_read_write prepare/cleanup
+        cmd.extend([
+            "oltp_read_write",
+            "--db-driver=mysql",
+            "--mysql-host=127.0.0.1",
+            "--mysql-port=3306",
+            f"--mysql-user={MYSQL_USER}",
+            f"--mysql-password={MYSQL_PASSWORD}",
+            f"--mysql-db={DATABASE}",
+            f"--tables={SYSBENCH_TABLE_COUNT}",
+            f"--table-size={SYSBENCH_TABLE_SIZE}",
+            f"--threads={SYSBENCH_THREADS}",
+            action,
+        ])
+    return cmd
+
+
+def _run_sysbench_prepare():
+    """Create + populate sbtest1..N in the `test` DB via the sysbench image.
+
+    A cleanup pass runs first (ignoring failures) so reruns against a reused
+    mysql-master container are idempotent. Legacy severalnines uses ``run`` as
+    the prepare action; modern sysbench uses ``prepare``.
+    """
+    prepare_action = "run" if SYSBENCH_LEGACY else "prepare"
+    print(
+        f"Running sysbench prepare: image={SYSBENCH_IMAGE} "
+        f"platform={SYSBENCH_PLATFORM or 'native'} legacy={SYSBENCH_LEGACY} "
+        f"tables={SYSBENCH_TABLE_COUNT} size={SYSBENCH_TABLE_SIZE} db={DATABASE}"
+    )
+    subprocess.run(_sysbench_cmd("cleanup"), check=False)
+    proc = subprocess.run(_sysbench_cmd(prepare_action), check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"sysbench {prepare_action} failed ({proc.returncode}):\n"
+            f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        )
+    if proc.stdout:
+        print(proc.stdout)
+
+
+@pytest.fixture(scope="session")
+def sysbench_stack():
+    """Generate data with sysbench (snapshot path), then start the connector.
+
+    Order: mysql-master -> sysbench prepare into `test` -> connector (pulls
+    clickhouse + zookeeper) -> wait for the sbtest tables to replicate. This
+    mirrors the deterministic snapshot semantics of ``replicated_stack`` but
+    sources the data from sysbench instead of init_mysql.sql.
+    """
+    print(f"Starting sysbench stack with connector image: {CONNECTOR_IMAGE}")
+    _run_compose("up", "-d", "mysql-master")
+    try:
+        _wait_for_mysql()
+        _run_sysbench_prepare()
+        _run_compose("up", "-d", "clickhouse-sink-connector-lt")
+        _wait_for_clickhouse()
+        wait_for_replication(SYSBENCH_TABLES)
         yield
     finally:
         if os.environ.get("KEEP_STACK") != "1":
